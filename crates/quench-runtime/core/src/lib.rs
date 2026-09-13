@@ -8404,6 +8404,9 @@ impl Vm {
                     Some(f.prototype),
                 );
             }
+            if matches!(f.kind, FunctionKind::Class { .. }) && self.current_new_target.is_some() {
+                return self.call_class(&f, t, a.materialize());
+            }
             let t = match &f.kind {
                 FunctionKind::User { .. } if !f.strict && (t.is_null() || t.is_undefined()) => {
                     Environment::get(&self.global, "globalThis").unwrap_or(Value::Undefined)
@@ -8547,7 +8550,12 @@ impl Vm {
                 } => {
                     let mut combined = bound_args.clone();
                     combined.extend(a.materialize());
-                    self.call_arguments_with_ic(target, this_arg.clone(), combined.as_slice(), None)
+                    let receiver = if self.current_new_target.is_some() {
+                        t
+                    } else {
+                        this_arg.clone()
+                    };
+                    self.call_arguments_with_ic(target, receiver, combined.as_slice(), None)
                 }
                 FunctionKind::User { node, env } => self.call_user_or_async(
                     node,
@@ -11059,7 +11067,18 @@ impl Vm {
                         "BigInt is not a constructor",
                     )));
                 }
-                let o = self.object(Some(function.prototype.clone()));
+                // GetPrototypeFromConstructor observes Proxy/Bound-function
+                // forwarding and falls back to the realm's Object.prototype
+                // when the published `prototype` is not an object.
+                let prototype_source = if let FunctionKind::Bound { target, .. } = &function.kind {
+                    target
+                } else {
+                    &c
+                };
+                let prototype = self
+                    .get_prop_with_accessors(prototype_source, "prototype")?
+                    .as_object();
+                let o = self.object(prototype);
                 if matches!(
                     function.kind,
                     FunctionKind::Builtin(BuiltinId::StringConstructor)
@@ -11110,7 +11129,7 @@ impl Vm {
                         initialize_string_wrapper(self, &o, &r);
                     }
                     Ok(o)
-                } else if native {
+                } else if native && proxy_target(&c).is_none() {
                     if error_constructor && let Some(_) = r.as_object_ref() {
                         self.set_prop(&r, "constructor", c.clone());
                         let name = c
@@ -11121,7 +11140,11 @@ impl Vm {
                     }
                     Ok(r)
                 } else {
-                    Ok(o)
+                    Ok(if r.is_object() || r.is_function() || r.is_regexp() {
+                        r
+                    } else {
+                        o
+                    })
                 }
             }
             RegExpLiteral(v) => {
@@ -18856,6 +18879,12 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                 .and_then(|value| value.as_object())
         })
         .or_else(|| {
+            new_target
+                .as_function_ref()
+                .and_then(|function| function.props.borrow().get(REALM_GLOBAL_PROP).cloned())
+                .and_then(|global| vm.get_prop(&global, "Object").as_function_ref().map(|function| function.prototype.clone()))
+        })
+        .or_else(|| {
             target
                 .as_function_ref()
                 .map(|function| function.prototype.clone())
@@ -19521,8 +19550,21 @@ fn initialize_string_wrapper(vm: &mut Vm, object: &Value, value: &Value) {
         }
     }
 }
-fn native_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+fn native_array(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
     let o = vm.array();
+    // Array construction is the first place where a Proxy/Reflect newTarget
+    // can change the resulting instance prototype.  The receiver created by
+    // the constructor boundary already carries GetPrototypeFromConstructor's
+    // answer; transfer that edge onto the array storage we materialize.
+    if vm.current_new_target.is_some()
+        && let Some(prototype) = this
+            .as_object_ref()
+            .and_then(|object| object.borrow().prototype.clone())
+    {
+        if let Some(array) = o.as_object_ref() {
+            array.borrow_mut().prototype = Some(prototype);
+        }
+    }
     if a.len() == 1 && a[0].as_number().is_some() {
         if let Some(obj) = o.as_object() {
             set_array_length(&mut obj.borrow_mut(), a[0].number());
