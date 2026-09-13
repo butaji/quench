@@ -3,21 +3,31 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use crate::{execute::VmError, value::Value};
 
 /// Host-registered namespace evaluators, keyed by object identity.
-type Evaluators = RefCell<HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>>;
+type Evaluators = HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>;
 /// Host resolver for `import()` / `import.defer()`.
 type DynamicImportResolver = Rc<dyn Fn(&str, bool) -> Option<Value>>;
 
+/// All mutable module-linking facts are kept in one record.  This makes reset
+/// and observation data-driven instead of relying on several independent
+/// thread-local cells with subtly different lifetimes.
+#[derive(Default)]
+struct ModuleBindingState {
+    evaluators: Evaluators,
+    pending_type_error: bool,
+    pending_throw: Option<Value>,
+    dynamic_import: Option<DynamicImportResolver>,
+    await_advanced: bool,
+    defer_fulfilled_await: bool,
+}
+
 thread_local! {
-    static EVALUATORS: Evaluators = RefCell::new(HashMap::new());
-    static PENDING_TYPE_ERROR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static PENDING_THROW: RefCell<Option<Value>> = const { RefCell::new(None) };
-    static DYNAMIC_IMPORT: RefCell<Option<DynamicImportResolver>> =
-        const { RefCell::new(None) };
+    static MODULE_STATE: RefCell<ModuleBindingState> =
+        RefCell::new(ModuleBindingState::default());
 }
 
 /// Host-owned GetModuleNamespace for `import()` / `import.defer()`.
 pub fn install_dynamic_import(resolve: DynamicImportResolver) -> DynamicImportGuard {
-    DYNAMIC_IMPORT.with(|slot| slot.replace(Some(resolve)));
+    MODULE_STATE.with(|state| state.borrow_mut().dynamic_import = Some(resolve));
     DynamicImportGuard
 }
 
@@ -25,13 +35,15 @@ pub struct DynamicImportGuard;
 
 impl Drop for DynamicImportGuard {
     fn drop(&mut self) {
-        DYNAMIC_IMPORT.with(|slot| slot.replace(None));
+        MODULE_STATE.with(|state| state.borrow_mut().dynamic_import = None);
     }
 }
 
 pub fn resolve_dynamic_import(specifier: &str, deferred: bool) -> Option<Value> {
-    DYNAMIC_IMPORT.with(|slot| {
-        slot.borrow()
+    MODULE_STATE.with(|state| {
+        state
+            .borrow()
+            .dynamic_import
             .as_ref()
             .and_then(|resolve| resolve(specifier, deferred))
     })
@@ -49,17 +61,20 @@ pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
     let Value::Object(object) = value else {
         return Ok(());
     };
-    let Some(evaluate) = EVALUATORS.with(|map| map.borrow().get(&Rc::as_ptr(object)).cloned())
+    let Some(evaluate) =
+        MODULE_STATE.with(|state| state.borrow().evaluators.get(&Rc::as_ptr(object)).cloned())
     else {
         return Ok(());
     };
     evaluate();
-    if PENDING_TYPE_ERROR.with(|flag| flag.replace(false)) {
+    if MODULE_STATE
+        .with(|state| std::mem::replace(&mut state.borrow_mut().pending_type_error, false))
+    {
         return Err(crate::value::error::throw_type_error(
             "deferred namespace is not ready",
         ));
     }
-    if let Some(thrown) = PENDING_THROW.with(|slot| slot.borrow_mut().take()) {
+    if let Some(thrown) = MODULE_STATE.with(|state| state.borrow_mut().pending_throw.take()) {
         return Err(crate::execute::VmError::Thrown(thrown));
     }
     Ok(())
@@ -73,38 +88,37 @@ fn skips_deferred_evaluation(key: &str) -> bool {
 }
 
 pub fn request_ensure_throw(value: Value) {
-    PENDING_THROW.with(|slot| *slot.borrow_mut() = Some(value));
+    MODULE_STATE.with(|state| state.borrow_mut().pending_throw = Some(value));
 }
 
 pub fn take_pending_throw() -> Option<Value> {
-    PENDING_THROW.with(|slot| slot.borrow_mut().take())
-}
-
-thread_local! {
-    static AWAIT_ADVANCED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    MODULE_STATE.with(|state| state.borrow_mut().pending_throw.take())
 }
 
 pub fn mark_await_advanced(advanced: bool) {
-    AWAIT_ADVANCED.with(|flag| flag.set(advanced));
+    MODULE_STATE.with(|state| state.borrow_mut().await_advanced = advanced);
 }
 
 pub fn await_advanced() -> bool {
-    AWAIT_ADVANCED.with(std::cell::Cell::get)
+    MODULE_STATE.with(|state| state.borrow().await_advanced)
 }
 
 pub fn has_evaluator(value: &Value) -> bool {
     let Value::Object(object) = unwrap_cells(value) else {
         return false;
     };
-    EVALUATORS.with(|map| map.borrow().contains_key(&Rc::as_ptr(&object)))
+    MODULE_STATE.with(|state| state.borrow().evaluators.contains_key(&Rc::as_ptr(&object)))
 }
 
 pub fn attach_evaluator(value: &Value, evaluate: Rc<dyn Fn()>) {
     let Value::Object(object) = value else {
         return;
     };
-    EVALUATORS.with(|map| {
-        map.borrow_mut().insert(Rc::as_ptr(object), evaluate);
+    MODULE_STATE.with(|state| {
+        state
+            .borrow_mut()
+            .evaluators
+            .insert(Rc::as_ptr(object), evaluate);
     });
 }
 
@@ -112,26 +126,24 @@ pub fn rehome_evaluator(from: &Value, to: &Value) {
     let Value::Object(old) = from else {
         return;
     };
-    let Some(evaluate) = EVALUATORS.with(|map| map.borrow().get(&Rc::as_ptr(old)).cloned()) else {
+    let Some(evaluate) =
+        MODULE_STATE.with(|state| state.borrow().evaluators.get(&Rc::as_ptr(old)).cloned())
+    else {
         return;
     };
     attach_evaluator(to, evaluate);
 }
 
 pub fn request_ensure_type_error() {
-    PENDING_TYPE_ERROR.with(|flag| flag.set(true));
-}
-
-thread_local! {
-    static DEFER_FULFILLED_AWAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    MODULE_STATE.with(|state| state.borrow_mut().pending_type_error = true);
 }
 
 pub fn defer_fulfilled_await(enable: bool) {
-    DEFER_FULFILLED_AWAIT.with(|flag| flag.set(enable));
+    MODULE_STATE.with(|state| state.borrow_mut().defer_fulfilled_await = enable);
 }
 
 pub fn fulfilled_await_defers() -> bool {
-    DEFER_FULFILLED_AWAIT.with(std::cell::Cell::get)
+    MODULE_STATE.with(|state| state.borrow().defer_fulfilled_await)
 }
 
 pub fn enqueue_job(job: Rc<dyn Fn()>) {
@@ -183,9 +195,12 @@ pub fn drain_jobs() {
 
 pub fn reset_module_jobs() {
     crate::promise::clear_jobs();
-    defer_fulfilled_await(false);
-    PENDING_TYPE_ERROR.with(|flag| flag.set(false));
-    PENDING_THROW.with(|slot| slot.replace(None));
+    MODULE_STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.defer_fulfilled_await = false;
+        state.pending_type_error = false;
+        state.pending_throw = None;
+    });
 }
 
 /// A live binding shared by module environments.
