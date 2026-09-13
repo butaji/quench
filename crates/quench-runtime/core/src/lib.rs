@@ -7627,6 +7627,17 @@ impl Vm {
         key: &str,
         value: Value,
     ) -> JsResult<()> {
+        let receiver = object.clone();
+        self.set_prop_with_receiver(object, key, value, &receiver)
+    }
+
+    fn set_prop_with_receiver(
+        &mut self,
+        object: &Value,
+        key: &str,
+        value: Value,
+        receiver: &Value,
+    ) -> JsResult<()> {
         if let Some(target) = proxy_target(object) {
             if proxy_revoked(object) {
                 return Err(JsError::Throw(type_error(self, "revoked Proxy")));
@@ -7656,7 +7667,7 @@ impl Vm {
             {
                 return Err(JsError::Throw(type_error(self, "Proxy set trap is not callable")));
             }
-            return self.set_prop_with_accessors(&target, key, value);
+            return self.set_prop_with_receiver(&target, key, value, receiver);
         }
         // Primitive Symbols are represented by an internal object carrier.
         // ToObject auto-boxing must not persist user properties on that
@@ -7677,7 +7688,7 @@ impl Vm {
             let Some(setter) = setter else {
                 return Err(JsError::Throw(type_error(self, "property has no setter")));
             };
-            self.call_arguments(&setter, object.clone(), &[value][..])?;
+            self.call_arguments(&setter, receiver.clone(), &[value][..])?;
             return Ok(());
         }
         if let Some(target) = object.as_object() {
@@ -7707,7 +7718,19 @@ impl Vm {
                 "cannot assign to read-only property",
             )));
         }
-        self.set_prop(object, key, value);
+        if !receiver.same_bits(object) {
+            // Ordinary [[Set]] defines the property on the original receiver;
+            // this is what lets a Proxy's defineProperty trap observe writes
+            // forwarded through a target Proxy.
+            let descriptor = vm_assignment_descriptor(self, receiver, key, value)?;
+            native_object_define_property(
+                self,
+                Value::Undefined,
+                &[receiver.clone(), Value::string_value(key), descriptor],
+            )?;
+        } else {
+            self.set_prop(object, key, value);
+        }
         Ok(())
     }
 
@@ -8056,6 +8079,9 @@ impl Vm {
                     object.props.shift_remove(&accessor_slot("get", k));
                     object.props.shift_remove(&accessor_slot("set", k));
                     object.attributes.remove(k);
+                }
+                if k == "length" {
+                    return false;
                 }
                 return true;
             }
@@ -22418,10 +22444,15 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
         let handler = proxy_handler(target).unwrap_or(Value::Undefined);
         let trap = vm.get_prop_with_accessors(&handler, "defineProperty")?;
         if trap.is_function() {
+            let trap_descriptor = to_proxy_property_descriptor(vm, &descriptor)?;
             let result = vm.call(
                 trap,
                 handler,
-                vec![proxy_target_value.clone(), Value::string_value(key.clone()), descriptor.clone()],
+                vec![
+                    proxy_target_value.clone(),
+                    Value::string_value(key.clone()),
+                    trap_descriptor,
+                ],
             )?;
             if !result.truthy() {
                 return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap returned false")));
@@ -22798,6 +22829,47 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     Ok(target.clone())
 }
 
+/// Materialize the internal property descriptor for a Proxy trap in the
+/// current realm.  Passing the caller's descriptor object leaks its realm and
+/// its prototype; FromPropertyDescriptor must always produce a fresh ordinary
+/// object with normalized boolean attributes.
+fn to_proxy_property_descriptor(vm: &mut Vm, descriptor: &Value) -> JsResult<Value> {
+    let result = vm.object(None);
+    for field in ["value", "writable", "get", "set", "enumerable", "configurable"] {
+        if !vm.has_property(descriptor, field) {
+            continue;
+        }
+        let value = vm.get_prop_with_accessors(descriptor, field)?;
+        let value = match field {
+            "writable" | "enumerable" | "configurable" => Value::Bool(value.truthy()),
+            _ => value,
+        };
+        vm.set_prop(&result, field, value);
+    }
+    Ok(result)
+}
+
+fn vm_assignment_descriptor(
+    vm: &mut Vm,
+    receiver: &Value,
+    key: &str,
+    value: Value,
+) -> JsResult<Value> {
+    let descriptor = vm.object(None);
+    vm.set_prop(&descriptor, "value", value);
+    let existing = native_object_get_own_property_descriptor(
+        vm,
+        Value::Undefined,
+        &[receiver.clone(), Value::string_value(key)],
+    )?;
+    if existing.is_undefined() {
+        vm.set_prop(&descriptor, "writable", Value::Bool(true));
+        vm.set_prop(&descriptor, "enumerable", Value::Bool(true));
+        vm.set_prop(&descriptor, "configurable", Value::Bool(true));
+    }
+    Ok(descriptor)
+}
+
 fn define_function_property(
     vm: &mut Vm,
     target: &Value,
@@ -22850,13 +22922,25 @@ fn define_function_property(
     };
     let mut props = function.props.borrow_mut();
     let mut attributes = function.attributes.borrow_mut();
+    let internal_prototype = key == "prototype"
+        && constructable(target)
+        && !props.contains_key(PROXY_NO_PROTOTYPE_PROP)
+        && !props.contains_key("prototype");
     let old_accessor = props.contains_key(&accessor_slot("get", key))
         || props.contains_key(&accessor_slot("set", key));
-    let old_present = old_accessor || props.contains_key(key);
+    let old_present = old_accessor || props.contains_key(key) || internal_prototype;
     let old_attributes = attributes
         .get(key)
         .copied()
-        .unwrap_or(PropertyAttributes::DEFAULT);
+        .unwrap_or(if internal_prototype {
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: false,
+            }
+        } else {
+            PropertyAttributes::DEFAULT
+        });
     if old_present && !old_attributes.configurable {
         if !configurable.is_undefined() && configurable.truthy() {
             return Err(JsError::Throw(type_error(vm, "cannot reconfigure a non-configurable property")));
@@ -23504,14 +23588,22 @@ fn validate_proxy_define_invariant(
         if !extensible {
             return Err(proxy_invariant_error(vm, "Proxy defineProperty trap added to non-extensible target"));
         }
-        if !vm.get_prop_with_accessors(descriptor, "configurable")?.truthy() {
+        if vm.has_property(descriptor, "configurable")
+            && !vm.get_prop_with_accessors(descriptor, "configurable")?.truthy()
+        {
             return Err(proxy_invariant_error(vm, "Proxy defineProperty trap reported a non-configurable new property"));
         }
         return Ok(());
     }
     let current_configurable = vm.get_prop(&current, "configurable").truthy();
-    let requested_configurable = vm.get_prop_with_accessors(descriptor, "configurable")?.truthy();
-    if current_configurable && !requested_configurable {
+    let requested_configurable = vm.has_property(descriptor, "configurable")
+        .then(|| vm.get_prop_with_accessors(descriptor, "configurable"))
+        .transpose()?
+        .map_or(false, |value| value.truthy());
+    if current_configurable
+        && vm.has_property(descriptor, "configurable")
+        && !requested_configurable
+    {
         return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made target property non-configurable"));
     }
     if !vm.get_prop(&current, "configurable").truthy()
