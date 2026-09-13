@@ -10709,20 +10709,30 @@ impl Vm {
     }
 
     fn module_export_bindings(&mut self, path: &Path) -> JsResult<HashMap<String, usize>> {
+        type Resolution = HashSet<(PathBuf, String)>;
+
         fn visit(
             vm: &mut Vm,
             path: &Path,
-            seen: &mut HashSet<PathBuf>,
-        ) -> JsResult<HashMap<String, usize>> {
+            name: &str,
+            seen: &mut HashSet<(PathBuf, String)>,
+        ) -> JsResult<Resolution> {
             let key = vm.module_key(path);
-            if !seen.insert(key.clone()) {
-                return Ok(HashMap::new());
+            let request = (key.clone(), name.to_owned());
+            if !seen.insert(request) {
+                // ResolveExport treats a repeated (module, name) pair as a
+                // circular edge and returns null.  Other star paths may still
+                // provide a real binding, so only this edge is pruned.
+                return Ok(HashSet::new());
             }
             let source =
                 fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
             if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
-                seen.remove(&key);
-                return Ok(HashMap::from([(String::from("default"), 1)]));
+                let result = (name == "default")
+                    .then(|| HashSet::from([(key.clone(), String::from("default"))]))
+                    .unwrap_or_default();
+                seen.remove(&(key, name.to_owned()));
+                return Ok(result);
             }
             let parsed_source: &'static str = Box::leak(source.into_boxed_str());
             let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
@@ -10738,70 +10748,108 @@ impl Vm {
                     &format!("parse error: {error:?}"),
                 )));
             }
-            let mut bindings = HashMap::new();
             let Some(parent) = key.parent() else {
-                seen.remove(&key);
-                return Ok(bindings);
+                seen.remove(&(key, name.to_owned()));
+                return Ok(HashSet::new());
             };
+            let mut imported_bindings = HashMap::<String, (PathBuf, String)>::new();
+            for statement in &parsed.program.body {
+                let Statement::ImportDeclaration(import) = statement else {
+                    continue;
+                };
+                let dependency = vm.resolve_module_request(parent, import.source.value.as_str());
+                let phase_name = if import.phase == Some(ImportPhase::Source) {
+                    "source"
+                } else {
+                    "*"
+                };
+                if let Some(specifiers) = &import.specifiers {
+                    for specifier in specifiers {
+                        let (local, imported) = match specifier {
+                            ImportDeclarationSpecifier::ImportSpecifier(specifier) => (
+                                specifier.local.name.to_string(),
+                                module_export_name_for_early_error(&specifier.imported),
+                            ),
+                            ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => (
+                                specifier.local.name.to_string(),
+                                String::from("default"),
+                            ),
+                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => (
+                                specifier.local.name.to_string(),
+                                phase_name.to_owned(),
+                            ),
+                        };
+                        imported_bindings.insert(local, (dependency.clone(), imported));
+                    }
+                }
+            }
+            let mut bindings = HashSet::new();
             for statement in &parsed.program.body {
                 match statement {
                     Statement::ExportDeclaration(export) => {
                         let mut names = Vec::new();
                         declaration_names_for_early_error(&export.declaration, &mut names);
-                        for name in names {
-                            *bindings.entry(name).or_insert(0) += 1;
+                        if names.iter().any(|candidate| candidate == name) {
+                            bindings.insert((key.clone(), name.to_owned()));
                         }
                     }
-                    Statement::ExportDefaultDeclaration(_) => {
-                        *bindings.entry(String::from("default")).or_insert(0) += 1;
+                    Statement::ExportDefaultDeclaration(_) if name == "default" => {
+                        bindings.insert((key.clone(), String::from("default")));
                     }
                     Statement::ExportNamedDeclaration(export) => {
                         for specifier in &export.specifiers {
-                            *bindings
-                                .entry(module_export_name_for_early_error(&specifier.exported))
-                                .or_insert(0) += 1;
+                            if module_export_name_for_early_error(&specifier.exported) == name {
+                                let local = module_export_name_for_early_error(&specifier.local);
+                                if let Some((dependency, imported)) = imported_bindings.get(&local)
+                                {
+                                    if imported == "*" || imported == "source" {
+                                        bindings.insert((dependency.clone(), imported.clone()));
+                                    } else {
+                                        bindings.extend(visit(vm, dependency, imported, seen)?);
+                                    }
+                                } else {
+                                    bindings.insert((key.clone(), local));
+                                }
+                            }
                         }
                     }
                     Statement::ExportFromDeclaration(export) => {
                         let dependency =
                             vm.resolve_module_request(parent, export.source.value.as_str());
-                        let mut dependency_bindings = visit(vm, &dependency, seen)?;
-                        if dependency_bindings.is_empty() {
-                            dependency_bindings = vm.direct_module_export_bindings(&dependency)?;
-                        }
                         for specifier in &export.specifiers {
-                            let local = module_export_name_for_early_error(&specifier.local);
                             let exported = module_export_name_for_early_error(&specifier.exported);
-                            let count = if local == "*" {
-                                1
-                            } else {
-                                dependency_bindings.get(&local).copied().unwrap_or(0)
-                            };
-                            *bindings.entry(exported).or_insert(0) += count;
+                            if exported == name {
+                                let local = module_export_name_for_early_error(&specifier.local);
+                                bindings.extend(visit(vm, &dependency, &local, seen)?);
+                            }
                         }
                     }
                     Statement::ExportAllDeclaration(export) => {
                         let dependency =
                             vm.resolve_module_request(parent, export.source.value.as_str());
-                        let dependency_bindings = visit(vm, &dependency, seen)?;
                         if let Some(exported) = &export.exported {
-                            let name = module_export_name_for_early_error(exported);
-                            *bindings.entry(name).or_insert(0) += 1;
-                        } else {
-                            for (name, count) in dependency_bindings {
-                                if name != "default" {
-                                    *bindings.entry(name).or_insert(0) += count;
-                                }
+                            if module_export_name_for_early_error(exported) == name {
+                                // `export * as ns` resolves to the namespace
+                                // object itself, not to a named binding.
+                                bindings.insert((dependency, String::from("*")));
                             }
+                        } else if name != "default" {
+                            bindings.extend(visit(vm, &dependency, name, seen)?);
                         }
                     }
                     _ => {}
                 }
             }
-            seen.remove(&key);
+            seen.remove(&(key, name.to_owned()));
             Ok(bindings)
         }
-        visit(self, path, &mut HashSet::new())
+        let names = self.module_export_names(path)?;
+        let mut bindings = HashMap::new();
+        for name in names {
+            let count = visit(self, path, &name, &mut HashSet::new())?.len();
+            bindings.insert(name, count);
+        }
+        Ok(bindings)
     }
 
     fn json_module_value(&mut self, value: &serde_json::Value) -> Value {
@@ -10853,20 +10901,21 @@ impl Vm {
             .filter(|name| resolutions.get(*name).is_none_or(|count| *count == 1))
             .cloned()
             .collect::<Vec<_>>();
-        if self.module_is_evaluating(path) {
-            // Namespace imports are instantiated before evaluation.  Seed
-            // their statically-known keys with `undefined`; completion then
-            // refreshes the same interned object with live export values.
-            for name in self.module_export_names(path).unwrap_or_default() {
-                if !names.iter().any(|existing| existing == &name) {
-                    names.push(name);
-                }
+        // Exported names are a graph fact, not merely the set of bindings
+        // materialized by the current evaluation.  Include star/indirect
+        // names even after evaluation so cyclic namespaces expose the same
+        // key set as ordinary modules.
+        for name in self.module_export_names(path).unwrap_or_default() {
+            if resolutions.get(&name).is_none_or(|count| *count == 1)
+                && !names.iter().any(|existing| existing == &name)
+            {
+                names.push(name);
             }
         }
         names.sort_unstable();
         for name in names {
             let value = exports.get(&name).cloned().unwrap_or_else(|| {
-                if self.module_is_evaluating(path) && !self.module_binding_is_var(path, &name) {
+                if resolutions.get(&name).copied() == Some(1) {
                     self.module_import_ref(path, &name)
                 } else {
                     Value::Undefined
@@ -11245,13 +11294,23 @@ impl Vm {
                     } else if imported == "*" {
                         self.module_namespace(&target, &exports, deferred)
                     } else {
-                        let Some(value) = exports.get(&imported).cloned() else {
-                            return Err(JsError::Throw(syntax_error(
-                                self,
-                                "requested module export is not provided",
-                            )));
-                        };
-                        value
+                        match exports.get(&imported).cloned() {
+                            Some(value) => value,
+                            None if self
+                                .module_export_bindings(&target)?
+                                .get(&imported)
+                                .copied()
+                                == Some(1) =>
+                            {
+                                self.module_import_ref(&target, &imported)
+                            }
+                            None => {
+                                return Err(JsError::Throw(syntax_error(
+                                    self,
+                                    "requested module export is not provided",
+                                )));
+                            }
+                        }
                     };
                     environment.borrow_mut().declare(local, value);
                     environment
@@ -11265,8 +11324,23 @@ impl Vm {
     }
 
     fn record_module_export(&mut self, name: impl Into<String>, value: Value) {
+        let name = name.into();
+        let previous = self
+            .module_export_stack
+            .last()
+            .and_then(|exports| exports.get(&name))
+            .cloned();
+        let previous_is_concrete = previous
+            .as_ref()
+            .is_some_and(|previous| self.module_ref_value_parts(previous).is_none());
+        let value_is_reference = self.module_ref_value_parts(&value).is_some();
         if let Some(exports) = self.module_export_stack.last_mut() {
-            let name = name.into();
+            // A cyclic re-export is represented temporarily by a reference
+            // object.  Keep a concrete binding discovered through another
+            // star edge and never let a later cyclic edge overwrite it.
+            if previous_is_concrete && value_is_reference {
+                return;
+            }
             exports.insert(name, value);
             // Namespace objects are observable from imports in the same
             // module before evaluation completes.  Refresh the interned
