@@ -2347,8 +2347,8 @@ enum RegExpLiteralKernel {
 }
 
 impl RegExpLiteralKernel {
-    fn compile(pattern: &str, insensitive: bool, unicode: bool) -> Self {
-        match compile_regex_with_flags(pattern, insensitive, unicode) {
+    fn compile(pattern: &str, insensitive: bool, multiline: bool, unicode: bool) -> Self {
+        match compile_regex_with_flags(pattern, insensitive, multiline, unicode) {
             Ok(regex) => Self::Compiled(Rc::new(regex)),
             Err(error) => Self::Error(error.to_string().into()),
         }
@@ -4631,7 +4631,7 @@ fn eq_strict(a: &Value, b: &Value) -> bool {
     if let (Some(left), Some(right)) = (a.as_string(), b.as_string()) {
         return left == right;
     }
-    if (a.is_object() && b.is_object()) || (a.is_function() && b.is_function()) {
+    if a.is_object_like() && b.is_object_like() {
         return a.same_bits(b);
     }
     false
@@ -4670,7 +4670,7 @@ fn loose_eq(a: &Value, b: &Value) -> bool {
     if is_symbol(a) || is_symbol(b) {
         return false;
     }
-    if a.is_object() || a.is_function() || b.is_object() || b.is_function() {
+    if a.is_object_like() || b.is_object_like() {
         if a.is_string() || b.is_string() {
             return a.string() == b.string();
         }
@@ -7772,6 +7772,14 @@ impl Vm {
                 "legacy octal escape is not permitted in strict template literals",
             )));
         }
+        if (self.strict_mode || has_strict_directive(source))
+            && has_strict_legacy_literal_escape(source)
+        {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "legacy escape is not permitted in strict code",
+            )));
+        }
         if Rc::ptr_eq(&environment, &self.global)
             && Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
         {
@@ -9433,6 +9441,7 @@ impl Vm {
                 let kernel = Rc::new(compile_regex_with_flags(
                     &source,
                     v.regex.flags.contains(oxc_ast::ast::RegExpFlags::I),
+                    v.regex.flags.contains(oxc_ast::ast::RegExpFlags::M),
                     v.regex.flags.contains(oxc_ast::ast::RegExpFlags::U),
                 )?);
                 let mut regexp =
@@ -10242,7 +10251,7 @@ fn has_strict_template_octal_escape(source: &str) -> bool {
                 || (byte == b'0'
                     && bytes
                         .get(index + 1)
-                        .is_some_and(|next| (b'0'..=b'7').contains(next)));
+                        .is_some_and(|next| next.is_ascii_digit()));
             if legacy_octal {
                 return true;
             }
@@ -10253,6 +10262,69 @@ fn has_strict_template_octal_escape(source: &str) -> bool {
             b'\\' => escaped = true,
             b'`' => in_template = false,
             _ => {}
+        }
+    }
+    false
+}
+
+fn has_strict_directive(source: &str) -> bool {
+    source.contains("\"use strict\"") || source.contains("'use strict'")
+}
+
+fn has_strict_legacy_literal_escape(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if line_comment {
+            if byte == b'\n' {
+                line_comment = false;
+            }
+            continue;
+        }
+        if block_comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                block_comment = false;
+            }
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if escaped {
+                let legacy = (b'1'..=b'9').contains(&byte)
+                    || (byte == b'0'
+                        && bytes
+                            .get(index + 1)
+                            .is_some_and(|next| next.is_ascii_digit()));
+                if legacy {
+                    return true;
+                }
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            line_comment = true;
+        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            block_comment = true;
+        } else if matches!(byte, b'\'' | b'"') {
+            quote = Some(byte);
+        } else if byte == b'0'
+            && bytes
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_digit())
+            && !matches!(
+                bytes.get(index + 1),
+                Some(b'x' | b'X' | b'b' | b'B' | b'o' | b'O')
+            )
+            && bytes.get(index + 1) != Some(&b'.')
+        {
+            return true;
         }
     }
     false
@@ -13926,7 +13998,43 @@ fn native_regexp_test(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Valu
         return Ok(Value::Bool(false));
     };
     let source = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
-    Ok(Value::Bool(r.borrow().regex.is_match(&source)))
+    let mut regexp = r.borrow_mut();
+    let sticky = regexp.flags.contains('y');
+    let stateful = sticky || regexp.flags.contains('g');
+    let start = if stateful {
+        regexp
+            .props
+            .get("lastIndex")
+            .and_then(Value::as_number)
+            .unwrap_or(regexp.last_index as f64)
+            .max(0.0) as usize
+    } else {
+        0
+    };
+    let Some(found) = regexp.regex.find_at(&source, start) else {
+        if stateful {
+            regexp.last_index = 0;
+            regexp.props.insert("lastIndex".into(), Value::Number(0.0));
+        }
+        return Ok(Value::Bool(false));
+    };
+    if sticky && found.start != start {
+        regexp.last_index = 0;
+        regexp.props.insert("lastIndex".into(), Value::Number(0.0));
+        return Ok(Value::Bool(false));
+    }
+    if stateful {
+        let end = if found.end == found.start {
+            found.end.saturating_add(1)
+        } else {
+            found.end
+        };
+        regexp.last_index = end;
+        regexp
+            .props
+            .insert("lastIndex".into(), Value::Number(end as f64));
+    }
+    Ok(Value::Bool(true))
 }
 
 fn native_regexp_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
@@ -17067,6 +17175,7 @@ fn native_regexp(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         compile_regex_with_flags(
             &p,
             flags.contains('i'),
+            flags.contains('m'),
             flags.contains('u') || flags.contains('v'),
         )
         .map_err(|_| JsError::Throw(syntax_error(vm, "invalid regular expression")))?,
@@ -17142,6 +17251,7 @@ fn native_regexp_compile(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         compile_regex_with_flags(
             &source,
             flags.contains('i'),
+            flags.contains('m'),
             flags.contains('u') || flags.contains('v'),
         )
         .map_err(|_| JsError::Throw(syntax_error(vm, "invalid regular expression")))?,
@@ -17184,12 +17294,13 @@ fn has_unicode_decimal_escape(pattern: &str) -> bool {
 }
 
 fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<RegExpKernel> {
-    compile_regex_with_flags(pattern, insensitive, false)
+    compile_regex_with_flags(pattern, insensitive, false, false)
 }
 
 fn compile_regex_with_flags(
     pattern: &str,
     insensitive: bool,
+    multiline: bool,
     unicode: bool,
 ) -> JsResult<RegExpKernel> {
     let pattern = rename_duplicate_named_groups(pattern);
@@ -17197,6 +17308,17 @@ fn compile_regex_with_flags(
     let pattern = normalize_legacy_control_escapes(&pattern);
     let pattern = normalize_legacy_class_ranges(&pattern);
     let pattern = normalize_quantified_assertions(&pattern);
+    let pattern = normalize_forward_named_backrefs(&pattern);
+    let pattern = if unicode {
+        pattern
+    } else {
+        normalize_legacy_identity_escapes(&pattern)
+    };
+    let pattern = if unicode {
+        normalize_unicode_surrogate_pairs(&pattern)
+    } else {
+        pattern
+    };
     if unicode && !valid_unicode_pattern(&pattern) {
         return Err(JsError::Message(
             "invalid Unicode regular expression".into(),
@@ -17206,11 +17328,7 @@ fn compile_regex_with_flags(
     // a real numeric backreference or lookaround to the ECMAScript-capable
     // engine instead of rewriting them into a different language.
     if requires_fancy_regex(&pattern) {
-        let source = if insensitive {
-            format!("(?i:{pattern})")
-        } else {
-            pattern.to_owned()
-        };
+        let source = regex_mode_group(&pattern, insensitive, multiline, unicode);
         return fancy_regex::Regex::new(&source)
             .map(RegExpKernel::Fancy)
             .map_err(|e| JsError::Message(format!("regex parse error: {e}")));
@@ -17243,17 +17361,179 @@ fn compile_regex_with_flags(
     } else {
         normalized
     };
-    let source = if insensitive {
-        format!("(?i:{normalized})")
-    } else {
-        normalized
-    };
+    let source = regex_mode_group(&normalized, insensitive, multiline, unicode);
     match LinearRegex::new(&source) {
         Ok(regex) => Ok(RegExpKernel::Linear(regex)),
         Err(linear_error) => fancy_regex::Regex::new(&source)
             .map(RegExpKernel::Fancy)
             .map_err(|_| JsError::Message(format!("regex parse error: {linear_error}"))),
     }
+}
+
+fn regex_mode_group(pattern: &str, insensitive: bool, multiline: bool, unicode: bool) -> String {
+    let mut modes = String::new();
+    if insensitive {
+        modes.push('i');
+    }
+    if multiline {
+        modes.push('m');
+    }
+    if modes.is_empty() {
+        pattern.to_owned()
+    } else if insensitive && !unicode {
+        format!("(?-u:(?{modes}:{pattern}))")
+    } else {
+        format!("(?{modes}:{pattern})")
+    }
+}
+
+fn normalize_unicode_surrogate_pairs(pattern: &str) -> String {
+    fn hex_digit(byte: u8) -> Option<u16> {
+        match byte {
+            b'0'..=b'9' => Some(u16::from(byte - b'0')),
+            b'a'..=b'f' => Some(u16::from(byte - b'a' + 10)),
+            b'A'..=b'F' => Some(u16::from(byte - b'A' + 10)),
+            _ => None,
+        }
+    }
+    let bytes = pattern.as_bytes();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let is_escape =
+            |at: usize| at + 6 <= bytes.len() && bytes[at] == b'\\' && bytes[at + 1] == b'u';
+        if index + 12 <= bytes.len()
+            && is_escape(index)
+            && bytes[index + 6] == b'\\'
+            && bytes[index + 7] == b'u'
+        {
+            let mut high = 0u16;
+            let mut low = 0u16;
+            let mut valid = true;
+            for offset in 0..4 {
+                let Some(digit) = hex_digit(bytes[index + 2 + offset]) else {
+                    valid = false;
+                    break;
+                };
+                high = (high << 4) | digit;
+                let Some(digit) = hex_digit(bytes[index + 8 + offset]) else {
+                    valid = false;
+                    break;
+                };
+                low = (low << 4) | digit;
+            }
+            if valid && (0xD800..=0xDBFF).contains(&high) && (0xDC00..=0xDFFF).contains(&low) {
+                let code_point =
+                    0x10000 + ((u32::from(high) - 0xD800) << 10) + (u32::from(low) - 0xDC00);
+                output.push(char::from_u32(code_point).expect("valid surrogate pair"));
+                index += 12;
+                continue;
+            }
+        }
+        let character = pattern[index..]
+            .chars()
+            .next()
+            .expect("valid UTF-8 pattern");
+        output.push(character);
+        index += character.len_utf8();
+    }
+    output
+}
+
+fn normalize_forward_named_backrefs(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if index + 4 < bytes.len() && bytes[index..].starts_with(b"\\k<") {
+            if let Some(close_offset) = bytes[index + 3..].iter().position(|byte| *byte == b'>') {
+                let close = index + 3 + close_offset;
+                let name = String::from_utf8_lossy(&bytes[index + 3..close]);
+                let declared_before = pattern[..index].contains(&format!("(?<{}>", name));
+                if !declared_before {
+                    output.push_str("(?:)");
+                    index = close + 1;
+                    continue;
+                }
+            }
+        }
+        let character = pattern[index..]
+            .chars()
+            .next()
+            .expect("valid UTF-8 pattern");
+        output.push(character);
+        index += character.len_utf8();
+    }
+    output
+}
+
+fn normalize_legacy_identity_escapes(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' && index + 1 < bytes.len() {
+            let next = bytes[index + 1];
+            if next >= 0x80 {
+                let character = pattern[index + 1..]
+                    .chars()
+                    .next()
+                    .expect("valid UTF-8 pattern");
+                output.push(character);
+                index += 1 + character.len_utf8();
+                continue;
+            }
+            let mut recognized = matches!(
+                next,
+                b'0'..=b'9'
+                    | b'b'
+                    | b'B'
+                    | b'd'
+                    | b'D'
+                    | b's'
+                    | b'S'
+                    | b'w'
+                    | b'W'
+                    | b'n'
+                    | b'r'
+                    | b't'
+                    | b'v'
+                    | b'f'
+                    | b'c'
+                    | b'x'
+                    | b'u'
+                    | b'k'
+                    | b'p'
+                    | b'P'
+            );
+            if next == b'k' {
+                recognized = bytes.get(index + 2) == Some(&b'<');
+            } else if matches!(next, b'p' | b'P') {
+                recognized = bytes.get(index + 2) == Some(&b'{');
+            } else if next == b'x' {
+                recognized = bytes
+                    .get(index + 2..index + 4)
+                    .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit));
+            } else if next == b'u' {
+                recognized = bytes.get(index + 2) == Some(&b'{')
+                    || bytes
+                        .get(index + 2..index + 6)
+                        .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit));
+            }
+            if next.is_ascii_alphabetic() && !recognized {
+                output.push(next as char);
+                index += 2;
+                continue;
+            }
+        }
+        let character = pattern[index..]
+            .chars()
+            .next()
+            .expect("valid UTF-8 pattern");
+        output.push(character);
+        index += character.len_utf8();
+    }
+    output
 }
 
 fn valid_unicode_pattern(pattern: &str) -> bool {
@@ -17383,9 +17663,28 @@ fn normalize_legacy_octal_escapes(pattern: &str) -> String {
     let mut output = String::with_capacity(pattern.len());
     let mut index = 0usize;
     while index < bytes.len() {
+        if bytes[index] >= 0x80 {
+            let character = pattern[index..]
+                .chars()
+                .next()
+                .expect("valid UTF-8 pattern");
+            output.push(character);
+            index += character.len_utf8();
+            continue;
+        }
         if bytes[index] != b'\\' || index + 1 >= bytes.len() {
             output.push(bytes[index] as char);
             index += 1;
+            continue;
+        }
+        if bytes[index + 1] >= 0x80 {
+            let character = pattern[index + 1..]
+                .chars()
+                .next()
+                .expect("valid UTF-8 pattern");
+            output.push('\\');
+            output.push(character);
+            index += 1 + character.len_utf8();
             continue;
         }
         let next = bytes[index + 1];
@@ -17424,6 +17723,15 @@ fn normalize_legacy_control_escapes(pattern: &str) -> String {
     let mut index = 0usize;
     let mut in_class = false;
     while index < bytes.len() {
+        if bytes[index] >= 0x80 {
+            let character = pattern[index..]
+                .chars()
+                .next()
+                .expect("valid UTF-8 pattern");
+            output.push(character);
+            index += character.len_utf8();
+            continue;
+        }
         let byte = bytes[index];
         if byte == b'[' {
             in_class = true;
@@ -17444,6 +17752,11 @@ fn normalize_legacy_control_escapes(pattern: &str) -> String {
             index += 3;
             continue;
         }
+        if byte == b'\\' && index + 2 == bytes.len() && bytes[index + 1] == b'c' {
+            output.push('c');
+            index += 2;
+            continue;
+        }
         output.push(byte as char);
         index += 1;
     }
@@ -17455,6 +17768,15 @@ fn normalize_legacy_class_ranges(pattern: &str) -> String {
     let mut output = String::with_capacity(pattern.len());
     let mut index = 0usize;
     while index < bytes.len() {
+        if bytes[index] >= 0x80 {
+            let character = pattern[index..]
+                .chars()
+                .next()
+                .expect("valid UTF-8 pattern");
+            output.push(character);
+            index += character.len_utf8();
+            continue;
+        }
         if bytes[index] != b'[' {
             output.push(bytes[index] as char);
             index += 1;
@@ -17511,6 +17833,15 @@ fn normalize_quantified_assertions(pattern: &str) -> String {
     let mut output = String::with_capacity(pattern.len());
     let mut index = 0usize;
     while index < bytes.len() {
+        if bytes[index] >= 0x80 {
+            let character = pattern[index..]
+                .chars()
+                .next()
+                .expect("valid UTF-8 pattern");
+            output.push(character);
+            index += character.len_utf8();
+            continue;
+        }
         let starts_assertion = index + 3 < bytes.len()
             && bytes[index] == b'('
             && bytes[index + 1] == b'?'
@@ -20900,6 +21231,36 @@ mod tests {
         let kernel = compile_regex(r"^(a+)\1*$", false).expect("backreference compiles");
         assert!(kernel.is_match("aaaa"));
         assert!(!kernel.is_match("aaab"));
+    }
+
+    #[test]
+    fn regexp_unicode_null_escape_matches() {
+        let kernel = compile_regex_with_flags(r"\0", false, false, true).expect("compile");
+        assert!(kernel.find("\0").is_some(), "kernel should match null");
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<unicode-null>"),
+            "var nullChar = String.fromCharCode(0); result = /\\0/u.exec(nullChar)[0] === nullChar;",
+        )
+        .expect("unicode null regexp executes");
+        let result = Environment::get(&vm.global, "result").expect("result binding");
+        assert!(result.truthy(), "unicode null regexp should match");
+    }
+
+    #[test]
+    fn regexp_unicode_astral_literals_match() {
+        let kernel = compile_regex_with_flags("𝌆{2}", false, false, true).expect("compile");
+        assert!(LinearRegex::new("𝌆{2}").expect("linear").is_match("𝌆𝌆"));
+        assert!(kernel.is_match("𝌆𝌆"));
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<unicode-astral>"),
+            "result = /𝌆{2}/u.test('𝌆𝌆');",
+        )
+        .expect("unicode astral regexp executes");
+        assert!(Environment::get(&vm.global, "result").is_some_and(|value| value.truthy()));
     }
 
     #[test]
