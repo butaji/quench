@@ -13814,6 +13814,29 @@ impl Vm {
                         self.run_timers()?;
                         return Ok(self.get_prop(&value, PROMISE_RESULT_PROP));
                     }
+                    if state
+                        .as_string()
+                        .is_some_and(|state| state.as_str() == "pending")
+                    {
+                        // A synchronously-driven module has no resumable
+                        // frame yet. Drain the VM job queue at the await
+                        // boundary, then observe the settled promise through
+                        // the same state machine.
+                        self.run_timers()?;
+                        let settled_state = self.get_prop(&value, PROMISE_STATE_PROP);
+                        if settled_state
+                            .as_string()
+                            .is_some_and(|state| state.as_str() == "rejected")
+                        {
+                            return Err(JsError::Throw(self.get_prop(&value, PROMISE_RESULT_PROP)));
+                        }
+                        if settled_state
+                            .as_string()
+                            .is_some_and(|state| state.as_str() == "fulfilled")
+                        {
+                            return Ok(self.get_prop(&value, PROMISE_RESULT_PROP));
+                        }
+                    }
                 }
                 // Await assimilates ordinary thenables as well as native
                 // Promise instances.  Module fixtures use synchronously
