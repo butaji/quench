@@ -8419,7 +8419,18 @@ impl Vm {
         annex_b_allowed: bool,
     ) {
         let closure = self.make_user(function, environment.clone());
-        environment.borrow_mut().declare(name, closure.clone());
+        let is_global_environment = Rc::ptr_eq(&environment, &self.global);
+        let is_lexical_environment = {
+            let environment = environment.borrow();
+            !environment.contains_local("arguments") && !is_global_environment
+        };
+        {
+            let mut environment = environment.borrow_mut();
+            if is_lexical_environment {
+                environment.lexical_names.insert(name.to_owned());
+            }
+            environment.declare(name, closure.clone());
+        }
         self.sync_global_binding(&environment, name, closure.clone());
         if !annex_b_allowed || self.strict_mode || Rc::ptr_eq(&environment, &self.global) {
             return;
