@@ -72,7 +72,7 @@ interpreter would be a compatibility regression, not a migration.
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (190 tests)
+- `cargo test -p quench-runtime-core --lib` (191 tests)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - production `quench-node` build and a core-backed Node smoke test
@@ -171,7 +171,7 @@ Verification completed:
   RegExp flags and identity escapes through one compiled kernel, preserving
   UTF-8 astral literals and surrogate-pair escapes, and enforcing strict
   legacy-literal early errors across direct and eval code
-- the stencil eval-code stage now reaches 240/347 after modeling parameter
+- the stencil eval-code stage now reaches 241/347 after modeling parameter
   binding conflicts, implicit `arguments`, lexical TDZ state, strict reserved
   bindings, strict caller propagation, isolated strict-eval environments, and
   top-level eval control-flow completion; remaining failures are primarily
