@@ -320,6 +320,7 @@ builtin_catalog! {
     ReferenceErrorConstructor, Global, "ReferenceError", native_error, Generic, MAY_ALLOCATE;
     EvalErrorConstructor, Global, "EvalError", native_error, Generic, MAY_ALLOCATE;
     AggregateErrorConstructor, Global, "AggregateError", native_error, Generic, MAY_ALLOCATE;
+    SuppressedErrorConstructor, Global, "SuppressedError", native_error, Generic, MAY_ALLOCATE;
     Eval, Global, "eval", native_eval, Generic, EFFECTFUL;
     Alert, Global, "alert", native_noop, Generic, EFFECTFUL;
     Print, Global, "print", native_print, Generic, EFFECTFUL;
@@ -491,6 +492,7 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
 
 fn builtin_length(id: BuiltinId) -> usize {
     match id {
+        BuiltinId::SuppressedErrorConstructor => 3,
         BuiltinId::StringFromCharCode
         | BuiltinId::StringFromCodePoint
         | BuiltinId::StringRaw

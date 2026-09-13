@@ -5684,6 +5684,7 @@ impl Vm {
             (BuiltinId::TypeErrorConstructor, "TypeError"),
             (BuiltinId::URIErrorConstructor, "URIError"),
             (BuiltinId::AggregateErrorConstructor, "AggregateError"),
+            (BuiltinId::SuppressedErrorConstructor, "SuppressedError"),
         ];
         let error_prototype = self
             .builtin(BuiltinId::ErrorConstructor)
@@ -6043,6 +6044,7 @@ impl Vm {
                 "TypeError",
                 "URIError",
                 "AggregateError",
+                "SuppressedError",
                 "assert",
                 "decodeURI",
                 "decodeURIComponent",
@@ -6360,6 +6362,7 @@ impl Vm {
                             | BuiltinId::ReferenceErrorConstructor
                             | BuiltinId::EvalErrorConstructor
                             | BuiltinId::AggregateErrorConstructor
+                            | BuiltinId::SuppressedErrorConstructor
                             | BuiltinId::FunctionConstructor
                     ),
                     FunctionKind::Native(native)
@@ -7218,6 +7221,7 @@ impl Vm {
                             | BuiltinId::ReferenceErrorConstructor
                             | BuiltinId::EvalErrorConstructor
                             | BuiltinId::AggregateErrorConstructor
+                            | BuiltinId::SuppressedErrorConstructor
                     );
                     let receiver = if error_constructor && !t.is_object() {
                         self.object(Some(f.prototype.clone()))
@@ -8765,6 +8769,7 @@ impl Vm {
                             | BuiltinId::ReferenceErrorConstructor
                             | BuiltinId::EvalErrorConstructor
                             | BuiltinId::AggregateErrorConstructor
+                            | BuiltinId::SuppressedErrorConstructor
                     )
                 );
                 if wrapped {
@@ -13868,6 +13873,7 @@ pub(crate) fn constructable(value: &Value) -> bool {
             | BuiltinId::ReferenceErrorConstructor
             | BuiltinId::EvalErrorConstructor
             | BuiltinId::AggregateErrorConstructor
+            | BuiltinId::SuppressedErrorConstructor
             | BuiltinId::FunctionConstructor,
         ) => true,
         FunctionKind::Native(_) => !function.props.borrow().contains_key("\0nonconstructable"),
@@ -15943,6 +15949,52 @@ fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
         vm.object(None)
     };
     vm.set_prop(&o, "\0error", Value::Bool(true));
+    let suppressed_prototype = vm
+        .builtin(BuiltinId::SuppressedErrorConstructor)
+        .as_function_ref()
+        .map(|function| function.prototype.clone());
+    let is_suppressed = o
+        .as_object_ref()
+        .and_then(|object| object.borrow().prototype.clone())
+        .zip(suppressed_prototype)
+        .is_some_and(|(actual, expected)| actual.as_ptr() == expected.as_ptr());
+    if is_suppressed {
+        if let Some(message) = a.get(2).filter(|value| !value.is_undefined()) {
+            if is_symbol_carrier(message) {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Cannot convert a Symbol value to a string",
+                )));
+            }
+            let message = Value::string_value(to_string_with_vm(vm, message)?);
+            vm.set_prop(&o, "message", message);
+            set_property_attributes(
+                &o,
+                "message",
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+        for (key, value) in [
+            ("error", a.first().cloned().unwrap_or(Value::Undefined)),
+            ("suppressed", a.get(1).cloned().unwrap_or(Value::Undefined)),
+        ] {
+            vm.set_prop(&o, key, value);
+            set_property_attributes(
+                &o,
+                key,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+        return Ok(o);
+    }
     if let Some(message) = a.first() {
         if is_symbol_carrier(message) {
             return Err(JsError::Throw(type_error(
@@ -16889,6 +16941,7 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
                         | BuiltinId::TypeErrorConstructor
                         | BuiltinId::URIErrorConstructor
                         | BuiltinId::AggregateErrorConstructor
+                        | BuiltinId::SuppressedErrorConstructor
                 )
             )
         }) {
