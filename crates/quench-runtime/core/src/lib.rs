@@ -253,6 +253,8 @@ const ASYNC_GENERATOR_EXECUTING_PROP: &str = "\0quench:async-generator-executing
 const ASYNC_GENERATOR_QUEUE_PROP: &str = "\0quench:async-generator-queue";
 const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
 const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
+const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
+const PROXY_HANDLER_PROP: &str = "\0quench:proxy-handler";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6343,6 +6345,8 @@ impl Vm {
             },
         );
         Environment::set(&g, "Promise", promise);
+        let proxy = self.native_named(native_proxy_constructor, "Proxy", 2);
+        Environment::set(&g, "Proxy", proxy);
         let json = self.object(None);
         self.set_prop(&json, "stringify", self.native(native_json_stringify));
         Environment::set(&g, "JSON", json);
@@ -6854,6 +6858,7 @@ impl Vm {
                 "AggregateError",
                 "SuppressedError",
                 "Promise",
+                "Proxy",
                 "assert",
                 "decodeURI",
                 "decodeURIComponent",
@@ -7050,6 +7055,14 @@ impl Vm {
         module
     }
     fn get_prop(&self, o: &Value, k: &str) -> Value {
+        // Proxies are represented as ordinary heap objects carrying their
+        // target/handler pair.  The trap-aware path lives in
+        // `get_prop_with_accessors`; this raw lookup forwards the default
+        // operation so internal slots (Promise branding, state, etc.) remain
+        // observable through a proxy as they are through [[Get]].
+        if let Some(target) = proxy_target(o) {
+            return self.get_prop(&target, k);
+        }
         if let Some(x) = o.as_object_ref() {
             let (prototype, builtin_prototype) = {
                 let object = x.borrow();
@@ -7445,6 +7458,22 @@ impl Vm {
     }
 
     pub(crate) fn get_prop_with_accessors(&mut self, object: &Value, key: &str) -> JsResult<Value> {
+        if let Some(target) = proxy_target(object) {
+            let handler = proxy_handler(object).unwrap_or(Value::Undefined);
+            let trap = self.get_prop_with_accessors(&handler, "get")?;
+            if trap.is_function() {
+                return self.call(
+                    trap,
+                    handler,
+                    vec![
+                        target,
+                        Value::string_value(key),
+                        object.clone(),
+                    ],
+                );
+            }
+            return self.get_prop_with_accessors(&target, key);
+        }
         if let Some((getter, _)) = self.find_accessor(object, key) {
             let Some(getter) = getter else {
                 return Ok(Value::Undefined);
@@ -13828,6 +13857,25 @@ fn native_async_iterator_dispose(vm: &mut Vm, this: Value, _: &[Value]) -> JsRes
     Ok(vm.promise_from_result(Ok(Value::Undefined)))
 }
 
+fn native_proxy_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let handler = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !target.is_object_like() || is_symbol_carrier(&target) {
+        return Err(JsError::Throw(type_error(vm, "Proxy target must be an object")));
+    }
+    if !handler.is_object_like() || is_symbol_carrier(&handler) || handler.is_null() {
+        return Err(JsError::Throw(type_error(vm, "Proxy handler must be an object")));
+    }
+    let prototype = target
+        .as_object_ref()
+        .and_then(|object| object.borrow().prototype.clone())
+        .or_else(|| target.as_function_ref().map(|function| function.prototype.clone()));
+    let proxy = vm.object(prototype);
+    vm.set_prop(&proxy, PROXY_TARGET_PROP, target);
+    vm.set_prop(&proxy, PROXY_HANDLER_PROP, handler);
+    Ok(proxy)
+}
+
 fn promise_species_constructor(vm: &mut Vm, promise: &Value) -> JsResult<Value> {
     let default_constructor =
         Environment::get(&vm.global, "Promise").unwrap_or_else(|| Value::Undefined);
@@ -13843,6 +13891,10 @@ fn promise_species_constructor(vm: &mut Vm, promise: &Value) -> JsResult<Value> 
     }
     let species_key = vm.well_known_symbol_key("species");
     let species = vm.get_prop_with_accessors(&constructor, &species_key)?;
+    if std::env::var_os("QUENCH_DEBUG_PROMISE_SPECIES").is_some() {
+        let promise = Environment::get(&vm.global, "Promise").unwrap_or(Value::Undefined);
+        eprintln!("species constructor={} species={} same_ctor={} same_promise={} constructable={}", constructor.display(), species.display(), species.same_bits(&constructor), species.same_bits(&promise), constructable(&species));
+    }
     if species.is_null() || species.is_undefined() {
         return Ok(default_constructor);
     }
@@ -14109,6 +14161,9 @@ fn new_promise_capability(
     } else {
         vm.call(constructor, target.clone(), vec![executor])
     };
+    if std::env::var_os("QUENCH_DEBUG_PROMISE_SPECIES").is_some() {
+        eprintln!("capability call result is_err={}", result.is_err());
+    }
     vm.current_new_target = previous_new_target;
     let result = result?;
     let promise = if result.is_object_like() { result } else { target };
@@ -14234,7 +14289,7 @@ fn native_promise_reject_executor(vm: &mut Vm, this: Value, args: &[Value]) -> J
     Ok(Value::Undefined)
 }
 fn native_promise_resolve(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
-    if !constructor.is_object_like() {
+    if !constructor.is_object_like() || is_symbol_carrier(&constructor) {
         return Err(JsError::Throw(type_error(
             vm,
             "Promise.resolve called on non-object",
@@ -14847,7 +14902,7 @@ fn native_promise_keyed(
         let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "value is not an object")]);
         return Ok(aggregate);
     }
-    let keys = object_own_enumerable_keys_with_symbols(&input);
+    let keys = proxy_own_enumerable_keys(vm, &input)?;
     let resolve_method = match vm.get_prop_with_accessors(&constructor, "resolve") {
         Ok(resolve) if resolve.is_function() => resolve,
         Ok(_) => {
@@ -21662,6 +21717,9 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             "property descriptor is not an object",
         )));
     }
+    if target.as_function_ref().is_some() {
+        return define_function_property(vm, target, &key, &descriptor);
+    }
     if let Some(regexp) = target.as_regexp()
         && key == "lastIndex"
     {
@@ -22015,6 +22073,108 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
     }
     Ok(target.clone())
 }
+
+fn define_function_property(
+    vm: &mut Vm,
+    target: &Value,
+    key: &str,
+    descriptor: &Value,
+) -> JsResult<Value> {
+    let Some(function) = target.as_function_ref() else {
+        unreachable!("function descriptor helper requires a function")
+    };
+    let has_get = vm.has_property(descriptor, "get");
+    let has_set = vm.has_property(descriptor, "set");
+    let has_value = vm.has_property(descriptor, "value");
+    let has_writable = vm.has_property(descriptor, "writable");
+    if (has_get || has_set) && (has_value || has_writable) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "property descriptor mixes data and accessor fields",
+        )));
+    }
+    let getter = if has_get {
+        Some(vm.get_prop_with_accessors(descriptor, "get")?)
+    } else {
+        None
+    };
+    let setter = if has_set {
+        Some(vm.get_prop_with_accessors(descriptor, "set")?)
+    } else {
+        None
+    };
+    if getter
+        .as_ref()
+        .is_some_and(|value| !value.is_undefined() && !value.is_function())
+        || setter
+            .as_ref()
+            .is_some_and(|value| !value.is_undefined() && !value.is_function())
+    {
+        return Err(JsError::Throw(type_error(vm, "accessor must be callable or undefined")));
+    }
+    let enumerable = vm.get_prop_with_accessors(descriptor, "enumerable")?;
+    let configurable = vm.get_prop_with_accessors(descriptor, "configurable")?;
+    let value = if has_value {
+        Some(vm.get_prop_with_accessors(descriptor, "value")?)
+    } else {
+        None
+    };
+    let writable = if has_writable {
+        Some(vm.get_prop_with_accessors(descriptor, "writable")?.truthy())
+    } else {
+        None
+    };
+    let mut props = function.props.borrow_mut();
+    let mut attributes = function.attributes.borrow_mut();
+    let old_accessor = props.contains_key(&accessor_slot("get", key))
+        || props.contains_key(&accessor_slot("set", key));
+    let old_present = old_accessor || props.contains_key(key);
+    let old_attributes = attributes
+        .get(key)
+        .copied()
+        .unwrap_or(PropertyAttributes::DEFAULT);
+    if old_present && !old_attributes.configurable {
+        if !configurable.is_undefined() && configurable.truthy() {
+            return Err(JsError::Throw(type_error(vm, "cannot reconfigure a non-configurable property")));
+        }
+        if (has_get || has_set) != old_accessor {
+            return Err(JsError::Throw(type_error(vm, "cannot change property kind")));
+        }
+    }
+    let next_attributes = PropertyAttributes {
+        writable: writable.unwrap_or(if old_present { old_attributes.writable } else { false }),
+        enumerable: if enumerable.is_undefined() {
+            if old_present { old_attributes.enumerable } else { false }
+        } else {
+            enumerable.truthy()
+        },
+        configurable: if configurable.is_undefined() {
+            if old_present { old_attributes.configurable } else { false }
+        } else {
+            configurable.truthy()
+        },
+    };
+    if has_get || has_set {
+        props.shift_remove(key);
+        props.shift_remove(&accessor_slot("get", key));
+        props.shift_remove(&accessor_slot("set", key));
+        if let Some(getter) = getter.filter(|value| !value.is_undefined()) {
+            props.insert(accessor_slot("get", key), getter);
+        }
+        if let Some(setter) = setter.filter(|value| !value.is_undefined()) {
+            props.insert(accessor_slot("set", key), setter);
+        }
+    } else if let Some(value) = value {
+        props.shift_remove(&accessor_slot("get", key));
+        props.shift_remove(&accessor_slot("set", key));
+        props.insert(key.to_owned(), value);
+    } else if !old_present {
+        props.insert(key.to_owned(), Value::Undefined);
+    }
+    attributes.insert(key.to_owned(), next_attributes);
+    Ok(target.clone())
+}
+
 fn native_object_define_properties(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let Some(target) = args.first() else {
         return Err(JsError::Throw(type_error(
@@ -22452,6 +22612,68 @@ fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
 
 fn object_own_enumerable_keys_with_symbols(target: &Value) -> Vec<String> {
     object_own_enumerable_keys_mode(target, true)
+}
+
+fn proxy_target(value: &Value) -> Option<Value> {
+    value
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get(PROXY_TARGET_PROP).cloned())
+}
+
+fn proxy_handler(value: &Value) -> Option<Value> {
+    value
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get(PROXY_HANDLER_PROP).cloned())
+}
+
+/// Implements the enumerable-key projection needed by keyed Promise
+/// combinators.  Keeping this operation in the VM (rather than teaching each
+/// combinator about proxy traps) preserves one property-ordering pipeline.
+fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String>> {
+    let Some(proxy_target_value) = proxy_target(target) else {
+        return Ok(object_own_enumerable_keys_with_symbols(target));
+    };
+    let handler = proxy_handler(target).unwrap_or(Value::Undefined);
+    let own_keys = vm.get_prop_with_accessors(&handler, "ownKeys")?;
+    let keys = if own_keys.is_function() {
+        let returned = vm.call(own_keys, handler.clone(), vec![proxy_target_value.clone()])?;
+        if !returned.is_object_like() {
+            return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap must return an object")));
+        }
+        let length = array_from_length(vm, &returned).unwrap_or(0);
+        let mut keys = Vec::with_capacity(length);
+        for index in 0..length {
+            let key = vm.to_property_key(vm.get_prop(&returned, &index.to_string()))?;
+            keys.push(key);
+        }
+        keys
+    } else {
+        object_own_property_keys(&proxy_target_value)
+    };
+    let descriptor_trap = vm.get_prop_with_accessors(&handler, "getOwnPropertyDescriptor")?;
+    let mut enumerable = Vec::new();
+    for key in keys {
+        let descriptor = if descriptor_trap.is_function() {
+            vm.call(
+                descriptor_trap.clone(),
+                handler.clone(),
+                vec![proxy_target_value.clone(), vm.symbol_keys.get(&key).cloned().unwrap_or_else(|| Value::string_value(key.clone()))],
+            )?
+        } else {
+            native_object_get_own_property_descriptor(
+                vm,
+                Value::Undefined,
+                &[proxy_target_value.clone(), Value::string_value(key.clone())],
+            )?
+        };
+        if descriptor.is_undefined() {
+            continue;
+        }
+        if vm.get_prop(&descriptor, "enumerable").truthy() {
+            enumerable.push(key);
+        }
+    }
+    Ok(partition_symbol_keys(enumerable))
 }
 
 fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec<String> {
