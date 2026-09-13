@@ -238,6 +238,7 @@ const PROMISE_COMBINATOR_REJECT_PROP: &str = "\0quench:promise-combinator-reject
 const PROMISE_COMBINATOR_KEY_PROP: &str = "\0quench:promise-combinator-key";
 const PROMISE_COMBINATOR_KEYED_PROP: &str = "\0quench:promise-combinator-keyed";
 const PROMISE_COMBINATOR_RESULT_PROP: &str = "\0quench:promise-combinator-result";
+const PROXY_NO_PROTOTYPE_PROP: &str = "\0quench:proxy-no-prototype";
 const PROMISE_FINALLY_CALLBACK_PROP: &str = "\0quench:promise-finally-callback";
 const PROMISE_FINALLY_VALUE_PROP: &str = "\0quench:promise-finally-value";
 const PROMISE_FINALLY_REJECTED_PROP: &str = "\0quench:promise-finally-rejected";
@@ -6353,6 +6354,7 @@ impl Vm {
         );
         Environment::set(&g, "Promise", promise);
         let proxy = self.native_named(native_proxy_constructor, "Proxy", 2);
+        self.set_prop(&proxy, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
         let revocable = self.native_named(native_proxy_revocable, "revocable", 2);
         self.mark_nonconstructable(&revocable);
         self.set_prop(&proxy, "revocable", revocable);
@@ -7186,7 +7188,7 @@ impl Vm {
                 if let Some(override_value) = override_value {
                     return override_value;
                 }
-                let has_prototype = match &f.kind {
+                let has_prototype = !f.props.borrow().contains_key(PROXY_NO_PROTOTYPE_PROP) && match &f.kind {
                     FunctionKind::User { node, .. } => !node.r#async || node.generator,
                     FunctionKind::Builtin(id) => id.is_constructable(),
                     FunctionKind::Native(native)
@@ -7511,7 +7513,9 @@ impl Vm {
             props.contains_key(key)
                 || props.contains_key(&accessor_slot("get", key))
                 || props.contains_key(&accessor_slot("set", key))
-                || (key == "prototype" && constructable(value))
+                || (key == "prototype"
+                    && constructable(value)
+                    && !props.contains_key(PROXY_NO_PROTOTYPE_PROP))
                 || key == "name"
                 || key == "length"
         })
@@ -22165,7 +22169,7 @@ fn native_object_get_own_property_descriptor(
         }
     }
     let value = if let Some(function) = target.as_function_ref() {
-        if key == "prototype" {
+        if key == "prototype" && !function.props.borrow().contains_key(PROXY_NO_PROTOTYPE_PROP) {
             Some(Value::Object(function.prototype.clone()))
         } else {
             function.props.borrow().get(&key).cloned()
@@ -24296,6 +24300,7 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
             || props.contains_key(&accessor_slot("set", &key))
             || (key == "prototype"
                 && (constructable(&target)
+                    && !props.contains_key(PROXY_NO_PROTOTYPE_PROP)
                     || matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)))
     } else {
         target.as_object_ref().is_some_and(|object| {
