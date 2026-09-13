@@ -5441,10 +5441,12 @@ struct Vm {
     // settlement fact on the VM makes the current path deterministic and
     // avoids a second promise implementation.
     await_result: Option<Result<Value, Value>>,
-    async_module_continuations: Vec<AsyncModuleContinuation>,
+    async_module_continuations: Vec<Option<AsyncModuleContinuation>>,
+    pending_async_modules: HashSet<PathBuf>,
 }
 
 struct AsyncModuleContinuation {
+    path: PathBuf,
     statements: &'static [Statement<'static>],
     environment: Env,
 }
@@ -5514,6 +5516,7 @@ impl Vm {
             mapped_arguments: RefCell::new(Vec::new()),
             await_result: None,
             async_module_continuations: Vec::new(),
+            pending_async_modules: HashSet::new(),
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -10364,6 +10367,15 @@ impl Vm {
             .get(&module_path)
             .cloned()
             .unwrap_or_default();
+        if self
+            .async_module_continuations
+            .iter()
+            .flatten()
+            .any(|continuation| self.module_key(&continuation.path) == key)
+        {
+            self.pending_async_modules.insert(key.clone());
+            self.pending_async_modules.insert(module_path.clone());
+        }
         self.module_evaluating.remove(&key);
         self.module_exports_cache
             .insert(key.clone(), exports.clone());
@@ -10403,6 +10415,25 @@ impl Vm {
                         || self.module_evaluating.contains(&relative))
             })
         }))
+    }
+
+    fn module_has_pending_async_dependency(&self, path: &Path, program: &Program<'_>) -> bool {
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        program.body.iter().any(|statement| {
+            let request = match statement {
+                Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
+                Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
+                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
+                _ => None,
+            };
+            request.is_some_and(|request| {
+                let dependency = self.resolve_module_request(parent, request);
+                self.pending_async_modules
+                    .contains(&self.module_key(&dependency))
+            })
+        })
     }
 
     fn module_export_names(&mut self, path: &Path) -> JsResult<Vec<String>> {
@@ -11944,15 +11975,23 @@ impl Vm {
             // identities are lowered into the stencil image.
             self.jit_mode = JitMode::Off;
         }
-        let defer_sibling_async_tail = module_source
-            && source.contains("globalThis.check = false")
-            && source.contains("globalThis.check = true")
-            && top_level_await_statement_index(&r.program).is_some();
-        let deferred_statements = if defer_sibling_async_tail {
+        // An unexported async module can suspend after its first top-level
+        // await while sibling modules continue evaluation.  The module graph
+        // owns the ordering; no source/fixture identity participates here.
+        let defer_async_tail = module_source
+            && self
+                .module_export_names(p)
+                .is_ok_and(|names| names.is_empty())
+            && !top_level_await_is_dynamic_import(&r.program)
+            && (top_level_await_statement_index(&r.program).is_some()
+                || self.module_has_pending_async_dependency(p, &r.program));
+        let deferred_statements = if defer_async_tail {
             let statements: &'static [Statement<'static>] =
                 unsafe { std::mem::transmute(r.program.body.as_slice()) };
-            top_level_await_statement_index(&r.program)
-                .map(|index| (&statements[..index], &statements[index.saturating_add(1)..]))
+            Some(match top_level_await_statement_index(&r.program) {
+                Some(index) => (&statements[..index], &statements[index.saturating_add(1)..]),
+                None => (&statements[..0], statements),
+            })
         } else {
             None
         };
@@ -12022,10 +12061,11 @@ impl Vm {
             if !suffix.is_empty() {
                 let index = self.async_module_continuations.len();
                 self.async_module_continuations
-                    .push(AsyncModuleContinuation {
+                    .push(Some(AsyncModuleContinuation {
+                        path: p.to_path_buf(),
                         statements: suffix,
                         environment: execution_environment.clone(),
-                    });
+                    }));
                 self.schedule_microtask(
                     self.native(native_async_module_continuation),
                     vec![Value::Number(index as f64)],
@@ -19770,7 +19810,15 @@ fn native_async_module_continuation(vm: &mut Vm, _: Value, args: &[Value]) -> Js
     if index >= vm.async_module_continuations.len() {
         return Ok(Value::Undefined);
     }
-    let continuation = vm.async_module_continuations.remove(index);
+    let Some(Some(continuation)) = vm
+        .async_module_continuations
+        .get_mut(index)
+        .map(Option::take)
+    else {
+        return Ok(Value::Undefined);
+    };
+    vm.pending_async_modules
+        .remove(&vm.module_key(&continuation.path));
     vm.exec_stmts(continuation.statements, continuation.environment)?;
     Ok(Value::Undefined)
 }
@@ -25627,6 +25675,18 @@ fn top_level_await_statement_index(program: &Program<'_>) -> Option<usize> {
             Statement::ExpressionStatement(expression)
                 if matches!(expression.expression, Expression::AwaitExpression(_))
         )
+    })
+}
+
+fn top_level_await_is_dynamic_import(program: &Program<'_>) -> bool {
+    program.body.iter().any(|statement| {
+        let Statement::ExpressionStatement(expression) = statement else {
+            return false;
+        };
+        let Expression::AwaitExpression(await_expression) = &expression.expression else {
+            return false;
+        };
+        matches!(await_expression.argument, Expression::ImportExpression(_))
     })
 }
 
