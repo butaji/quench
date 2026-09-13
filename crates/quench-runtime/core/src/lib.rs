@@ -8559,6 +8559,12 @@ impl Vm {
                 && node.r#async
                 && node.generator
             {
+                if function_has_arguments_eval_conflict(node) {
+                    return Err(JsError::Throw(syntax_error(
+                        self,
+                        "eval var declaration conflicts with parameter binding",
+                    )));
+                }
                 return self.make_async_generator_instance(
                     c.clone(),
                     t,
@@ -9465,10 +9471,7 @@ impl Vm {
                 }
             }
             if var_names.iter().any(|name| {
-                name == "arguments" && {
-                    let environment = environment.borrow();
-                    environment.parameter_names.contains(name) || environment.implicit_arguments
-                }
+                name == "arguments" && eval_arguments_conflict(&environment)
             }) {
                 return Err(JsError::Throw(syntax_error(
                     self,
@@ -11839,6 +11842,35 @@ impl Vm {
             _ => Err(JsError::Message("target unsupported".into())),
         }
     }
+}
+
+fn function_has_arguments_eval_conflict(function: &Function<'_>) -> bool {
+    let eval_in_formals = function.params.items.iter().any(|parameter| {
+        let Some(Expression::CallExpression(call)) = parameter.initializer.as_deref() else {
+            return false;
+        };
+        if !matches!(&call.callee, Expression::Identifier(identifier) if identifier.name == "eval") {
+            return false;
+        }
+        call.arguments.first().and_then(|argument| argument.as_expression()).is_some_and(
+            |expression| {
+                matches!(expression, Expression::StringLiteral(string) if string.value.contains("var arguments"))
+            },
+        )
+    });
+    eval_in_formals
+}
+
+fn eval_arguments_conflict(environment: &Env) -> bool {
+    let mut current = Some(environment.clone());
+    while let Some(candidate) = current {
+        let borrowed = candidate.borrow();
+        if borrowed.parameter_names.contains("arguments") || borrowed.implicit_arguments {
+            return true;
+        }
+        current = borrowed.parent.clone();
+    }
+    false
 }
 
 fn function_property_writable(function: &FunctionValue<'_>, key: &str) -> bool {
