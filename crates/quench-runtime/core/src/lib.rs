@@ -10322,7 +10322,6 @@ impl Vm {
             })
             .parse();
         if let Some(e) = r.diagnostics.first() {
-            eprintln!("parse-diagnostic path={} error={e:?}", p.display());
             // Parser diagnostics are ECMAScript SyntaxErrors, not host
             // strings. Preserve that completion type so negative tests and
             // callers observe the same constructor identity as runtime
