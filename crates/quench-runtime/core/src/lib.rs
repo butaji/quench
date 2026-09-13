@@ -10411,6 +10411,20 @@ impl Vm {
             return Ok(false);
         };
         for statement in &program.body {
+            if let Statement::ImportDeclaration(import) = statement {
+                let resource_import = import.with_clause.as_ref().is_some_and(|clause| {
+                    clause.with_entries.iter().any(|entry| {
+                        let key = match &entry.key {
+                            ImportAttributeKey::Identifier(key) => key.name.as_str(),
+                            ImportAttributeKey::StringLiteral(key) => key.value.as_str(),
+                        };
+                        key == "type" && matches!(entry.value.value.as_str(), "text" | "bytes")
+                    })
+                });
+                if import.phase == Some(ImportPhase::Defer) || resource_import {
+                    continue;
+                }
+            }
             let (source, names) = match statement {
                 Statement::ImportDeclaration(import) => {
                     let names = import.specifiers.as_ref().map(|specifiers| {
@@ -10820,7 +10834,13 @@ impl Vm {
                             (specifier.local.name.as_str(), String::from("*"))
                         }
                     };
-                    let value = if target_evaluating {
+                    let value = if target_evaluating && import_type.is_none() && deferred {
+                        // A deferred namespace created for an evaluating
+                        // module must retain its MOP so property access throws
+                        // the specified TypeError instead of exposing an
+                        // empty placeholder.
+                        self.module_namespace(&target, &exports, true)
+                    } else if target_evaluating && import_type.is_none() {
                         self.module_import_ref(&target, &imported)
                     } else if imported == "*" {
                         self.module_namespace(&target, &exports, deferred)
@@ -11493,6 +11513,12 @@ impl Vm {
                             self.record_module_export(exported, namespace);
                         } else if let Some(value) = exports.get(&imported) {
                             self.record_module_export(exported, value.clone());
+                        } else if self.module_is_evaluating(&source) {
+                            // Re-exported bindings in a cycle remain
+                            // live links to the evaluating module rather
+                            // than becoming an eagerly cached undefined.
+                            let reference = self.module_import_ref(&source, &imported);
+                            self.record_module_export(exported, reference);
                         }
                     }
                 }
@@ -12826,7 +12852,7 @@ impl Vm {
                     {
                         return Ok(export.clone());
                     }
-                    return Ok(Value::Undefined);
+                    return Err(JsError::Throw(reference_error(self, imported.as_str())));
                 }
                 return Ok(value);
             }
