@@ -8743,7 +8743,15 @@ impl Vm {
                 } => {
                     let mut combined = bound_args.clone();
                     combined.extend(a.materialize());
-                    let receiver = if self.current_new_target.is_some() {
+                    // A nested bound call inside a constructor is still an
+                    // ordinary call. Only the bound function that is itself
+                    // the active new.target substitutes the construction
+                    // receiver for its captured this value.
+                    let receiver = if self
+                        .current_new_target
+                        .as_ref()
+                        .is_some_and(|new_target| new_target.same_bits(c))
+                    {
                         t
                     } else {
                         this_arg.clone()
