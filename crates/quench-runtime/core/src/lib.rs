@@ -11868,6 +11868,15 @@ impl Vm {
                 }
                 let mut lexical_names = HashSet::new();
                 collect_lexical_binding_names(&r.program.body, &mut lexical_names);
+                if lexical_names
+                    .iter()
+                    .any(|name| environment.borrow().lexical_names.contains(name))
+                {
+                    return Err(JsError::Throw(syntax_error(
+                        self,
+                        "lexical declaration conflicts with existing global binding",
+                    )));
+                }
                 let restricted = self
                     .global_object_for_environment(&environment)
                     .and_then(|global| global.as_object())
