@@ -3,9 +3,35 @@
 pub const CANON_F32: u32 = 0x7fc0_0000;
 pub const CANON_F64: u64 = 0x7ff8_0000_0000_0000;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum UnF32 {
+// The f32/f64 operation sets are intentionally isomorphic. Keep their
+// variant catalog in one declaration so adding a WebAssembly float opcode
+// updates both lanes together; the concrete implementations below still make
+// each representation's NaN and signed-zero policy explicit.
+macro_rules! define_float_ops {
+    ($name:ident { $($variant:ident),+ $(,)? }) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[repr(u8)]
+        pub enum $name {
+            $($variant),+
+        }
+    };
+}
+
+macro_rules! define_float_unary_family {
+    ($($variant:ident),+ $(,)?) => {
+        define_float_ops!(UnF32 { $($variant),+ });
+        define_float_ops!(UnF64 { $($variant),+ });
+    };
+}
+
+macro_rules! define_float_binary_family {
+    ($($variant:ident),+ $(,)?) => {
+        define_float_ops!(BinF32 { $($variant),+ });
+        define_float_ops!(BinF64 { $($variant),+ });
+    };
+}
+
+define_float_unary_family!(
     Abs,
     Neg,
     Ceil,
@@ -13,11 +39,9 @@ pub enum UnF32 {
     Trunc,
     Nearest,
     Sqrt,
-}
+);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum BinF32 {
+define_float_binary_family!(
     Add,
     Sub,
     Mul,
@@ -31,37 +55,7 @@ pub enum BinF32 {
     Gt,
     Le,
     Ge,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum UnF64 {
-    Abs,
-    Neg,
-    Ceil,
-    Floor,
-    Trunc,
-    Nearest,
-    Sqrt,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum BinF64 {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Min,
-    Max,
-    Copysign,
-    Eq,
-    Ne,
-    Lt,
-    Gt,
-    Le,
-    Ge,
-}
+);
 
 impl UnF32 {
     pub fn apply(self, bits: u32) -> u32 {
