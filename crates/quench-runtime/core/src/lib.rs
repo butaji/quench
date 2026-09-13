@@ -18445,7 +18445,12 @@ fn native_reflect_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
     let _ = reflect_require_object(vm, args.first(), "defineProperty")?;
     match native_object_define_property(vm, Value::Undefined, args) {
         Ok(_) => Ok(Value::Bool(true)),
-        Err(JsError::Throw(error)) if is_type_error_value(&error) => Ok(Value::Bool(false)),
+        Err(JsError::Throw(error))
+            if is_type_error_value(&error)
+                && !vm.get_prop(&error, "\0quench:proxy-invariant").truthy() =>
+        {
+            Ok(Value::Bool(false))
+        }
         Err(error) => Err(error),
     }
 }
@@ -23371,6 +23376,12 @@ fn validate_proxy_set_invariant(vm: &mut Vm, target: &Value, key: &str, value: &
     Ok(())
 }
 
+fn proxy_invariant_error(vm: &mut Vm, message: &str) -> JsError {
+    let error = type_error(vm, message);
+    vm.set_prop(&error, "\0quench:proxy-invariant", Value::Bool(true));
+    JsError::Throw(error)
+}
+
 fn validate_proxy_define_invariant(
     vm: &mut Vm,
     target: &Value,
@@ -23385,15 +23396,23 @@ fn validate_proxy_define_invariant(
     let extensible = native_object_is_extensible(vm, Value::Undefined, &[target.clone()])?.truthy();
     if current.is_undefined() {
         if !extensible {
-            return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap added to non-extensible target")));
+            return Err(proxy_invariant_error(vm, "Proxy defineProperty trap added to non-extensible target"));
+        }
+        if !vm.get_prop_with_accessors(descriptor, "configurable")?.truthy() {
+            return Err(proxy_invariant_error(vm, "Proxy defineProperty trap reported a non-configurable new property"));
         }
         return Ok(());
+    }
+    let current_configurable = vm.get_prop(&current, "configurable").truthy();
+    let requested_configurable = vm.get_prop_with_accessors(descriptor, "configurable")?.truthy();
+    if current_configurable && !requested_configurable {
+        return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made target property non-configurable"));
     }
     if !vm.get_prop(&current, "configurable").truthy()
         && vm.has_property(descriptor, "configurable")
         && vm.get_prop_with_accessors(descriptor, "configurable")?.truthy()
     {
-        return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap made target property configurable")));
+        return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made target property configurable"));
     }
     if !vm.get_prop(&current, "configurable").truthy()
         && vm.has_property(&current, "writable")
@@ -23402,7 +23421,7 @@ fn validate_proxy_define_invariant(
         if vm.has_property(descriptor, "writable")
             && vm.get_prop_with_accessors(descriptor, "writable")?.truthy()
         {
-            return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap made target property writable")));
+            return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made target property writable"));
         }
         if vm.has_property(descriptor, "value")
             && vm.has_property(&current, "value")
@@ -23410,8 +23429,15 @@ fn validate_proxy_define_invariant(
                 .get_prop_with_accessors(descriptor, "value")?
                 .same_bits(&vm.get_prop(&current, "value"))
         {
-            return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap changed frozen target value")));
+            return Err(proxy_invariant_error(vm, "Proxy defineProperty trap changed frozen target value"));
         }
+    }
+    if vm.get_prop(&current, "configurable").truthy() == false
+        && vm.get_prop(&current, "writable").truthy()
+        && vm.has_property(descriptor, "writable")
+        && !vm.get_prop_with_accessors(descriptor, "writable")?.truthy()
+    {
+        return Err(proxy_invariant_error(vm, "Proxy defineProperty trap made writable target property non-writable"));
     }
     Ok(())
 }
