@@ -8062,6 +8062,8 @@ impl Vm {
         receiver: &Value,
     ) -> JsResult<Value> {
         if key != DEFERRED_NAMESPACE_PATH_PROP
+            && key != "then"
+            && !key.starts_with('\0')
             && object.as_object_ref().is_some_and(|object| {
                 object
                     .borrow()
@@ -25821,12 +25823,15 @@ fn native_object_get_own_property_descriptor(
         )));
     };
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
-    if target.as_object_ref().is_some_and(|object| {
-        object
-            .borrow()
-            .props
-            .contains_key(DEFERRED_NAMESPACE_PATH_PROP)
-    }) {
+    if key != "then"
+        && !key.starts_with('\0')
+        && target.as_object_ref().is_some_and(|object| {
+            object
+                .borrow()
+                .props
+                .contains_key(DEFERRED_NAMESPACE_PATH_PROP)
+        })
+    {
         vm.materialize_deferred_namespace(target)?;
     }
     if let Some(proxy_target_value) = proxy_target(target) {
