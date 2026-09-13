@@ -16632,6 +16632,73 @@ fn expression_contains_identifier(expression: &Expression<'_>, name: &str) -> bo
     scan.found
 }
 
+/// Return whether an assignment target binds a strict-mode reserved name.
+///
+/// Assignment patterns are represented separately from binding patterns in
+/// OXC. Walking the target shape directly keeps this semantic fact attached
+/// to the target (rather than accidentally matching a property key or an
+/// expression nested in a computed member). The recursive cases mirror the
+/// grammar's single target algebra and are shared by simple and destructuring
+/// assignments.
+fn assignment_target_contains_strict_reserved(target: &AssignmentTarget<'_>) -> bool {
+    const RESERVED: [&str; 11] = [
+        "arguments",
+        "enum",
+        "eval",
+        "implements",
+        "interface",
+        "let",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "static",
+    ];
+    fn name_is_reserved(name: &str) -> bool {
+        RESERVED.contains(&name)
+    }
+    fn maybe_default_is_reserved(target: &AssignmentTargetMaybeDefault<'_>) -> bool {
+        match target {
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
+                assignment_target_contains_strict_reserved(&default.binding)
+            }
+            target => assignment_target_contains_strict_reserved(target.to_assignment_target()),
+        }
+    }
+    match target {
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+            name_is_reserved(identifier.name.as_str())
+        }
+        AssignmentTarget::ArrayAssignmentTarget(pattern) => {
+            pattern
+                .elements
+                .iter()
+                .flatten()
+                .any(maybe_default_is_reserved)
+                || pattern
+                    .rest
+                    .as_ref()
+                    .is_some_and(|rest| assignment_target_contains_strict_reserved(&rest.target))
+        }
+        AssignmentTarget::ObjectAssignmentTarget(pattern) => {
+            pattern.properties.iter().any(|property| match property {
+                AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                    name_is_reserved(property.binding.name.as_str())
+                }
+                AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                    maybe_default_is_reserved(&property.binding)
+                }
+            }) || pattern
+                .rest
+                .as_ref()
+                .is_some_and(|rest| assignment_target_contains_strict_reserved(&rest.target))
+        }
+        // Member targets and TypeScript-only wrappers do not bind an
+        // identifier; any identifiers they contain are ordinary expressions.
+        _ => false,
+    }
+}
+
 fn function_contains_new_target(function: &Function<'_>) -> bool {
     struct Scan {
         found: bool,
@@ -16822,6 +16889,13 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
             ast_walk::walk_arrow_function_expression(self, arrow);
             self.async_stack.pop();
             self.strict_stack.pop();
+        }
+
+        fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
+            if self.strict() && assignment_target_contains_strict_reserved(&expression.left) {
+                self.invalid = true;
+            }
+            ast_walk::walk_assignment_expression(self, expression);
         }
     }
 
