@@ -31,8 +31,8 @@ pub use quench_runtime_core::{instance, interp, layer, native};
 mod native_control;
 mod native_property;
 pub mod shape_cache;
-pub use quench_runtime_core::{slot, unwind, wasm, wasm_atomic};
 pub use host_jobs::install_host_job_pump;
+pub use quench_runtime_core::{slot, unwind, wasm, wasm_atomic};
 
 mod arrays;
 mod atomics;

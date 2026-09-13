@@ -6502,6 +6502,16 @@ impl Vm {
             .map(|function| function.prototype.clone())
         {
             self.set_prop(&array_buffer, "prototype", Value::Object(prototype));
+            let prototype = array_buffer
+                .as_function_ref()
+                .expect("ArrayBuffer constructor")
+                .prototype
+                .clone();
+            self.set_prop(
+                &Value::Object(prototype),
+                "resize",
+                self.native_named(native_array_buffer_resize, "resize", 1),
+            );
         }
         Environment::set(&g, "ArrayBuffer", array_buffer);
         let typed_array_base = self.native_named(native_typed_array_constructor, "TypedArray", 0);
@@ -6560,6 +6570,32 @@ impl Vm {
                 &Value::Object(prototype),
                 "fill",
                 self.native_named(native_typed_array_fill, "fill", 1),
+            );
+            let prototype = constructor
+                .as_function_ref()
+                .expect("typed array constructor")
+                .prototype
+                .clone();
+            let iterator_key = self.well_known_symbol_key("iterator");
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                &iterator_key,
+                self.native_named(native_array_iterator, "values", 0),
+            );
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                "values",
+                self.native_named(native_array_values, "values", 0),
+            );
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                "keys",
+                self.native_named(native_array_keys, "keys", 0),
+            );
+            self.set_prop(
+                &Value::Object(prototype),
+                "entries",
+                self.native_named(native_array_entries, "entries", 0),
             );
             Environment::set(&g, name, constructor);
         }
@@ -7359,6 +7395,56 @@ impl Vm {
             return self.get_prop(&target, k);
         }
         if let Some(x) = o.as_object_ref() {
+            // Typed-array elements and length are views over the shared
+            // backing buffer, not independent ordinary properties.
+            let typed_view = {
+                let object = x.borrow();
+                object
+                    .props
+                    .get(TYPED_ARRAY_BUFFER)
+                    .cloned()
+                    .zip(object.props.get(TYPED_ARRAY_OFFSET).cloned())
+                    .zip(object.props.get("\0typed-array-bytes").cloned())
+            };
+            if let Some(((buffer, offset), bytes)) = typed_view {
+                if k == "length" {
+                    let buffer_len =
+                        self.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
+                    let offset = offset.number().max(0.0) as usize;
+                    let width = bytes.number().max(1.0) as usize;
+                    let available = buffer_len.saturating_sub(offset) / width;
+                    let fixed = x
+                        .borrow()
+                        .props
+                        .get(TYPED_ARRAY_FIXED)
+                        .is_some_and(Value::truthy);
+                    let declared = x
+                        .borrow()
+                        .props
+                        .get("\0typed-array-length")
+                        .map_or(available, |value| value.number().max(0.0) as usize);
+                    return Value::Number(
+                        (if fixed {
+                            declared.min(available)
+                        } else {
+                            available
+                        }) as f64,
+                    );
+                }
+                if let Some(index) = array_index_key(k) {
+                    let offset = offset.number().max(0.0) as usize;
+                    let data = self.get_prop(&buffer, ARRAY_BUFFER_DATA);
+                    if let Some(value) = data.as_object_ref().and_then(|object| {
+                        object.borrow().array.as_ref().and_then(|array| {
+                            let width = bytes.number().max(1.0) as usize;
+                            let value = array.get(offset / width + index).cloned();
+                            value
+                        })
+                    }) {
+                        return value;
+                    }
+                }
+            }
             let (prototype, builtin_prototype) = {
                 let object = x.borrow();
                 if let Some(a) = &object.array {
@@ -8205,6 +8291,25 @@ impl Vm {
             return;
         }
         if let Some(object) = o.as_object_ref() {
+            let typed_target = {
+                let object = object.borrow();
+                object
+                    .props
+                    .get(TYPED_ARRAY_BUFFER)
+                    .cloned()
+                    .zip(object.props.get(TYPED_ARRAY_OFFSET).cloned())
+                    .zip(object.props.get("\0typed-array-bytes").cloned())
+            };
+            if let Some(((buffer, offset), bytes)) = typed_target
+                && let Some(index) = array_index_key(k)
+            {
+                let offset = offset.number().max(0.0) as usize;
+                let width = bytes.number().max(1.0) as usize;
+                let data = self.get_prop(&buffer, ARRAY_BUFFER_DATA);
+                if let Some(data_object) = data.as_object_ref() {
+                    self.set_prop(&data, &(offset / width + index).to_string(), v.clone());
+                }
+            }
             let mut object = object.borrow_mut();
             if object.props.contains_key("\0symbol") && !k.starts_with('\0') {
                 return;
@@ -15040,7 +15145,33 @@ fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> 
     vm.set_prop(&this, "byteLength", Value::Number(length.floor()));
     vm.set_prop(&this, "maxByteLength", Value::Number(length.floor()));
     vm.set_prop(&this, "\0array-buffer", Value::Bool(true));
+    vm.set_prop(&this, ARRAY_BUFFER_DATA, vm.array_from_values(Vec::new()));
     Ok(this)
+}
+
+fn native_array_buffer_resize(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !this
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0array-buffer"))
+    {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    }
+    let next = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(0.0)
+        .max(0.0)
+        .floor();
+    let max = vm.get_prop(&this, "maxByteLength").number();
+    if next > max {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "ArrayBuffer resize exceeds maxByteLength",
+        )));
+    }
+    vm.set_prop(&this, "byteLength", Value::Number(next));
+    Ok(Value::Undefined)
 }
 
 fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -15064,46 +15195,102 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
                 .and_then(|object| object.borrow().props.get("\0typed-array-bytes").cloned())
         })
         .map_or(1.0, |value| value.number());
-    let values = match args.first() {
-        Some(value) if value.as_number().is_some() => {
-            let length = value.number();
-            if !length.is_finite() || length < 0.0 {
-                return Err(JsError::Throw(range_error(vm, "invalid TypedArray length")));
+    let source_buffer = args
+        .first()
+        .filter(|value| {
+            value
+                .as_object_ref()
+                .is_some_and(|object| object.borrow().props.contains_key("\0array-buffer"))
+        })
+        .cloned();
+    let source_offset = source_buffer
+        .as_ref()
+        .map(|_| args.get(1).map_or(0.0, Value::number).max(0.0));
+    let values = match source_buffer.as_ref() {
+        Some(buffer) => {
+            let byte_length = vm.get_prop(buffer, "byteLength").number().max(0.0) as usize;
+            let offset = source_offset.unwrap_or(0.0) as usize;
+            let available = byte_length.saturating_sub(offset) / bytes as usize;
+            let requested = args.get(2).map(|value| value.number().max(0.0) as usize);
+            vec![Value::Number(0.0); requested.unwrap_or(available).min(available)]
+        }
+        None => match args.first() {
+            Some(value) if value.as_number().is_some() => {
+                let length = value.number();
+                if !length.is_finite() || length < 0.0 {
+                    return Err(JsError::Throw(range_error(vm, "invalid TypedArray length")));
+                }
+                vec![Value::Number(0.0); length.floor() as usize]
             }
-            vec![Value::Number(0.0); length.floor() as usize]
-        }
-        Some(value) => {
-            let length = vm
-                .get_prop_with_accessors(value, "length")
-                .ok()
-                .map(|v| v.number().max(0.0).min(9_007_199_254_740_991.0) as usize);
-            let length = length.unwrap_or(0);
-            (0..length)
-                .map(|index| {
-                    vm.get_prop_with_accessors(value, &index.to_string())
-                        .unwrap_or(Value::Undefined)
-                })
-                .collect()
-        }
-        None => Vec::new(),
+            Some(value) => {
+                let length = vm
+                    .get_prop_with_accessors(value, "length")
+                    .ok()
+                    .map(|v| v.number().max(0.0).min(9_007_199_254_740_991.0) as usize);
+                let length = length.unwrap_or(0);
+                (0..length)
+                    .map(|index| {
+                        vm.get_prop_with_accessors(value, &index.to_string())
+                            .unwrap_or(Value::Undefined)
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        },
     };
-    let buffer = vm.object(None);
-    vm.set_prop(
-        &buffer,
-        "byteLength",
-        Value::Number(values.len() as f64 * bytes),
-    );
-    vm.set_prop(&buffer, "\0array-buffer", Value::Bool(true));
-    vm.set_prop(&this, "buffer", buffer);
+    let had_source = source_buffer.is_some();
+    let backing = source_buffer.unwrap_or_else(|| {
+        let backing = vm.object(None);
+        vm.set_prop(
+            &backing,
+            "byteLength",
+            Value::Number(values.len() as f64 * bytes),
+        );
+        vm.set_prop(&backing, "\0array-buffer", Value::Bool(true));
+        backing
+    });
+    vm.set_prop(&this, "buffer", backing.clone());
     vm.set_prop(
         &this,
         "byteLength",
         Value::Number(values.len() as f64 * bytes),
     );
-    vm.set_prop(&this, "byteOffset", Value::Number(0.0));
+    vm.set_prop(
+        &this,
+        "byteOffset",
+        Value::Number(source_offset.unwrap_or(0.0)),
+    );
     vm.set_prop(&this, "length", Value::Number(values.len() as f64));
-    for (index, value) in values.into_iter().enumerate() {
-        vm.set_prop(&this, &index.to_string(), value);
+    let data = vm.get_prop(&backing, ARRAY_BUFFER_DATA);
+    let data = if data.is_undefined() {
+        let data = vm.array_from_values(Vec::new());
+        vm.set_prop(&backing, ARRAY_BUFFER_DATA, data.clone());
+        data
+    } else {
+        data
+    };
+    if had_source {
+        let existing = vm.get_prop(&data, "length").number().max(0.0) as usize;
+        let needed = (source_offset.unwrap_or(0.0) as usize / bytes as usize) + values.len();
+        for index in existing..needed {
+            vm.set_prop(&data, &index.to_string(), Value::Number(0.0));
+        }
+    }
+    vm.set_prop(&this, TYPED_ARRAY_BUFFER, backing.clone());
+    vm.set_prop(
+        &this,
+        TYPED_ARRAY_OFFSET,
+        Value::Number(source_offset.unwrap_or(0.0)),
+    );
+    vm.set_prop(&this, TYPED_ARRAY_FIXED, Value::Bool(args.get(2).is_some()));
+    vm.set_prop(
+        &this,
+        "\0typed-array-length",
+        Value::Number(values.len() as f64),
+    );
+    vm.set_prop(&this, "\0typed-array-bytes", Value::Number(bytes));
+    for (index, value) in values.iter().cloned().enumerate() {
+        vm.set_prop(&data, &index.to_string(), value);
     }
     Ok(this)
 }
@@ -20830,6 +21017,10 @@ const REGEXP_ITERATOR_SOURCE: &str = "\0regexp_iterator_source";
 const REGEXP_ITERATOR_INDEX: &str = "\0regexp_iterator_index";
 const REGEXP_ITERATOR_GLOBAL: &str = "\0regexp_iterator_global";
 const REGEXP_ITERATOR_DONE: &str = "\0regexp_iterator_done";
+const TYPED_ARRAY_BUFFER: &str = "\0typed-array-buffer";
+const TYPED_ARRAY_OFFSET: &str = "\0typed-array-offset";
+const TYPED_ARRAY_FIXED: &str = "\0typed-array-fixed";
+const ARRAY_BUFFER_DATA: &str = "\0array-buffer-data";
 
 fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if !this.is_object_like() {
