@@ -4847,6 +4847,7 @@ struct Vm {
     jit_mode: JitMode,
     array_proto: Option<ObjectHandle>,
     regexp_iterator_proto: Option<ObjectHandle>,
+    string_iterator_proto: Option<ObjectHandle>,
     prototype_epoch: Cell<u64>,
     object_heap: ObjectHeap,
     host_roots: Vec<Value>,
@@ -4891,6 +4892,7 @@ impl Vm {
             jit_mode: JitMode::from_environment(),
             array_proto: None,
             regexp_iterator_proto: None,
+            string_iterator_proto: None,
             prototype_epoch: Cell::new(INITIAL_PROTOTYPE_EPOCH),
             object_heap: ObjectHeap::new(),
             host_roots: Vec::new(),
@@ -4966,6 +4968,9 @@ impl Vm {
             tracer.object(prototype);
         }
         if let Some(prototype) = self.regexp_iterator_proto {
+            tracer.object(prototype);
+        }
+        if let Some(prototype) = self.string_iterator_proto {
             tracer.object(prototype);
         }
         self.builtin_functions
@@ -14627,6 +14632,28 @@ fn native_iterator_self(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value>
 
 fn native_string_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let source = string_receiver(vm, &this, "Symbol.iterator")?;
+    let prototype = if let Some(prototype) = vm.string_iterator_proto.clone() {
+        Value::Object(prototype)
+    } else {
+        let prototype = vm.object_value(Object::ordinary(None));
+        let next = vm.native_named(native_string_iterator_next, "next", 0);
+        vm.set_prop(&prototype, "next", next);
+        let iterator_key = vm.well_known_symbol_key("iterator");
+        vm.set_prop(&prototype, &iterator_key, vm.native(native_iterator_self));
+        let tag_key = vm.well_known_symbol_key("toStringTag");
+        vm.set_prop(&prototype, &tag_key, Value::string_value("String Iterator"));
+        set_property_attributes(
+            &prototype,
+            &tag_key,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        vm.string_iterator_proto = prototype.as_object();
+        prototype
+    };
     let iterator = vm.object(None);
     vm.set_prop(
         &iterator,
@@ -14634,28 +14661,57 @@ fn native_string_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
         Value::string_value(source),
     );
     vm.set_prop(&iterator, STRING_ITERATOR_INDEX, Value::Number(0.0));
-    vm.set_prop(&iterator, "next", vm.native(native_string_iterator_next));
-    let key = vm.well_known_symbol_key("iterator");
-    vm.set_prop(&iterator, &key, vm.native(native_iterator_self));
+    if let Some(object) = iterator.as_object_ref() {
+        object.borrow_mut().prototype = prototype.as_object();
+    }
     Ok(iterator)
 }
 
 fn native_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    let source = vm.get_prop(&this, STRING_ITERATOR_SOURCE);
-    let index = vm
-        .get_prop(&this, STRING_ITERATOR_INDEX)
-        .as_number()
-        .unwrap_or(0.0) as usize;
+    let Some(object) = this.as_object_ref() else {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "String Iterator.prototype.next called on incompatible receiver",
+        )));
+    };
+    let (source, index) = {
+        let object = object.borrow();
+        let Some(source) = object.props.get(STRING_ITERATOR_SOURCE).cloned() else {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "String Iterator.prototype.next called on incompatible receiver",
+            )));
+        };
+        let index = object
+            .props
+            .get(STRING_ITERATOR_INDEX)
+            .and_then(Value::as_number)
+            .unwrap_or(0.0) as usize;
+        (source, index)
+    };
     let result = vm.object(None);
     let source = source.string();
-    let mut chars = source.chars();
-    if let Some(character) = chars.nth(index) {
+    let units = utf16_units(&source);
+    if index < units.len() {
+        let width = if (0xd800..=0xdbff).contains(&units[index])
+            && units
+                .get(index + 1)
+                .is_some_and(|unit| (0xdc00..=0xdfff).contains(unit))
+        {
+            2
+        } else {
+            1
+        };
         vm.set_prop(
             &this,
             STRING_ITERATOR_INDEX,
-            Value::Number((index + 1) as f64),
+            Value::Number((index + width) as f64),
         );
-        vm.set_prop(&result, "value", Value::string_value(character.to_string()));
+        vm.set_prop(
+            &result,
+            "value",
+            Value::string_value(string_from_utf16_units(&units[index..index + width])),
+        );
         vm.set_prop(&result, "done", Value::Bool(false));
     } else {
         vm.set_prop(&result, "value", Value::Undefined);
