@@ -13351,14 +13351,10 @@ impl Vm {
 
     fn iterable_values(&mut self, value: &Value) -> JsResult<Vec<Value>> {
         if let Some(object) = value.as_object_ref() {
-            if let Some(values) = object
-                .borrow()
-                .array
-                .as_ref()
-                .map(|array| array.values.clone())
-            {
-                return Ok(values);
-            }
+            // Even dense arrays must go through @@iterator: callers may
+            // replace or invalidate Array.prototype[Symbol.iterator], and
+            // spread/argument evaluation is observable at that boundary.
+            let _ = object;
             let iterator_key = self.well_known_symbol_key("iterator");
             let method = self.get_prop_with_accessors(value, &iterator_key)?;
             if !method.is_function() {
@@ -14174,10 +14170,8 @@ impl Vm {
                         ArrayExpressionElement::Elision(_) => index += 1,
                         ArrayExpressionElement::SpreadElement(spread) => {
                             let source = self.eval_expr(&spread.argument, e.clone())?;
-                            let values = native_array_from(self, Value::Undefined, &[source])?;
-                            let length = array_from_length(self, &values)?;
-                            for offset in 0..length {
-                                let value = self.get_prop(&values, &offset.to_string());
+                            let values = self.iterable_values(&source)?;
+                            for value in values {
                                 self.set_prop(&a, &index.to_string(), value);
                                 index += 1;
                             }
