@@ -10143,6 +10143,19 @@ impl Vm {
                 parameter_names.parameter_names.extend(names);
             }
         }
+        {
+            let mut environment = e.borrow_mut();
+            for parameter in &n.params.items {
+                let mut names = Vec::new();
+                pattern_bound_names(&parameter.pattern, &mut names);
+                environment.tdz_names.extend(names);
+            }
+            if let Some(rest) = &n.params.rest {
+                let mut names = Vec::new();
+                pattern_bound_names(&rest.rest.argument, &mut names);
+                environment.tdz_names.extend(names);
+            }
+        }
         for (i, p) in n.params.items.iter().enumerate() {
             let argument = args.get(i).cloned().unwrap_or(Value::Undefined);
             let argument = if argument.is_undefined() {
@@ -10378,6 +10391,19 @@ impl Vm {
                 let mut names = Vec::new();
                 pattern_bound_names(&rest.rest.argument, &mut names);
                 parameter_names.parameter_names.extend(names);
+            }
+        }
+        {
+            let mut environment = e.borrow_mut();
+            for parameter in &n.params.items {
+                let mut names = Vec::new();
+                pattern_bound_names(&parameter.pattern, &mut names);
+                environment.tdz_names.extend(names);
+            }
+            if let Some(rest) = &n.params.rest {
+                let mut names = Vec::new();
+                pattern_bound_names(&rest.rest.argument, &mut names);
+                environment.tdz_names.extend(names);
             }
         }
         for (i, p) in n.params.items.iter().enumerate() {
@@ -13510,6 +13536,7 @@ impl Vm {
                 let name = identifier.name.as_str();
                 let global_object_binding = self.is_global_environment(&target)
                     && !target.borrow().lexical_names.contains(name);
+                target.borrow_mut().tdz_names.remove(name);
                 target.borrow_mut().declare(name, value.clone());
                 if global_object_binding {
                     self.sync_global_binding(&target, name, value);
