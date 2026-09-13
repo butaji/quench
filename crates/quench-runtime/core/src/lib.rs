@@ -40,6 +40,7 @@ macro_rules! install_builtin_methods {
             let method = $method;
             $vm.set_prop(&owner, $name, method);
             set_property_attributes(&owner, $name, PropertyAttributes::BUILTIN_METHOD);
+            $vm.mark_nonconstructable(&$vm.get_prop(&owner, $name));
         )+
     }};
 }
@@ -213,6 +214,33 @@ const PROMISE_STATE_PROP: &str = "\0quench:promise-state";
 const PROMISE_RESULT_PROP: &str = "\0quench:promise-result";
 const PROMISE_MARKER_PROP: &str = "\0quench:promise";
 const PROMISE_QUEUE_PROP: &str = "\0quench:promise-queue";
+const PROMISE_CAPABILITY_RESOLVE_PROP: &str = "\0quench:promise-capability-resolve";
+const PROMISE_CAPABILITY_REJECT_PROP: &str = "\0quench:promise-capability-reject";
+const PROMISE_ALL_STATE_PROP: &str = "\0quench:promise-all-state";
+const PROMISE_ALL_INDEX_PROP: &str = "\0quench:promise-all-index";
+const PROMISE_ALL_CALLED_PROP: &str = "\0quench:promise-all-called";
+const PROMISE_ALL_VALUES_PROP: &str = "\0quench:promise-all-values";
+const PROMISE_ALL_TOTAL_PROP: &str = "\0quench:promise-all-total";
+const PROMISE_ALL_COUNT_PROP: &str = "\0quench:promise-all-count";
+const PROMISE_ALL_RESOLVE_PROP: &str = "\0quench:promise-all-resolve";
+const PROMISE_ALL_REJECT_PROP: &str = "\0quench:promise-all-reject";
+const PROMISE_COMBINATOR_STATE_PROP: &str = "\0quench:promise-combinator-state";
+const PROMISE_COMBINATOR_INDEX_PROP: &str = "\0quench:promise-combinator-index";
+const PROMISE_COMBINATOR_CALLED_PROP: &str = "\0quench:promise-combinator-called";
+const PROMISE_COMBINATOR_KIND_PROP: &str = "\0quench:promise-combinator-kind";
+const PROMISE_COMBINATOR_VALUES_PROP: &str = "\0quench:promise-combinator-values";
+const PROMISE_COMBINATOR_ERRORS_PROP: &str = "\0quench:promise-combinator-errors";
+const PROMISE_COMBINATOR_TOTAL_PROP: &str = "\0quench:promise-combinator-total";
+const PROMISE_COMBINATOR_COUNT_PROP: &str = "\0quench:promise-combinator-count";
+const PROMISE_COMBINATOR_RESOLVE_PROP: &str = "\0quench:promise-combinator-resolve";
+const PROMISE_COMBINATOR_REJECT_PROP: &str = "\0quench:promise-combinator-reject";
+const PROMISE_COMBINATOR_KEY_PROP: &str = "\0quench:promise-combinator-key";
+const PROMISE_COMBINATOR_KEYED_PROP: &str = "\0quench:promise-combinator-keyed";
+const PROMISE_COMBINATOR_RESULT_PROP: &str = "\0quench:promise-combinator-result";
+const PROMISE_FINALLY_CALLBACK_PROP: &str = "\0quench:promise-finally-callback";
+const PROMISE_FINALLY_VALUE_PROP: &str = "\0quench:promise-finally-value";
+const PROMISE_FINALLY_REJECTED_PROP: &str = "\0quench:promise-finally-rejected";
+const PROMISE_FINALLY_HANDLER_PROP: &str = "\0quench:promise-finally-handler";
 const ASYNC_GENERATOR_VALUES_PROP: &str = "\0quench:async-generator-values";
 const ASYNC_GENERATOR_INDEX_PROP: &str = "\0quench:async-generator-index";
 const ASYNC_GENERATOR_ERROR_PROP: &str = "\0quench:async-generator-error";
@@ -246,6 +274,13 @@ impl JitMode {
 pub enum JsError {
     Throw(Value),
     Message(String),
+}
+
+fn error_value(error: JsError) -> Value {
+    match error {
+        JsError::Throw(value) => value,
+        JsError::Message(message) => Value::string_value(message),
+    }
 }
 
 fn is_stencil_fallback_error(error: &JsError) -> bool {
@@ -5783,7 +5818,20 @@ impl Vm {
             } else {
                 Err(JsError::Throw(value.clone()))
             };
-            self.settle_promise(&child, child_result);
+            // Species constructors provide their own resolving functions.  A
+            // custom promise instance may not carry the compact-core marker,
+            // so route settlements through the capability when present.
+            let capability_key = if child_result.is_ok() { "resolve" } else { "reject" };
+            let capability = self.get_prop(&entry, capability_key);
+            if capability.is_function() {
+                let argument = match child_result {
+                    Ok(value) => value,
+                    Err(error) => error_value(error),
+                };
+                let _ = self.call(capability, Value::Undefined, vec![argument]);
+            } else {
+                self.settle_promise(&child, child_result);
+            }
         }
     }
     fn mark_nonconstructable(&self, value: &Value) {
@@ -6208,12 +6256,37 @@ impl Vm {
         let promise_all = self.native_named(native_promise_all, "all", 1);
         let promise_reject = self.native_named(native_promise_reject, "reject", 1);
         let promise_resolve = self.native_named(native_promise_resolve, "resolve", 1);
+        let promise_race = self.native_named(native_promise_race, "race", 1);
+        let promise_any = self.native_named(native_promise_any, "any", 1);
+        let promise_all_settled = self.native_named(native_promise_all_settled, "allSettled", 1);
+        let promise_with_resolvers = self.native_named(native_promise_with_resolvers, "withResolvers", 0);
+        let promise_try = self.native_named(native_promise_try, "try", 1);
+        let promise_all_keyed = self.native_named(native_promise_all_keyed, "allKeyed", 1);
+        let promise_all_settled_keyed =
+            self.native_named(native_promise_all_settled_keyed, "allSettledKeyed", 1);
+        self.mark_nonconstructable(&promise_all);
+        self.mark_nonconstructable(&promise_reject);
+        self.mark_nonconstructable(&promise_resolve);
+        self.mark_nonconstructable(&promise_race);
+        self.mark_nonconstructable(&promise_any);
+        self.mark_nonconstructable(&promise_all_settled);
+        self.mark_nonconstructable(&promise_with_resolvers);
+        self.mark_nonconstructable(&promise_try);
+        self.mark_nonconstructable(&promise_all_keyed);
+        self.mark_nonconstructable(&promise_all_settled_keyed);
         install_builtin_methods!(
             self,
             promise.clone(),
             "all" => promise_all,
             "reject" => promise_reject,
             "resolve" => promise_resolve,
+            "race" => promise_race,
+            "any" => promise_any,
+            "allSettled" => promise_all_settled,
+            "withResolvers" => promise_with_resolvers,
+            "try" => promise_try,
+            "allKeyed" => promise_all_keyed,
+            "allSettledKeyed" => promise_all_settled_keyed,
         );
         let promise_prototype = Value::Object(
             promise
@@ -6221,12 +6294,35 @@ impl Vm {
                 .expect("Promise constructor")
                 .prototype,
         );
+        if let Some(object_prototype) = self
+            .builtin(BuiltinId::ObjectConstructor)
+            .as_function_ref()
+            .map(|function| function.prototype.clone())
+        {
+            promise_prototype
+                .as_object()
+                .expect("Promise prototype")
+                .borrow_mut()
+                .prototype = Some(object_prototype);
+        }
         self.set_prop(&promise_prototype, "constructor", promise.clone());
         install_builtin_methods!(
             self,
             promise_prototype.clone(),
             "then" => self.native_named(native_promise_then, "then", 2),
             "catch" => self.native_named(native_promise_catch, "catch", 1),
+            "finally" => self.native_named(native_promise_finally, "finally", 1),
+        );
+        let tag_key = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&promise_prototype, &tag_key, Value::string_value("Promise"));
+        set_property_attributes(
+            &promise_prototype,
+            &tag_key,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
         );
         // Promise's species accessor is installed after the constructor is
         // materialized.  The earlier generic species pass creates temporary
@@ -6757,6 +6853,7 @@ impl Vm {
                 "URIError",
                 "AggregateError",
                 "SuppressedError",
+                "Promise",
                 "assert",
                 "decodeURI",
                 "decodeURIComponent",
@@ -13730,10 +13827,45 @@ fn native_async_iterator_dispose(vm: &mut Vm, this: Value, _: &[Value]) -> JsRes
     }
     Ok(vm.promise_from_result(Ok(Value::Undefined)))
 }
+
+fn promise_species_constructor(vm: &mut Vm, promise: &Value) -> JsResult<Value> {
+    let default_constructor =
+        Environment::get(&vm.global, "Promise").unwrap_or_else(|| Value::Undefined);
+    let constructor = vm.get_prop_with_accessors(promise, "constructor")?;
+    if constructor.is_undefined() {
+        return Ok(default_constructor.clone());
+    }
+    if !constructor.is_object_like() || is_symbol_carrier(&constructor) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise constructor is not an object",
+        )));
+    }
+    let species_key = vm.well_known_symbol_key("species");
+    let species = vm.get_prop_with_accessors(&constructor, &species_key)?;
+    if species.is_null() || species.is_undefined() {
+        return Ok(default_constructor);
+    }
+    if !constructable(&species) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise species is not a constructor",
+        )));
+    }
+    Ok(species)
+}
+
 fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !vm.get_prop(&this, PROMISE_MARKER_PROP).truthy() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise.prototype.then called on incompatible receiver",
+        )));
+    }
     let state = vm.get_prop(&this, PROMISE_STATE_PROP);
+    let species = promise_species_constructor(vm, &this)?;
+    let (child, child_resolve, child_reject) = new_promise_capability(vm, species)?;
     if state.as_string().is_some_and(|state| state.as_str() == "pending") {
-        let child = vm.new_pending_promise();
         let entry = vm.object(None);
         vm.set_prop(
             &entry,
@@ -13746,6 +13878,8 @@ fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
             args.get(1).cloned().unwrap_or(Value::Undefined),
         );
         vm.set_prop(&entry, "promise", child.clone());
+        vm.set_prop(&entry, "resolve", child_resolve);
+        vm.set_prop(&entry, "reject", child_reject);
         let queue = vm.get_prop(&this, PROMISE_QUEUE_PROP);
         let length = array_from_length(vm, &queue).unwrap_or(0);
         vm.set_prop(&queue, &length.to_string(), entry);
@@ -13760,21 +13894,233 @@ fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
         .unwrap_or(Value::Undefined);
     let value = vm.get_prop(&this, PROMISE_RESULT_PROP);
     if !handler.is_function() {
-        return Ok(vm.promise_from_result(if fulfilled {
-            Ok(value)
-        } else {
-            Err(JsError::Throw(value))
-        }));
+        let resolver = if fulfilled { child_resolve } else { child_reject };
+        let argument = value.clone();
+        let _ = vm.call(resolver, Value::Undefined, vec![argument]);
+        return Ok(child);
     }
     let result = vm.call(handler, Value::Undefined, vec![value]);
-    Ok(vm.promise_from_result(result))
+    match result {
+        Ok(value) => {
+            let _ = vm.call(child_resolve, Value::Undefined, vec![value]);
+        }
+        Err(error) => {
+            let _ = vm.call(child_reject, Value::Undefined, vec![error_value(error)]);
+        }
+    }
+    Ok(child)
 }
 fn native_promise_catch(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    native_promise_then(
-        vm,
+    if this.is_null() || this.is_undefined() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise.prototype.catch called on null or undefined",
+        )));
+    }
+    let then_method = vm.get_prop_with_accessors(&this, "then")?;
+    if !then_method.is_function() {
+        return Err(JsError::Throw(type_error(vm, "promise then is not callable")));
+    }
+    vm.call(
+        then_method,
         this,
-        &[Value::Undefined, args.first().cloned().unwrap_or(Value::Undefined)],
+        vec![Value::Undefined, args.first().cloned().unwrap_or(Value::Undefined)],
     )
+}
+fn native_promise_finally_handler(
+    vm: &mut Vm,
+    this: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    let callback = vm.get_prop(&this, PROMISE_FINALLY_CALLBACK_PROP);
+    if callback.is_function() {
+        vm.call(callback, Value::Undefined, Vec::new())?;
+    }
+    let value = vm.get_prop(&this, PROMISE_FINALLY_VALUE_PROP);
+    if vm.get_prop(&this, PROMISE_FINALLY_REJECTED_PROP).truthy() {
+        Err(JsError::Throw(value))
+    } else {
+        Ok(value)
+    }
+}
+fn native_promise_finally(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !this.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise.prototype.finally called on incompatible receiver",
+        )));
+    }
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() {
+        let then_method = vm.get_prop_with_accessors(&this, "then")?;
+        if !then_method.is_function() {
+            return Err(JsError::Throw(type_error(vm, "promise then is not callable")));
+        }
+        return vm.call(then_method, this, vec![callback.clone(), callback]);
+    }
+    let state_fulfilled = vm.object(None);
+    vm.set_prop(&state_fulfilled, PROMISE_FINALLY_CALLBACK_PROP, callback.clone());
+    vm.set_prop(
+        &state_fulfilled,
+        PROMISE_FINALLY_VALUE_PROP,
+        Value::Undefined,
+    );
+    vm.set_prop(&state_fulfilled, PROMISE_FINALLY_REJECTED_PROP, Value::Bool(false));
+    let state_rejected = vm.object(None);
+    vm.set_prop(&state_rejected, PROMISE_FINALLY_CALLBACK_PROP, callback);
+    vm.set_prop(&state_rejected, PROMISE_FINALLY_VALUE_PROP, Value::Undefined);
+    vm.set_prop(&state_rejected, PROMISE_FINALLY_REJECTED_PROP, Value::Bool(true));
+    let fulfilled = native_function_bind(
+        vm,
+        vm.native_named(native_promise_finally_handler, "", 1),
+        std::slice::from_ref(&state_fulfilled),
+    )?;
+    let rejected = native_function_bind(
+        vm,
+        vm.native_named(native_promise_finally_handler, "", 1),
+        std::slice::from_ref(&state_rejected),
+    )?;
+    vm.set_prop(&state_fulfilled, PROMISE_FINALLY_HANDLER_PROP, fulfilled);
+    vm.set_prop(&state_rejected, PROMISE_FINALLY_HANDLER_PROP, rejected);
+    let fulfill_forward = native_function_bind(
+        vm,
+        vm.native_named(native_promise_finally_capture_fulfilled, "", 1),
+        std::slice::from_ref(&state_fulfilled),
+    )?;
+    let reject_forward = native_function_bind(
+        vm,
+        vm.native_named(native_promise_finally_capture_rejected, "", 1),
+        std::slice::from_ref(&state_rejected),
+    )?;
+    for forward in [&fulfill_forward, &reject_forward] {
+        set_function_name(forward, "");
+        set_property_attributes(
+            forward,
+            "name",
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
+    let then_method = vm.get_prop_with_accessors(&this, "then")?;
+    if !then_method.is_function() {
+        return Err(JsError::Throw(type_error(vm, "promise then is not callable")));
+    }
+    vm.call(then_method, this, vec![fulfill_forward, reject_forward])
+}
+fn native_promise_finally_capture_fulfilled(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let state = this.clone();
+    vm.set_prop(&state, PROMISE_FINALLY_VALUE_PROP, args.first().cloned().unwrap_or(Value::Undefined));
+    let handler = vm.get_prop(&state, PROMISE_FINALLY_HANDLER_PROP);
+    vm.call(handler, Value::Undefined, Vec::new())
+}
+fn native_promise_finally_capture_rejected(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let state = this.clone();
+    vm.set_prop(&state, PROMISE_FINALLY_VALUE_PROP, args.first().cloned().unwrap_or(Value::Undefined));
+    let handler = vm.get_prop(&state, PROMISE_FINALLY_HANDLER_PROP);
+    vm.call(handler, Value::Undefined, Vec::new())
+}
+fn native_promise_capability_executor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let resolve = args.first().cloned().unwrap_or(Value::Undefined);
+    let reject = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let old_resolve = vm.get_prop(&this, PROMISE_CAPABILITY_RESOLVE_PROP);
+    let old_reject = vm.get_prop(&this, PROMISE_CAPABILITY_REJECT_PROP);
+    if (!old_resolve.is_undefined() && !resolve.is_undefined())
+        || (!old_reject.is_undefined() && !reject.is_undefined())
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise capability executor called twice",
+        )));
+    }
+    if old_resolve.is_undefined() {
+        vm.set_prop(&this, PROMISE_CAPABILITY_RESOLVE_PROP, resolve);
+    }
+    if old_reject.is_undefined() {
+        vm.set_prop(&this, PROMISE_CAPABILITY_REJECT_PROP, reject);
+    }
+    Ok(Value::Undefined)
+}
+fn anonymous_native_bound(
+    vm: &mut Vm,
+    native: fn(&mut Vm, Value, &[Value]) -> JsResult<Value>,
+    this_arg: &Value,
+    length: usize,
+) -> JsResult<Value> {
+    let target = vm.native_named(native, "", length);
+    let bound = native_function_bind(vm, target, std::slice::from_ref(this_arg))?;
+    set_function_name(&bound, "");
+    set_property_attributes(
+        &bound,
+        "name",
+        PropertyAttributes {
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    Ok(bound)
+}
+fn set_function_name(value: &Value, name: &str) {
+    if let Some(function) = value.as_function_ref() {
+        function
+            .props
+            .borrow_mut()
+            .insert("name".into(), Value::string_value(name));
+    }
+}
+fn new_promise_capability(
+    vm: &mut Vm,
+    constructor: Value,
+) -> JsResult<(Value, Value, Value)> {
+    if !constructable(&constructor) {
+        return Err(JsError::Throw(type_error(vm, "Promise constructor is not a constructor")));
+    }
+    let holder = vm.object(None);
+    let executor = anonymous_native_bound(vm, native_promise_capability_executor, &holder, 2)?;
+    let prototype = vm
+        .get_prop(&constructor, "prototype")
+        .as_object()
+        .or_else(|| constructor.as_function_ref().map(|function| function.prototype.clone()));
+    let target = vm.object(prototype);
+    // Capability construction is the spec's `new Constructor(executor)` path.
+    // Keep the dynamic new.target visible to user constructors while invoking
+    // them, then restore the enclosing call's value even when construction
+    // throws.
+    let previous_new_target = vm.current_new_target.replace(constructor.clone());
+    let result = if let Some(function) = constructor.as_function_ref()
+        && matches!(function.kind, FunctionKind::Class { .. })
+    {
+        vm.call_class(function, target.clone(), vec![executor])
+    } else {
+        vm.call(constructor, target.clone(), vec![executor])
+    };
+    vm.current_new_target = previous_new_target;
+    let result = result?;
+    let promise = if result.is_object_like() { result } else { target };
+    let resolve = vm.get_prop(&holder, PROMISE_CAPABILITY_RESOLVE_PROP);
+    let reject = vm.get_prop(&holder, PROMISE_CAPABILITY_REJECT_PROP);
+    if !resolve.is_function() || !reject.is_function() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise capability executor did not provide functions",
+        )));
+    }
+    Ok((promise, resolve, reject))
 }
 fn native_promise_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(executor) = args.first().filter(|value| value.is_function()).cloned() else {
@@ -13796,16 +14142,8 @@ fn native_promise_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         PROMISE_QUEUE_PROP,
         vm.array_from_values(Vec::new()),
     );
-    let resolve = native_function_bind(
-        vm,
-        vm.native(native_promise_resolve_executor),
-        std::slice::from_ref(&promise),
-    )?;
-    let reject = native_function_bind(
-        vm,
-        vm.native(native_promise_reject_executor),
-        std::slice::from_ref(&promise),
-    )?;
+    let resolve = anonymous_native_bound(vm, native_promise_resolve_executor, &promise, 1)?;
+    let reject = anonymous_native_bound(vm, native_promise_reject_executor, &promise, 1)?;
     if let Err(error) = vm.call(executor, Value::Undefined, vec![resolve, reject]) {
         if vm
             .get_prop(&this, PROMISE_STATE_PROP)
@@ -13823,10 +14161,60 @@ fn native_promise_resolve_executor(vm: &mut Vm, this: Value, args: &[Value]) -> 
         .as_string()
         .is_some_and(|state| state.as_str() == "pending")
     {
-        vm.settle_promise(
-            &this,
-            Ok(args.first().cloned().unwrap_or(Value::Undefined)),
-        );
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        if value.same_bits(&this) {
+            vm.settle_promise(
+                &this,
+                Err(JsError::Throw(type_error(vm, "promise cannot resolve itself"))),
+            );
+            return Ok(Value::Undefined);
+        }
+        if vm.get_prop(&value, PROMISE_MARKER_PROP).truthy() {
+            let then = vm.get_prop_with_accessors(&value, "then");
+            match then {
+                Ok(then) if then.is_function() => {
+                    let resolve = anonymous_native_bound(
+                        vm,
+                        native_promise_resolve_executor,
+                        &this,
+                        1,
+                    )?;
+                    let reject = anonymous_native_bound(
+                        vm,
+                        native_promise_reject_executor,
+                        &this,
+                        1,
+                    )?;
+                    if let Err(error) = vm.call(then, value, vec![resolve, reject]) {
+                        vm.settle_promise(&this, Err(error));
+                    }
+                }
+                Ok(_) => vm.settle_promise(&this, Ok(value)),
+                Err(error) => vm.settle_promise(&this, Err(error)),
+            }
+        } else {
+            match vm.get_prop_with_accessors(&value, "then") {
+                Ok(then) if then.is_function() => {
+                    let resolve = anonymous_native_bound(
+                        vm,
+                        native_promise_resolve_executor,
+                        &this,
+                        1,
+                    )?;
+                    let reject = anonymous_native_bound(
+                        vm,
+                        native_promise_reject_executor,
+                        &this,
+                        1,
+                    )?;
+                    if let Err(error) = vm.call(then, value, vec![resolve, reject]) {
+                        vm.settle_promise(&this, Err(error));
+                    }
+                }
+                Ok(_) => vm.settle_promise(&this, Ok(value)),
+                Err(error) => vm.settle_promise(&this, Err(error)),
+            }
+        }
     }
     Ok(Value::Undefined)
 }
@@ -13845,95 +14233,709 @@ fn native_promise_reject_executor(vm: &mut Vm, this: Value, args: &[Value]) -> J
     }
     Ok(Value::Undefined)
 }
-fn native_promise_resolve(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    if let Some(value) = args.first()
-        && !vm.get_prop(value, PROMISE_MARKER_PROP).is_undefined()
-    {
-        return Ok(value.clone());
+fn native_promise_resolve(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    if !constructor.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise.resolve called on non-object",
+        )));
     }
-    Ok(vm.promise_from_result(Ok(
-        args.first().cloned().unwrap_or(Value::Undefined),
-    )))
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if vm.get_prop(&value, PROMISE_MARKER_PROP).truthy()
+        && vm.get_prop(&value, "constructor").same_bits(&constructor)
+    {
+        return Ok(value);
+    }
+    let (promise, resolve, _) = new_promise_capability(vm, constructor)?;
+    vm.call(resolve, Value::Undefined, vec![value])?;
+    Ok(promise)
 }
-fn native_promise_reject(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(vm.promise_from_result(Err(JsError::Throw(
+fn native_promise_reject(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    let (promise, _, reject) = new_promise_capability(vm, constructor)?;
+    vm.call(
+        reject,
+        Value::Undefined,
+        vec![args.first().cloned().unwrap_or(Value::Undefined)],
+    )?;
+    Ok(promise)
+}
+fn native_promise_all_resolve_element(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if vm.get_prop(&this, PROMISE_ALL_CALLED_PROP).truthy() {
+        return Ok(Value::Undefined);
+    }
+    vm.set_prop(&this, PROMISE_ALL_CALLED_PROP, Value::Bool(true));
+    let state = vm.get_prop(&this, PROMISE_ALL_STATE_PROP);
+    let index = vm.get_prop(&this, PROMISE_ALL_INDEX_PROP).number().max(0.0) as usize;
+    let values = vm.get_prop(&state, PROMISE_ALL_VALUES_PROP);
+    vm.set_prop(
+        &values,
+        &index.to_string(),
         args.first().cloned().unwrap_or(Value::Undefined),
-    ))))
+    );
+    let count = vm.get_prop(&state, PROMISE_ALL_COUNT_PROP).number() as usize + 1;
+    vm.set_prop(&state, PROMISE_ALL_COUNT_PROP, Value::Number(count as f64));
+    let total = vm.get_prop(&state, PROMISE_ALL_TOTAL_PROP).number() as usize;
+    if total > 0 && count == total {
+        let resolve = vm.get_prop(&state, PROMISE_ALL_RESOLVE_PROP);
+        if resolve.is_function() {
+            let _ = vm.call(resolve, Value::Undefined, vec![values]);
+        }
+    }
+    Ok(Value::Undefined)
 }
 fn native_promise_all(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    // NewPromiseCapability errors are synchronous (a malformed constructor or
+    // capability executor must throw before iterator processing begins).
+    let (aggregate, aggregate_resolve, aggregate_reject) =
+        new_promise_capability(vm, constructor.clone())?;
     let iterable = args.first().cloned().unwrap_or(Value::Undefined);
     let iterator_key = vm.well_known_symbol_key("iterator");
-    let method = vm.get_prop_with_accessors(&iterable, &iterator_key)?;
+    let method = match vm.get_prop_with_accessors(&iterable, &iterator_key) {
+        Ok(method) => method,
+        Err(error) => {
+            let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
     if !method.is_function() {
-        return Err(JsError::Throw(type_error(vm, "value is not iterable")));
+        let error = type_error(vm, "value is not iterable");
+        let _ = vm.call(aggregate_reject, Value::Undefined, vec![error]);
+        return Ok(aggregate);
     }
-    let iterator = vm.call(method, iterable, Vec::new())?;
-    let resolve = vm.get_prop_with_accessors(&constructor, "resolve")?;
+    let iterator = match vm.call(method, iterable, Vec::new()) {
+        Ok(iterator) => iterator,
+        Err(error) => {
+            let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
+    let resolve = match vm.get_prop_with_accessors(&constructor, "resolve") {
+        Ok(resolve) => resolve,
+        Err(error) => {
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
     if !resolve.is_function() {
-        return Err(JsError::Throw(type_error(vm, "Promise resolve is not callable")));
+        let error = type_error(vm, "Promise resolve is not callable");
+        let _ = vm.iterator_close(&iterator);
+        let _ = vm.call(aggregate_reject, Value::Undefined, vec![error]);
+        return Ok(aggregate);
     }
-    let mut results = Vec::new();
+    let aggregate_state = vm.object(None);
+    vm.set_prop(
+        &aggregate_state,
+        PROMISE_ALL_VALUES_PROP,
+        vm.array_from_values(Vec::new()),
+    );
+    vm.set_prop(&aggregate_state, PROMISE_ALL_TOTAL_PROP, Value::Number(0.0));
+    vm.set_prop(&aggregate_state, PROMISE_ALL_COUNT_PROP, Value::Number(0.0));
+    vm.set_prop(
+        &aggregate_state,
+        PROMISE_ALL_RESOLVE_PROP,
+        aggregate_resolve.clone(),
+    );
+    vm.set_prop(&aggregate_state, PROMISE_ALL_REJECT_PROP, aggregate_reject.clone());
+    let mut index = 0usize;
     loop {
-        let next = vm.get_prop_with_accessors(&iterator, "next")?;
+        let next = match vm.get_prop_with_accessors(&iterator, "next") {
+            Ok(next) => next,
+            Err(error) => {
+                let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
         if !next.is_function() {
-            return Err(JsError::Throw(type_error(
-                vm,
-                "iterator next method is not callable",
-            )));
+            let error = type_error(vm, "iterator next method is not callable");
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(aggregate_reject, Value::Undefined, vec![error]);
+            return Ok(aggregate);
         }
         let step = match vm.call(next, iterator.clone(), Vec::new()) {
             Ok(value) => value,
             Err(error) => {
-                let _ = vm.iterator_close(&iterator);
-                return Err(error);
+                let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
             }
         };
         if !step.is_object_like() {
-            let error = JsError::Throw(type_error(vm, "iterator result is not an object"));
+            let error = type_error(vm, "iterator result is not an object");
             let _ = vm.iterator_close(&iterator);
-            return Err(error);
+            let _ = vm.call(aggregate_reject, Value::Undefined, vec![error]);
+            return Ok(aggregate);
         }
-        if vm.get_prop_with_accessors(&step, "done")?.truthy() {
+        let done = match vm.get_prop_with_accessors(&step, "done") {
+            Ok(done) => done.truthy(),
+            Err(error) => {
+                let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if done {
             break;
         }
-        let value = vm.get_prop_with_accessors(&step, "value")?;
+        let value = match vm.get_prop_with_accessors(&step, "value") {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
         let resolved = match vm.call(resolve.clone(), constructor.clone(), vec![value]) {
             Ok(value) => value,
             Err(error) => {
                 let _ = vm.iterator_close(&iterator);
-                return Ok(vm.promise_from_result(Err(error)));
+                let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
             }
         };
         // PerformPromiseAll invokes the resolved promise's `then` before it
         // advances the iterator.  Calling the method here is observable (and
         // is what guarantees IteratorClose when a user replacement throws).
-        let then_method = vm.get_prop_with_accessors(&resolved, "then")?;
+        let then_method = match vm.get_prop_with_accessors(&resolved, "then") {
+            Ok(method) => method,
+            Err(error) => {
+                let _ = vm.iterator_close(&iterator);
+                let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
         if !then_method.is_function() {
-            let error = JsError::Throw(type_error(vm, "promise then is not callable"));
+            let error = type_error(vm, "promise then is not callable");
             let _ = vm.iterator_close(&iterator);
-            return Ok(vm.promise_from_result(Err(error)));
+            let _ = vm.call(aggregate_reject, Value::Undefined, vec![error]);
+            return Ok(aggregate);
         }
+        let element_state = vm.object(None);
+        vm.set_prop(&element_state, PROMISE_ALL_STATE_PROP, aggregate_state.clone());
+        vm.set_prop(
+            &element_state,
+            PROMISE_ALL_INDEX_PROP,
+            Value::Number(index as f64),
+        );
+        vm.set_prop(&element_state, PROMISE_ALL_CALLED_PROP, Value::Bool(false));
+        let resolve_element = native_function_bind(
+            vm,
+            vm.native_named(native_promise_all_resolve_element, "", 1),
+            std::slice::from_ref(&element_state),
+        )?;
+        set_function_name(&resolve_element, "");
+        set_property_attributes(
+            &resolve_element,
+            "name",
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         if let Err(error) = vm.call(
             then_method,
             resolved.clone(),
-            vec![vm.native(native_noop), vm.native(native_noop)],
+            vec![resolve_element, aggregate_reject.clone()],
         ) {
             let _ = vm.iterator_close(&iterator);
-            return Ok(vm.promise_from_result(Err(error)));
+            let _ = vm.call(aggregate_reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
         }
-        let state = vm.get_prop(&resolved, PROMISE_STATE_PROP);
-        if state.as_string().is_some_and(|state| state.as_str() == "rejected") {
-            let error = JsError::Throw(vm.get_prop(&resolved, PROMISE_RESULT_PROP));
-            let _ = vm.iterator_close(&iterator);
-            return Ok(vm.promise_from_result(Err(error)));
-        }
-        results.push(if state.as_string().is_some_and(|state| state.as_str() == "fulfilled") {
-            vm.get_prop(&resolved, PROMISE_RESULT_PROP)
-        } else {
-            resolved
-        });
+        index += 1;
     }
-    Ok(vm.promise_from_result(Ok(vm.array_from_values(results))))
+    vm.set_prop(
+        &aggregate_state,
+        PROMISE_ALL_TOTAL_PROP,
+        Value::Number(index as f64),
+    );
+    let count = vm.get_prop(&aggregate_state, PROMISE_ALL_COUNT_PROP).number() as usize;
+    if index == 0 || count == index {
+        let values = vm.get_prop(&aggregate_state, PROMISE_ALL_VALUES_PROP);
+        let _ = vm.call(aggregate_resolve, Value::Undefined, vec![values]);
+    }
+    Ok(aggregate)
+}
+fn native_promise_combinator_fulfill(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if vm.get_prop(&this, PROMISE_COMBINATOR_CALLED_PROP).truthy() {
+        return Ok(Value::Undefined);
+    }
+    vm.set_prop(&this, PROMISE_COMBINATOR_CALLED_PROP, Value::Bool(true));
+    let state = vm.get_prop(&this, PROMISE_COMBINATOR_STATE_PROP);
+    let kind = vm.get_prop(&state, PROMISE_COMBINATOR_KIND_PROP).string();
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if kind == "any" {
+        let resolve = vm.get_prop(&state, PROMISE_COMBINATOR_RESOLVE_PROP);
+        if resolve.is_function() {
+            let _ = vm.call(resolve, Value::Undefined, vec![value]);
+        }
+        return Ok(Value::Undefined);
+    }
+    let keyed = vm.get_prop(&state, PROMISE_COMBINATOR_KEYED_PROP).truthy();
+    let all_settled = kind == "allSettled" || kind == "allSettledKeyed";
+    let index = vm.get_prop(&this, PROMISE_COMBINATOR_INDEX_PROP).number() as usize;
+    let key = vm.get_prop(&this, PROMISE_COMBINATOR_KEY_PROP).string();
+    let values = if keyed {
+        vm.get_prop(&state, PROMISE_COMBINATOR_RESULT_PROP)
+    } else {
+        vm.get_prop(&state, PROMISE_COMBINATOR_VALUES_PROP)
+    };
+    if keyed && !all_settled {
+        vm.set_prop(&values, &key, value);
+    } else {
+        let result = if all_settled {
+            let result = vm.object(None);
+            vm.set_prop(&result, "status", Value::string_value("fulfilled"));
+            vm.set_prop(&result, "value", value);
+            result
+        } else {
+            value
+        };
+        let result_key = if keyed { key.clone() } else { index.to_string() };
+        vm.set_prop(&values, &result_key, result);
+    }
+    promise_combinator_complete(vm, &state)
+}
+fn native_promise_combinator_reject(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if vm.get_prop(&this, PROMISE_COMBINATOR_CALLED_PROP).truthy() {
+        return Ok(Value::Undefined);
+    }
+    vm.set_prop(&this, PROMISE_COMBINATOR_CALLED_PROP, Value::Bool(true));
+    let state = vm.get_prop(&this, PROMISE_COMBINATOR_STATE_PROP);
+    let kind = vm.get_prop(&state, PROMISE_COMBINATOR_KIND_PROP).string();
+    let reason = args.first().cloned().unwrap_or(Value::Undefined);
+    if kind == "allKeyed" {
+        let reject = vm.get_prop(&state, PROMISE_COMBINATOR_REJECT_PROP);
+        if reject.is_function() {
+            let _ = vm.call(reject, Value::Undefined, vec![reason]);
+        }
+        return Ok(Value::Undefined);
+    }
+    if kind == "any" {
+        let index = vm.get_prop(&this, PROMISE_COMBINATOR_INDEX_PROP).number() as usize;
+        let errors = vm.get_prop(&state, PROMISE_COMBINATOR_ERRORS_PROP);
+        vm.set_prop(&errors, &index.to_string(), reason);
+        return promise_combinator_complete(vm, &state);
+    }
+    let keyed = vm.get_prop(&state, PROMISE_COMBINATOR_KEYED_PROP).truthy();
+    let index = vm.get_prop(&this, PROMISE_COMBINATOR_INDEX_PROP).number() as usize;
+    let key = vm.get_prop(&this, PROMISE_COMBINATOR_KEY_PROP).string();
+    let values = if keyed {
+        vm.get_prop(&state, PROMISE_COMBINATOR_RESULT_PROP)
+    } else {
+        vm.get_prop(&state, PROMISE_COMBINATOR_VALUES_PROP)
+    };
+    let result = vm.object(None);
+    vm.set_prop(&result, "status", Value::string_value("rejected"));
+    vm.set_prop(&result, "reason", reason);
+    let result_key = if keyed { key } else { index.to_string() };
+    vm.set_prop(&values, &result_key, result);
+    promise_combinator_complete(vm, &state)
+}
+fn promise_combinator_complete(vm: &mut Vm, state: &Value) -> JsResult<Value> {
+    let count = vm.get_prop(state, PROMISE_COMBINATOR_COUNT_PROP).number() as usize + 1;
+    vm.set_prop(state, PROMISE_COMBINATOR_COUNT_PROP, Value::Number(count as f64));
+    promise_combinator_finish(vm, state)
+}
+fn promise_combinator_finish(vm: &mut Vm, state: &Value) -> JsResult<Value> {
+    let count = vm.get_prop(state, PROMISE_COMBINATOR_COUNT_PROP).number() as usize;
+    let total = vm.get_prop(state, PROMISE_COMBINATOR_TOTAL_PROP).number() as usize;
+    if total == 0 || count != total {
+        return Ok(Value::Undefined);
+    }
+    let kind = vm.get_prop(state, PROMISE_COMBINATOR_KIND_PROP).string();
+    if kind == "any" {
+        let errors = vm.get_prop(state, PROMISE_COMBINATOR_ERRORS_PROP);
+        let aggregate_error = vm.object(
+            vm.builtin(BuiltinId::AggregateErrorConstructor)
+                .as_function_ref()
+                .map(|function| function.prototype.clone()),
+        );
+        vm.set_prop(&aggregate_error, "name", Value::string_value("AggregateError"));
+        vm.set_prop(&aggregate_error, "message", Value::string_value("All promises were rejected"));
+        vm.set_prop(&aggregate_error, "errors", errors);
+        let reject = vm.get_prop(state, PROMISE_COMBINATOR_REJECT_PROP);
+        if reject.is_function() {
+            let _ = vm.call(reject, Value::Undefined, vec![aggregate_error]);
+        }
+    } else {
+        let values = if vm.get_prop(state, PROMISE_COMBINATOR_KEYED_PROP).truthy() {
+            vm.get_prop(state, PROMISE_COMBINATOR_RESULT_PROP)
+        } else {
+            vm.get_prop(state, PROMISE_COMBINATOR_VALUES_PROP)
+        };
+        let resolve = vm.get_prop(state, PROMISE_COMBINATOR_RESOLVE_PROP);
+        if resolve.is_function() {
+            if let Err(error) = vm.call(resolve, Value::Undefined, vec![values]) {
+                let reject = vm.get_prop(state, PROMISE_COMBINATOR_REJECT_PROP);
+                if reject.is_function() {
+                    let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                }
+            }
+        }
+    }
+    Ok(Value::Undefined)
+}
+fn native_promise_combinator(
+    vm: &mut Vm,
+    constructor: Value,
+    args: &[Value],
+    kind: &'static str,
+) -> JsResult<Value> {
+    let (aggregate, resolve, reject) = new_promise_capability(vm, constructor.clone())?;
+    let state = vm.object(None);
+    vm.set_prop(&state, PROMISE_COMBINATOR_KIND_PROP, Value::string_value(kind));
+    vm.set_prop(&state, PROMISE_COMBINATOR_KEYED_PROP, Value::Bool(false));
+    vm.set_prop(&state, PROMISE_COMBINATOR_VALUES_PROP, vm.array_from_values(Vec::new()));
+    vm.set_prop(&state, PROMISE_COMBINATOR_ERRORS_PROP, vm.array_from_values(Vec::new()));
+    vm.set_prop(&state, PROMISE_COMBINATOR_TOTAL_PROP, Value::Number(0.0));
+    vm.set_prop(&state, PROMISE_COMBINATOR_COUNT_PROP, Value::Number(0.0));
+    vm.set_prop(&state, PROMISE_COMBINATOR_RESOLVE_PROP, resolve.clone());
+    vm.set_prop(&state, PROMISE_COMBINATOR_REJECT_PROP, reject.clone());
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let iterator_key = vm.well_known_symbol_key("iterator");
+    let method = match vm.get_prop_with_accessors(&iterable, &iterator_key) {
+        Ok(method) => method,
+        Err(error) => {
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
+    if !method.is_function() {
+        let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "value is not iterable")]);
+        return Ok(aggregate);
+    }
+    let iterator = match vm.call(method, iterable, Vec::new()) {
+        Ok(iterator) => iterator,
+        Err(error) => {
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
+    let resolve_method = match vm.get_prop_with_accessors(&constructor, "resolve") {
+        Ok(resolve) if resolve.is_function() => resolve,
+        Ok(_) => {
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "Promise resolve is not callable")]);
+            return Ok(aggregate);
+        }
+        Err(error) => {
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
+    let mut index = 0usize;
+    loop {
+        let next = match vm.get_prop_with_accessors(&iterator, "next") {
+            Ok(next) => next,
+            Err(error) => {
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if !next.is_function() {
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "iterator next method is not callable")]);
+            return Ok(aggregate);
+        }
+        let step = match vm.call(next, iterator.clone(), Vec::new()) {
+            Ok(step) => step,
+            Err(error) => {
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if !step.is_object_like() {
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "iterator result is not an object")]);
+            return Ok(aggregate);
+        }
+        let done = match vm.get_prop_with_accessors(&step, "done") {
+            Ok(done) => done.truthy(),
+            Err(error) => {
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if done {
+            break;
+        }
+        let value = match vm.get_prop_with_accessors(&step, "value") {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        let value = match vm.call(resolve_method.clone(), constructor.clone(), vec![value]) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = vm.iterator_close(&iterator);
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        let element = vm.object(None);
+        vm.set_prop(&element, PROMISE_COMBINATOR_STATE_PROP, state.clone());
+        vm.set_prop(&element, PROMISE_COMBINATOR_INDEX_PROP, Value::Number(index as f64));
+        vm.set_prop(&element, PROMISE_COMBINATOR_CALLED_PROP, Value::Bool(false));
+        // Promise.any forwards fulfillment directly to the capability's
+        // resolve function.  The resolve function itself is responsible for
+        // idempotence; wrapping it in an AlreadyCalled record would suppress
+        // observable repeated calls on user supplied constructors.
+        let fulfill = if kind == "any" {
+            resolve.clone()
+        } else {
+            anonymous_native_bound(vm, native_promise_combinator_fulfill, &element, 1)?
+        };
+        let reject_element = anonymous_native_bound(vm, native_promise_combinator_reject, &element, 1)?;
+        let then = match vm.get_prop_with_accessors(&value, "then") {
+            Ok(then) => then,
+            Err(error) => {
+                let _ = vm.iterator_close(&iterator);
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if !then.is_function() {
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "promise then is not callable")]);
+            return Ok(aggregate);
+        }
+        if let Err(error) = vm.call(then, value, vec![fulfill, reject_element]) {
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+        index += 1;
+    }
+    vm.set_prop(&state, PROMISE_COMBINATOR_TOTAL_PROP, Value::Number(index as f64));
+    let count = vm.get_prop(&state, PROMISE_COMBINATOR_COUNT_PROP).number() as usize;
+    if index == 0 || count == index {
+        promise_combinator_finish(vm, &state)?;
+    }
+    Ok(aggregate)
+}
+fn native_promise_race(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    let (aggregate, resolve, reject) = new_promise_capability(vm, constructor.clone())?;
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let iterator_key = vm.well_known_symbol_key("iterator");
+    let method = match vm.get_prop_with_accessors(&iterable, &iterator_key) {
+        Ok(method) => method,
+        Err(error) => {
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
+    if !method.is_function() {
+        let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "value is not iterable")]);
+        return Ok(aggregate);
+    }
+    let iterator = match vm.call(method, iterable, Vec::new()) {
+        Ok(iterator) => iterator,
+        Err(error) => {
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
+    let resolve_method = match vm.get_prop_with_accessors(&constructor, "resolve") {
+        Ok(resolve) if resolve.is_function() => resolve,
+        Ok(_) => {
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "Promise resolve is not callable")]);
+            return Ok(aggregate);
+        }
+        Err(error) => {
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
+    loop {
+        let next = match vm.get_prop_with_accessors(&iterator, "next") {
+            Ok(next) => next,
+            Err(error) => {
+                let _ = vm.call(reject.clone(), Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if !next.is_function() {
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "iterator next method is not callable")]);
+            return Ok(aggregate);
+        }
+        let step = match vm.call(next, iterator.clone(), Vec::new()) {
+            Ok(step) => step,
+            Err(error) => {
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if !step.is_object_like() {
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "iterator result is not an object")]);
+            return Ok(aggregate);
+        }
+        let done = match vm.get_prop_with_accessors(&step, "done") {
+            Ok(done) => done.truthy(),
+            Err(error) => {
+                let _ = vm.call(reject.clone(), Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if done {
+            break;
+        }
+        let value = match vm.get_prop_with_accessors(&step, "value") {
+            Ok(value) => value,
+            Err(error) => {
+                // IteratorValue marks the record done before propagating; the
+                // race algorithm therefore rejects without IteratorClose.
+                let _ = vm.call(reject.clone(), Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        let value = match vm.call(resolve_method.clone(), constructor.clone(), vec![value]) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = vm.iterator_close(&iterator);
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        let then = match vm.get_prop_with_accessors(&value, "then") {
+            Ok(then) => then,
+            Err(error) => {
+                let _ = vm.iterator_close(&iterator);
+                let _ = vm.call(reject.clone(), Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        if !then.is_function() {
+            let _ = vm.call(reject.clone(), Value::Undefined, vec![type_error(vm, "promise then is not callable")]);
+            return Ok(aggregate);
+        }
+        if let Err(error) = vm.call(then, value, vec![resolve.clone(), reject.clone()]) {
+            let _ = vm.iterator_close(&iterator);
+            let _ = vm.call(reject.clone(), Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    }
+    Ok(aggregate)
+}
+fn native_promise_any(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    native_promise_combinator(vm, constructor, args, "any")
+}
+fn native_promise_all_settled(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    native_promise_combinator(vm, constructor, args, "allSettled")
+}
+fn native_promise_keyed(
+    vm: &mut Vm,
+    constructor: Value,
+    args: &[Value],
+    kind: &'static str,
+) -> JsResult<Value> {
+    let (aggregate, resolve, reject) = new_promise_capability(vm, constructor.clone())?;
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+    if !input.is_object_like() {
+        let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "value is not an object")]);
+        return Ok(aggregate);
+    }
+    let keys = object_own_enumerable_keys_with_symbols(&input);
+    let resolve_method = match vm.get_prop_with_accessors(&constructor, "resolve") {
+        Ok(resolve) if resolve.is_function() => resolve,
+        Ok(_) => {
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "Promise resolve is not callable")]);
+            return Ok(aggregate);
+        }
+        Err(error) => {
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    };
+    let state = vm.object(None);
+    vm.set_prop(&state, PROMISE_COMBINATOR_KIND_PROP, Value::string_value(kind));
+    vm.set_prop(&state, PROMISE_COMBINATOR_KEYED_PROP, Value::Bool(true));
+    vm.set_prop(&state, PROMISE_COMBINATOR_VALUES_PROP, vm.array_from_values(Vec::new()));
+    vm.set_prop(&state, PROMISE_COMBINATOR_ERRORS_PROP, vm.array_from_values(Vec::new()));
+    vm.set_prop(&state, PROMISE_COMBINATOR_RESULT_PROP, vm.object_value(Object::ordinary(None)));
+    vm.set_prop(&state, PROMISE_COMBINATOR_TOTAL_PROP, Value::Number(keys.len() as f64));
+    vm.set_prop(&state, PROMISE_COMBINATOR_COUNT_PROP, Value::Number(0.0));
+    vm.set_prop(&state, PROMISE_COMBINATOR_RESOLVE_PROP, resolve.clone());
+    vm.set_prop(&state, PROMISE_COMBINATOR_REJECT_PROP, reject.clone());
+    for (index, key) in keys.into_iter().enumerate() {
+        let value = vm.get_prop_with_accessors(&input, &key)?;
+        let value = match vm.call(resolve_method.clone(), constructor.clone(), vec![value]) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(aggregate);
+            }
+        };
+        let element = vm.object(None);
+        vm.set_prop(&element, PROMISE_COMBINATOR_STATE_PROP, state.clone());
+        vm.set_prop(&element, PROMISE_COMBINATOR_INDEX_PROP, Value::Number(index as f64));
+        vm.set_prop(&element, PROMISE_COMBINATOR_KEY_PROP, Value::string_value(key));
+        vm.set_prop(&element, PROMISE_COMBINATOR_CALLED_PROP, Value::Bool(false));
+        let fulfill = anonymous_native_bound(vm, native_promise_combinator_fulfill, &element, 1)?;
+        let reject_element = anonymous_native_bound(vm, native_promise_combinator_reject, &element, 1)?;
+        let then = vm.get_prop_with_accessors(&value, "then")?;
+        if !then.is_function() {
+            let _ = vm.call(reject, Value::Undefined, vec![type_error(vm, "promise then is not callable")]);
+            return Ok(aggregate);
+        }
+        if let Err(error) = vm.call(then, value, vec![fulfill, reject_element]) {
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+            return Ok(aggregate);
+        }
+    }
+    if vm.get_prop(&state, PROMISE_COMBINATOR_TOTAL_PROP).number() == 0.0 {
+        promise_combinator_finish(vm, &state)?;
+    }
+    Ok(aggregate)
+}
+fn native_promise_all_keyed(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    native_promise_keyed(vm, constructor, args, "allKeyed")
+}
+fn native_promise_all_settled_keyed(
+    vm: &mut Vm,
+    constructor: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    native_promise_keyed(vm, constructor, args, "allSettledKeyed")
+}
+fn native_promise_with_resolvers(vm: &mut Vm, constructor: Value, _: &[Value]) -> JsResult<Value> {
+    let (promise, resolve, reject) = new_promise_capability(vm, constructor)?;
+    let result = vm.object(None);
+    vm.set_prop(&result, "promise", promise);
+    vm.set_prop(&result, "resolve", resolve);
+    vm.set_prop(&result, "reject", reject);
+    Ok(result)
+}
+fn native_promise_try(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let call_args = args.get(1..).unwrap_or_default().to_vec();
+    let result = if callback.is_function() {
+        vm.call(callback, Value::Undefined, call_args)
+    } else {
+        Err(JsError::Throw(type_error(vm, "Promise.try callback is not callable")))
+    };
+    let (promise, resolve, reject) = new_promise_capability(vm, constructor)?;
+    match result {
+        Ok(value) => {
+            let _ = vm.call(resolve, Value::Undefined, vec![value]);
+        }
+        Err(error) => {
+            let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+        }
+    }
+    Ok(promise)
 }
 fn native_html_dda(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Null)
@@ -17243,11 +18245,16 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     let explicit_prototype = prototype_override
         .clone()
         .and_then(|value| value.as_object());
+    let ordinary_prototype = if prototype_override.is_none() {
+        Some(vm.get_prop_with_accessors(&new_target, "prototype")?)
+    } else {
+        None
+    };
     let prototype = explicit_prototype
         .or_else(|| {
             prototype_override
                 .is_none()
-                .then(|| vm.get_prop(&new_target, "prototype"))
+                .then(|| ordinary_prototype.clone().unwrap_or(Value::Undefined))
                 .and_then(|value| value.as_object())
         })
         .or_else(|| {
