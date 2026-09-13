@@ -9215,6 +9215,13 @@ impl Vm {
                     f.strict,
                     Some(c.clone()),
                 );
+                if let Ok(value) = &result
+                    && !value.is_undefined()
+                {
+                    if let Some(yields) = self.async_generator_yields.as_mut() {
+                        yields.push(value.clone());
+                    }
+                }
                 let yields = self.async_generator_yields.take().unwrap_or_default();
                 self.async_generator_yields = previous_yields;
                 result?;
