@@ -2839,6 +2839,7 @@ enum Signal {
 }
 enum LValue {
     Var(Env, String),
+    UnresolvedVar(Env, String),
     Prop(Value, String),
     SuperProp {
         base: Value,
@@ -12059,7 +12060,12 @@ impl Vm {
         };
         match s {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(i) => {
-                Ok(LValue::Var(e, i.name.to_string()))
+                let name = i.name.to_string();
+                if Environment::get(&e, &name).is_none() {
+                    Ok(LValue::UnresolvedVar(e, name))
+                } else {
+                    Ok(LValue::Var(e, name))
+                }
             }
             SimpleAssignmentTarget::StaticMemberExpression(m) => {
                 let base = self.eval_expr(&m.object, e.clone())?;
@@ -12091,12 +12097,19 @@ impl Vm {
     fn read_lvalue(&self, target: &LValue) -> Value {
         match target {
             LValue::Var(e, name) => Environment::get(e, name).unwrap_or(Value::Undefined),
+            LValue::UnresolvedVar(_, _) => Value::Undefined,
             LValue::Prop(o, k) => self.get_prop(o, k),
             LValue::SuperProp { base, key, .. } => self.get_prop(base, key),
         }
     }
     fn write_lvalue(&mut self, target: LValue, v: Value) -> JsResult<()> {
         match target {
+            LValue::UnresolvedVar(e, name) => {
+                if self.strict_mode {
+                    return Err(JsError::Throw(reference_error(self, &name)));
+                }
+                Environment::set(&e, &name, v);
+            }
             LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {
                 if self.strict_mode {
                     return Err(JsError::Throw(type_error(

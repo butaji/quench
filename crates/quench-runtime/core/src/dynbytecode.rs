@@ -2187,6 +2187,15 @@ impl Compiler {
             span: value.span,
             reason: "unsupported assignment target",
         })?;
+        if self.strict
+            && let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target
+            && !self.known_names.contains(identifier.name.as_str())
+        {
+            return Err(CompileGap {
+                span: value.span,
+                reason: "strict unresolved assignment deferred to shared semantics",
+            });
+        }
         let lvalue = self.lvalue(target)?;
         let right = self.expression(&value.right)?;
         use oxc_syntax::operator::AssignmentOperator::*;
