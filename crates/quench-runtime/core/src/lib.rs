@@ -13509,6 +13509,21 @@ impl Vm {
                 } else {
                     value
                 };
+                // Default initializers participate in NamedEvaluation.  Keep
+                // the binding name as the single source of truth for
+                // anonymous function/class values created in parameter and
+                // destructuring patterns.
+                if is_anonymous_function_definition(&assignment.right)
+                    && let Some(name) = pattern_name(&assignment.left)
+                    && value.as_function_ref().is_some_and(|function| {
+                        let props = function.props.borrow();
+                        props
+                            .get("name")
+                            .is_none_or(|name| name.as_string().is_some_and(|name| name.is_empty()))
+                    })
+                {
+                    set_function_name(&value, &name);
+                }
                 self.bind_pattern_with_eval_env(&assignment.left, value, target, eval_env)
             }
             BindingPattern::ArrayPattern(array) => {
@@ -15273,6 +15288,18 @@ fn function_has_arguments_eval_conflict(function: &Function<'_>) -> bool {
         )
     });
     eval_in_formals
+}
+
+fn is_anonymous_function_definition(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::FunctionExpression(function) => function.id.is_none(),
+        Expression::ArrowFunctionExpression(_) => true,
+        Expression::ClassExpression(class) => class.id.is_none(),
+        Expression::ParenthesizedExpression(expression) => {
+            is_anonymous_function_definition(&expression.expression)
+        }
+        _ => false,
+    }
 }
 
 fn eval_arguments_conflict(environment: &Env) -> bool {
