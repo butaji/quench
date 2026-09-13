@@ -169,6 +169,32 @@ macro_rules! builtin_catalog {
                         | Self::SuppressedErrorConstructor
                 )
             }
+
+            /// Whether this builtin has a constructable function shape.
+            /// Keeping the intrinsic constructor family beside the catalog
+            /// prevents interpreter and JIT `new` paths from drifting apart.
+            pub(crate) const fn is_constructable(self) -> bool {
+                matches!(
+                    self,
+                    Self::ObjectConstructor
+                        | Self::ArrayConstructor
+                        | Self::StringConstructor
+                        | Self::NumberConstructor
+                        | Self::BooleanConstructor
+                        | Self::DateConstructor
+                        | Self::RegExpConstructor
+                        | Self::ErrorConstructor
+                        | Self::TypeErrorConstructor
+                        | Self::RangeErrorConstructor
+                        | Self::URIErrorConstructor
+                        | Self::SyntaxErrorConstructor
+                        | Self::ReferenceErrorConstructor
+                        | Self::EvalErrorConstructor
+                        | Self::AggregateErrorConstructor
+                        | Self::SuppressedErrorConstructor
+                        | Self::FunctionConstructor
+                )
+            }
         }
 
         pub(crate) static BUILTIN_RECIPES: &[BuiltinRecipe] = &[
