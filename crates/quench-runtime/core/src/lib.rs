@@ -2931,6 +2931,10 @@ enum LValue {
     Var(Env, String),
     UnresolvedVar(Env, String),
     WithProp(Value, String),
+    DeferredProp {
+        object: Value,
+        key: Value,
+    },
     Prop(Value, String),
     SuperProp {
         base: Value,
@@ -15143,6 +15147,9 @@ impl Vm {
             LValue::Var(e, name) => Environment::get(e, name).unwrap_or(Value::Undefined),
             LValue::UnresolvedVar(_, _) => Value::Undefined,
             LValue::WithProp(object, key) => self.get_prop(object, key),
+            // Prepared destructuring targets are write-only references; the
+            // source value is read from the other object before PutValue.
+            LValue::DeferredProp { .. } => Value::Undefined,
             LValue::Prop(o, k) => self.get_prop(o, k),
             LValue::SuperProp { base, key, .. } => self.get_prop(base, key),
         }
@@ -15166,6 +15173,10 @@ impl Vm {
                     }
                 }
                 self.set_prop_with_accessors(&object, &key, v)?;
+            }
+            LValue::DeferredProp { object, key } => {
+                let key = self.to_property_key(key)?;
+                set_assignment_property(self, &object, &key, v)?;
             }
             LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {
                 if self.immutable_binding(&e, &name) || self.strict_mode {
@@ -15400,21 +15411,60 @@ impl Vm {
     fn assign_target<'a>(&mut self, t: &AssignmentTarget<'a>, v: Value, e: Env) -> JsResult<()> {
         match t {
             AssignmentTarget::ArrayAssignmentTarget(pattern) => {
-                let values = self.iterable_values(&v)?;
-                for (index, element) in pattern.elements.iter().enumerate() {
-                    if let Some(element) = element {
-                        let value = values.get(index).cloned().unwrap_or(Value::Undefined);
-                        self.assign_maybe_default_target(element, value, e.clone())?;
+                let mut record = self.iterator_record(&v)?;
+                macro_rules! iterator_try {
+                    ($operation:expr) => {
+                        match $operation {
+                            Ok(value) => value,
+                            Err(error) => {
+                                if !record.done {
+                                    let _ = self.iterator_close(&record.iterator);
+                                }
+                                return Err(error);
+                            }
+                        }
+                    };
+                }
+                for element in &pattern.elements {
+                    let Some(element) = element else {
+                        iterator_try!(self.iterator_step(&mut record));
+                        continue;
+                    };
+                    // Iterator destructuring evaluates each target reference
+                    // before advancing the iterator.  Keep computed-key
+                    // coercion deferred until PutValue.
+                    let prepared =
+                        iterator_try!(self.prepare_destructuring_target(element, e.clone()));
+                    let element_value =
+                        iterator_try!(self.iterator_step(&mut record)).unwrap_or(Value::Undefined);
+                    if let Some(target) = prepared {
+                        let value = if element_value.is_undefined() {
+                            match element {
+                                AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(
+                                    default,
+                                ) => iterator_try!(self.eval_expr(&default.init, e.clone())),
+                                _ => element_value,
+                            }
+                        } else {
+                            element_value
+                        };
+                        iterator_try!(self.write_lvalue(target, value));
+                    } else {
+                        iterator_try!(self.assign_maybe_default_target(
+                            element,
+                            element_value,
+                            e.clone()
+                        ));
                     }
                 }
                 if let Some(rest) = &pattern.rest {
-                    self.assign_target(
-                        &rest.target,
-                        self.array_from_values(
-                            values.into_iter().skip(pattern.elements.len()).collect(),
-                        ),
-                        e,
-                    )?;
+                    let mut values = Vec::new();
+                    while let Some(value) = iterator_try!(self.iterator_step(&mut record)) {
+                        values.push(value);
+                    }
+                    self.assign_target(&rest.target, self.array_from_values(values), e)?;
+                } else if !record.done {
+                    self.iterator_close(&record.iterator)?;
                 }
                 Ok(())
             }
@@ -15429,7 +15479,7 @@ impl Vm {
                     match property {
                         AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
                             let key = property.binding.name.as_str();
-                            let value = self.get_prop(&v, key);
+                            let value = self.get_prop_with_accessors(&v, key)?;
                             let value = if value.is_undefined() {
                                 property
                                     .init
@@ -15444,8 +15494,32 @@ impl Vm {
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
                             let key = self.eval_property_key(&property.name, e.clone())?;
-                            let value = self.get_prop(&v, &key);
-                            self.assign_maybe_default_target(&property.binding, value, e.clone())?;
+                            // Evaluate the assignment target reference before
+                            // fetching the source property.  Computed keys
+                            // are evaluated now, but ToPropertyKey remains a
+                            // PutValue-time effect.
+                            let prepared =
+                                self.prepare_destructuring_target(&property.binding, e.clone())?;
+                            let value = self.get_prop_with_accessors(&v, &key)?;
+                            if let Some(target) = prepared {
+                                let value = if value.is_undefined() {
+                                    match &property.binding {
+                                        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(
+                                            default,
+                                        ) => self.eval_expr(&default.init, e.clone())?,
+                                        _ => value,
+                                    }
+                                } else {
+                                    value
+                                };
+                                self.write_lvalue(target, value)?;
+                            } else {
+                                self.assign_maybe_default_target(
+                                    &property.binding,
+                                    value,
+                                    e.clone(),
+                                )?;
+                            }
                         }
                     }
                 }
@@ -15490,6 +15564,35 @@ impl Vm {
                 |target| self.assign_target(target, value, e),
             ),
         }
+    }
+
+    fn prepare_destructuring_target<'a>(
+        &mut self,
+        target: &AssignmentTargetMaybeDefault<'a>,
+        e: Env,
+    ) -> JsResult<Option<LValue>> {
+        let target = match target {
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => &default.binding,
+            _ => target
+                .as_assignment_target()
+                .ok_or_else(|| JsError::Message("target unsupported".into()))?,
+        };
+        let lvalue = match target {
+            AssignmentTarget::AssignmentTargetIdentifier(_) => {
+                Some(self.resolve_target(target, e)?)
+            }
+            AssignmentTarget::StaticMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e)?;
+                Some(LValue::Prop(object, member.property.name.to_string()))
+            }
+            AssignmentTarget::ComputedMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                let key = self.eval_expr(&member.expression, e)?;
+                Some(LValue::DeferredProp { object, key })
+            }
+            _ => None,
+        };
+        Ok(lvalue)
     }
 
     fn assign_simple_target<'a>(
