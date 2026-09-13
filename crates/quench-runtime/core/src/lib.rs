@@ -7493,6 +7493,15 @@ impl Vm {
         function: &FunctionValue<'static>,
         node: &ArrowFunctionExpression<'static>,
     ) -> JsResult<()> {
+        if node.params.items.iter().any(|parameter| {
+            parameter.initializer.is_some()
+                || !matches!(&parameter.pattern, BindingPattern::BindingIdentifier(_))
+        }) || node.params.rest.as_ref().is_some_and(|rest| {
+            !matches!(&rest.rest.argument, BindingPattern::BindingIdentifier(_))
+        }) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         if !function.strict
             && node.body.as_function_body().is_some_and(|body| {
                 dynbytecode::contains_nested_function_declaration(&body.statements)
@@ -7581,10 +7590,20 @@ impl Vm {
         self.set_prop(&av, "toString", self.native(native_object_to_string));
         set_property_attributes(&av, "toString", PropertyAttributes::BUILTIN_METHOD);
         e.borrow_mut().declare("arguments", av);
+        {
+            let mut parameter_names = e.borrow_mut();
+            for parameter in &n.params.items {
+                let mut names = Vec::new();
+                pattern_bound_names(&parameter.pattern, &mut names);
+                parameter_names.parameter_names.extend(names);
+            }
+            if let Some(rest) = &n.params.rest {
+                let mut names = Vec::new();
+                pattern_bound_names(&rest.rest.argument, &mut names);
+                parameter_names.parameter_names.extend(names);
+            }
+        }
         for (i, p) in n.params.items.iter().enumerate() {
-            let mut names = Vec::new();
-            pattern_bound_names(&p.pattern, &mut names);
-            e.borrow_mut().parameter_names.extend(names);
             let argument = args.get(i).cloned().unwrap_or(Value::Undefined);
             let argument = if argument.is_undefined() {
                 p.initializer
@@ -7598,9 +7617,6 @@ impl Vm {
             self.bind_pattern(&p.pattern, argument, e.clone())?;
         }
         if let Some(rest) = &n.params.rest {
-            let mut names = Vec::new();
-            pattern_bound_names(&rest.rest.argument, &mut names);
-            e.borrow_mut().parameter_names.extend(names);
             self.bind_pattern(
                 &rest.rest.argument,
                 self.array_from_values(args.iter().skip(n.params.items.len()).cloned().collect()),
@@ -7678,19 +7694,38 @@ impl Vm {
         if let Some(body) = n.body.as_function_body() {
             reserve_script_bindings(&e, &body.statements);
         }
-        for (i, p) in n.params.items.iter().enumerate() {
-            if let Some(name) = pattern_name(&p.pattern) {
-                e.borrow_mut()
-                    .declare(&name, args.get(i).cloned().unwrap_or(Value::Undefined));
+        {
+            let mut parameter_names = e.borrow_mut();
+            for parameter in &n.params.items {
+                let mut names = Vec::new();
+                pattern_bound_names(&parameter.pattern, &mut names);
+                parameter_names.parameter_names.extend(names);
+            }
+            if let Some(rest) = &n.params.rest {
+                let mut names = Vec::new();
+                pattern_bound_names(&rest.rest.argument, &mut names);
+                parameter_names.parameter_names.extend(names);
             }
         }
-        if let Some(rest) = &n.params.rest
-            && let Some(name) = pattern_name(&rest.rest.argument)
-        {
-            e.borrow_mut().declare(
-                &name,
+        for (i, p) in n.params.items.iter().enumerate() {
+            let argument = args.get(i).cloned().unwrap_or(Value::Undefined);
+            let argument = if argument.is_undefined() {
+                p.initializer
+                    .as_ref()
+                    .map(|initializer| self.eval_expr(initializer, e.clone()))
+                    .transpose()?
+                    .unwrap_or(argument)
+            } else {
+                argument
+            };
+            self.bind_pattern(&p.pattern, argument, e.clone())?;
+        }
+        if let Some(rest) = &n.params.rest {
+            self.bind_pattern(
+                &rest.rest.argument,
                 self.array_from_values(args.iter().skip(n.params.items.len()).cloned().collect()),
-            );
+                e.clone(),
+            )?;
         }
         let result = (|| {
             if let Some(expression) = n.body.as_expression() {
@@ -7780,40 +7815,48 @@ impl Vm {
                 "legacy escape is not permitted in strict code",
             )));
         }
-        if Rc::ptr_eq(&environment, &self.global)
-            && Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
-        {
+        if Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some() {
             let mut var_names = Vec::new();
             collect_global_object_binding_names(&r.program.body, &mut var_names);
-            let global_lexical_names = self.global.borrow().lexical_names.clone();
-            if !self.strict_mode
-                && var_names
-                    .iter()
-                    .any(|name| global_lexical_names.contains(name))
-            {
+            if var_names.iter().any(|name| {
+                name == "arguments" && environment.borrow().parameter_names.contains(name)
+            }) {
                 return Err(JsError::Throw(syntax_error(
                     self,
-                    "var declaration conflicts with global lexical binding",
+                    "eval var declaration conflicts with parameter binding",
                 )));
             }
-            let mut lexical_names = HashSet::new();
-            collect_lexical_binding_names(&r.program.body, &mut lexical_names);
-            let restricted = Environment::get(&self.global, "globalThis")
-                .and_then(|global| global.as_object())
-                .is_some_and(|object| {
-                    let object = object.borrow();
-                    lexical_names.iter().any(|name| {
-                        object
-                            .attributes
-                            .get(name)
-                            .is_some_and(|attributes| !attributes.configurable)
-                    })
-                });
-            if restricted {
-                return Err(JsError::Throw(syntax_error(
-                    self,
-                    "lexical declaration conflicts with restricted global binding",
-                )));
+            if Rc::ptr_eq(&environment, &self.global) {
+                let global_lexical_names = self.global.borrow().lexical_names.clone();
+                if !self.strict_mode
+                    && var_names
+                        .iter()
+                        .any(|name| global_lexical_names.contains(name))
+                {
+                    return Err(JsError::Throw(syntax_error(
+                        self,
+                        "var declaration conflicts with global lexical binding",
+                    )));
+                }
+                let mut lexical_names = HashSet::new();
+                collect_lexical_binding_names(&r.program.body, &mut lexical_names);
+                let restricted = Environment::get(&self.global, "globalThis")
+                    .and_then(|global| global.as_object())
+                    .is_some_and(|object| {
+                        let object = object.borrow();
+                        lexical_names.iter().any(|name| {
+                            object
+                                .attributes
+                                .get(name)
+                                .is_some_and(|attributes| !attributes.configurable)
+                        })
+                    });
+                if restricted {
+                    return Err(JsError::Throw(syntax_error(
+                        self,
+                        "lexical declaration conflicts with restricted global binding",
+                    )));
+                }
             }
         }
         // Script declaration instantiation happens before any statement (and
@@ -21260,6 +21303,18 @@ mod tests {
             "result = /𝌆{2}/u.test('𝌆𝌆');",
         )
         .expect("unicode astral regexp executes");
+        assert!(Environment::get(&vm.global, "result").is_some_and(|value| value.truthy()));
+    }
+
+    #[test]
+    fn eval_var_arguments_conflicts_with_following_parameter() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<eval-arguments-conflict>"),
+            "const f = (p = eval(\"var arguments = 'param'\"), arguments) => {}; result = (() => { try { f(); return false; } catch (e) { return e instanceof SyntaxError; } })();",
+        )
+        .expect("eval conflict probe executes");
         assert!(Environment::get(&vm.global, "result").is_some_and(|value| value.truthy()));
     }
 
