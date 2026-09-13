@@ -72,7 +72,7 @@ interpreter would be a compatibility regression, not a migration.
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (177 tests)
+- `cargo test -p quench-runtime-core --lib` (185 tests)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - production `quench-node` build and a core-backed Node smoke test
@@ -113,9 +113,9 @@ Verification completed:
   Instant conversion, and static `now`/`parse`/`UTC` helpers from one date
   payload; the remaining failures are mostly Temporal hooks, proxies, and
   unsupported prototype methods
-- the stencil String stage now reaches 424/1,223 after routing constructor
-  coercion and global binding projection through the shared stencil VM; the
-  remaining failures are unsupported syntax, accessors, and Unicode details
+- the stencil String stage now reaches 1,223/1,223 after routing constructor
+  coercion, global binding projection, and accessor reads through the shared
+  stencil VM
 - the stencil Object stage now reaches 3,411/3,411 and is fully green after
   enforcing
   `Object.create` prototype validation, applying its property descriptors with
@@ -146,11 +146,17 @@ Verification completed:
   detection, preserving constructor-call prototypes, and modeling the shared
   `Error.prototype.stack` accessor contract; proxy/realm and accessor-descriptor
   edge cases remain open
-- the stencil Symbol stage now reaches 97/98 after introducing stable symbol
+- the stencil Symbol stage now reaches 98/98 after introducing stable symbol
   key atoms, shared global-symbol registry state, distinct realm constructors,
   well-known symbol descriptors, species accessors, and constructor-boundary
-  `IsConstructor` semantics; the remaining failure is class-based subclassing
-  syntax in the stencil frontend
+  `IsConstructor` semantics
+- the stencil StringIteratorPrototype stage reaches 7/7, including iterator
+  ancestry, descriptors, receiver validation, and UTF-16 surrogate pairs
+- the stencil SuppressedError stage reaches 19/22; the three remaining cases
+  require Proxy/custom-realm construction semantics
+- the stencil Annex B built-ins stage reaches 214/241; remaining cases are
+  advanced RegExp grammar/Unicode behavior, Proxy/custom-realm RegExp
+  receivers, and TypedArray iterator lowering
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
