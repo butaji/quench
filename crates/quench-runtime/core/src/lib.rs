@@ -6183,6 +6183,7 @@ impl Vm {
             for (name, native) in [("Map", native_map_constructor as _), ("Set", native_set_constructor as _)] {
                 let constructor = self.native_named(native, name, 0);
                 let prototype = constructor.as_function_ref().expect("collection constructor").prototype.clone();
+                self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
                 if name == "Map" {
                     self.set_prop(&Value::Object(prototype.clone()), "get", self.native_named(native_map_get, "get", 1));
                     self.set_prop(&Value::Object(prototype.clone()), "set", self.native_named(native_map_set, "set", 2));
@@ -6422,6 +6423,9 @@ impl Vm {
         // only by their element width/name. Keep that fact declarative so the
         // global surface and prototype metadata cannot drift apart.
         let array_buffer = self.native_named(native_array_buffer_constructor, "ArrayBuffer", 1);
+        if let Some(prototype) = array_buffer.as_function_ref().map(|function| function.prototype.clone()) {
+            self.set_prop(&array_buffer, "prototype", Value::Object(prototype));
+        }
         Environment::set(&g, "ArrayBuffer", array_buffer);
         let typed_array_base = self.native_named(native_typed_array_constructor, "TypedArray", 0);
         self.mark_nonconstructable(&typed_array_base);
@@ -6450,6 +6454,7 @@ impl Vm {
                 .expect("typed array constructor")
                 .prototype
                 .clone();
+            self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
             self.set_prop(
                 &Value::Object(prototype.clone()),
                 "BYTES_PER_ELEMENT",
@@ -6483,6 +6488,7 @@ impl Vm {
         if Environment::get(&g, "Map").is_none() {
             let constructor = self.native_named(native_map_constructor, "Map", 0);
             let prototype = constructor.as_function_ref().expect("Map constructor").prototype.clone();
+            self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
             self.set_prop(&Value::Object(prototype.clone()), "get", self.native_named(native_map_get, "get", 1));
             self.set_prop(&Value::Object(prototype.clone()), "set", self.native_named(native_map_set, "set", 2));
             self.set_prop(&Value::Object(prototype), "has", self.native_named(native_map_has, "has", 1));
@@ -6493,6 +6499,7 @@ impl Vm {
         if Environment::get(&g, "Set").is_none() {
             let constructor = self.native_named(native_set_constructor, "Set", 0);
             let prototype = constructor.as_function_ref().expect("Set constructor").prototype.clone();
+            self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
             self.set_prop(&Value::Object(prototype.clone()), "add", self.native_named(native_set_add, "add", 1));
             self.set_prop(&Value::Object(prototype), "has", self.native_named(native_set_has, "has", 1));
             let iterator = self.well_known_symbol_key("iterator");
@@ -7367,6 +7374,14 @@ impl Vm {
                     }
                     FunctionKind::Native(native)
                         if *native as *const () == native_promise_constructor as *const () =>
+                    {
+                        true
+                    }
+                    FunctionKind::Native(native)
+                        if *native as *const () == native_array_buffer_constructor as *const ()
+                            || *native as *const () == native_typed_array_constructor as *const ()
+                            || *native as *const () == native_map_constructor as *const ()
+                            || *native as *const () == native_set_constructor as *const () =>
                     {
                         true
                     }
