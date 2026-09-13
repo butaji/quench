@@ -8288,6 +8288,14 @@ impl Vm {
             }
             return self.get_prop_with_receiver(&target, key, receiver);
         }
+        // Restricted function properties are inherited from
+        // %Function.prototype%. Function values carry their own prototype
+        // object separately, so route this accessor explicitly rather than
+        // pretending the own `prototype` slot is the internal [[Prototype]].
+        if self.restricted_function_property(object, key) {
+            let thrower = self.throw_type_error();
+            return self.call_arguments(&thrower, receiver.clone(), &[] as &[Value]);
+        }
         if let Some((path, imported)) = self.module_ref_parts(object, key) {
             return self.resolve_module_ref(&path, &imported);
         }
@@ -8436,6 +8444,11 @@ impl Vm {
                 )));
             }
             return self.set_prop_with_receiver(&target, key, value, receiver);
+        }
+        if self.restricted_function_property(object, key) {
+            let thrower = self.throw_type_error();
+            self.call_arguments(&thrower, receiver.clone(), &[value][..])?;
+            return Ok(());
         }
         // Primitive Symbols are represented by an internal object carrier.
         // ToObject auto-boxing must not persist user properties on that
