@@ -15274,6 +15274,13 @@ impl Vm {
                 } else {
                     value
                 };
+                if value.is_function()
+                    && is_anonymous_function_definition(&default.init)
+                    && function_name_is_inferable(&value)
+                    && let Some(name) = assignment_target_name(&default.binding)
+                {
+                    set_function_name(&value, &name);
+                }
                 self.assign_target(&default.binding, value, e)
             }
             _ => target.as_assignment_target().map_or_else(
@@ -15424,6 +15431,24 @@ fn pattern_name<'a>(p: &BindingPattern<'a>) -> Option<String> {
         BindingPattern::AssignmentPattern(a) => pattern_name(&a.left),
         _ => None,
     }
+}
+
+fn assignment_target_name(target: &AssignmentTarget<'_>) -> Option<String> {
+    match target {
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+            Some(identifier.name.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn function_name_is_inferable(value: &Value) -> bool {
+    value.as_function_ref().is_some_and(|function| {
+        let props = function.props.borrow();
+        props
+            .get("name")
+            .is_none_or(|name| name.as_string().is_some_and(|name| name.is_empty()))
+    })
 }
 
 fn pattern_bound_names<'a>(pattern: &BindingPattern<'a>, names: &mut Vec<String>) {
