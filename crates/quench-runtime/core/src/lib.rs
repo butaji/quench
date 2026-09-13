@@ -485,6 +485,9 @@ impl Value {
         }
     }
     fn truthy(&self) -> bool {
+        if is_html_dda_value(self) {
+            return false;
+        }
         if self.is_undefined() || self.is_null() {
             return false;
         }
@@ -4617,6 +4620,10 @@ fn loose_eq(a: &Value, b: &Value) -> bool {
     if eq_strict(a, b) {
         return true;
     }
+    if is_html_dda_value(a) || is_html_dda_value(b) {
+        return (is_html_dda_value(a) && (b.is_null() || b.is_undefined()))
+            || (is_html_dda_value(b) && (a.is_null() || a.is_undefined()));
+    }
     if (a.is_null() && b.is_undefined()) || (a.is_undefined() && b.is_null()) {
         return true;
     }
@@ -4644,6 +4651,15 @@ fn loose_eq(a: &Value, b: &Value) -> bool {
         return a.number() == b.number();
     }
     false
+}
+
+fn is_html_dda_value(value: &Value) -> bool {
+    value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0html-dda"))
+        || value
+            .as_function_ref()
+            .is_some_and(|function| function.props.borrow().contains_key("\0html-dda"))
 }
 fn instance_of(value: &Value, ctor: &Value) -> bool {
     if value.as_regexp_ref().is_some() {
@@ -5964,6 +5980,7 @@ impl Vm {
         // result is not an iterator. Keep it VM-owned so Array.from and
         // Object.is observe the same sentinel without a second host runtime.
         let html_dda = self.native_named(native_html_dda, "IsHTMLDDA", 0);
+        self.mark_nonconstructable(&html_dda);
         self.set_prop(&html_dda, "\0html-dda", Value::Bool(true));
         self.set_prop(&test262, "IsHTMLDDA", html_dda);
         Environment::set(&g, "$262", test262);
@@ -7958,18 +7975,73 @@ impl Vm {
             ForOfStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
                 let iterable = self.eval_expr(&x.right, e.clone())?;
-                let values = self.iterable_values(&iterable)?;
-                for value in values {
+                let iterator_key = self.well_known_symbol_key("iterator");
+                let iterator_method = self.get_prop_with_accessors(&iterable, &iterator_key)?;
+                let Some(iterator) = iterator_method
+                    .is_function()
+                    .then(|| {
+                        self.call_arguments(&iterator_method, iterable.clone(), &[] as &[Value])
+                    })
+                    .transpose()?
+                else {
+                    let values = self.iterable_values(&iterable)?;
+                    for value in values {
+                        self.assign_for_left(&x.left, value, e.clone())?;
+                        match self.exec_stmt(&x.body, e.clone())? {
+                            Signal::Break(None) => break,
+                            Signal::Break(Some(label))
+                                if loop_label.as_deref() == Some(label.as_str()) =>
+                            {
+                                break;
+                            }
+                            Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
+                            Signal::Return(v) => return Ok(Signal::Return(v)),
+                            Signal::Continue(None) | Signal::Normal(_) => {}
+                            Signal::Continue(Some(label))
+                                if loop_label.as_deref() == Some(label.as_str()) => {}
+                            Signal::Continue(Some(label)) => {
+                                return Ok(Signal::Continue(Some(label)));
+                            }
+                        }
+                    }
+                    return Ok(Signal::Normal(Value::Undefined));
+                };
+                loop {
+                    let next = self.get_prop_with_accessors(&iterator, "next")?;
+                    if !next.is_function() {
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "iterator next method is not callable",
+                        )));
+                    }
+                    let step = self.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
+                    if !step.is_object_like() {
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "iterator result is not an object",
+                        )));
+                    }
+                    if self.get_prop_with_accessors(&step, "done")?.truthy() {
+                        break;
+                    }
+                    let value = self.get_prop_with_accessors(&step, "value")?;
                     self.assign_for_left(&x.left, value, e.clone())?;
                     match self.exec_stmt(&x.body, e.clone())? {
-                        Signal::Break(None) => break,
+                        Signal::Break(None) => {
+                            self.iterator_close(&iterator)?;
+                            break;
+                        }
                         Signal::Break(Some(label))
                             if loop_label.as_deref() == Some(label.as_str()) =>
                         {
+                            self.iterator_close(&iterator)?;
                             break;
                         }
                         Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
-                        Signal::Return(v) => return Ok(Signal::Return(v)),
+                        Signal::Return(v) => {
+                            self.iterator_close(&iterator)?;
+                            return Ok(Signal::Return(v));
+                        }
                         Signal::Continue(None) | Signal::Normal(_) => {}
                         Signal::Continue(Some(label))
                             if loop_label.as_deref() == Some(label.as_str()) => {}
@@ -8122,9 +8194,8 @@ impl Vm {
                 .transpose()?
                 .unwrap_or(Value::Undefined);
             let target = if v.kind == VariableDeclarationKind::Var {
-                let catch_binding = pattern_name(&d.id).is_some_and(|name| {
-                    e.borrow().catch_names.contains(&name)
-                });
+                let catch_binding =
+                    pattern_name(&d.id).is_some_and(|name| e.borrow().catch_names.contains(&name));
                 catch_binding
                     .then(|| e.clone())
                     .unwrap_or_else(|| variable_environment(&e))
@@ -8293,6 +8364,27 @@ impl Vm {
         Err(JsError::Throw(type_error(self, "value is not iterable")))
     }
 
+    fn iterator_close(&mut self, iterator: &Value) -> JsResult<()> {
+        let return_method = self.get_prop_with_accessors(iterator, "return")?;
+        if return_method.is_null() || return_method.is_undefined() {
+            return Ok(());
+        }
+        if !return_method.is_function() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "iterator return method is not callable",
+            )));
+        }
+        let result = self.call_arguments(&return_method, iterator.clone(), &[] as &[Value])?;
+        if !result.is_object_like() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "iterator result is not an object",
+            )));
+        }
+        Ok(())
+    }
+
     fn bind_pattern<'a>(
         &mut self,
         pattern: &BindingPattern<'a>,
@@ -8450,6 +8542,15 @@ impl Vm {
             .as_ref()
             .map(|heritage| self.eval_expr(&heritage.expression, outer.clone()))
             .transpose()?;
+        if let Some(superclass) = &super_constructor
+            && !superclass.is_null()
+            && !constructable(superclass)
+        {
+            return Err(JsError::Throw(type_error(
+                self,
+                "class extends value is not a constructor",
+            )));
+        }
         let super_prototype = super_constructor.as_ref().and_then(|constructor| {
             constructor
                 .as_function_ref()
@@ -8747,7 +8848,7 @@ impl Vm {
                     LogicalNot => Value::Bool(!z.truthy()),
                     BitwiseNot => Value::Number(!i32_js(z.number()) as f64),
                     Typeof => Value::String(Rc::new(
-                        if z.is_undefined() {
+                        if z.is_undefined() || is_html_dda_value(&z) {
                             "undefined"
                         } else if z.is_function() {
                             "function"
@@ -8822,38 +8923,43 @@ impl Vm {
                 use oxc_syntax::operator::AssignmentOperator::*;
                 let target = self.resolve_target(&v.left, e.clone())?;
                 let old = self.read_lvalue(&target);
-                let right = self.eval_expr(&v.right, e.clone())?;
+                let right = match v.operator {
+                    LogicalOr if old.truthy() => None,
+                    LogicalAnd if !old.truthy() => None,
+                    LogicalNullish if !old.is_null() && !old.is_undefined() => None,
+                    _ => Some(self.eval_expr(&v.right, e.clone())?),
+                };
                 let value = match v.operator {
-                    Assign => right,
-                    Addition => exec_op(Op::Add, old, Some(right)),
-                    Subtraction => exec_op(Op::Sub, old, Some(right)),
-                    Multiplication => exec_op(Op::Mul, old, Some(right)),
-                    Division => exec_op(Op::Div, old, Some(right)),
-                    Remainder => exec_op(Op::Rem, old, Some(right)),
-                    Exponential => exec_op(Op::Pow, old, Some(right)),
-                    ShiftLeft => exec_op(Op::Shl, old, Some(right)),
-                    ShiftRight => exec_op(Op::Shr, old, Some(right)),
-                    ShiftRightZeroFill => exec_op(Op::Ushr, old, Some(right)),
-                    BitwiseOR => exec_op(Op::Or, old, Some(right)),
-                    BitwiseXOR => exec_op(Op::Xor, old, Some(right)),
-                    BitwiseAnd => exec_op(Op::And, old, Some(right)),
+                    Assign => right.expect("assignment evaluates its right-hand side"),
+                    Addition => exec_op(Op::Add, old, right),
+                    Subtraction => exec_op(Op::Sub, old, right),
+                    Multiplication => exec_op(Op::Mul, old, right),
+                    Division => exec_op(Op::Div, old, right),
+                    Remainder => exec_op(Op::Rem, old, right),
+                    Exponential => exec_op(Op::Pow, old, right),
+                    ShiftLeft => exec_op(Op::Shl, old, right),
+                    ShiftRight => exec_op(Op::Shr, old, right),
+                    ShiftRightZeroFill => exec_op(Op::Ushr, old, right),
+                    BitwiseOR => exec_op(Op::Or, old, right),
+                    BitwiseXOR => exec_op(Op::Xor, old, right),
+                    BitwiseAnd => exec_op(Op::And, old, right),
                     LogicalOr => {
                         if old.truthy() {
                             old
                         } else {
-                            right
+                            right.expect("logical assignment evaluates its right-hand side")
                         }
                     }
                     LogicalAnd => {
                         if old.truthy() {
-                            right
+                            right.expect("logical assignment evaluates its right-hand side")
                         } else {
                             old
                         }
                     }
                     LogicalNullish => {
                         if old.is_null() || old.is_undefined() {
-                            right
+                            right.expect("logical assignment evaluates its right-hand side")
                         } else {
                             old
                         }
