@@ -9,6 +9,27 @@ mod builtins;
 #[cfg(any(test, feature = "inline-census"))]
 mod call_recipe;
 mod coverage;
+// Keep the RegExp flag order and spelling as one declarative fact. Both the
+// stencil compiler and interpreter materialize flags from this same table.
+macro_rules! regexp_flags {
+    ($flags:expr) => {{
+        let flags = $flags;
+        [
+            (oxc_ast::ast::RegExpFlags::D, 'd'),
+            (oxc_ast::ast::RegExpFlags::G, 'g'),
+            (oxc_ast::ast::RegExpFlags::I, 'i'),
+            (oxc_ast::ast::RegExpFlags::M, 'm'),
+            (oxc_ast::ast::RegExpFlags::S, 's'),
+            (oxc_ast::ast::RegExpFlags::U, 'u'),
+            (oxc_ast::ast::RegExpFlags::V, 'v'),
+            (oxc_ast::ast::RegExpFlags::Y, 'y'),
+        ]
+        .into_iter()
+        .filter_map(|(flag, character)| flags.contains(flag).then_some(character))
+        .collect::<String>()
+    }};
+}
+
 mod dynbytecode;
 mod dynjit;
 #[cfg(any(test, feature = "inline-census"))]
@@ -8067,19 +8088,7 @@ impl Vm {
                     })
                     .unwrap_or(v.regex.pattern.text.as_str())
                     .to_string();
-                let flags = [
-                    (oxc_ast::ast::RegExpFlags::D, 'd'),
-                    (oxc_ast::ast::RegExpFlags::G, 'g'),
-                    (oxc_ast::ast::RegExpFlags::I, 'i'),
-                    (oxc_ast::ast::RegExpFlags::M, 'm'),
-                    (oxc_ast::ast::RegExpFlags::S, 's'),
-                    (oxc_ast::ast::RegExpFlags::U, 'u'),
-                    (oxc_ast::ast::RegExpFlags::V, 'v'),
-                    (oxc_ast::ast::RegExpFlags::Y, 'y'),
-                ]
-                .into_iter()
-                .filter_map(|(flag, character)| v.regex.flags.contains(flag).then_some(character))
-                .collect::<String>();
+                let flags = regexp_flags!(v.regex.flags);
                 let kernel = Rc::new(compile_regex(
                     &source,
                     v.regex.flags.contains(oxc_ast::ast::RegExpFlags::I),
@@ -17322,6 +17331,14 @@ mod tests {
             Environment::get(&vm.global, "result").and_then(|v| v.as_bool()),
             Some(true)
         );
+    }
+
+    #[test]
+    fn regexp_flag_catalog_is_canonical_for_both_execution_tiers() {
+        use oxc_ast::ast::RegExpFlags;
+
+        let flags = regexp_flags!(RegExpFlags::Y | RegExpFlags::G | RegExpFlags::I);
+        assert_eq!(flags, "giy");
     }
 
     #[test]
