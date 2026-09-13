@@ -68,6 +68,20 @@ macro_rules! native_fn_matches {
     }};
 }
 
+// A module edge is one fact regardless of whether it is consumed by linking,
+// deferred-namespace checks, or async scheduling. Keep the OXC statement
+// shapes in one declarative matcher so those phases cannot drift apart.
+macro_rules! module_request {
+    ($statement:expr) => {
+        match $statement {
+            Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
+            Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
+            Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
+            _ => None,
+        }
+    };
+}
+
 mod dynbytecode;
 mod dynjit;
 #[cfg(any(test, feature = "inline-census"))]
@@ -10427,12 +10441,7 @@ impl Vm {
         };
         let current = self.module_key(path);
         Ok(parsed.program.body.iter().any(|statement| {
-            let request = match statement {
-                Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
-                Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
-                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
-                _ => None,
-            };
+            let request = module_request!(statement);
             request.is_some_and(|request| {
                 let dependency = self.resolve_module_request(parent, request);
                 let dependency = self.module_key(&dependency);
@@ -10454,12 +10463,7 @@ impl Vm {
             return false;
         };
         program.body.iter().any(|statement| {
-            let request = match statement {
-                Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
-                Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
-                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
-                _ => None,
-            };
+            let request = module_request!(statement);
             request.is_some_and(|request| {
                 let dependency = self.resolve_module_request(parent, request);
                 self.pending_async_modules
@@ -10475,12 +10479,7 @@ impl Vm {
     ) -> Option<PathBuf> {
         let parent = path.parent()?;
         program.body.iter().find_map(|statement| {
-            let request = match statement {
-                Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
-                Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
-                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
-                _ => None,
-            }?;
+            let request = module_request!(statement)?;
             let dependency = self.resolve_module_request(parent, request);
             let key = self.module_key(&dependency);
             let synthetic = key.with_extension("mjs");
@@ -10498,12 +10497,7 @@ impl Vm {
         let parent = path.parent()?;
         let current = self.module_key(path);
         program.body.iter().find_map(|statement| {
-            let request = match statement {
-                Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
-                Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
-                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
-                _ => None,
-            }?;
+            let request = module_request!(statement)?;
             let dependency = self.resolve_module_request(parent, request);
             let dependency_key = self.module_key(&dependency);
             (dependency_key != current && self.module_is_evaluating(&dependency))
@@ -10706,12 +10700,7 @@ impl Vm {
                 return Ok(());
             };
             for statement in &parsed.program.body {
-                let request = match statement {
-                    Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
-                    Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
-                    Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
-                    _ => None,
-                };
+                let request = module_request!(statement);
                 if let Some(request) = request {
                     let dependency = vm.resolve_module_request(parent, request);
                     visit(vm, &dependency, seen, result)?;
