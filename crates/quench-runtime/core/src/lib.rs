@@ -105,6 +105,7 @@ const CLASS_SUPER_CONSTRUCTOR_ENV_NAME: &str = "\0quench:class-super-constructor
 const CLASS_SUPER_PROTOTYPE_ENV_NAME: &str = "\0quench:class-super-prototype";
 const EVAL_CODE_ENV_NAME: &str = "\0quench:eval-code";
 const STRICT_EVAL_ENV_NAME: &str = "\0quench:strict-eval";
+const FUNCTION_ENV_NAME: &str = "\0quench:function";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7542,6 +7543,30 @@ impl Vm {
                     return Ok(());
                 }
             };
+        // Arrow functions inherit `arguments` lexically. The generic call
+        // recipe materializes an own arguments object for compiled code, so
+        // keep this case on the shared interpreter path until that recipe can
+        // represent lexical captures explicitly.
+        let arguments_slot = bytecode
+            .bindings
+            .iter()
+            .position(|name| name == "arguments");
+        if bytecode.ops.iter().any(|instruction| {
+            matches!(
+                &instruction.op,
+                dynbytecode::DynOp::LoadName { name, .. }
+                    | dynbytecode::DynOp::StoreName { name, .. }
+                    if name == "arguments"
+            ) || matches!(
+                (&instruction.op, arguments_slot),
+                (dynbytecode::DynOp::LoadLocal { slot, .. }, Some(arguments_slot))
+                    | (dynbytecode::DynOp::StoreLocal { slot, .. }, Some(arguments_slot))
+                    if *slot == arguments_slot
+            )
+        }) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         let instrumented_kernels = self.instrumented_kernels();
         let code = {
             let mut arena = self.code_arena.borrow_mut();
@@ -7584,8 +7609,17 @@ impl Vm {
             self.source_ids.push(source_id);
         }
         let e = Environment::new(Some(outer));
+        let non_simple_parameters = n.params.items.iter().any(|parameter| {
+            parameter.initializer.is_some()
+                || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+        }) || n.params.rest.is_some();
+        let body_environment = if non_simple_parameters {
+            Environment::new(Some(e.clone()))
+        } else {
+            e.clone()
+        };
         if let Some(body) = &n.body {
-            reserve_script_bindings(&e, &body.statements);
+            reserve_script_bindings(&body_environment, &body.statements);
         }
         let strict = n.body.as_ref().is_some_and(|body| {
             body.directives
@@ -7608,6 +7642,7 @@ impl Vm {
         self.set_prop(&av, "toString", self.native(native_object_to_string));
         set_property_attributes(&av, "toString", PropertyAttributes::BUILTIN_METHOD);
         e.borrow_mut().declare("arguments", av);
+        e.borrow_mut().declare(FUNCTION_ENV_NAME, Value::Bool(true));
         e.borrow_mut().implicit_arguments = true;
         {
             let mut parameter_names = e.borrow_mut();
@@ -7657,7 +7692,7 @@ impl Vm {
         }
         let result = (|| {
             if let Some(b) = &n.body {
-                match self.exec_stmts(&b.statements, e)? {
+                match self.exec_stmts(&b.statements, body_environment)? {
                     Signal::Return(v) | Signal::Normal(v) => Ok(v),
                     _ => Ok(Value::Undefined),
                 }
@@ -7724,8 +7759,18 @@ impl Vm {
         // parameter bindings live in a fresh environment layered over the
         // captured scope.
         let e = Environment::new(Some(outer));
+        e.borrow_mut().declare(FUNCTION_ENV_NAME, Value::Bool(true));
+        let non_simple_parameters = n.params.items.iter().any(|parameter| {
+            parameter.initializer.is_some()
+                || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+        }) || n.params.rest.is_some();
+        let body_environment = if non_simple_parameters {
+            Environment::new(Some(e.clone()))
+        } else {
+            e.clone()
+        };
         if let Some(body) = n.body.as_function_body() {
-            reserve_script_bindings(&e, &body.statements);
+            reserve_script_bindings(&body_environment, &body.statements);
         }
         let strict = n.body.as_function_body().is_some_and(|body| {
             body.directives
@@ -7787,7 +7832,7 @@ impl Vm {
             let Some(body) = n.body.as_function_body() else {
                 return Ok(Value::Undefined);
             };
-            match self.exec_stmts(&body.statements, e)? {
+            match self.exec_stmts(&body.statements, body_environment)? {
                 Signal::Return(v) | Signal::Normal(v) => Ok(v),
                 _ => Ok(Value::Undefined),
             }
@@ -8544,6 +8589,7 @@ impl Vm {
     }
     fn exec_var<'a>(&mut self, v: &VariableDeclaration<'a>, e: Env) -> JsResult<()> {
         for d in &v.declarations {
+            if pattern_name(&d.id).as_deref() == Some("arguments") {}
             if v.kind != VariableDeclarationKind::Var
                 && let Some(name) = pattern_name(&d.id)
             {
@@ -8647,14 +8693,14 @@ impl Vm {
         while let Some(candidate) = current {
             let is_global = Rc::ptr_eq(&candidate, &self.global);
             let (parent, is_variable, blocked) = {
-                let candidate = candidate.borrow();
+                let candidate_ref = candidate.borrow();
                 (
-                    candidate.parent.clone(),
-                    candidate.contains_local("arguments") || is_global,
-                    (candidate.parameter_names.contains(name)
-                        && !candidate.contains_local(EVAL_CODE_ENV_NAME))
-                        || (candidate.lexical_names.contains(name)
-                            && !candidate.catch_simple_names.contains(name)),
+                    candidate_ref.parent.clone(),
+                    is_variable_environment(&candidate) || is_global,
+                    (candidate_ref.parameter_names.contains(name)
+                        && !candidate_ref.contains_local(EVAL_CODE_ENV_NAME))
+                        || (candidate_ref.lexical_names.contains(name)
+                            && !candidate_ref.catch_simple_names.contains(name)),
                 )
             };
             if blocked {
@@ -8677,10 +8723,8 @@ impl Vm {
     ) {
         let closure = self.make_user(function, environment.clone());
         let is_global_environment = Rc::ptr_eq(&environment, &self.global);
-        let is_lexical_environment = {
-            let environment = environment.borrow();
-            !environment.contains_local("arguments") && !is_global_environment
-        };
+        let is_lexical_environment =
+            !is_variable_environment(&environment) && !is_global_environment;
         {
             let mut environment = environment.borrow_mut();
             if is_lexical_environment {
@@ -8698,14 +8742,14 @@ impl Vm {
         while let Some(candidate) = current {
             let is_global = Rc::ptr_eq(&candidate, &self.global);
             let (parent, is_variable_environment, has_name, is_parameter, is_lexical, is_eval) = {
-                let candidate = candidate.borrow();
+                let candidate_ref = candidate.borrow();
                 (
-                    candidate.parent.clone(),
-                    candidate.contains_local("arguments") || is_global,
-                    candidate.contains_local(name),
-                    candidate.parameter_names.contains(name),
-                    candidate.lexical_names.contains(name),
-                    candidate.contains_local(EVAL_CODE_ENV_NAME),
+                    candidate_ref.parent.clone(),
+                    is_variable_environment(&candidate) || is_global,
+                    candidate_ref.contains_local(name),
+                    candidate_ref.parameter_names.contains(name),
+                    candidate_ref.lexical_names.contains(name),
+                    candidate_ref.contains_local(EVAL_CODE_ENV_NAME),
                 )
             };
             if !first_environment
@@ -9999,16 +10043,18 @@ fn pattern_bound_names<'a>(pattern: &BindingPattern<'a>, names: &mut Vec<String>
     }
 }
 
+fn is_variable_environment(environment: &Env) -> bool {
+    let candidate = environment.borrow();
+    candidate.contains_local(dynbytecode::ARGUMENTS_BINDING_NAME)
+        || candidate.contains_local(FUNCTION_ENV_NAME)
+        || candidate.contains_local(STRICT_EVAL_ENV_NAME)
+        || candidate.parent.is_none()
+}
+
 fn variable_environment(environment: &Env) -> Env {
     let mut current = environment.clone();
     loop {
-        let is_variable = {
-            let candidate = current.borrow();
-            candidate.contains_local(dynbytecode::ARGUMENTS_BINDING_NAME)
-                || candidate.contains_local(STRICT_EVAL_ENV_NAME)
-                || candidate.parent.is_none()
-        };
-        if is_variable {
+        if is_variable_environment(&current) {
             return current;
         }
         let parent = current
