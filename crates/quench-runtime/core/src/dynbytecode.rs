@@ -1865,6 +1865,21 @@ impl Compiler {
         value: &BinaryExpression<'static>,
     ) -> Result<Register, CompileGap> {
         use oxc_syntax::operator::BinaryOperator::*;
+        if matches!(
+            value.operator,
+            LessThan | LessEqualThan | GreaterThan | GreaterEqualThan
+        ) && (matches!(&value.left, Expression::StringLiteral(_))
+            || matches!(&value.right, Expression::StringLiteral(_)))
+        {
+            // The number-only stencil comparison is not valid when source
+            // spelling proves a string operand. Keep these relations on the
+            // shared UTF-16 semantic path; numeric relations retain their
+            // specialized stencil.
+            return Err(CompileGap {
+                span: value.span,
+                reason: "string relational comparison deferred to shared semantics",
+            });
+        }
         let left = self.expression(&value.left)?;
         let right = self.expression(&value.right)?;
         let dst = self.alloc()?;
