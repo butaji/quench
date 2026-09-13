@@ -2244,7 +2244,10 @@ impl Environment {
             }
             return;
         }
-        e.borrow_mut().declare(k, v);
+        // Keep cached and uncached name stores on the same semantic path.
+        // Unresolved sloppy writes must project onto the realm global object,
+        // not become private cache-environment bindings.
+        Self::set(e, k, v);
         cache.set(None);
     }
     fn resolve(e: &Env, k: &str) -> Option<NameIc> {
@@ -7846,7 +7849,12 @@ impl Vm {
             if getter.is_some() || setter.is_some() {
                 return Some((getter, setter));
             }
-            if borrowed.props.contains_key(key) {
+            let own_array_property = borrowed.array.as_ref().is_some_and(|array| {
+                (key == "length" && !borrowed.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP))
+                    || array_index_key(key)
+                        .is_some_and(|index| index < array.len() && !array.holes[index])
+            });
+            if borrowed.props.contains_key(key) || own_array_property {
                 return None;
             }
             current = borrowed.prototype;
@@ -7975,6 +7983,37 @@ impl Vm {
         self.get_prop_with_receiver(object, key, &receiver)
     }
 
+    fn has_own_property_key(&self, value: &Value, key: &str) -> bool {
+        if let Some(object) = value.as_object_ref() {
+            let object = object.borrow();
+            return object.props.contains_key(key)
+                || object.props.contains_key(&accessor_slot("get", key))
+                || object.props.contains_key(&accessor_slot("set", key))
+                || object.array.as_ref().is_some_and(|array| {
+                    (key == "length" && !object.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP))
+                        || array_index_key(key)
+                            .is_some_and(|index| index < array.len() && !array.holes[index])
+                });
+        }
+        if let Some(function) = value.as_function_ref() {
+            let props = function.props.borrow();
+            return props.contains_key(key)
+                || props.contains_key(&accessor_slot("get", key))
+                || props.contains_key(&accessor_slot("set", key))
+                || key == "name"
+                || key == "length"
+                || (key == "prototype"
+                    && constructable(value)
+                    && !props.contains_key(PROXY_NO_PROTOTYPE_PROP));
+        }
+        value.as_regexp_ref().is_some_and(|regexp| {
+            let regexp = regexp.borrow();
+            regexp.props.contains_key(key)
+                || regexp.props.contains_key(&accessor_slot("get", key))
+                || regexp.props.contains_key(&accessor_slot("set", key))
+        })
+    }
+
     fn get_prop_with_receiver(
         &mut self,
         object: &Value,
@@ -8084,7 +8123,9 @@ impl Vm {
         }) {
             return self.get_prop_with_receiver(&Value::Object(next_prototype), key, receiver);
         }
-        if let Some((getter, _)) = self.find_accessor(object, key) {
+        if !self.has_own_property_key(object, key)
+            && let Some((getter, _)) = self.find_accessor(object, key)
+        {
             let Some(getter) = getter else {
                 return Ok(Value::Undefined);
             };
