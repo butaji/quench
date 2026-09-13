@@ -1809,6 +1809,7 @@ struct Environment {
     // Annex B must not overwrite a parameter when a block function is
     // evaluated in a sloppy function body.
     parameter_names: HashSet<String>,
+    implicit_arguments: bool,
     lexical_names: HashSet<String>,
     catch_names: HashSet<String>,
     catch_simple_names: HashSet<String>,
@@ -1829,6 +1830,7 @@ impl Environment {
             values: vec![Value::Undefined; binding_count],
             parent,
             parameter_names: HashSet::new(),
+            implicit_arguments: false,
             lexical_names: HashSet::new(),
             catch_names: HashSet::new(),
             catch_simple_names: HashSet::new(),
@@ -7590,6 +7592,7 @@ impl Vm {
         self.set_prop(&av, "toString", self.native(native_object_to_string));
         set_property_attributes(&av, "toString", PropertyAttributes::BUILTIN_METHOD);
         e.borrow_mut().declare("arguments", av);
+        e.borrow_mut().implicit_arguments = true;
         {
             let mut parameter_names = e.borrow_mut();
             for parameter in &n.params.items {
@@ -7819,7 +7822,10 @@ impl Vm {
             let mut var_names = Vec::new();
             collect_global_object_binding_names(&r.program.body, &mut var_names);
             if var_names.iter().any(|name| {
-                name == "arguments" && environment.borrow().parameter_names.contains(name)
+                name == "arguments" && {
+                    let environment = environment.borrow();
+                    environment.parameter_names.contains(name) || environment.implicit_arguments
+                }
             }) {
                 return Err(JsError::Throw(syntax_error(
                     self,
