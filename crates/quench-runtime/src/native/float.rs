@@ -31,31 +31,9 @@ macro_rules! define_float_binary_family {
     };
 }
 
-define_float_unary_family!(
-    Abs,
-    Neg,
-    Ceil,
-    Floor,
-    Trunc,
-    Nearest,
-    Sqrt,
-);
+define_float_unary_family!(Abs, Neg, Ceil, Floor, Trunc, Nearest, Sqrt,);
 
-define_float_binary_family!(
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Min,
-    Max,
-    Copysign,
-    Eq,
-    Ne,
-    Lt,
-    Gt,
-    Le,
-    Ge,
-);
+define_float_binary_family!(Add, Sub, Mul, Div, Min, Max, Copysign, Eq, Ne, Lt, Gt, Le, Ge,);
 
 impl UnF32 {
     pub fn apply(self, bits: u32) -> u32 {
