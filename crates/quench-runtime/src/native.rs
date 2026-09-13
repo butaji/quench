@@ -1,5 +1,51 @@
 //! Native layer: unboxed scalars and a 16-byte `v128` slot.
 
+// Integer kernels share one dispatch shape across widths. The operation
+// catalogs stay local to each width, while this macro derives the enum and
+// table-backed execution once so the two lanes cannot drift structurally.
+macro_rules! define_integer_kernels {
+    (
+        binary $binary:ident,
+        unary $unary:ident,
+        type $ty:ty;
+        binary_ops { $( $binary_name:ident => $binary_fn:ident ),+ $(,)? }
+        unary_ops { $( $unary_name:ident => $unary_fn:ident ),+ $(,)? }
+    ) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[repr(u8)]
+        pub enum $binary {
+            $( $binary_name ),+
+        }
+
+        impl $binary {
+            pub fn is_rel(self) -> bool {
+                matches!(self, Self::Eq | Self::Ne | Self::LtS | Self::LtU
+                    | Self::LeS | Self::LeU | Self::GtS | Self::GtU
+                    | Self::GeS | Self::GeU)
+            }
+
+            pub fn apply(self, lhs: $ty, rhs: $ty) -> Result<$ty, crate::unwind::Trap> {
+                const TABLE: &[fn($ty, $ty) -> Result<$ty, crate::unwind::Trap>] =
+                    &[$($binary_fn),+];
+                TABLE[self as usize](lhs, rhs)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[repr(u8)]
+        pub enum $unary {
+            $( $unary_name ),+
+        }
+
+        impl $unary {
+            pub fn apply(self, src: $ty) -> $ty {
+                const TABLE: &[fn($ty) -> $ty] = &[$($unary_fn),+];
+                TABLE[self as usize](src)
+            }
+        }
+    };
+}
+
 mod conv;
 mod float;
 mod i32_ops;

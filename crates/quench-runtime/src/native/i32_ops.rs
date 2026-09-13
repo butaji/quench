@@ -2,75 +2,21 @@
 
 use crate::unwind::Trap;
 
-macro_rules! bin_i32 {
-    ($($name:ident => $apply:ident),+ $(,)?) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-        #[repr(u8)]
-        pub enum BinI32 {
-            $($name),+
-        }
-
-        impl BinI32 {
-            pub fn apply(self, lhs: i32, rhs: i32) -> Result<i32, Trap> {
-                const TABLE: &[fn(i32, i32) -> Result<i32, Trap>] = &[$($apply),+];
-                TABLE[self as usize](lhs, rhs)
-            }
-        }
-    };
-}
-
-macro_rules! un_i32 {
-    ($($name:ident => $apply:ident),+ $(,)?) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-        #[repr(u8)]
-        pub enum UnI32 {
-            $($name),+
-        }
-
-        impl UnI32 {
-            pub fn apply(self, src: i32) -> i32 {
-                const TABLE: &[fn(i32) -> i32] = &[$($apply),+];
-                TABLE[self as usize](src)
-            }
-        }
-    };
-}
-
-bin_i32! {
-    Add => add,
-    Sub => sub,
-    Mul => mul,
-    DivS => div_s,
-    DivU => div_u,
-    RemS => rem_s,
-    RemU => rem_u,
-    And => and,
-    Or => or,
-    Xor => xor,
-    Shl => shl,
-    ShrS => shr_s,
-    ShrU => shr_u,
-    Rotl => rotl,
-    Rotr => rotr,
-    Eq => eq,
-    Ne => ne,
-    LtS => lt_s,
-    LtU => lt_u,
-    LeS => le_s,
-    LeU => le_u,
-    GtS => gt_s,
-    GtU => gt_u,
-    GeS => ge_s,
-    GeU => ge_u,
-}
-
-un_i32! {
-    Clz => clz,
-    Ctz => ctz,
-    Popcnt => popcnt,
-    Eqz => eqz,
-    Extend8S => extend8_s,
-    Extend16S => extend16_s,
+define_integer_kernels! {
+    binary BinI32,
+    unary UnI32,
+    type i32;
+    binary_ops {
+        Add => add, Sub => sub, Mul => mul, DivS => div_s, DivU => div_u,
+        RemS => rem_s, RemU => rem_u, And => and, Or => or, Xor => xor,
+        Shl => shl, ShrS => shr_s, ShrU => shr_u, Rotl => rotl, Rotr => rotr,
+        Eq => eq, Ne => ne, LtS => lt_s, LtU => lt_u, LeS => le_s, LeU => le_u,
+        GtS => gt_s, GtU => gt_u, GeS => ge_s, GeU => ge_u,
+    }
+    unary_ops {
+        Clz => clz, Ctz => ctz, Popcnt => popcnt, Eqz => eqz,
+        Extend8S => extend8_s, Extend16S => extend16_s,
+    }
 }
 
 fn add(lhs: i32, rhs: i32) -> Result<i32, Trap> {
