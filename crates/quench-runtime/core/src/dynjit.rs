@@ -2879,6 +2879,12 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         }
         DynOp::StoreName { name, src } => {
             let value = get(frame, src);
+            if unsafe { &*frame.vm }.immutable_binding(&frame.environment, name) {
+                return Err(JsError::Throw(super::type_error(
+                    vm(frame),
+                    "Assignment to read-only global binding",
+                )));
+            }
             if unsafe { (*frame.code).strict }
                 && Environment::get(&frame.environment, name).is_none()
             {

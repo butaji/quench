@@ -10281,7 +10281,11 @@ impl Vm {
                 .mark_deletable(newly_created);
         }
         if !strict_eval {
-            self.materialize_script_bindings(&variable_environment, &r.program.body);
+            self.materialize_script_bindings(
+                &variable_environment,
+                &r.program.body,
+                self.strict_mode,
+            );
             self.hydrate_global_bindings(&variable_environment, &r.program.body);
         }
         self.source_stack.push(p.to_path_buf());
@@ -10327,7 +10331,6 @@ impl Vm {
                 ) {
                     Ok(code) => code,
                     Err(_) => {
-                        reserve_script_bindings(&execution_environment, statements);
                         return self
                             .exec_stmts(statements, execution_environment.clone())
                             .and_then(|signal| self.complete_script_signal(signal));
@@ -10339,7 +10342,6 @@ impl Vm {
                     dynjit::DynJitCode::build(code, &mut arena, instrumented_kernels)
                 };
                 let Some(image) = image else {
-                    reserve_script_bindings(&execution_environment, statements);
                     return self
                         .exec_stmts(statements, execution_environment.clone())
                         .and_then(|signal| self.complete_script_signal(signal));
@@ -10355,11 +10357,9 @@ impl Vm {
                     .compiled_direct_opcodes
                     .saturating_add(direct_opcodes as u64);
                 match image.call_script(self, execution_environment.clone()) {
-                    Err(error) if is_stencil_fallback_error(&error) => {
-                        reserve_script_bindings(&execution_environment, statements);
-                        self.exec_stmts(statements, execution_environment.clone())
-                            .and_then(|signal| self.complete_script_signal(signal))
-                    }
+                    Err(error) if is_stencil_fallback_error(&error) => self
+                        .exec_stmts(statements, execution_environment.clone())
+                        .and_then(|signal| self.complete_script_signal(signal)),
                     result => result,
                 }
             })()
@@ -10913,7 +10913,6 @@ impl Vm {
                     e.borrow_mut().lexical_names.insert(id.name.to_string());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
-                    self.sync_global_binding(&e, id.name.as_str(), value);
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
@@ -11005,7 +11004,12 @@ impl Vm {
         }
     }
 
-    fn materialize_script_bindings(&self, environment: &Env, statements: &[Statement<'_>]) {
+    fn materialize_script_bindings(
+        &self,
+        environment: &Env,
+        statements: &[Statement<'_>],
+        strict: bool,
+    ) {
         if !self.is_global_environment(environment) {
             return;
         }
@@ -11013,7 +11017,11 @@ impl Vm {
             return;
         };
         let mut names = Vec::new();
-        collect_global_object_binding_names(statements, &mut names);
+        if strict {
+            collect_strict_eval_var_names(statements, &mut names, true);
+        } else {
+            collect_global_object_binding_names(statements, &mut names);
+        }
         let mut lexical = HashSet::new();
         collect_lexical_binding_names(statements, &mut lexical);
         let eval_binding = Environment::get(environment, EVAL_CODE_ENV_NAME).is_some();
