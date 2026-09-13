@@ -152,12 +152,12 @@ Verification completed:
   `IsConstructor` semantics
 - the stencil StringIteratorPrototype stage reaches 7/7, including iterator
   ancestry, descriptors, receiver validation, and UTF-16 surrogate pairs
-- the stencil SuppressedError stage reaches 19/22; the three remaining cases
-  require Proxy/custom-realm construction semantics
-- the stencil AggregateError stage reaches 22/25 after deriving constructor
+- the stencil SuppressedError stage reaches 20/22; the two remaining cases
+  require Proxy construction semantics
+- the stencil AggregateError stage reaches 23/25 after deriving constructor
   arity, iterable consumption, message/cause fields, and non-enumerable
-  `errors` storage; the three remaining cases require Proxy/custom-realm
-  construction semantics
+  `errors` storage; the two remaining cases require Proxy construction
+  semantics
 - the stencil Annex B language stage reaches 427/845; shared binding
   reservation, Annex B block-function transitions, catch redeclarations,
   HTMLDDA, and iterator-close behavior now run through the same core;
