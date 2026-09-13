@@ -8813,9 +8813,7 @@ impl Vm {
                 if wrapped {
                     self.set_prop(&o, "\0primitive", r.clone());
                     let wrapper = match function.kind {
-                        FunctionKind::Builtin(BuiltinId::BooleanConstructor) => "Boolean",
-                        FunctionKind::Builtin(BuiltinId::NumberConstructor) => "Number",
-                        FunctionKind::Builtin(BuiltinId::StringConstructor) => "String",
+                        FunctionKind::Builtin(id) => id.wrapper_name().unwrap_or("Object"),
                         _ => "Object",
                     };
                     self.set_prop(&o, "\0wrapper", Value::string_value(wrapper));
@@ -14090,10 +14088,8 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     let result = vm.call(target.clone(), object.clone(), arguments)?;
     let wrapper = target
         .as_function_ref()
-        .and_then(|function| match &function.kind {
-            FunctionKind::Builtin(BuiltinId::BooleanConstructor) => Some("Boolean"),
-            FunctionKind::Builtin(BuiltinId::NumberConstructor) => Some("Number"),
-            FunctionKind::Builtin(BuiltinId::StringConstructor) => Some("String"),
+        .and_then(|function| match function.kind {
+            FunctionKind::Builtin(id) => id.wrapper_name(),
             _ => None,
         });
     if let Some(wrapper) = wrapper {
