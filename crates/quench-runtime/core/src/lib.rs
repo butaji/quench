@@ -104,6 +104,7 @@ const CLASS_METHOD_STRICT_ENV_NAME: &str = "\0quench:class-method-strict";
 const CLASS_SUPER_CONSTRUCTOR_ENV_NAME: &str = "\0quench:class-super-constructor";
 const CLASS_SUPER_PROTOTYPE_ENV_NAME: &str = "\0quench:class-super-prototype";
 const EVAL_CODE_ENV_NAME: &str = "\0quench:eval-code";
+const SCRIPT_EVAL_ENV_NAME: &str = "\0quench:script-eval";
 const STRICT_EVAL_ENV_NAME: &str = "\0quench:strict-eval";
 const FUNCTION_ENV_NAME: &str = "\0quench:function";
 const NEW_TARGET_VALUE_NAME: &str = "\0quench:new-target";
@@ -8011,7 +8012,11 @@ impl Vm {
         // before a stencil image is entered). Reserve lexical slots and
         // materialize the observable global `var`/Annex-B function projection
         // once so both execution tiers see the same pre-evaluation state.
-        let eval_code = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
+        let script_eval = Environment::get(&environment, SCRIPT_EVAL_ENV_NAME)
+            .is_some_and(|value| value.truthy());
+        let eval_code = Environment::get(&environment, EVAL_CODE_ENV_NAME)
+            .is_some_and(|value| value.truthy())
+            && !script_eval;
         let strict_eval = eval_code && self.strict_mode;
         let execution_environment = if eval_code {
             let eval_environment = Environment::new(Some(environment.clone()));
@@ -9603,7 +9608,7 @@ impl Vm {
                         Some(FunctionKind::Builtin(BuiltinId::Eval))
                     )
                 {
-                    return native_eval_in_environment(self, &args, e);
+                    return native_eval_in_environment(self, &args, e, true, false);
                 }
                 let result = match self.call(c, t, args) {
                     Ok(value) => value,
@@ -11063,7 +11068,13 @@ fn native_parse_float(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     ))
 }
 
-fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsResult<Value> {
+fn native_eval_in_environment(
+    vm: &mut Vm,
+    a: &[Value],
+    environment: Env,
+    eval_code: bool,
+    script_eval: bool,
+) -> JsResult<Value> {
     let Some(source) = a
         .first()
         .filter(|value| value.is_string())
@@ -11105,13 +11116,22 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
     } else {
         source.clone()
     };
-    Environment::set(&environment, EVAL_CODE_ENV_NAME, Value::Bool(true));
-    match vm.run_source_text_in_environment(&path, &eval_source, environment) {
+    if eval_code {
+        Environment::set(&environment, EVAL_CODE_ENV_NAME, Value::Bool(true));
+        if script_eval {
+            Environment::set(&environment, SCRIPT_EVAL_ENV_NAME, Value::Bool(true));
+        }
+    }
+    let result = match vm.run_source_text_in_environment(&path, &eval_source, environment.clone()) {
         Err(JsError::Message(message)) if message.starts_with("parse error:") => {
             Err(JsError::Throw(syntax_error(vm, &message)))
         }
         result => result,
+    };
+    if script_eval {
+        Environment::set(&environment, SCRIPT_EVAL_ENV_NAME, Value::Bool(false));
     }
+    result
 }
 
 fn contains_eval_call(source: &str) -> bool {
@@ -11136,7 +11156,7 @@ fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     with_strict_mode!(
         vm,
         false,
-        native_eval_in_environment(vm, a, vm.global.clone())
+        native_eval_in_environment(vm, a, vm.global.clone(), true, false)
     )
 }
 
@@ -11144,7 +11164,7 @@ fn native_eval_script(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     with_strict_mode!(
         vm,
         false,
-        native_eval_in_environment(vm, a, vm.global.clone())
+        native_eval_in_environment(vm, a, vm.global.clone(), true, true)
     )
 }
 
