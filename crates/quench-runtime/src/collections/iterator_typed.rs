@@ -32,48 +32,62 @@ macro_rules! bigint_values {
         )
     };
 }
+
+// Keep the typed-array family as one semantic table.  Consumers provide the
+// operation for numeric arrays, BigInt arrays, and the Uint16 lane (which has
+// the only representation-specific float16 rule).
+macro_rules! typed_array_dispatch {
+    ($value:expr, $number:ident, $bigint:ident, $uint16:ident $(,)?) => {
+        match $value {
+            Value::Float64Array(data) => $number!(data),
+            Value::Float32Array(data) => $number!(data),
+            Value::Int8Array(data) => $number!(data),
+            Value::Int16Array(data) => $number!(data),
+            Value::Int32Array(data) => $number!(data),
+            Value::Uint8Array(data) => $number!(data),
+            Value::Uint8ClampedArray(data) => $number!(data),
+            Value::Uint16Array(data) => $uint16!(data),
+            Value::Uint32Array(data) => $number!(data),
+            Value::BigInt64Array(data) => $bigint!(data),
+            Value::BigUint64Array(data) => $bigint!(data),
+            _ => Err(crate::collections::iterator::not_iterable()),
+        }
+    };
+}
+
+macro_rules! uint16_values {
+    ($data:expr) => {{
+        let length = checked_length(
+            $data.length,
+            $data.byte_offset,
+            $data.byte_length(),
+            $data.logical_len(),
+            &$data.buffer,
+        )?;
+        collect_typed(length, |index| {
+            $data.get(index).map(|value| {
+                if $data.meta.property("\0float16_array").is_some()
+                    || $data.meta.prototype().is_some_and(|prototype| {
+                        matches!(
+                            crate::execute::get_property(&prototype, "\0float16_constructor"),
+                            Value::Boolean(true)
+                        )
+                    })
+                {
+                    Value::Number(crate::value::float16_to_float64(value))
+                } else {
+                    Value::Number(value.into())
+                }
+            })
+        })
+    }};
+}
+
 pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     if let Value::BindingCell(cell) = value {
         return typed_values(cell.load());
     }
-    match value {
-        Value::Float64Array(data) => number_values!(data),
-        Value::Float32Array(data) => number_values!(data),
-        Value::Int8Array(data) => number_values!(data),
-        Value::Int16Array(data) => number_values!(data),
-        Value::Int32Array(data) => number_values!(data),
-        Value::Uint8Array(data) => number_values!(data),
-        Value::Uint8ClampedArray(data) => number_values!(data),
-        Value::Uint16Array(data) => {
-            let length = checked_length(
-                data.length,
-                data.byte_offset,
-                data.byte_length(),
-                data.logical_len(),
-                &data.buffer,
-            )?;
-            collect_typed(length, |index| {
-                data.get(index).map(|value| {
-                    if data.meta.property("\0float16_array").is_some()
-                        || data.meta.prototype().is_some_and(|prototype| {
-                            matches!(
-                                crate::execute::get_property(&prototype, "\0float16_constructor"),
-                                Value::Boolean(true)
-                            )
-                        })
-                    {
-                        Value::Number(crate::value::float16_to_float64(value))
-                    } else {
-                        Value::Number(value.into())
-                    }
-                })
-            })
-        }
-        Value::Uint32Array(data) => number_values!(data),
-        Value::BigInt64Array(data) => bigint_values!(data),
-        Value::BigUint64Array(data) => bigint_values!(data),
-        _ => Err(crate::collections::iterator::not_iterable()),
-    }
+    typed_array_dispatch!(value, number_values, bigint_values, uint16_values,)
 }
 fn checked_length(
     length: usize,
@@ -113,20 +127,7 @@ pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmErr
             )
         };
     }
-    match value {
-        Value::Float64Array(data) => length!(data),
-        Value::Float32Array(data) => length!(data),
-        Value::Int8Array(data) => length!(data),
-        Value::Int16Array(data) => length!(data),
-        Value::Int32Array(data) => length!(data),
-        Value::Uint8Array(data) => length!(data),
-        Value::Uint8ClampedArray(data) => length!(data),
-        Value::Uint16Array(data) => length!(data),
-        Value::Uint32Array(data) => length!(data),
-        Value::BigInt64Array(data) => length!(data),
-        Value::BigUint64Array(data) => length!(data),
-        _ => Err(crate::collections::iterator::not_iterable()),
-    }
+    typed_array_dispatch!(value, length, length, length)
 }
 fn collect_typed<T>(
     length: usize,
