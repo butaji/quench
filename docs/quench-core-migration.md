@@ -158,9 +158,11 @@ Verification completed:
   arity, iterable consumption, message/cause fields, and non-enumerable
   `errors` storage; the three remaining cases require Proxy/custom-realm
   construction semantics
-- the stencil Annex B language stage reaches 207/845; remaining cases are
-  legacy eval/global declaration semantics, advanced RegExp grammar, and
-  unsupported control-flow syntax
+- the stencil Annex B language stage reaches 427/845; shared binding
+  reservation, Annex B block-function transitions, catch redeclarations,
+  HTMLDDA, and iterator-close behavior now run through the same core;
+  remaining cases are legacy eval/global declaration semantics, advanced
+  RegExp grammar, async iteration, and unsupported control-flow syntax
 - the stencil Annex B built-ins stage reaches 214/241; remaining cases are
   advanced RegExp grammar/Unicode behavior, Proxy/custom-realm RegExp
   receivers, and TypedArray iterator lowering
