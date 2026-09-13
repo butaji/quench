@@ -3042,9 +3042,10 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 }
                 let cache = property_ic();
                 let vm = unsafe { &mut *frame.vm };
-                let cached = vm
+                let cached = (vm
                     .find_accessor(&object, key)
                     .is_none()
+                    && super::proxy_target(&object).is_none())
                     .then(|| cache.and_then(|cache| get_static_cached(&object, key, cache)))
                     .flatten();
                 cached.unwrap_or(vm.get_prop_with_accessors(&object, key)?)
@@ -3070,9 +3071,10 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     )));
                 }
                 let cache = property_ic();
-                let cached = vm
+                let cached = (vm
                     .find_accessor(&object, &key_string)
                     .is_none()
+                    && super::proxy_target(&object).is_none())
                     .then(|| cache.and_then(|cache| get_static_cached(&object, &key_string, cache)))
                     .flatten();
                 cached.unwrap_or(vm.get_prop_with_accessors(&object, &key_string)?)
@@ -3123,7 +3125,9 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     "cannot assign to read-only property",
                 )));
             }
-            if vm.find_accessor(&object, key).is_none() {
+            if vm.find_accessor(&object, key).is_none()
+                && super::proxy_target(&object).is_none()
+            {
                 if let Some(cache) = cache {
                     if set_static_cached(&object, key, value.clone(), cache).is_ok() {
                         return Ok(next);
@@ -3180,7 +3184,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             strict,
         } => {
             let object = get(frame, object);
-            let deleted = unsafe { &*frame.vm }.delete_prop(&object, &key);
+            let deleted = unsafe { &mut *frame.vm }.delete_prop_with_vm(&object, &key)?;
             if *strict && !deleted {
                 return Err(JsError::Throw(super::type_error(
                     unsafe { &mut *frame.vm },
@@ -3198,7 +3202,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let object = get(frame, object);
             let key_value = get(frame, key);
             let key = unsafe { &mut *frame.vm }.to_property_key(key_value)?;
-            let deleted = unsafe { &*frame.vm }.delete_prop(&object, &key);
+            let deleted = unsafe { &mut *frame.vm }.delete_prop_with_vm(&object, &key)?;
             if *strict && !deleted {
                 return Err(JsError::Throw(super::type_error(
                     unsafe { &mut *frame.vm },
