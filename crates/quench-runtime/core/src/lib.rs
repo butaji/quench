@@ -45,6 +45,19 @@ macro_rules! install_builtin_methods {
     }};
 }
 
+// Preserve the caller's strictness while entering a stencil/native body.
+// Keeping this as a single macro makes every execution tier share the same
+// state transition and restoration discipline.
+macro_rules! with_strict_mode {
+    ($vm:expr, $strict:expr, $body:expr) => {{
+        let previous_strict_mode = $vm.strict_mode;
+        $vm.strict_mode = $strict;
+        let result = $body;
+        $vm.strict_mode = previous_strict_mode;
+        result
+    }};
+}
+
 mod dynbytecode;
 mod dynjit;
 #[cfg(any(test, feature = "inline-census"))]
@@ -1980,6 +1993,10 @@ struct Environment {
     lexical_names: HashSet<String>,
     catch_names: HashSet<String>,
     catch_simple_names: HashSet<String>,
+    // A with-environment is an object environment, not a snapshot of keys.
+    // Keep the object as a semantic edge so identifier resolution can invoke
+    // Proxy [[HasProperty]] dynamically in the canonical VM.
+    with_object: Option<Value>,
 }
 impl Environment {
     fn new(parent: Option<Env>) -> Env {
@@ -2004,6 +2021,7 @@ impl Environment {
             lexical_names: HashSet::new(),
             catch_names: HashSet::new(),
             catch_simple_names: HashSet::new(),
+            with_object: None,
         };
         environment.publish_access();
         Rc::new(RefCell::new(environment))
@@ -10033,6 +10051,7 @@ impl Vm {
                     )));
                 }
                 let with_env = Environment::new(Some(e));
+                with_env.borrow_mut().with_object = Some(object.clone());
                 let keys = object
                     .as_object_ref()
                     .map(|object| object.borrow().props.keys().cloned().collect::<Vec<_>>())
@@ -10758,6 +10777,32 @@ impl Vm {
         }
         Ok(class)
     }
+    fn resolve_identifier(&mut self, e: &Env, name: &str) -> JsResult<Value> {
+        let mut current = Some(e.clone());
+        while let Some(environment) = current {
+            let (local, with_object, parent) = {
+                let borrowed = environment.borrow();
+                let local = borrowed
+                    .names
+                    .get(name)
+                    .filter(|slot| !borrowed.deleted_names.contains(name))
+                    .and_then(|slot| borrowed.values.get(*slot))
+                    .cloned();
+                (local, borrowed.with_object.clone(), borrowed.parent.clone())
+            };
+            if let Some(value) = local {
+                return Ok(value);
+            }
+            if let Some(object) = with_object
+                && self.has_property_with_proxy(&object, name)?
+            {
+                return Ok(self.get_prop(&object, name));
+            }
+            current = parent;
+        }
+        Environment::get(e, name).ok_or_else(|| JsError::Throw(reference_error(self, name)))
+    }
+
     fn eval_expr<'a>(&mut self, x: &Expression<'a>, e: Env) -> JsResult<Value> {
         self.coverage_hit(x.span(), expression_kind(x));
         use Expression::*;
@@ -10779,8 +10824,7 @@ impl Vm {
                 if Environment::is_tdz(&e, v.name.as_str()) {
                     return Err(JsError::Throw(reference_error(self, v.name.as_str())));
                 }
-                let value = Environment::get(&e, v.name.as_str());
-                value.ok_or_else(|| JsError::Throw(reference_error(self, v.name.as_str())))
+                self.resolve_identifier(&e, v.name.as_str())
             }
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
             NewTarget(_) => {
@@ -11450,7 +11494,7 @@ impl Vm {
                         if !self.strict_mode
                             && proxy_target(&o).is_none()
                             && is_type_error_value(&value) => {}
-                    Err(error) => { if k == "name" { eprintln!("DBG write name err strict={} proxy={}", self.strict_mode, proxy_target(&o).is_some()); } return Err(error) },
+                    Err(error) => return Err(error),
                 }
             }
         }
@@ -12925,16 +12969,6 @@ fn typeof_identifier<'a>(expression: &'a Expression<'a>) -> Option<&'a Identifie
         }
         _ => None,
     }
-}
-
-macro_rules! with_strict_mode {
-    ($vm:expr, $strict:expr, $body:expr) => {{
-        let previous_strict_mode = $vm.strict_mode;
-        $vm.strict_mode = $strict;
-        let result = $body;
-        $vm.strict_mode = previous_strict_mode;
-        result
-    }};
 }
 
 fn native_eval(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
