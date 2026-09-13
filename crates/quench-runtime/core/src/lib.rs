@@ -6276,16 +6276,6 @@ impl Vm {
         let promise_all_keyed = self.native_named(native_promise_all_keyed, "allKeyed", 1);
         let promise_all_settled_keyed =
             self.native_named(native_promise_all_settled_keyed, "allSettledKeyed", 1);
-        self.mark_nonconstructable(&promise_all);
-        self.mark_nonconstructable(&promise_reject);
-        self.mark_nonconstructable(&promise_resolve);
-        self.mark_nonconstructable(&promise_race);
-        self.mark_nonconstructable(&promise_any);
-        self.mark_nonconstructable(&promise_all_settled);
-        self.mark_nonconstructable(&promise_with_resolvers);
-        self.mark_nonconstructable(&promise_try);
-        self.mark_nonconstructable(&promise_all_keyed);
-        self.mark_nonconstructable(&promise_all_settled_keyed);
         install_builtin_methods!(
             self,
             promise.clone(),
