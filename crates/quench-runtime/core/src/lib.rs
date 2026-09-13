@@ -100,15 +100,26 @@ const OBJECT_LIVE_HEAP_GROWTH_FACTOR: usize = 2;
 const OBJECT_GC_STRESS_ENV: &str = "QUENCH_OBJECT_GC_STRESS";
 const FIRST_OBJECT_HEAP_ID: u64 = 1;
 const OBJECT_HEAP_ID_INCREMENT: u64 = 1;
-const CLASS_METHOD_STRICT_ENV_NAME: &str = "\0quench:class-method-strict";
-const CLASS_SUPER_CONSTRUCTOR_ENV_NAME: &str = "\0quench:class-super-constructor";
-const CLASS_SUPER_PROTOTYPE_ENV_NAME: &str = "\0quench:class-super-prototype";
-const EVAL_CODE_ENV_NAME: &str = "\0quench:eval-code";
-const SCRIPT_EVAL_ENV_NAME: &str = "\0quench:script-eval";
-const STRICT_EVAL_ENV_NAME: &str = "\0quench:strict-eval";
-const FUNCTION_ENV_NAME: &str = "\0quench:function";
-const NEW_TARGET_VALUE_NAME: &str = "\0quench:new-target";
-const NEW_TARGET_ALLOWED_NAME: &str = "\0quench:new-target-allowed";
+// Internal environment slots are semantic facts, not ad-hoc string keys.
+// Keep their common namespace and declarations in one table so every layer
+// (eval, functions, classes, and constructors) resolves the same bindings.
+macro_rules! environment_keys {
+    ($( $name:ident => $suffix:literal ),+ $(,)?) => {
+        $(const $name: &str = concat!("\0quench:", $suffix);)+
+    };
+}
+
+environment_keys! {
+    CLASS_METHOD_STRICT_ENV_NAME => "class-method-strict",
+    CLASS_SUPER_CONSTRUCTOR_ENV_NAME => "class-super-constructor",
+    CLASS_SUPER_PROTOTYPE_ENV_NAME => "class-super-prototype",
+    EVAL_CODE_ENV_NAME => "eval-code",
+    SCRIPT_EVAL_ENV_NAME => "script-eval",
+    STRICT_EVAL_ENV_NAME => "strict-eval",
+    FUNCTION_ENV_NAME => "function",
+    NEW_TARGET_VALUE_NAME => "new-target",
+    NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
+}
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
