@@ -1991,6 +1991,7 @@ struct Environment {
     deleted_names: HashSet<String>,
     tdz_names: HashSet<String>,
     lexical_names: HashSet<String>,
+    immutable_names: HashSet<String>,
     catch_names: HashSet<String>,
     catch_simple_names: HashSet<String>,
     // A with-environment is an object environment, not a snapshot of keys.
@@ -2019,6 +2020,7 @@ impl Environment {
             deleted_names: HashSet::new(),
             tdz_names: HashSet::new(),
             lexical_names: HashSet::new(),
+            immutable_names: HashSet::new(),
             catch_names: HashSet::new(),
             catch_simple_names: HashSet::new(),
             with_object: None,
@@ -10065,6 +10067,8 @@ impl Vm {
         let variable_environment = variable_environment(&execution_environment);
         if strict_eval {
             reserve_strict_eval_bindings(&variable_environment, &r.program.body);
+        } else if self.strict_mode && !eval_code {
+            reserve_function_bindings(&variable_environment, &r.program.body, true);
         } else {
             let mut eval_var_names = Vec::new();
             collect_global_object_binding_names(&r.program.body, &mut eval_var_names);
@@ -10115,6 +10119,7 @@ impl Vm {
             && !eval_code
             && !contains_eval_call(source)
             && !contains_async_function_constructor_probe(source)
+            && !has_direct_lexical_declaration(&r.program.body)
         {
             (|| {
                 let statements: &'static [Statement<'static>] =
@@ -10752,6 +10757,9 @@ impl Vm {
             {
                 let mut environment = e.borrow_mut();
                 environment.lexical_names.insert(name.clone());
+                if v.kind == VariableDeclarationKind::Const {
+                    environment.immutable_names.insert(name.clone());
+                }
                 environment.tdz_names.remove(&name);
             }
             let value = d
@@ -10925,13 +10933,14 @@ impl Vm {
                         .is_none_or(|attributes| attributes.configurable)
                 });
                 if configurable {
+                    let eval_binding = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
                     set_property_attributes(
                         &global_this,
                         name,
                         PropertyAttributes {
                             writable: true,
                             enumerable: true,
-                            configurable: true,
+                            configurable: eval_binding,
                         },
                     );
                 }
@@ -12225,7 +12234,7 @@ impl Vm {
                 Environment::set(&e, &name, v);
             }
             LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {
-                if self.strict_mode {
+                if self.immutable_binding(&e, &name) || self.strict_mode {
                     return Err(JsError::Throw(type_error(
                         self,
                         "Assignment to read-only global binding",
@@ -12256,12 +12265,25 @@ impl Vm {
     }
 
     fn readonly_global_binding(&self, environment: &Env, name: &str) -> bool {
-        if !matches!(name, "undefined" | "NaN" | "Infinity") {
-            return false;
-        }
         let mut current = Some(environment.clone());
         while let Some(candidate) = current {
-            if self.is_global_environment(&candidate) {
+            if candidate.borrow().immutable_names.contains(name) {
+                return true;
+            }
+            if matches!(name, "undefined" | "NaN" | "Infinity")
+                && self.is_global_environment(&candidate)
+            {
+                return true;
+            }
+            current = candidate.borrow().parent.clone();
+        }
+        false
+    }
+
+    fn immutable_binding(&self, environment: &Env, name: &str) -> bool {
+        let mut current = Some(environment.clone());
+        while let Some(candidate) = current {
+            if candidate.borrow().immutable_names.contains(name) {
                 return true;
             }
             current = candidate.borrow().parent.clone();
@@ -12759,6 +12781,16 @@ fn collect_direct_lexical_names(statements: &[Statement<'_>], names: &mut HashSe
             _ => {}
         }
     }
+}
+
+fn has_direct_lexical_declaration(statements: &[Statement<'_>]) -> bool {
+    statements.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind != VariableDeclarationKind::Var
+        ) || matches!(statement, Statement::ClassDeclaration(_))
+    })
 }
 
 fn collect_strict_eval_var_names(
