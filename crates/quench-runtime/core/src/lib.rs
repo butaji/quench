@@ -7887,14 +7887,16 @@ impl Vm {
             IfStatement(x) => {
                 if self.eval_expr(&x.test, e.clone())?.truthy() {
                     if let Statement::FunctionDeclaration(function) = &x.consequent {
-                        self.declare_conditional_function(&*function, e);
+                        let branch_environment = Environment::new(Some(e.clone()));
+                        self.declare_conditional_function(&*function, branch_environment);
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
                         self.exec_stmt(&x.consequent, e)
                     }
                 } else if let Some(a) = &x.alternate {
                     if let Statement::FunctionDeclaration(function) = a {
-                        self.declare_conditional_function(&*function, e);
+                        let branch_environment = Environment::new(Some(e.clone()));
+                        self.declare_conditional_function(&*function, branch_environment);
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
                         self.exec_stmt(a, e)
