@@ -7968,7 +7968,7 @@ impl Vm {
         // stencil image carries those environment effects explicitly.
         let eval_tdz_names = if eval_code {
             let mut names = HashSet::new();
-            collect_lexical_binding_names(&r.program.body, &mut names);
+            collect_direct_lexical_names(&r.program.body, &mut names);
             execution_environment
                 .borrow_mut()
                 .tdz_names
@@ -10028,10 +10028,9 @@ fn eval_var_conflicts_with_lexical(environment: &Env, names: &[String]) -> bool 
             break;
         }
         let borrowed = candidate.borrow();
-        if names
-            .iter()
-            .any(|name| borrowed.lexical_names.contains(name))
-        {
+        if names.iter().any(|name| {
+            borrowed.lexical_names.contains(name) && !borrowed.catch_names.contains(name)
+        }) {
             return true;
         }
         current = borrowed.parent.clone();
