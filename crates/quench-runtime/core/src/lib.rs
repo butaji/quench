@@ -7746,24 +7746,26 @@ impl Vm {
                 &format!("parse error: {e:?}"),
             )));
         }
-        if has_for_in_initializer_early_error(
-            &r.program,
-            r.program
-                .directives
-                .iter()
-                .any(|directive| directive.directive.as_str() == "use strict"),
-        ) {
+        let previous_strict_mode = self.strict_mode;
+        let source_strict_mode = r
+            .program
+            .directives
+            .iter()
+            .any(|directive| directive.directive.as_str() == "use strict");
+        let effective_strict_mode = previous_strict_mode || source_strict_mode;
+        if has_for_in_initializer_early_error(&r.program, effective_strict_mode) {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "for-in statement initializer is not permitted",
             )));
         }
-        let previous_strict_mode = self.strict_mode;
-        self.strict_mode = r
-            .program
-            .directives
-            .iter()
-            .any(|directive| directive.directive.as_str() == "use strict");
+        self.strict_mode = effective_strict_mode;
+        if self.strict_mode && has_strict_yield_binding(&r.program) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "yield is reserved as an identifier in strict mode",
+            )));
+        }
         if self.strict_mode && has_strict_template_octal_escape(source) {
             return Err(JsError::Throw(syntax_error(
                 self,
@@ -7773,6 +7775,19 @@ impl Vm {
         if Rc::ptr_eq(&environment, &self.global)
             && Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
         {
+            let mut var_names = Vec::new();
+            collect_global_object_binding_names(&r.program.body, &mut var_names);
+            let global_lexical_names = self.global.borrow().lexical_names.clone();
+            if !self.strict_mode
+                && var_names
+                    .iter()
+                    .any(|name| global_lexical_names.contains(name))
+            {
+                return Err(JsError::Throw(syntax_error(
+                    self,
+                    "var declaration conflicts with global lexical binding",
+                )));
+            }
             let mut lexical_names = HashSet::new();
             collect_lexical_binding_names(&r.program.body, &mut lexical_names);
             let restricted = Environment::get(&self.global, "globalThis")
@@ -7802,7 +7817,12 @@ impl Vm {
         self.hydrate_global_bindings(&environment, &r.program.body);
         self.source_stack.push(p.to_path_buf());
         self.source_ids.push(source_id);
-        let out = if self.jit_mode == JitMode::Stencil {
+        // Eval declaration instantiation can mutate the surrounding
+        // environment (including deleting local var bindings). Keep this
+        // semantic boundary on the interpreter tier of the same VM until the
+        // stencil image carries those environment effects explicitly.
+        let eval_code = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
+        let out = if self.jit_mode == JitMode::Stencil && !eval_code {
             (|| {
                 let statements: &'static [Statement<'static>] =
                     unsafe { std::mem::transmute(r.program.body.as_slice()) };
@@ -8976,8 +8996,10 @@ impl Vm {
             .map(bigint_marker)
             .map_err(|_| JsError::Throw(syntax_error(self, "invalid BigInt literal"))),
             StringLiteral(v) => Ok(Value::String(Rc::new(string_literal_value(v).into()))),
-            Identifier(v) => Environment::get(&e, v.name.as_str())
-                .ok_or_else(|| JsError::Throw(reference_error(self, v.name.as_str()))),
+            Identifier(v) => {
+                let value = Environment::get(&e, v.name.as_str());
+                value.ok_or_else(|| JsError::Throw(reference_error(self, v.name.as_str())))
+            }
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
             Super(_) => Ok(
                 Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME).unwrap_or(Value::Undefined)
@@ -10234,6 +10256,18 @@ fn has_strict_template_octal_escape(source: &str) -> bool {
         }
     }
     false
+}
+
+fn has_strict_yield_binding(program: &Program<'_>) -> bool {
+    program.body.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::VariableDeclaration(declaration)
+                if declaration.declarations.iter().any(|declarator| {
+                    pattern_name(&declarator.id).as_deref() == Some("yield")
+                })
+        )
+    })
 }
 
 fn for_in_error_in_statement(statement: &Statement<'_>, strict: bool) -> bool {
