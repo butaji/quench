@@ -290,7 +290,9 @@ pub fn build_value() -> Value {
     }
     let _ = execute::set_callable_property(&strict, "strict", strict.clone());
     let _ = execute::set_callable_property(&strict, "\0quench:strict", Value::Boolean(true));
-    let _ = execute::set_callable_property(&value, "strict", strict.clone());
+    // Node exposes `assert.strict` as an alias of the callable assert export;
+    // only the `node:assert/strict` subpath is a distinct namespace object.
+    let _ = execute::set_callable_property(&value, "strict", value.clone());
     let _ = execute::set_callable_property(&value, "\0quench:strict-namespace", strict.clone());
     for (name, source) in [
         ("rejects", ASSERT_REJECTS),
