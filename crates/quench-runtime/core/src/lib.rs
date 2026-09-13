@@ -7598,8 +7598,11 @@ impl Vm {
                 let result = self.call(
                     trap,
                     handler,
-                    vec![target, Value::string_value(key), value, object.clone()],
+                    vec![target.clone(), Value::string_value(key), value.clone(), object.clone()],
                 )?;
+                if result.truthy() {
+                    validate_proxy_set_invariant(self, &target, key, &value)?;
+                }
                 if !result.truthy() {
                     if !self.strict_mode {
                         return Ok(());
@@ -18586,8 +18589,11 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             let result = vm.call(
                 trap,
                 handler,
-                vec![proxy_target_value, Value::string_value(key), value, receiver],
+                vec![proxy_target_value.clone(), Value::string_value(key.clone()), value.clone(), receiver],
             )?;
+            if result.truthy() {
+                validate_proxy_set_invariant(vm, &proxy_target_value, &key, &value)?;
+            }
             return Ok(Value::Bool(result.truthy()));
         }
         if vm.has_property(&handler, "set") && !trap.is_null() && !trap.is_undefined() {
@@ -23293,6 +23299,32 @@ fn proxy_revoked(value: &Value) -> bool {
         .as_function_ref()
         .and_then(|function| function.props.borrow().get(PROXY_REVOKED_PROP).cloned())
         .is_some_and(|value| value.truthy())
+}
+
+fn validate_proxy_set_invariant(vm: &mut Vm, target: &Value, key: &str, value: &Value) -> JsResult<()> {
+    let descriptor = native_object_get_own_property_descriptor(
+        vm,
+        Value::Undefined,
+        &[target.clone(), Value::string_value(key.to_owned())],
+    )?;
+    if descriptor.is_undefined() {
+        return Ok(());
+    }
+    if vm.has_property(&descriptor, "writable")
+        && !vm.get_prop(&descriptor, "writable").truthy()
+        && !vm.get_prop(&descriptor, "configurable").truthy()
+        && vm.has_property(&descriptor, "value")
+        && !vm.get_prop(&descriptor, "value").same_bits(value)
+    {
+        return Err(JsError::Throw(type_error(vm, "Proxy set trap violated non-writable target invariant")));
+    }
+    if !vm.has_property(&descriptor, "writable")
+        && !vm.get_prop(&descriptor, "configurable").truthy()
+        && vm.get_prop(&descriptor, "set").is_undefined()
+    {
+        return Err(JsError::Throw(type_error(vm, "Proxy set trap violated accessor target invariant")));
+    }
+    Ok(())
 }
 
 /// Implements the enumerable-key projection needed by keyed Promise
