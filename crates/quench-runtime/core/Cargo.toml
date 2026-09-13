@@ -23,6 +23,7 @@ num-bigint = "0.4"
 num-traits = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 unicode-normalization = "0.1"
+wasmparser = "0.247"
 
 [build-dependencies]
 object = "0.37"

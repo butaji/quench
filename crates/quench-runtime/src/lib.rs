@@ -18,29 +18,20 @@ pub mod vm_core {
     /// while the instantiated module and typed value ladder are exposed from
     /// this single execution namespace during the lowering migration.
     pub mod wasm {
-        pub use crate::hir::{FuncSig, ImportKind};
-        pub use crate::instance::{Instance, InvokeError, ResolvedImport};
-        pub use crate::slot::Slot;
+        pub use quench_runtime_core::hir::{FuncSig, ImportKind};
+        pub use quench_runtime_core::instance::{Instance, InvokeError, ResolvedImport};
+        pub use quench_runtime_core::native::{Native, RefVal};
+        pub use quench_runtime_core::slot::Slot;
+        pub use quench_runtime_core::unwind::Failure;
     }
 }
-mod bulk;
-pub mod dynamic;
-pub mod fast;
-pub mod gc;
-pub mod hir;
-pub mod hir_gc;
+pub use quench_runtime_core::{bulk, dynamic, fast, gc, hir, hir_gc};
 mod host_jobs;
-pub mod instance;
-pub mod interp;
-pub mod layer;
-pub mod native;
+pub use quench_runtime_core::{instance, interp, layer, native};
 mod native_control;
 mod native_property;
 pub mod shape_cache;
-pub mod slot;
-pub mod unwind;
-pub mod wasm;
-mod wasm_atomic;
+pub use quench_runtime_core::{slot, unwind, wasm, wasm_atomic};
 pub use host_jobs::install_host_job_pump;
 
 mod arrays;
@@ -104,7 +95,7 @@ pub mod hardware_counters;
 pub mod heap;
 pub mod host_api;
 mod identifiers;
-pub mod identity;
+pub use quench_runtime_core::identity;
 mod intl;
 mod json;
 pub use json::parse as parse_json;
