@@ -7958,6 +7958,23 @@ impl Vm {
         if Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some() {
             let mut var_names = Vec::new();
             collect_global_object_binding_names(&r.program.body, &mut var_names);
+            let var_environment = variable_environment(&environment);
+            if Rc::ptr_eq(&var_environment, &self.global)
+                && let Some(global_this) = Environment::get(&self.global, "globalThis")
+                && let Some(global_object) = global_this.as_object_ref()
+            {
+                let global_object = global_object.borrow();
+                if !global_object.extensible
+                    && var_names
+                        .iter()
+                        .any(|name| !global_object.props.contains_key(name))
+                {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot declare global binding on a non-extensible object",
+                    )));
+                }
+            }
             if var_names.iter().any(|name| {
                 name == "arguments" && {
                     let environment = environment.borrow();
