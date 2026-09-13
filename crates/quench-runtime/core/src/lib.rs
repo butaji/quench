@@ -14174,7 +14174,8 @@ impl Vm {
             }
             current = parent;
         }
-        Environment::get(e, name).ok_or_else(|| JsError::Throw(reference_error(self, name)))
+        let result = Environment::get(e, name);
+        result.ok_or_else(|| JsError::Throw(reference_error(self, name)))
     }
 
     fn with_binding_allowed(&mut self, object: &Value, name: &str) -> JsResult<bool> {
@@ -14661,7 +14662,15 @@ impl Vm {
                     return Ok(value);
                 }
                 let target = self.resolve_target(&v.left, e.clone())?;
-                let old = self.read_lvalue(&target)?;
+                let old = if v.operator == Assign {
+                    // Simple assignment performs PutValue without an
+                    // antecedent GetValue; unresolved sloppy names therefore
+                    // remain valid global writes. Compound/logical forms do
+                    // require the captured reference to be read first.
+                    Value::Undefined
+                } else {
+                    self.read_lvalue(&target)?
+                };
                 let right = match v.operator {
                     LogicalOr if old.truthy() => None,
                     LogicalAnd if !old.truthy() => None,
