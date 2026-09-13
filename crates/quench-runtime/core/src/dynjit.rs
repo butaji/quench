@@ -3739,11 +3739,17 @@ fn construct(
         vm(frame).object(prototype)
     } else if native {
         let native_prototype = callee.as_function_ref().and_then(|function| {
-            matches!(
-                function.kind,
-                FunctionKind::Builtin(BuiltinId::DateConstructor)
-            )
-            .then(|| function.prototype.clone())
+            let is_native_constructor = match function.kind {
+                FunctionKind::Builtin(BuiltinId::DateConstructor) => true,
+                FunctionKind::Native(native) => {
+                    native as *const () == super::native_array_buffer_constructor as *const ()
+                        || native as *const () == super::native_typed_array_constructor as *const ()
+                        || native as *const () == super::native_map_constructor as *const ()
+                        || native as *const () == super::native_set_constructor as *const ()
+                }
+                _ => false,
+            };
+            is_native_constructor.then(|| function.prototype.clone())
         });
         let proxy_prototype = super::proxy_target(&callee)
             .and_then(|target| target.as_function_ref().map(|function| function.prototype.clone()));
