@@ -3117,6 +3117,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let cache = property_ic();
             let vm = unsafe { &mut *frame.vm };
             if *strict
+                && vm.find_accessor(&object, key).is_none()
                 && object.as_object_ref().is_some_and(|object| {
                     object
                         .borrow()
