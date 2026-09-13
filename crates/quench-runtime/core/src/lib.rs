@@ -7497,8 +7497,13 @@ impl Vm {
             let (prototype, builtin_prototype) = {
                 let object = x.borrow();
                 if let Some(a) = &object.array {
-                    if k == "length" && !object.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP) {
-                        return Value::Number(array_length(&object) as f64);
+                    if k == "length" {
+                        if let Some(value) = object.props.get(k) {
+                            return value.clone();
+                        }
+                        if !object.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP) {
+                            return Value::Number(array_length(&object) as f64);
+                        }
                     }
                     if let Some(i) = array_index_key(k) {
                         if let Some(value) = a.get(i).cloned() {
@@ -8417,6 +8422,24 @@ impl Vm {
                 return;
             }
             if k == "length" && object.array.is_some() {
+                let is_arguments = object
+                    .props
+                    .get("\0wrapper")
+                    .and_then(Value::as_string)
+                    .is_some_and(|wrapper| wrapper == "Arguments");
+                if is_arguments {
+                    object.props.insert(k.into(), v);
+                    object.props.shift_remove(ARGUMENTS_LENGTH_DELETED_PROP);
+                    object.attributes.insert(
+                        k.into(),
+                        PropertyAttributes {
+                            writable: true,
+                            enumerable: false,
+                            configurable: true,
+                        },
+                    );
+                    return;
+                }
                 set_array_length(&mut object, v.number());
                 object
                     .attributes
@@ -8632,6 +8655,7 @@ impl Vm {
                     object
                         .props
                         .insert(ARGUMENTS_LENGTH_DELETED_PROP, Value::Bool(true));
+                    object.props.shift_remove(k);
                     object.attributes.remove(k);
                     return true;
                 }
@@ -9625,22 +9649,50 @@ impl Vm {
             this
         };
         e.borrow_mut().declare("this", this);
-        let av = self.object_value(Object::array(self.array_proto, args.clone()));
+        // Arguments are array-exotic for indexed access, but their prototype
+        // is ordinary Object.prototype (not Array.prototype).
+        let av = self.object_value(Object::array(self.default_object_prototype(), args.clone()));
         self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
-        self.set_prop(
-            &av,
-            "callee",
-            callee.unwrap_or_else(|| self.make_user(n, outer.clone())),
-        );
-        set_property_attributes(
-            &av,
-            "callee",
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: !strict,
-            },
-        );
+        if strict {
+            let throw_type_error = self.throw_type_error();
+            self.define_accessor_slot(
+                &av,
+                "callee",
+                Some(throw_type_error.clone()),
+                Some(throw_type_error.clone()),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                },
+            );
+            self.define_accessor_slot(
+                &av,
+                "caller",
+                Some(throw_type_error.clone()),
+                Some(throw_type_error),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                },
+            );
+        } else {
+            self.set_prop(
+                &av,
+                "callee",
+                callee.unwrap_or_else(|| self.make_user(n, outer.clone())),
+            );
+            set_property_attributes(
+                &av,
+                "callee",
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
         set_property_attributes(
             &av,
             "length",
@@ -24796,11 +24848,11 @@ fn native_object_get_own_property_descriptor(
         }
     } else if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
-        if key == "length"
-            && object.array.is_some()
-            && !object.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP)
-        {
-            Some(Value::Number(array_length(&object) as f64))
+        if key == "length" && object.array.is_some() {
+            object.props.get(&key).cloned().or_else(|| {
+                (!object.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP))
+                    .then_some(Value::Number(array_length(&object) as f64))
+            })
         } else if let Some(index) = array_index_key(&key) {
             object
                 .array
