@@ -7441,7 +7441,11 @@ impl Vm {
         while let Some(object) = current {
             let candidate = Value::Object(object.clone());
             if let Some(target) = proxy_target(&candidate) {
-                return self.find_accessor(&target, key);
+                // A Proxy is an observable [[Get]]/[[Set]] boundary.  Do not
+                // tunnel through it while searching for an inherited
+                // accessor; the caller must re-enter the proxy protocol.
+                let _ = target;
+                return None;
             }
             let borrowed = object.borrow();
             let getter = borrowed.props.get(&accessor_slot("get", key)).cloned();
@@ -7659,7 +7663,8 @@ impl Vm {
                 || object.props.contains_key(&accessor_slot("set", key))
                 || object.array.as_ref().is_some_and(|array| {
                     key == "length"
-                        || array_index_key(key).is_some_and(|index| index < array.len())
+                        || array_index_key(key)
+                            .is_some_and(|index| index < array.len() && !array.holes[index])
                 });
             (!own).then(|| object.prototype.clone()).flatten()
         }) {
@@ -7751,7 +7756,8 @@ impl Vm {
                 || object.props.contains_key(&accessor_slot("set", key))
                 || object.array.as_ref().is_some_and(|array| {
                     key == "length"
-                        || array_index_key(key).is_some_and(|index| index < array.len())
+                        || array_index_key(key)
+                            .is_some_and(|index| index < array.len() && !array.holes[index])
                 });
             (!own).then(|| object.prototype.clone()).flatten()
         }) {
@@ -8493,6 +8499,16 @@ impl Vm {
             return call_ic.call(self, t, a);
         }
         if let Some(f) = c.as_function_ref() {
+            let effective_strict = f.strict
+                || matches!(
+                    &f.kind,
+                    FunctionKind::User { node, .. }
+                        if node.body.as_ref().is_some_and(|body| {
+                            body.directives
+                                .iter()
+                                .any(|directive| directive.directive.as_str() == "use strict")
+                        })
+                );
             if let FunctionKind::User { node, .. } = &f.kind
                 && node.r#async
                 && node.generator
@@ -8574,7 +8590,11 @@ impl Vm {
                 if let Some(call_ic) = call_ic {
                     call_ic.fill(c, code.clone(), env.clone());
                     if call_ic.matches(c) {
-                        return match call_ic.call(self, t.clone(), a) {
+                        return match with_strict_mode!(
+                            self,
+                            effective_strict,
+                            call_ic.call(self, t.clone(), a)
+                        ) {
                             Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
                                 FunctionKind::User { node, env } => self.call_user_or_async(
                                     node,
@@ -8601,7 +8621,11 @@ impl Vm {
                         };
                     }
                 }
-                return match code.call(self, env.clone(), t.clone(), a) {
+                return match with_strict_mode!(
+                    self,
+                    effective_strict,
+                    code.call(self, env.clone(), t.clone(), a)
+                ) {
                     Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
                         FunctionKind::User { node, env } => self.call_user_or_async(
                             node,
@@ -11420,10 +11444,13 @@ impl Vm {
                 Environment::set(&e, &name, v);
             }
             LValue::Prop(o, k) => {
-                if self.strict_mode || proxy_target(&o).is_some() {
-                    self.set_prop_with_accessors(&o, &k, v)?;
-                } else {
-                    self.set_prop(&o, &k, v);
+                match self.set_prop_with_accessors(&o, &k, v) {
+                    Ok(()) => {}
+                    Err(JsError::Throw(value))
+                        if !self.strict_mode
+                            && proxy_target(&o).is_none()
+                            && is_type_error_value(&value) => {}
+                    Err(error) => { if k == "name" { eprintln!("DBG write name err strict={} proxy={}", self.strict_mode, proxy_target(&o).is_some()); } return Err(error) },
                 }
             }
         }
