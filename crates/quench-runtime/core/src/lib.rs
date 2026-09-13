@@ -5901,6 +5901,7 @@ impl Vm {
                 configurable: true,
             },
         );
+        install_regexp_legacy_accessors(self);
         self.install_global_aliases();
         let test262 = self.object(None);
         self.set_prop(&test262, "createRealm", self.native(native_create_realm));
@@ -6625,9 +6626,12 @@ impl Vm {
                 || borrowed.props.contains_key(&accessor_slot("get", key))
                 || borrowed.props.contains_key(&accessor_slot("set", key));
         }
-        value
-            .as_function_ref()
-            .is_some_and(|function| function.props.borrow().contains_key(key))
+        value.as_function_ref().is_some_and(|function| {
+            let props = function.props.borrow();
+            props.contains_key(key)
+                || props.contains_key(&accessor_slot("get", key))
+                || props.contains_key(&accessor_slot("set", key))
+        })
     }
 
     pub(crate) fn get_prop_with_accessors(&mut self, object: &Value, key: &str) -> JsResult<Value> {
@@ -7025,7 +7029,11 @@ impl Vm {
                 return false;
             }
             if k != "prototype" {
-                function.props.borrow_mut().shift_remove(k);
+                let mut props = function.props.borrow_mut();
+                props.shift_remove(k);
+                props.shift_remove(&accessor_slot("get", k));
+                props.shift_remove(&accessor_slot("set", k));
+                function.attributes.borrow_mut().remove(k);
             }
         }
         true
@@ -8647,13 +8655,13 @@ impl Vm {
             }
             StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
-                Ok(self.get_prop(&o, m.property.name.as_str()))
+                self.get_prop_with_accessors(&o, m.property.name.as_str())
             }
             ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
                 let key_value = self.eval_expr(&m.expression, e)?;
                 let k = self.to_property_key(key_value)?;
-                Ok(self.get_prop(&o, &k))
+                self.get_prop_with_accessors(&o, &k)
             }
             CallExpression(v) => {
                 if matches!(&v.callee, Expression::Super(_)) {
@@ -8678,7 +8686,7 @@ impl Vm {
                     } else {
                         o.clone()
                     };
-                    (receiver, self.get_prop(&o, &k))
+                    (receiver, self.get_prop_with_accessors(&o, &k)?)
                 } else {
                     (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
                 };
@@ -12879,6 +12887,121 @@ fn regexp_replacement_captures(regexp: &RegExpValue, source: &str) -> Vec<Kernel
     captures
 }
 
+fn regexp_legacy_receiver_is_constructor(vm: &Vm, receiver: &Value) -> bool {
+    receiver
+        .as_function_ref()
+        .zip(vm.builtin(BuiltinId::RegExpConstructor).as_function_ref())
+        .is_some_and(|(actual, expected)| std::ptr::eq(actual, expected))
+}
+
+fn regexp_legacy_get(vm: &mut Vm, this: Value, key: &str) -> JsResult<Value> {
+    if !regexp_legacy_receiver_is_constructor(vm, &this) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp legacy accessor requires RegExp constructor",
+        )));
+    }
+    if matches!(key, "input" | "$_") {
+        return Ok(this
+            .as_function_ref()
+            .and_then(|function| function.props.borrow().get("\0regexp-input").cloned())
+            .unwrap_or_else(|| Value::string_value("")));
+    }
+    Ok(Value::string_value(""))
+}
+
+fn regexp_legacy_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !regexp_legacy_receiver_is_constructor(vm, &this) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "RegExp legacy accessor requires RegExp constructor",
+        )));
+    }
+    let value = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
+    if let Some(function) = this.as_function_ref() {
+        function
+            .props
+            .borrow_mut()
+            .insert("\0regexp-input".into(), Value::string_value(value));
+    }
+    Ok(Value::Undefined)
+}
+
+macro_rules! define_regexp_legacy_getters {
+    ($( $name:ident => $key:literal ),+ $(,)?) => {
+        $(
+            fn $name(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+                regexp_legacy_get(vm, this, $key)
+            }
+        )+
+    };
+}
+
+define_regexp_legacy_getters! {
+    native_regexp_legacy_get_1 => "$1",
+    native_regexp_legacy_get_2 => "$2",
+    native_regexp_legacy_get_3 => "$3",
+    native_regexp_legacy_get_4 => "$4",
+    native_regexp_legacy_get_5 => "$5",
+    native_regexp_legacy_get_6 => "$6",
+    native_regexp_legacy_get_7 => "$7",
+    native_regexp_legacy_get_8 => "$8",
+    native_regexp_legacy_get_9 => "$9",
+    native_regexp_legacy_get_match => "$&",
+    native_regexp_legacy_get_before => "$`",
+    native_regexp_legacy_get_after => "$'",
+    native_regexp_legacy_get_last_paren => "$+",
+    native_regexp_legacy_get_input => "input",
+    native_regexp_legacy_get_last_match => "lastMatch",
+    native_regexp_legacy_get_last_paren_name => "lastParen",
+    native_regexp_legacy_get_left_context => "leftContext",
+    native_regexp_legacy_get_right_context => "rightContext",
+    native_regexp_legacy_get_dollar_underscore => "$_",
+}
+
+fn install_regexp_legacy_accessors(vm: &Vm) {
+    let regexp = vm.builtin(BuiltinId::RegExpConstructor);
+    let getters = [
+        (
+            "$1",
+            native_regexp_legacy_get_1 as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>,
+        ),
+        ("$2", native_regexp_legacy_get_2 as _),
+        ("$3", native_regexp_legacy_get_3 as _),
+        ("$4", native_regexp_legacy_get_4 as _),
+        ("$5", native_regexp_legacy_get_5 as _),
+        ("$6", native_regexp_legacy_get_6 as _),
+        ("$7", native_regexp_legacy_get_7 as _),
+        ("$8", native_regexp_legacy_get_8 as _),
+        ("$9", native_regexp_legacy_get_9 as _),
+        ("$&", native_regexp_legacy_get_match as _),
+        ("$`", native_regexp_legacy_get_before as _),
+        ("$'", native_regexp_legacy_get_after as _),
+        ("$+", native_regexp_legacy_get_last_paren as _),
+        ("input", native_regexp_legacy_get_input as _),
+        ("lastMatch", native_regexp_legacy_get_last_match as _),
+        ("lastParen", native_regexp_legacy_get_last_paren_name as _),
+        ("leftContext", native_regexp_legacy_get_left_context as _),
+        ("rightContext", native_regexp_legacy_get_right_context as _),
+        ("$_", native_regexp_legacy_get_dollar_underscore as _),
+    ];
+    for (key, getter) in getters {
+        let setter = matches!(key, "input" | "$_")
+            .then(|| vm.native_named(regexp_legacy_set, "set RegExp legacy accessor", 1));
+        vm.define_accessor_slot(
+            &regexp,
+            key,
+            Some(vm.native_named(getter, "get RegExp legacy accessor", 0)),
+            setter,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
+}
+
 fn native_regexp_symbol_split(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(regexp) = this.as_regexp() else {
         return Err(JsError::Throw(type_error(
@@ -15057,7 +15180,9 @@ fn native_function_constructor(vm: &mut Vm, receiver: Value, args: &[Value]) -> 
     let parameters = if args.len() > 1 {
         let mut parameters = Vec::with_capacity(args.len() - 1);
         for value in &args[..args.len() - 1] {
-            parameters.push(strip_legacy_html_comments(&to_string_with_vm(vm, value)?));
+            parameters.push(strip_legacy_html_comment_parameters(&to_string_with_vm(
+                vm, value,
+            )?));
         }
         parameters.join(",")
     } else {
@@ -15111,6 +15236,27 @@ fn strip_legacy_html_comments(source: &str) -> String {
     // grammar, so erase only those legacy markers before handing the source
     // to the same parser used by ordinary functions.
     source.replace("<!--", "").replace("-->", "")
+}
+
+fn strip_legacy_html_comment_parameters(source: &str) -> String {
+    let source = source.replace("<!--", "");
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find("-->") {
+        let end = cursor + relative;
+        let before = &source[..end];
+        let line_terminated = before
+            .chars()
+            .next_back()
+            .is_some_and(|character| matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}'));
+        output.push_str(&source[cursor..end]);
+        if !line_terminated {
+            output.push_str("-->");
+        }
+        cursor = end + 3;
+    }
+    output.push_str(&source[cursor..]);
+    output
 }
 
 fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
@@ -17958,7 +18104,11 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
             || regexp.props.contains_key(&accessor_slot("get", &key))
             || regexp.props.contains_key(&accessor_slot("set", &key))
     } else if let Some(function) = target.as_function_ref() {
-        function.props.borrow().contains_key(&key) || (key == "prototype" && constructable(&target))
+        let props = function.props.borrow();
+        props.contains_key(&key)
+            || props.contains_key(&accessor_slot("get", &key))
+            || props.contains_key(&accessor_slot("set", &key))
+            || (key == "prototype" && constructable(&target))
     } else {
         target.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
