@@ -3630,7 +3630,14 @@ fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> 
         UnaryKind::Not => Value::Bool(!value.truthy()),
         UnaryKind::BitNot => Value::Number(!i32_js(value.number()) as f64),
         UnaryKind::Typeof => Value::String(Rc::new(
-            if value.is_undefined() {
+            if value.is_undefined()
+                || value
+                    .as_function_ref()
+                    .is_some_and(|function| function.props.borrow().contains_key("\0html-dda"))
+                || value
+                    .as_object_ref()
+                    .is_some_and(|object| object.borrow().props.contains_key("\0html-dda"))
+            {
                 "undefined"
             } else if value.is_function() {
                 "function"

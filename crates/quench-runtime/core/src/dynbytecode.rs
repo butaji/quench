@@ -1177,12 +1177,21 @@ impl Compiler {
     }
 
     fn for_of_statement(&mut self, item: &ForOfStatement<'static>) -> Result<(), CompileGap> {
-        if item.r#await {
-            return Err(CompileGap {
-                span: item.span,
-                reason: "async for-of stencil missing",
-            });
-        }
+        // The interpreter owns the iterator protocol (custom @@iterator,
+        // abrupt completion, and IteratorClose).  The old stencil lowering
+        // assumed a dense `.length` array and silently skipped arbitrary
+        // iterables, so keep this semantic boundary explicit until a
+        // protocol-aware stencil exists.
+        let reason = if item.r#await {
+            "async for-of stencil missing"
+        } else {
+            "iterator protocol deferred to shared semantics"
+        };
+        return Err(CompileGap {
+            span: item.span,
+            reason,
+        });
+        /*
         let object = self.expression(&item.right)?;
         let index = self.literal(Literal::Number(0.0), item.span)?;
         let length = self.alloc()?;
@@ -1256,6 +1265,7 @@ impl Compiler {
             self.patch(jump, end);
         }
         Ok(())
+        */
     }
 
     fn store_for_left(
@@ -2427,18 +2437,20 @@ fn binding_pattern_name(pattern: &BindingPattern<'static>) -> Option<String> {
 fn contains_var_named(statements: &[Statement<'static>], name: &str) -> bool {
     statements.iter().any(|statement| match statement {
         Statement::VariableDeclaration(declaration)
-            if declaration.kind == VariableDeclarationKind::Var => declaration
+            if declaration.kind == VariableDeclarationKind::Var =>
+        {
+            declaration
                 .declarations
                 .iter()
                 .filter_map(|declarator| binding_pattern_name(&declarator.id))
-                .any(|candidate| candidate == name),
+                .any(|candidate| candidate == name)
+        }
         Statement::BlockStatement(block) => contains_var_named(&block.body, name),
         Statement::IfStatement(statement) => {
             contains_var_named(std::slice::from_ref(&statement.consequent), name)
-                || statement
-                    .alternate
-                    .as_ref()
-                    .is_some_and(|alternate| contains_var_named(std::slice::from_ref(alternate), name))
+                || statement.alternate.as_ref().is_some_and(|alternate| {
+                    contains_var_named(std::slice::from_ref(alternate), name)
+                })
         }
         Statement::LabeledStatement(statement) => {
             contains_var_named(std::slice::from_ref(&statement.body), name)
@@ -2467,9 +2479,10 @@ fn contains_var_named(statements: &[Statement<'static>], name: &str) -> bool {
             .any(|case| contains_var_named(&case.consequent, name)),
         Statement::TryStatement(statement) => {
             contains_var_named(&statement.block.body, name)
-                || statement.handler.as_ref().is_some_and(|handler| {
-                    contains_var_named(&handler.body.body, name)
-                })
+                || statement
+                    .handler
+                    .as_ref()
+                    .is_some_and(|handler| contains_var_named(&handler.body.body, name))
                 || statement
                     .finalizer
                     .as_ref()
