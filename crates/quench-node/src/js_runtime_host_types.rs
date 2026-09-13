@@ -49,6 +49,15 @@ impl NodeHost for FilesystemNodeHost {
     }
 }
 
+/// Host state is a product of independent keyed stores. Declare the empty
+/// stores as data once and let the macro expand the uniform `RefCell` wiring;
+/// counters and state machines remain explicit below.
+macro_rules! empty_host_maps {
+    ($($field:ident),+ $(,)?) => {
+        $( $field: RefCell::new(HashMap::new()), )+
+    };
+}
+
 pub(crate) trait NodeHost {
     fn resolve_module(
         &self,
@@ -128,12 +137,9 @@ struct HttpState {
 impl Default for QuenchNodeHost {
     fn default() -> Self {
         Self {
-            hashes: RefCell::new(HashMap::new()),
-            hash_objects: RefCell::new(HashMap::new()),
-            dgram_states: RefCell::new(HashMap::new()),
-            dgram_listeners: RefCell::new(HashMap::new()),
+            empty_host_maps!(hashes, hash_objects, dgram_states, dgram_listeners),
             next_dgram: Cell::new(1),
-            streams: RefCell::new(HashMap::new()),
+            empty_host_maps!(streams),
             next_hash: Cell::new(100),
             next_stream: Cell::new(200),
             http: RefCell::new(HttpState {
@@ -142,26 +148,23 @@ impl Default for QuenchNodeHost {
                 data_callback: None,
                 end_callback: None,
             }),
-            urls: RefCell::new(HashMap::new()),
-            url_objects: RefCell::new(HashMap::new()),
+            empty_host_maps!(urls, url_objects),
             next_url: Cell::new(600),
-            params_state: RefCell::new(HashMap::new()),
-            params_objects: RefCell::new(HashMap::new()),
+            empty_host_maps!(params_state, params_objects),
             next_params: Cell::new(700),
-            event_max: RefCell::new(HashMap::new()),
+            empty_host_maps!(event_max),
             next_event: Cell::new(900),
-            fd_paths: RefCell::new(HashMap::new()),
+            empty_host_maps!(fd_paths),
             next_fd: Cell::new(3),
-            fd_modes: RefCell::new(HashMap::new()),
-            directories: RefCell::new(HashMap::new()),
+            empty_host_maps!(fd_modes, directories),
             next_directory: Cell::new(1),
-            common_wrappers: RefCell::new(HashMap::new()),
+            empty_host_maps!(common_wrappers),
             next_common_wrapper: Cell::new(CapabilityName::CommonWrapperFirst),
-            promisified: RefCell::new(HashMap::new()),
+            empty_host_maps!(promisified),
             next_promisified: Cell::new(CapabilityName::UtilPromisifiedFirst),
-            deprecated: RefCell::new(HashMap::new()),
+            empty_host_maps!(deprecated),
             next_deprecated: Cell::new(CapabilityName::UtilDeprecatedFirst),
-            pending_promises: RefCell::new(HashMap::new()),
+            empty_host_maps!(pending_promises),
             next_promise: Cell::new(CapabilityName::UtilResolverFirst),
         }
     }
