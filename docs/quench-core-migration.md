@@ -74,7 +74,7 @@ Verification completed:
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - canonical stencil Test262 stage 10 (`language/expressions`) now reaches
-  9,204/11,101 fixtures; the focused arrow-function slice is 55/55 after
+  9,206/11,101 fixtures; the focused arrow-function slice is 55/55 after
   preserving parameter/body environments, lexical `new.target`/`super`,
   direct-eval conflicts, and `Symbol.unscopables`
 - production `quench-node` build and a core-backed Node smoke test
