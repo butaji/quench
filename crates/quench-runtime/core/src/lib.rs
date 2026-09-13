@@ -2321,8 +2321,8 @@ enum RegExpLiteralKernel {
 }
 
 impl RegExpLiteralKernel {
-    fn compile(pattern: &str, insensitive: bool) -> Self {
-        match compile_regex(pattern, insensitive) {
+    fn compile(pattern: &str, insensitive: bool, unicode: bool) -> Self {
+        match compile_regex_with_flags(pattern, insensitive, unicode) {
             Ok(regex) => Self::Compiled(Rc::new(regex)),
             Err(error) => Self::Error(error.to_string().into()),
         }
@@ -9147,9 +9147,10 @@ impl Vm {
                     .unwrap_or(v.regex.pattern.text.as_str())
                     .to_string();
                 let flags = regexp_flags!(v.regex.flags);
-                let kernel = Rc::new(compile_regex(
+                let kernel = Rc::new(compile_regex_with_flags(
                     &source,
                     v.regex.flags.contains(oxc_ast::ast::RegExpFlags::I),
+                    v.regex.flags.contains(oxc_ast::ast::RegExpFlags::U),
                 )?);
                 let mut regexp =
                     RegExpValue::new(kernel, v.regex.flags.contains(oxc_ast::ast::RegExpFlags::G));
@@ -16485,8 +16486,12 @@ fn native_regexp(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         )));
     }
     let kernel = Rc::new(
-        compile_regex(&p, flags.contains('i'))
-            .map_err(|_| JsError::Throw(syntax_error(vm, "invalid regular expression")))?,
+        compile_regex_with_flags(
+            &p,
+            flags.contains('i'),
+            flags.contains('u') || flags.contains('v'),
+        )
+        .map_err(|_| JsError::Throw(syntax_error(vm, "invalid regular expression")))?,
     );
     let mut regexp = RegExpValue::new(kernel, flags.contains('g'));
     regexp.source = p;
@@ -16556,8 +16561,12 @@ fn native_regexp_compile(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<V
         )));
     }
     let kernel = Rc::new(
-        compile_regex(&source, flags.contains('i'))
-            .map_err(|_| JsError::Throw(syntax_error(vm, "invalid regular expression")))?,
+        compile_regex_with_flags(
+            &source,
+            flags.contains('i'),
+            flags.contains('u') || flags.contains('v'),
+        )
+        .map_err(|_| JsError::Throw(syntax_error(vm, "invalid regular expression")))?,
     );
     let mut regexp = regexp.borrow_mut();
     let readonly_last_index = regexp
@@ -16597,7 +16606,20 @@ fn has_unicode_decimal_escape(pattern: &str) -> bool {
 }
 
 fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<RegExpKernel> {
+    compile_regex_with_flags(pattern, insensitive, false)
+}
+
+fn compile_regex_with_flags(
+    pattern: &str,
+    insensitive: bool,
+    unicode: bool,
+) -> JsResult<RegExpKernel> {
     let pattern = rename_duplicate_named_groups(pattern);
+    if unicode && !valid_unicode_pattern(&pattern) {
+        return Err(JsError::Message(
+            "invalid Unicode regular expression".into(),
+        ));
+    }
     // `regex` is the default linear backend.  Delegate patterns that contain
     // a real numeric backreference or lookaround to the ECMAScript-capable
     // engine instead of rewriting them into a different language.
@@ -16655,6 +16677,109 @@ fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<RegExpKernel> {
             .map(RegExpKernel::Fancy)
             .map_err(|_| JsError::Message(format!("regex parse error: {linear_error}"))),
     }
+}
+
+fn valid_unicode_pattern(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut index = 0usize;
+    let mut escaped = false;
+    let mut in_class = false;
+    let mut quantifier_open = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            if byte < 0x20 {
+                return false;
+            }
+            if byte == b'x'
+                && (index + 2 >= bytes.len()
+                    || !bytes[index + 1].is_ascii_hexdigit()
+                    || !bytes[index + 2].is_ascii_hexdigit())
+            {
+                return false;
+            }
+            if byte == b'0' && bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
+                return false;
+            }
+            if byte == b'c' && !bytes.get(index + 1).is_some_and(u8::is_ascii_alphabetic) {
+                return false;
+            }
+            if !byte.is_ascii_alphanumeric()
+                && !matches!(
+                    byte,
+                    b'^' | b'$'
+                        | b'\\'
+                        | b'.'
+                        | b'*'
+                        | b'+'
+                        | b'?'
+                        | b'('
+                        | b')'
+                        | b'['
+                        | b']'
+                        | b'{'
+                        | b'}'
+                        | b'|'
+                        | b'/'
+                )
+                && !(in_class && byte == b'-')
+            {
+                return false;
+            }
+            if byte.is_ascii_alphabetic()
+                && !matches!(
+                    byte,
+                    b'0' | b'1'
+                        ..=b'9'
+                            | b'b'
+                            | b'B'
+                            | b'd'
+                            | b'D'
+                            | b'f'
+                            | b'n'
+                            | b'r'
+                            | b's'
+                            | b'S'
+                            | b't'
+                            | b'v'
+                            | b'w'
+                            | b'W'
+                            | b'p'
+                            | b'P'
+                            | b'k'
+                            | b'c'
+                            | b'u'
+                            | b'U'
+                            | b'x'
+                )
+            {
+                return false;
+            }
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'\\' => escaped = true,
+            b'[' => in_class = true,
+            b']' if in_class => in_class = false,
+            b']' => return false,
+            b'{' if !in_class => {
+                // A quantifier must have an atom before it and a closing
+                // brace. This catches the restricted forms that the generic
+                // Rust regex parsers intentionally accept as literals.
+                if index == 0 || index + 1 >= bytes.len() || !pattern[index + 1..].contains('}') {
+                    return false;
+                }
+                quantifier_open = true;
+            }
+            b'}' if !in_class && !quantifier_open => return false,
+            b'}' if !in_class => quantifier_open = false,
+            _ => {}
+        }
+        index += 1;
+    }
+    !escaped
 }
 
 fn requires_fancy_regex(pattern: &str) -> bool {

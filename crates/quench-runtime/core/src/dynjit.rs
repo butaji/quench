@@ -9677,7 +9677,7 @@ mod tests {
                 global: true,
                 source: TEST_PATTERN.to_owned(),
                 flags: "g".to_owned(),
-                kernel: RegExpLiteralKernel::compile(TEST_PATTERN, false),
+                kernel: RegExpLiteralKernel::compile(TEST_PATTERN, false, false),
             },
             DynOp::Return {
                 src: Some(TEST_RESULT_REGISTER),
