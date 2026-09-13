@@ -6180,14 +6180,21 @@ impl Vm {
                 self.builtin(BuiltinId::ArrayConstructor),
                 self.builtin(BuiltinId::RegExpConstructor),
             ];
-            for (name, native) in [
-                (
-                    "Map",
-                    native_noop as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>,
-                ),
-                ("Set", native_noop as _),
-            ] {
+            for (name, native) in [("Map", native_map_constructor as _), ("Set", native_set_constructor as _)] {
                 let constructor = self.native_named(native, name, 0);
+                let prototype = constructor.as_function_ref().expect("collection constructor").prototype.clone();
+                if name == "Map" {
+                    self.set_prop(&Value::Object(prototype.clone()), "get", self.native_named(native_map_get, "get", 1));
+                    self.set_prop(&Value::Object(prototype.clone()), "set", self.native_named(native_map_set, "set", 2));
+                    self.set_prop(&Value::Object(prototype.clone()), "has", self.native_named(native_map_has, "has", 1));
+                    let iterator = self.well_known_symbol_key("iterator");
+                    self.set_prop(&Value::Object(prototype.clone()), &iterator, self.native_named(native_map_iterator, "entries", 0));
+                } else {
+                    self.set_prop(&Value::Object(prototype.clone()), "add", self.native_named(native_set_add, "add", 1));
+                    self.set_prop(&Value::Object(prototype.clone()), "has", self.native_named(native_set_has, "has", 1));
+                    let iterator = self.well_known_symbol_key("iterator");
+                    self.set_prop(&Value::Object(prototype.clone()), &iterator, self.native_named(native_set_iterator, "values", 0));
+                }
                 Environment::set(&g, name, constructor.clone());
                 constructors.push(constructor);
             }
@@ -6411,6 +6418,87 @@ impl Vm {
         self.mark_nonconstructable(&revocable);
         self.set_prop(&proxy, "revocable", revocable);
         Environment::set(&g, "Proxy", proxy);
+        // Typed-array constructors share one semantic constructor and differ
+        // only by their element width/name. Keep that fact declarative so the
+        // global surface and prototype metadata cannot drift apart.
+        let array_buffer = self.native_named(native_array_buffer_constructor, "ArrayBuffer", 1);
+        Environment::set(&g, "ArrayBuffer", array_buffer);
+        let typed_array_base = self.native_named(native_typed_array_constructor, "TypedArray", 0);
+        self.mark_nonconstructable(&typed_array_base);
+        for (name, bytes) in [
+            ("Float64Array", 8),
+            ("Float32Array", 4),
+            ("Int32Array", 4),
+            ("Int16Array", 2),
+            ("Int8Array", 1),
+            ("Uint32Array", 4),
+            ("Uint16Array", 2),
+            ("Uint8Array", 1),
+            ("Uint8ClampedArray", 1),
+            ("BigInt64Array", 8),
+            ("BigUint64Array", 8),
+        ] {
+            let constructor = self.native_named(native_typed_array_constructor, name, 1);
+            self.set_prop(
+                &constructor,
+                "BYTES_PER_ELEMENT",
+                Value::Number(bytes as f64),
+            );
+            self.set_prop(&constructor, FUNCTION_PROTOTYPE_OVERRIDE_PROP, typed_array_base.clone());
+            let prototype = constructor
+                .as_function_ref()
+                .expect("typed array constructor")
+                .prototype
+                .clone();
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                "BYTES_PER_ELEMENT",
+                Value::Number(bytes as f64),
+            );
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                "constructor",
+                constructor.clone(),
+            );
+            self.set_prop(
+                &Value::Object(prototype),
+                "\0typed-array-bytes",
+                Value::Number(bytes as f64),
+            );
+            let prototype = constructor
+                .as_function_ref()
+                .expect("typed array constructor")
+                .prototype
+                .clone();
+            self.set_prop(
+                &Value::Object(prototype),
+                "fill",
+                self.native_named(native_typed_array_fill, "fill", 1),
+            );
+            Environment::set(&g, name, constructor);
+        }
+        // Collections are also used by the shared test harness (for cycle
+        // detection and structural comparison). Publish their small semantic
+        // kernel even when Symbol.species is unavailable in a reduced realm.
+        if Environment::get(&g, "Map").is_none() {
+            let constructor = self.native_named(native_map_constructor, "Map", 0);
+            let prototype = constructor.as_function_ref().expect("Map constructor").prototype.clone();
+            self.set_prop(&Value::Object(prototype.clone()), "get", self.native_named(native_map_get, "get", 1));
+            self.set_prop(&Value::Object(prototype.clone()), "set", self.native_named(native_map_set, "set", 2));
+            self.set_prop(&Value::Object(prototype), "has", self.native_named(native_map_has, "has", 1));
+            let iterator = self.well_known_symbol_key("iterator");
+            self.set_prop(&Value::Object(prototype.clone()), &iterator, self.native_named(native_map_iterator, "entries", 0));
+            Environment::set(&g, "Map", constructor);
+        }
+        if Environment::get(&g, "Set").is_none() {
+            let constructor = self.native_named(native_set_constructor, "Set", 0);
+            let prototype = constructor.as_function_ref().expect("Set constructor").prototype.clone();
+            self.set_prop(&Value::Object(prototype.clone()), "add", self.native_named(native_set_add, "add", 1));
+            self.set_prop(&Value::Object(prototype), "has", self.native_named(native_set_has, "has", 1));
+            let iterator = self.well_known_symbol_key("iterator");
+            self.set_prop(&Value::Object(prototype.clone()), &iterator, self.native_named(native_set_iterator, "values", 0));
+            Environment::set(&g, "Set", constructor);
+        }
         let json = self.object(None);
         self.set_prop(&json, "stringify", self.native(native_json_stringify));
         Environment::set(&g, "JSON", json);
@@ -6923,6 +7011,18 @@ impl Vm {
                 "SuppressedError",
                 "Promise",
                 "Proxy",
+                "ArrayBuffer",
+                "Float64Array",
+                "Float32Array",
+                "Int32Array",
+                "Int16Array",
+                "Int8Array",
+                "Uint32Array",
+                "Uint16Array",
+                "Uint8Array",
+                "Uint8ClampedArray",
+                "BigInt64Array",
+                "BigUint64Array",
                 "assert",
                 "decodeURI",
                 "decodeURIComponent",
@@ -14522,6 +14622,233 @@ fn native_string_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
 fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
 }
+
+const MAP_ENTRIES_PROP: &str = "\0map-entries";
+const SET_VALUES_PROP: &str = "\0set-values";
+
+fn native_map_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(vm, "Map constructor must be called with new")));
+    }
+    let map = if this.is_object_like() { this } else { vm.object(None) };
+    vm.set_prop(&map, MAP_ENTRIES_PROP, vm.array_from_values(Vec::new()));
+    if let Some(iterable) = args.first().filter(|value| value.is_object_like()) {
+        let length = vm.get_prop(iterable, "length").as_number().unwrap_or(0.0).max(0.0) as usize;
+        for index in 0..length {
+            let pair = vm.get_prop(iterable, &index.to_string());
+            let key = vm.get_prop(&pair, "0");
+            let value = vm.get_prop(&pair, "1");
+            native_map_set(vm, map.clone(), &[key, value])?;
+        }
+    }
+    Ok(map)
+}
+
+fn map_entries(vm: &Vm, map: &Value) -> Vec<Value> {
+    let entries = vm.get_prop(map, MAP_ENTRIES_PROP);
+    let length = entries.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
+    (0..length).map(|index| vm.get_prop(&entries, &index.to_string())).collect()
+}
+
+fn native_map_get(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    for pair in map_entries(vm, &this) {
+        if vm.get_prop(&pair, "0").same_bits(&key) {
+            return Ok(vm.get_prop(&pair, "1"));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn native_map_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    Ok(Value::Bool(map_entries(vm, &this).into_iter().any(|pair| vm.get_prop(&pair, "0").same_bits(&key))))
+}
+
+fn native_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let entries = vm.get_prop(&this, MAP_ENTRIES_PROP);
+    for pair in map_entries(vm, &this) {
+        if vm.get_prop(&pair, "0").same_bits(&key) {
+            vm.set_prop(&pair, "1", value);
+            return Ok(this);
+        }
+    }
+    let pair = vm.array_from_values(vec![key, value]);
+    let length = entries.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
+    vm.set_prop(&entries, &length.to_string(), pair);
+    Ok(this)
+}
+
+fn native_map_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(native_array_iterator(vm, vm.get_prop(&this, MAP_ENTRIES_PROP), &[]))?
+}
+
+fn native_set_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(vm, "Set constructor must be called with new")));
+    }
+    let set = if this.is_object_like() { this } else { vm.object(None) };
+    vm.set_prop(&set, SET_VALUES_PROP, vm.array_from_values(Vec::new()));
+    if let Some(iterable) = args.first().filter(|value| value.is_object_like()) {
+        let length = vm.get_prop(iterable, "length").as_number().unwrap_or(0.0).max(0.0) as usize;
+        for index in 0..length {
+            native_set_add(vm, set.clone(), &[vm.get_prop(iterable, &index.to_string())])?;
+        }
+    }
+    Ok(set)
+}
+
+fn set_values(vm: &Vm, set: &Value) -> Vec<Value> {
+    let values = vm.get_prop(set, SET_VALUES_PROP);
+    let length = values.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
+    (0..length).map(|index| vm.get_prop(&values, &index.to_string())).collect()
+}
+
+fn native_set_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    Ok(Value::Bool(set_values(vm, &this).into_iter().any(|item| item.same_bits(&value))))
+}
+
+fn native_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if !set_values(vm, &this).into_iter().any(|item| item.same_bits(&value)) {
+        let values = vm.get_prop(&this, SET_VALUES_PROP);
+        let length = values.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
+        vm.set_prop(&values, &length.to_string(), value);
+    }
+    Ok(this)
+}
+
+fn native_set_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(native_array_iterator(vm, vm.get_prop(&this, SET_VALUES_PROP), &[]))?
+}
+
+fn native_array_buffer_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "ArrayBuffer constructor must be called with new",
+        )));
+    }
+    // The stencil constructor kernel deliberately omits a generic receiver
+    // for native constructors. Materialize the receiver here so both the AST
+    // and stencil construction paths share this semantic implementation.
+    let this = if this.is_object_like() { this } else { vm.object(None) };
+    let length = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    if !length.is_finite() || length < 0.0 {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "invalid ArrayBuffer length",
+        )));
+    }
+    vm.set_prop(&this, "byteLength", Value::Number(length.floor()));
+    vm.set_prop(&this, "maxByteLength", Value::Number(length.floor()));
+    vm.set_prop(&this, "\0array-buffer", Value::Bool(true));
+    Ok(this)
+}
+
+fn native_typed_array_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "TypedArray constructor must be called with new",
+        )));
+    }
+    let this = if this.is_object_like() { this } else { vm.object(None) };
+    let bytes = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().prototype.clone())
+        .and_then(|prototype| {
+            Value::Object(prototype)
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get("\0typed-array-bytes").cloned())
+        })
+        .map_or(1.0, |value| value.number());
+    let values = match args.first() {
+        Some(value) if value.as_number().is_some() => {
+            let length = value.number();
+            if !length.is_finite() || length < 0.0 {
+                return Err(JsError::Throw(range_error(vm, "invalid TypedArray length")));
+            }
+            vec![Value::Number(0.0); length.floor() as usize]
+        }
+        Some(value) => {
+            let length = vm.get_prop_with_accessors(value, "length").ok().map(|v| {
+                v.number().max(0.0).min(9_007_199_254_740_991.0) as usize
+            });
+            let length = length.unwrap_or(0);
+            (0..length)
+                .map(|index| vm.get_prop_with_accessors(value, &index.to_string()).unwrap_or(Value::Undefined))
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    let buffer = vm.object(None);
+    vm.set_prop(
+        &buffer,
+        "byteLength",
+        Value::Number(values.len() as f64 * bytes),
+    );
+    vm.set_prop(&buffer, "\0array-buffer", Value::Bool(true));
+    vm.set_prop(&this, "buffer", buffer);
+    vm.set_prop(&this, "byteLength", Value::Number(values.len() as f64 * bytes));
+    vm.set_prop(&this, "byteOffset", Value::Number(0.0));
+    vm.set_prop(&this, "length", Value::Number(values.len() as f64));
+    for (index, value) in values.into_iter().enumerate() {
+        vm.set_prop(&this, &index.to_string(), value);
+    }
+    Ok(this)
+}
+
+fn native_typed_array_fill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if this.as_object_ref().is_none() {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    }
+    let length = vm
+        .get_prop(&this, "length")
+        .as_number()
+        .unwrap_or(0.0)
+        .max(0.0) as usize;
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let start = args
+        .get(1)
+        .and_then(Value::as_number)
+        .unwrap_or(0.0)
+        .trunc();
+    let end = args
+        .get(2)
+        .and_then(Value::as_number)
+        .unwrap_or(length as f64)
+        .trunc();
+    let normalize = |index: f64| -> usize {
+        if index.is_sign_negative() {
+            (length as f64 + index).max(0.0) as usize
+        } else {
+            index.min(length as f64).max(0.0) as usize
+        }
+    };
+    let start = normalize(start);
+    let end = normalize(end);
+    for index in start..end {
+        vm.set_prop(&this, &index.to_string(), value.clone());
+    }
+    Ok(this)
+}
+
 fn native_async_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if vm.get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP).is_undefined() {
         return Ok(vm.promise_from_result(Err(JsError::Throw(type_error(
@@ -20711,28 +21038,54 @@ fn native_date(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
         vm.object(None)
     };
     let millis = if args.len() >= 2 {
-        let year = &args[0];
-        let month = &args[1];
-        let day = args.get(2).cloned().unwrap_or(Value::Number(1.0));
-        let hour = args.get(3).cloned().unwrap_or(Value::Number(0.0));
-        let minute = args.get(4).cloned().unwrap_or(Value::Number(0.0));
-        let second = args.get(5).cloned().unwrap_or(Value::Number(0.0));
-        let millisecond = args.get(6).cloned().unwrap_or(Value::Number(0.0));
-        let mut year = to_number_with_vm(vm, year)? as i32;
+        let mut year = to_number_with_vm(vm, &args[0])?.trunc() as i64;
         if (0..=99).contains(&year) {
-            year = year.saturating_add(1900);
+            year += 1900;
         }
-        let month = (to_number_with_vm(vm, month)? as u32).saturating_add(1);
-        let day = to_number_with_vm(vm, &day)? as u32;
-        let hour = to_number_with_vm(vm, &hour)? as u32;
-        let minute = to_number_with_vm(vm, &minute)? as u32;
-        let second = to_number_with_vm(vm, &second)? as u32;
-        let millisecond = to_number_with_vm(vm, &millisecond)? as u32;
-        chrono::Utc
-            .with_ymd_and_hms(year, month, day, hour, minute, second)
-            .single()
+        let month = to_number_with_vm(vm, &args[1])?.trunc() as i64;
+        let day = args
+            .get(2)
+            .map(|value| to_number_with_vm(vm, value))
+            .transpose()?
+            .unwrap_or(1.0)
+            .trunc() as i64;
+        let hour = args
+            .get(3)
+            .map(|value| to_number_with_vm(vm, value))
+            .transpose()?
+            .unwrap_or(0.0)
+            .trunc() as i64;
+        let minute = args
+            .get(4)
+            .map(|value| to_number_with_vm(vm, value))
+            .transpose()?
+            .unwrap_or(0.0)
+            .trunc() as i64;
+        let second = args
+            .get(5)
+            .map(|value| to_number_with_vm(vm, value))
+            .transpose()?
+            .unwrap_or(0.0)
+            .trunc() as i64;
+        let millisecond = args
+            .get(6)
+            .map(|value| to_number_with_vm(vm, value))
+            .transpose()?
+            .unwrap_or(0.0)
+            .trunc() as i64;
+        let month_index = year.saturating_mul(12).saturating_add(month);
+        let normalized_year = month_index.div_euclid(12);
+        let normalized_month = month_index.rem_euclid(12) as u32 + 1;
+        chrono::NaiveDate::from_ymd_opt(normalized_year as i32, normalized_month, 1)
+            .and_then(|date| date.and_hms_opt(0, 0, 0))
             .map_or(f64::NAN, |date| {
-                date.timestamp_millis() as f64 + millisecond as f64
+                let date = date
+                    + Duration::days(day.saturating_sub(1))
+                    + Duration::hours(hour)
+                    + Duration::minutes(minute)
+                    + Duration::seconds(second)
+                    + Duration::milliseconds(millisecond);
+                date.and_utc().timestamp_millis() as f64
             })
     } else {
         match args.first() {
@@ -23505,15 +23858,15 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             .unwrap_or(Value::Null));
     }
         if target.as_function().is_some() {
-            if target.as_function_ref().is_some_and(
-                |function| matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async),
-            ) {
             if let Some(override_value) = target
                 .as_function_ref()
                 .and_then(|function| function.props.borrow().get(FUNCTION_PROTOTYPE_OVERRIDE_PROP).cloned())
             {
                 return Ok(override_value);
             }
+            if target.as_function_ref().is_some_and(
+                |function| matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async),
+            ) {
             let generator = target.as_function_ref().is_some_and(|function| {
                 matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)
             });
