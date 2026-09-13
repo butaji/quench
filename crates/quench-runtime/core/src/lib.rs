@@ -4813,6 +4813,14 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     if matches!(op, Op::StrictEq | Op::StrictNe) {
         return Ok(exec_op_ref(op, left, right));
     }
+    if matches!(op, Op::Eq | Op::Ne) && (is_html_dda_value(left) || is_html_dda_value(right)) {
+        let equal = loose_eq(left, right);
+        return Ok(Value::Bool(if matches!(op, Op::Eq) {
+            equal
+        } else {
+            !equal
+        }));
+    }
     if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge)
         && let (Some(left), Some(right)) = (left.as_string(), right.as_string())
     {
