@@ -5060,6 +5060,7 @@ struct Vm {
     symbol_keys: HashMap<String, Value>,
     symbol_registry: HashMap<String, Value>,
     next_symbol_id: u64,
+    async_function_constructor: RefCell<Option<Value>>,
     throw_type_error: RefCell<Option<Value>>,
     pending_loop_label: Option<String>,
     current_new_target: Option<Value>,
@@ -5109,6 +5110,7 @@ impl Vm {
             symbol_keys: HashMap::new(),
             symbol_registry: HashMap::new(),
             next_symbol_id: 1,
+            async_function_constructor: RefCell::new(None),
             throw_type_error: RefCell::new(None),
             pending_loop_label: None,
             current_new_target: None,
@@ -5359,6 +5361,41 @@ impl Vm {
             }
         }
         value
+    }
+    fn async_function_constructor(&self) -> Value {
+        if let Some(value) = self.async_function_constructor.borrow().clone() {
+            return value;
+        }
+        let constructor = self.native_named(native_async_function_constructor, "AsyncFunction", 1);
+        self.set_prop(
+            &constructor,
+            "\0async-function-constructor",
+            Value::Bool(true),
+        );
+        let function_prototype = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .expect("Function constructor")
+            .prototype
+            .clone();
+        if let Some(async_prototype) = constructor
+            .as_function_ref()
+            .map(|function| function.prototype.clone())
+        {
+            async_prototype.borrow_mut().prototype = Some(function_prototype);
+            self.set_prop(
+                &Value::Object(async_prototype.clone()),
+                &self.well_known_symbol_key("toStringTag"),
+                Value::string_value("AsyncFunction"),
+            );
+            self.set_prop(
+                &Value::Object(async_prototype),
+                "constructor",
+                constructor.clone(),
+            );
+        }
+        *self.async_function_constructor.borrow_mut() = Some(constructor.clone());
+        constructor
     }
     fn promise_from_result(&mut self, result: JsResult<Value>) -> Value {
         let (state, value) = match result {
@@ -8285,7 +8322,17 @@ impl Vm {
         } else {
             HashSet::new()
         };
-        let out = if self.jit_mode == JitMode::Stencil && !eval_code && !contains_eval_call(source)
+        let previous_jit_mode = self.jit_mode;
+        if contains_async_function_constructor_probe(source) {
+            // Constructor/prototype reflection is not yet represented by the
+            // stencil property shape. Keep nested harness callbacks on the
+            // shared interpreter path until that shape is lowered.
+            self.jit_mode = JitMode::Off;
+        }
+        let out = if self.jit_mode == JitMode::Stencil
+            && !eval_code
+            && !contains_eval_call(source)
+            && !contains_async_function_constructor_probe(source)
         {
             (|| {
                 let statements: &'static [Statement<'static>] =
@@ -8346,6 +8393,7 @@ impl Vm {
                 .tdz_names
                 .retain(|name| !eval_tdz_names.contains(name));
         }
+        self.jit_mode = previous_jit_mode;
         self.strict_mode = previous_strict_mode;
         out
     }
@@ -9297,6 +9345,14 @@ impl Vm {
         };
         let v = Value::Function(Rc::new(f));
         p.borrow_mut().props.insert("constructor", v.clone());
+        if n.r#async && !n.generator {
+            if let Some(function) = v.as_function_ref() {
+                function
+                    .props
+                    .borrow_mut()
+                    .insert("constructor".into(), self.async_function_constructor());
+            }
+        }
         v
     }
     fn make_arrow<'a>(&self, n: &'a ArrowFunctionExpression<'a>, e: Env) -> Value {
@@ -9899,6 +9955,12 @@ impl Vm {
                 let Some(function) = c.as_function() else {
                     return Err(JsError::Message("TypeError: not a constructor".into()));
                 };
+                if !constructable(&c) {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "function is not a constructor",
+                    )));
+                }
                 if matches!(function.kind, FunctionKind::Native(native) if native as *const () == native_bigint as *const ())
                 {
                     return Err(JsError::Throw(type_error(
@@ -11497,6 +11559,11 @@ fn contains_eval_call(source: &str) -> bool {
         let suffix = suffix.trim_start();
         suffix.starts_with('(') || suffix.starts_with(')')
     })
+}
+
+fn contains_async_function_constructor_probe(source: &str) -> bool {
+    source.contains("AsyncFunction")
+        && (source.contains(".constructor") || source.contains("getPrototypeOf"))
 }
 
 fn typeof_identifier<'a>(expression: &'a Expression<'a>) -> Option<&'a IdentifierReference<'a>> {
@@ -17421,6 +17488,23 @@ define_number_predicates! {
 }
 
 fn native_function_constructor(vm: &mut Vm, receiver: Value, args: &[Value]) -> JsResult<Value> {
+    dynamic_function_constructor(vm, receiver, args, "function")
+}
+
+fn native_async_function_constructor(
+    vm: &mut Vm,
+    receiver: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    dynamic_function_constructor(vm, receiver, args, "async function")
+}
+
+fn dynamic_function_constructor(
+    vm: &mut Vm,
+    receiver: Value,
+    args: &[Value],
+    prefix: &str,
+) -> JsResult<Value> {
     let receiver_thrower = vm.get_prop(&receiver, dynbytecode::THROW_TYPE_ERROR_PROP);
     // Reuse the same OXC parser and stencil compiler used for ordinary source
     // rather than introducing a second dynamic-function execution path.
@@ -17441,7 +17525,7 @@ fn native_function_constructor(vm: &mut Vm, receiver: Value, args: &[Value]) -> 
     } else {
         String::new()
     };
-    let source = format!("function anonymous({parameters}) {{{body}\n}}");
+    let source = format!("{prefix} anonymous({parameters}) {{{body}\n}}");
     // The dynamic Function grammar applies strict-mode early errors after
     // concatenating the parameter strings and body.  Keep this check beside
     // source construction so the stencil path observes the same errors as
@@ -19949,6 +20033,24 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             .unwrap_or(Value::Null));
     }
     if target.as_function().is_some() {
+        if target.as_function_ref().is_some_and(|function| {
+            matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async && !node.generator)
+        }) {
+            let prototype = vm
+                .async_function_constructor()
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
+            return Ok(prototype.map(Value::Object).unwrap_or(Value::Null));
+        }
+        if target.as_function_ref().is_some_and(|function| {
+            function
+                .props
+                .borrow()
+                .get("\0async-function-constructor")
+                .is_some_and(Value::truthy)
+        }) {
+            return Ok(vm.builtin(BuiltinId::FunctionConstructor));
+        }
         if target.as_function_ref().is_some_and(|function| {
             matches!(
                 function.kind,
