@@ -171,6 +171,7 @@ use num_bigint::{BigInt, Sign};
 use num_traits::{FromPrimitive, ToPrimitive};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
+use oxc_ast_visit::{Visit, walk as ast_walk};
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::{GetSpan, SourceType, Span};
 use regex::{CaptureLocations, Regex as LinearRegex};
@@ -229,6 +230,8 @@ environment_keys! {
     EVAL_CODE_ENV_NAME => "eval-code",
     SCRIPT_EVAL_ENV_NAME => "script-eval",
     STRICT_EVAL_ENV_NAME => "strict-eval",
+    MODULE_INSTANTIATED_ENV_NAME => "module-instantiated",
+    MODULE_ENVIRONMENT_NAME => "module-environment",
     FUNCTION_ENV_NAME => "function",
     NEW_TARGET_VALUE_NAME => "new-target",
     NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
@@ -5365,6 +5368,7 @@ struct Vm {
     module_evaluating: HashSet<PathBuf>,
     deferred_namespace_loading: bool,
     module_export_stack: Vec<HashMap<String, Value>>,
+    module_export_stack_paths: Vec<PathBuf>,
     started_at: Instant,
     coverage: Coverage,
     coverage_output: Option<PathBuf>,
@@ -5422,6 +5426,7 @@ impl Vm {
             module_evaluating: HashSet::new(),
             deferred_namespace_loading: false,
             module_export_stack: Vec::new(),
+            module_export_stack_paths: Vec::new(),
             started_at: Instant::now(),
             coverage: if env::var_os("QUENCH_STENCIL_COVERAGE").is_some() {
                 Coverage::enabled()
@@ -8158,6 +8163,9 @@ impl Vm {
             }
             return self.get_prop_with_receiver(&target, key, receiver);
         }
+        if let Some((path, imported)) = self.module_ref_parts(object, key) {
+            return self.resolve_module_ref(&path, &imported);
+        }
         // An own accessor is the receiver's observable property and must be
         // invoked before looking through the prototype chain.  Keep this
         // explicit ownership check separate from the inherited-accessor path
@@ -10187,6 +10195,9 @@ impl Vm {
         // always undefined; it must not fall through to the realm global.
         environment.borrow_mut().declare("this", Value::Undefined);
         environment
+            .borrow_mut()
+            .declare(MODULE_ENVIRONMENT_NAME, Value::Bool(true));
+        environment
     }
 
     fn load_module_exports(&mut self, path: &Path) -> JsResult<HashMap<String, Value>> {
@@ -10306,6 +10317,7 @@ impl Vm {
             return Ok(Vec::new());
         }
         if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            visiting.remove(&key);
             return Ok(vec![String::from("default")]);
         }
         let source =
@@ -10367,6 +10379,7 @@ impl Vm {
         }
         let mut names = names.into_iter().collect::<Vec<_>>();
         names.sort_unstable();
+        visiting.remove(&key);
         Ok(names)
     }
 
@@ -10520,10 +10533,17 @@ impl Vm {
                 continue;
             };
             let target = self.resolve_module_request(parent, source);
-            if self.module_key(&target) == self.module_key(path) {
-                // Self-imports resolve against the module's live environment;
-                // their bindings are linked before evaluation completes.
-                continue;
+            let origin = self.module_key(path);
+            if names.iter().any(|name| {
+                self.module_resolution_is_same_cycle(
+                    &target,
+                    name,
+                    &origin,
+                    name,
+                    &mut HashSet::new(),
+                )
+            }) {
+                return Ok(true);
             }
             let declared = match self.module_export_names(&target) {
                 Ok(names) => names.into_iter().collect::<HashSet<_>>(),
@@ -10540,9 +10560,106 @@ impl Vm {
         Ok(false)
     }
 
+    fn module_resolution_is_same_cycle(
+        &mut self,
+        path: &Path,
+        name: &str,
+        origin: &Path,
+        origin_name: &str,
+        visiting: &mut HashSet<(PathBuf, String)>,
+    ) -> bool {
+        let key = self.module_key(path);
+        let pair = (key.clone(), name.to_owned());
+        if !visiting.insert(pair) {
+            return true;
+        }
+        if key == self.module_key(origin) && name == origin_name && visiting.len() > 1 {
+            return true;
+        }
+        let Ok(source) = fs::read_to_string(&key) else {
+            return false;
+        };
+        let parsed_source: &'static str = Box::leak(source.into_boxed_str());
+        let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+        let parsed = Parser::new(allocator, parsed_source, SourceType::mjs()).parse();
+        let Some(parent) = key.parent() else {
+            return false;
+        };
+        let has_direct = parsed.program.body.iter().any(|statement| match statement {
+            Statement::ExportDeclaration(export) => {
+                let mut names = Vec::new();
+                declaration_names_for_early_error(&export.declaration, &mut names);
+                names.iter().any(|candidate| candidate == name)
+            }
+            Statement::ExportDefaultDeclaration(_) => name == "default",
+            Statement::ExportNamedDeclaration(export) => export
+                .specifiers
+                .iter()
+                .any(|specifier| module_export_name_for_early_error(&specifier.exported) == name),
+            _ => false,
+        });
+        if has_direct {
+            return false;
+        }
+        for statement in &parsed.program.body {
+            let Statement::ExportFromDeclaration(export) = statement else {
+                continue;
+            };
+            let dependency = self.resolve_module_request(parent, export.source.value.as_str());
+            for specifier in &export.specifiers {
+                if module_export_name_for_early_error(&specifier.exported) == name {
+                    let local = module_export_name_for_early_error(&specifier.local);
+                    if self.module_resolution_is_same_cycle(
+                        &dependency,
+                        &local,
+                        origin,
+                        origin_name,
+                        visiting,
+                    ) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Return the number of distinct resolutions for every exported name.
     /// Star re-exports with the same name are counted as ambiguous so named
     /// imports fail during linking, while namespace creation can omit them.
+    fn direct_module_export_bindings(&mut self, path: &Path) -> JsResult<HashMap<String, usize>> {
+        let key = self.module_key(path);
+        let source =
+            fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
+        let parsed_source: &'static str = Box::leak(source.into_boxed_str());
+        let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+        let parsed = Parser::new(allocator, parsed_source, SourceType::mjs()).parse();
+        let mut direct = HashMap::new();
+        for statement in &parsed.program.body {
+            match statement {
+                Statement::ExportDeclaration(export) => {
+                    let mut names = Vec::new();
+                    declaration_names_for_early_error(&export.declaration, &mut names);
+                    for name in names {
+                        *direct.entry(name).or_insert(0) += 1;
+                    }
+                }
+                Statement::ExportDefaultDeclaration(_) => {
+                    *direct.entry(String::from("default")).or_insert(0) += 1;
+                }
+                Statement::ExportNamedDeclaration(export) => {
+                    for specifier in &export.specifiers {
+                        *direct
+                            .entry(module_export_name_for_early_error(&specifier.exported))
+                            .or_insert(0) += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(direct)
+    }
+
     fn module_export_bindings(&mut self, path: &Path) -> JsResult<HashMap<String, usize>> {
         fn visit(
             vm: &mut Vm,
@@ -10556,6 +10673,7 @@ impl Vm {
             let source =
                 fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
             if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
+                seen.remove(&key);
                 return Ok(HashMap::from([(String::from("default"), 1)]));
             }
             let parsed_source: &'static str = Box::leak(source.into_boxed_str());
@@ -10574,6 +10692,7 @@ impl Vm {
             }
             let mut bindings = HashMap::new();
             let Some(parent) = key.parent() else {
+                seen.remove(&key);
                 return Ok(bindings);
             };
             for statement in &parsed.program.body {
@@ -10598,7 +10717,10 @@ impl Vm {
                     Statement::ExportFromDeclaration(export) => {
                         let dependency =
                             vm.resolve_module_request(parent, export.source.value.as_str());
-                        let dependency_bindings = visit(vm, &dependency, seen)?;
+                        let mut dependency_bindings = visit(vm, &dependency, seen)?;
+                        if dependency_bindings.is_empty() {
+                            dependency_bindings = vm.direct_module_export_bindings(&dependency)?;
+                        }
                         for specifier in &export.specifiers {
                             let local = module_export_name_for_early_error(&specifier.local);
                             let exported = module_export_name_for_early_error(&specifier.exported);
@@ -10628,6 +10750,7 @@ impl Vm {
                     _ => {}
                 }
             }
+            seen.remove(&key);
             Ok(bindings)
         }
         visit(self, path, &mut HashSet::new())
@@ -10687,16 +10810,20 @@ impl Vm {
             // their statically-known keys with `undefined`; completion then
             // refreshes the same interned object with live export values.
             for name in self.module_export_names(path).unwrap_or_default() {
-                if resolutions.get(&name).is_none_or(|count| *count == 1)
-                    && !names.iter().any(|existing| existing == &name)
-                {
+                if !names.iter().any(|existing| existing == &name) {
                     names.push(name);
                 }
             }
         }
         names.sort_unstable();
         for name in names {
-            let value = exports.get(&name).cloned().unwrap_or(Value::Undefined);
+            let value = exports.get(&name).cloned().unwrap_or_else(|| {
+                if self.module_is_evaluating(path) && !self.module_binding_is_var(path, &name) {
+                    self.module_import_ref(path, &name)
+                } else {
+                    Value::Undefined
+                }
+            });
             self.set_prop(&object, &name, value);
             set_property_attributes(
                 &object,
@@ -10814,6 +10941,133 @@ impl Vm {
             Value::string_value(name),
         );
         reference
+    }
+
+    fn module_ref_parts(&self, object: &Value, key: &str) -> Option<(PathBuf, String)> {
+        let object = object.as_object_ref()?;
+        let borrowed = object.borrow();
+        let value = borrowed.props.get(key)?;
+        self.module_ref_value_parts(value)
+    }
+
+    fn module_ref_value_parts(&self, value: &Value) -> Option<(PathBuf, String)> {
+        let value_object = value.as_object_ref()?;
+        let value_object = value_object.borrow();
+        let path = value_object
+            .props
+            .get(MODULE_IMPORT_REF_PATH_PROP)
+            .and_then(Value::as_string)
+            .map(|value| PathBuf::from(value.as_str()))?;
+        let name = value_object
+            .props
+            .get(MODULE_IMPORT_REF_NAME_PROP)
+            .and_then(Value::as_string)
+            .map(ToOwned::to_owned)?;
+        Some((path, name))
+    }
+
+    fn resolve_module_ref(&mut self, path: &Path, imported: &str) -> JsResult<Value> {
+        let key = self.module_key(path);
+        if imported == "*" {
+            if let Some(exports) = self.module_exports_cache.get(&key).cloned() {
+                return Ok(self.module_namespace(&key, &exports, false));
+            }
+        } else if let Some(exports) = self.module_exports_cache.get(&key).cloned()
+            && let Some(export) = exports.get(imported)
+        {
+            if let Some((path, name)) = self.module_ref_value_parts(export) {
+                return self.resolve_named_module_ref(&path, &name, &mut HashSet::new());
+            }
+            return Ok(export.clone());
+        }
+        let active_index = self.module_export_stack_paths.iter().position(|active| {
+            active == &key
+                || self.module_key(active) == key
+                || active.with_extension("mjs") == key
+                || key.with_extension("mjs") == *active
+        });
+        if let Some(index) = active_index {
+            if imported == "*" {
+                let exports = self.module_export_stack[index].clone();
+                return Ok(self.module_namespace(&key, &exports, false));
+            }
+            if let Some(export) = self.module_export_stack[index].get(imported).cloned() {
+                if let Some((path, name)) = self.module_ref_value_parts(&export) {
+                    return self.resolve_named_module_ref(&path, &name, &mut HashSet::new());
+                }
+                return Ok(export);
+            }
+        }
+        self.resolve_named_module_ref(path, imported, &mut HashSet::new())
+    }
+
+    fn resolve_named_module_ref(
+        &mut self,
+        path: &Path,
+        imported: &str,
+        visiting: &mut HashSet<(PathBuf, String)>,
+    ) -> JsResult<Value> {
+        let key = self.module_key(path);
+        if !visiting.insert((key.clone(), imported.to_owned())) {
+            return Err(JsError::Throw(reference_error(self, imported)));
+        }
+        if let Some(exports) = self.module_exports_cache.get(&key).cloned()
+            && let Some(export) = exports.get(imported)
+        {
+            if let Some((path, name)) = self.module_ref_value_parts(export) {
+                return self.resolve_named_module_ref(&path, &name, visiting);
+            }
+            return Ok(export.clone());
+        }
+        if let Some(index) = self.module_export_stack_paths.iter().position(|active| {
+            active == &key
+                || active.with_extension("mjs") == key
+                || key.with_extension("mjs") == *active
+        }) && let Some(export) = self.module_export_stack[index].get(imported).cloned()
+        {
+            if let Some((path, name)) = self.module_ref_value_parts(&export) {
+                return self.resolve_named_module_ref(&path, &name, visiting);
+            }
+            return Ok(export);
+        }
+        if self.module_binding_is_var(path, imported) {
+            return Ok(Value::Undefined);
+        }
+        let source =
+            fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
+        let parsed_source: &'static str = Box::leak(source.into_boxed_str());
+        let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+        let parsed = Parser::new(allocator, parsed_source, SourceType::mjs()).parse();
+        let Some(parent) = key.parent() else {
+            return Err(JsError::Throw(reference_error(self, imported)));
+        };
+        for statement in &parsed.program.body {
+            match statement {
+                Statement::ExportFromDeclaration(export) => {
+                    for specifier in &export.specifiers {
+                        if module_export_name_for_early_error(&specifier.exported) == imported {
+                            let dependency =
+                                self.resolve_module_request(parent, export.source.value.as_str());
+                            let local = module_export_name_for_early_error(&specifier.local);
+                            return self.resolve_named_module_ref(&dependency, &local, visiting);
+                        }
+                    }
+                }
+                Statement::ExportAllDeclaration(export) if imported != "default" => {
+                    if export.exported.is_none() {
+                        let dependency =
+                            self.resolve_module_request(parent, export.source.value.as_str());
+                        if let Ok(value) =
+                            self.resolve_named_module_ref(&dependency, imported, visiting)
+                        {
+                            return Ok(value);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Err(JsError::Throw(reference_error(self, imported)))
     }
 
     fn bind_module_imports(
@@ -10939,6 +11193,10 @@ impl Vm {
                         value
                     };
                     environment.borrow_mut().declare(local, value);
+                    environment
+                        .borrow_mut()
+                        .immutable_names
+                        .insert(local.to_owned());
                 }
             }
         }
@@ -11027,7 +11285,9 @@ impl Vm {
             )));
         }
         if st.is_module()
-            && (has_module_early_error(&r.program) || has_invalid_module_control_flow(&r.program))
+            && (has_module_early_error(&r.program)
+                || has_invalid_module_control_flow(&r.program)
+                || has_nested_module_declaration(&r.program))
         {
             return Err(JsError::Throw(syntax_error(
                 self,
@@ -11218,6 +11478,20 @@ impl Vm {
         if module_source {
             self.bind_module_imports(p, &r.program, &environment)?;
             self.module_export_stack.push(HashMap::new());
+            self.module_export_stack_paths.push(self.module_key(p));
+            let mut module_vars = Vec::new();
+            let mut module_lexicals = HashSet::new();
+            collect_module_bindings(&r.program.body, &mut module_vars, &mut module_lexicals);
+            environment.borrow_mut().reserve(module_vars);
+            environment
+                .borrow_mut()
+                .lexical_names
+                .extend(module_lexicals.iter().cloned());
+            environment.borrow_mut().tdz_names.extend(module_lexicals);
+            self.instantiate_module_bindings(&environment, &r.program.body);
+            environment
+                .borrow_mut()
+                .declare(MODULE_INSTANTIATED_ENV_NAME, Value::Bool(true));
         }
         // Script declaration instantiation happens before any statement (and
         // before a stencil image is entered). Reserve lexical slots and
@@ -11388,6 +11662,7 @@ impl Vm {
                     self.refresh_module_namespaces(p, &exports);
                 }
             }
+            self.module_export_stack_paths.pop();
             if module_owner {
                 if let Some(key) = module_key {
                     self.module_evaluating.remove(&key);
@@ -11427,6 +11702,67 @@ impl Vm {
             self.coverage.hit(source_id, span.start, operation);
         }
     }
+
+    fn instantiate_module_bindings(&mut self, environment: &Env, statements: &[Statement<'_>]) {
+        for statement in statements {
+            match statement {
+                Statement::FunctionDeclaration(function) => {
+                    if let Some(id) = &function.id {
+                        self.declare_function_binding(
+                            function,
+                            environment.clone(),
+                            id.name.as_str(),
+                            false,
+                        );
+                    }
+                }
+                Statement::ExportDeclaration(export) => {
+                    if let Declaration::FunctionDeclaration(function) = &export.declaration
+                        && let Some(id) = &function.id
+                    {
+                        self.declare_function_binding(
+                            function,
+                            environment.clone(),
+                            id.name.as_str(),
+                            false,
+                        );
+                        let value = Environment::get(environment, id.name.as_str())
+                            .unwrap_or(Value::Undefined);
+                        self.record_module_export(id.name.as_str(), value);
+                    }
+                }
+                Statement::ExportDefaultDeclaration(export) => {
+                    if let ExportDefaultDeclarationKind::FunctionDeclaration(function) =
+                        &export.declaration
+                    {
+                        let value = if let Some(id) = &function.id {
+                            self.declare_function_binding(
+                                function,
+                                environment.clone(),
+                                id.name.as_str(),
+                                false,
+                            );
+                            Environment::get(environment, id.name.as_str())
+                                .unwrap_or(Value::Undefined)
+                        } else {
+                            self.make_user(function, environment.clone())
+                        };
+                        if function.id.is_none()
+                            && let Some(function) = value.as_function_ref()
+                        {
+                            function
+                                .props
+                                .borrow_mut()
+                                .insert("name".into(), Value::string_value("default"));
+                        }
+                        self.record_module_export("default", value);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn exec_stmts<'a>(&mut self, b: &[Statement<'a>], e: Env) -> JsResult<Signal> {
         let annex_b_allowed = !b.iter().any(|statement| {
             direct_lexical_binding_name(statement).is_some_and(|name| {
@@ -11438,20 +11774,23 @@ impl Vm {
                 })
             })
         });
-        for stmt in b {
-            if let Statement::FunctionDeclaration(f) = stmt {
-                if let Some(id) = &f.id {
-                    let function_environment = if e.borrow().contains_local(EVAL_CODE_ENV_NAME) {
-                        variable_environment(&e)
-                    } else {
-                        e.clone()
-                    };
-                    self.declare_function_binding(
-                        f,
-                        function_environment,
-                        id.name.as_str(),
-                        annex_b_allowed,
-                    );
+        if !e.borrow().contains_local(MODULE_INSTANTIATED_ENV_NAME) {
+            for stmt in b {
+                if let Statement::FunctionDeclaration(f) = stmt {
+                    if let Some(id) = &f.id {
+                        let function_environment = if e.borrow().contains_local(EVAL_CODE_ENV_NAME)
+                        {
+                            variable_environment(&e)
+                        } else {
+                            e.clone()
+                        };
+                        self.declare_function_binding(
+                            f,
+                            function_environment,
+                            id.name.as_str(),
+                            annex_b_allowed,
+                        );
+                    }
                 }
             }
         }
@@ -11506,6 +11845,14 @@ impl Vm {
             }
             ExportDefaultDeclaration(export) => match &export.declaration {
                 ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                    if e.borrow().contains_local(MODULE_INSTANTIATED_ENV_NAME)
+                        && self
+                            .module_export_stack
+                            .last()
+                            .is_some_and(|exports| exports.contains_key("default"))
+                    {
+                        return Ok(Signal::Normal(Value::Undefined));
+                    }
                     // Named default functions are ordinary declarations; an
                     // anonymous default function has no local binding but its
                     // body still undergoes the same function construction
@@ -11538,6 +11885,7 @@ impl Vm {
                     if class.id.is_some() {
                         if let Some(id) = &class.id {
                             e.borrow_mut().lexical_names.insert(id.name.to_string());
+                            e.borrow_mut().tdz_names.remove(id.name.as_str());
                             let value = self.make_class(class, e.clone())?;
                             e.borrow_mut().declare(id.name.as_str(), value.clone());
                             self.record_module_export("default", value);
@@ -12080,7 +12428,9 @@ impl Vm {
                 Ok(Signal::Normal(Value::Undefined))
             }
             FunctionDeclaration(f) => {
-                if let Some(i) = &f.id {
+                if !e.borrow().contains_local(MODULE_INSTANTIATED_ENV_NAME)
+                    && let Some(i) = &f.id
+                {
                     let function_environment = if e.borrow().contains_local(EVAL_CODE_ENV_NAME) {
                         variable_environment(&e)
                     } else {
@@ -12093,6 +12443,7 @@ impl Vm {
             ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
                     e.borrow_mut().lexical_names.insert(id.name.to_string());
+                    e.borrow_mut().tdz_names.remove(id.name.as_str());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
                 }
@@ -12108,7 +12459,9 @@ impl Vm {
                 Ok(Signal::Normal(Value::Undefined))
             }
             Declaration::FunctionDeclaration(f) => {
-                if let Some(i) = &f.id {
+                if !e.borrow().contains_local(MODULE_INSTANTIATED_ENV_NAME)
+                    && let Some(i) = &f.id
+                {
                     self.declare_function_binding(f, e.clone(), i.name.as_str(), true);
                 }
                 Ok(Signal::Normal(Value::Undefined))
@@ -12116,6 +12469,7 @@ impl Vm {
             Declaration::ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
                     e.borrow_mut().lexical_names.insert(id.name.to_string());
+                    e.borrow_mut().tdz_names.remove(id.name.as_str());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
                     self.sync_global_binding(&e, id.name.as_str(), value);
@@ -12941,24 +13295,7 @@ impl Vm {
                         })
                         .and_then(|value| value.as_string().cloned()),
                 ) {
-                    if let Some(exports) = self
-                        .module_exports_cache
-                        .get(&self.module_key(&path))
-                        .cloned()
-                    {
-                        if imported == "*" {
-                            return Ok(self.module_namespace(&path, &exports, false));
-                        }
-                        if let Some(export) = exports.get(imported.as_str()) {
-                            return Ok(export.clone());
-                        }
-                    }
-                    if let Some(exports) = self.module_export_stack.last()
-                        && let Some(export) = exports.get(imported.as_str())
-                    {
-                        return Ok(export.clone());
-                    }
-                    return Err(JsError::Throw(reference_error(self, imported.as_str())));
+                    return self.resolve_module_ref(&path, imported.as_str());
                 }
                 return Ok(value);
             }
@@ -12970,6 +13307,37 @@ impl Vm {
             current = parent;
         }
         Environment::get(e, name).ok_or_else(|| JsError::Throw(reference_error(self, name)))
+    }
+
+    fn module_binding_is_var(&mut self, path: &Path, name: &str) -> bool {
+        let key = self.module_key(path);
+        let Ok(source) = fs::read_to_string(&key) else {
+            return false;
+        };
+        let parsed_source: &'static str = Box::leak(source.into_boxed_str());
+        let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+        let parsed = Parser::new(allocator, parsed_source, SourceType::mjs()).parse();
+        if parsed.diagnostics.first().is_some() {
+            return false;
+        }
+        parsed.program.body.iter().any(|statement| {
+            let declaration = match statement {
+                Statement::VariableDeclaration(declaration) => Some(declaration),
+                Statement::ExportDeclaration(export) => match &export.declaration {
+                    Declaration::VariableDeclaration(declaration) => Some(declaration),
+                    _ => None,
+                },
+                _ => None,
+            };
+            declaration.is_some_and(|declaration| {
+                declaration.kind == VariableDeclarationKind::Var
+                    && declaration
+                        .declarations
+                        .iter()
+                        .filter_map(|declarator| pattern_name(&declarator.id))
+                        .any(|candidate| candidate == name)
+            })
+        })
     }
 
     fn eval_expr<'a>(&mut self, x: &Expression<'a>, e: Env) -> JsResult<Value> {
@@ -14237,6 +14605,7 @@ fn is_variable_environment(environment: &Env) -> bool {
     candidate.contains_local(dynbytecode::ARGUMENTS_BINDING_NAME)
         || candidate.contains_local(FUNCTION_ENV_NAME)
         || candidate.contains_local(STRICT_EVAL_ENV_NAME)
+        || candidate.contains_local(MODULE_ENVIRONMENT_NAME)
         || candidate.parent.is_none()
 }
 
@@ -14319,6 +14688,78 @@ fn reserve_function_bindings(environment: &Env, statements: &[Statement<'_>], st
     let mut names = Vec::new();
     collect_strict_eval_var_names(statements, &mut names, true);
     environment.borrow_mut().reserve(names);
+}
+
+fn collect_module_bindings(
+    statements: &[Statement<'_>],
+    variables: &mut Vec<String>,
+    lexicals: &mut HashSet<String>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration) => {
+                for declarator in &declaration.declarations {
+                    let Some(name) = pattern_name(&declarator.id) else {
+                        continue;
+                    };
+                    if declaration.kind == VariableDeclarationKind::Var {
+                        variables.push(name);
+                    } else {
+                        lexicals.insert(name);
+                    }
+                }
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(id) = &function.id {
+                    variables.push(id.name.to_string());
+                }
+            }
+            Statement::ClassDeclaration(class) => {
+                if let Some(id) = &class.id {
+                    lexicals.insert(id.name.to_string());
+                }
+            }
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::VariableDeclaration(declaration) => {
+                    for declarator in &declaration.declarations {
+                        let Some(name) = pattern_name(&declarator.id) else {
+                            continue;
+                        };
+                        if declaration.kind == VariableDeclarationKind::Var {
+                            variables.push(name);
+                        } else {
+                            lexicals.insert(name);
+                        }
+                    }
+                }
+                Declaration::FunctionDeclaration(function) => {
+                    if let Some(id) = &function.id {
+                        variables.push(id.name.to_string());
+                    }
+                }
+                Declaration::ClassDeclaration(class) => {
+                    if let Some(id) = &class.id {
+                        lexicals.insert(id.name.to_string());
+                    }
+                }
+                _ => {}
+            },
+            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                    if let Some(id) = &function.id {
+                        variables.push(id.name.to_string());
+                    }
+                }
+                ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                    if let Some(id) = &class.id {
+                        lexicals.insert(id.name.to_string());
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
 }
 
 fn reserve_strict_eval_bindings(environment: &Env, statements: &[Statement<'_>]) {
@@ -14993,11 +15434,22 @@ fn has_module_early_error(program: &Program<'_>) -> bool {
                 }
             }
             Statement::ExportDeclaration(export) => {
-                let mut names = Vec::new();
-                declaration_names_for_early_error(&export.declaration, &mut names);
-                for name in names {
-                    add_name(&mut bindings, &name, &mut duplicate);
-                    add_export(&mut exports, name, &mut duplicate);
+                if let Declaration::VariableDeclaration(declaration) = &export.declaration
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    for declarator in &declaration.declarations {
+                        if let Some(name) = pattern_name(&declarator.id) {
+                            bindings.insert(name.clone());
+                            add_export(&mut exports, name, &mut duplicate);
+                        }
+                    }
+                } else {
+                    let mut names = Vec::new();
+                    declaration_names_for_early_error(&export.declaration, &mut names);
+                    for name in names {
+                        add_name(&mut bindings, &name, &mut duplicate);
+                        add_export(&mut exports, name, &mut duplicate);
+                    }
                 }
             }
             Statement::ExportDefaultDeclaration(default) => {
@@ -15059,7 +15511,11 @@ fn has_module_early_error(program: &Program<'_>) -> bool {
                     }
                 }
                 for name in names {
-                    add_name(&mut bindings, &name, &mut duplicate);
+                    if declaration.kind == VariableDeclarationKind::Var {
+                        bindings.insert(name);
+                    } else {
+                        add_name(&mut bindings, &name, &mut duplicate);
+                    }
                 }
             }
             Statement::FunctionDeclaration(function) => {
@@ -15079,6 +15535,44 @@ fn has_module_early_error(program: &Program<'_>) -> bool {
         || unresolved_exports
             .into_iter()
             .any(|name| !bindings.contains(&name))
+}
+
+/// Module declarations are only valid in the program's direct statement
+/// list. OXC keeps a few declaration-position errors representable in the
+/// AST (for example `() => { export default 1; }`), so perform one structural
+/// visitor pass and reject declarations discovered below that list before any
+/// user code can run.
+fn has_nested_module_declaration(program: &Program<'_>) -> bool {
+    struct Scan {
+        statement_depth: usize,
+        invalid: bool,
+    }
+
+    impl<'a> Visit<'a> for Scan {
+        fn visit_program(&mut self, program: &Program<'a>) {
+            ast_walk::walk_program(self, program);
+        }
+
+        fn visit_statement(&mut self, statement: &Statement<'a>) {
+            self.statement_depth += 1;
+            ast_walk::walk_statement(self, statement);
+            self.statement_depth -= 1;
+        }
+
+        fn visit_module_declaration(&mut self, declaration: &ModuleDeclaration<'a>) {
+            if self.statement_depth != 1 {
+                self.invalid = true;
+            }
+            ast_walk::walk_module_declaration(self, declaration);
+        }
+    }
+
+    let mut scan = Scan {
+        statement_depth: 0,
+        invalid: false,
+    };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 /// Check the module-only control-flow facts that are intentionally preserved
@@ -26518,6 +27012,19 @@ fn native_object_get_own_property_descriptor(
             &[proxy_target_value, Value::string_value(key)],
         );
     }
+    if target
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key(MODULE_NAMESPACE_PROP))
+        && let Some((path, imported)) = vm.module_ref_parts(target, &key)
+    {
+        let value = vm.resolve_module_ref(&path, &imported)?;
+        let descriptor = vm.object(None);
+        vm.set_prop(&descriptor, "value", value);
+        vm.set_prop(&descriptor, "writable", Value::Bool(true));
+        vm.set_prop(&descriptor, "enumerable", Value::Bool(true));
+        vm.set_prop(&descriptor, "configurable", Value::Bool(false));
+        return Ok(descriptor);
+    }
     let error_prototype = vm
         .builtin(BuiltinId::ErrorConstructor)
         .as_function_ref()
@@ -27635,11 +28142,17 @@ fn native_object_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
         ));
     };
     vm.ensure_deferred_namespace(target, None)?;
-    let keys = proxy_own_enumerable_keys(vm, target)?
-        .into_iter()
-        .filter(|key| !is_symbol_key(key))
-        .map(Value::string_value)
-        .collect();
+    let mut keys = Vec::new();
+    for key in proxy_own_enumerable_keys(vm, target)? {
+        if is_symbol_key(&key) {
+            continue;
+        }
+        // EnumerableOwnProperties performs [[Get]] for every key.  This is
+        // observable for module-namespace bindings, whose live cell may still
+        // be in the TDZ and must throw here.
+        let _ = vm.get_prop_with_accessors(target, &key)?;
+        keys.push(Value::string_value(key));
+    }
     Ok(vm.array_from_values(keys))
 }
 fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
