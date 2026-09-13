@@ -12231,10 +12231,16 @@ impl Vm {
         if !eval_code || strict_eval {
             let mut lexical_names = HashSet::new();
             collect_direct_lexical_names(&r.program.body, &mut lexical_names);
-            execution_environment
-                .borrow_mut()
+            let mut execution = execution_environment.borrow_mut();
+            // Lexical declaration instantiation creates the bindings (in TDZ)
+            // before statement evaluation.  Reserve their slots now so an
+            // assignment appearing before `let`/`const` resolves to that
+            // binding rather than becoming an unrelated global write.
+            execution.reserve(lexical_names.iter().cloned());
+            execution
                 .lexical_names
-                .extend(lexical_names);
+                .extend(lexical_names.iter().cloned());
+            execution.tdz_names.extend(lexical_names);
         }
         let variable_environment = variable_environment(&execution_environment);
         if strict_eval {
@@ -15153,7 +15159,12 @@ impl Vm {
     }
     fn read_lvalue(&mut self, target: &LValue) -> JsResult<Value> {
         match target {
-            LValue::Var(e, name) => Ok(Environment::get(e, name).unwrap_or(Value::Undefined)),
+            LValue::Var(e, name) => {
+                if Environment::is_tdz(e, name) {
+                    return Err(JsError::Throw(reference_error(self, name)));
+                }
+                Ok(Environment::get(e, name).unwrap_or(Value::Undefined))
+            }
             LValue::UnresolvedVar(_, name) => Err(JsError::Throw(reference_error(self, name))),
             LValue::WithProp(object, key) | LValue::Prop(object, key) => {
                 self.get_prop_with_accessors(object, key)
@@ -15201,6 +15212,9 @@ impl Vm {
                 }
             }
             LValue::Var(e, name) => {
+                if Environment::is_tdz(&e, &name) {
+                    return Err(JsError::Throw(reference_error(self, &name)));
+                }
                 if self.strict_mode && Environment::get(&e, &name).is_none() {
                     return Err(JsError::Throw(reference_error(self, &name)));
                 }
