@@ -267,6 +267,7 @@ const ASYNC_GENERATOR_STARTED_PROP: &str = "\0quench:async-generator-started";
 const ASYNC_GENERATOR_EXECUTING_PROP: &str = "\0quench:async-generator-executing";
 const ASYNC_GENERATOR_QUEUE_PROP: &str = "\0quench:async-generator-queue";
 const ARGUMENTS_LENGTH_DELETED_PROP: &str = "\0quench:arguments-length-deleted";
+const MODULE_NAMESPACE_PROP: &str = "\0quench:module-namespace";
 const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
 const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
@@ -8206,6 +8207,15 @@ impl Vm {
         value: Value,
         receiver: &Value,
     ) -> JsResult<()> {
+        if object
+            .as_object_ref()
+            .is_some_and(|object| object.borrow().props.contains_key(MODULE_NAMESPACE_PROP))
+        {
+            return Err(JsError::Throw(type_error(
+                self,
+                "cannot assign to a module namespace object",
+            )));
+        }
         if let Some(target) = proxy_target(object) {
             if proxy_revoked(object) {
                 return Err(JsError::Throw(type_error(self, "revoked Proxy")));
@@ -10188,10 +10198,47 @@ impl Vm {
                 }
                 _ => self.load_module_exports(&target)?,
             };
+            let namespace_tag = if import.phase == Some(ImportPhase::Defer) {
+                "Deferred Module"
+            } else {
+                "Module"
+            };
             let namespace = || {
                 let object = self.ordinary_object();
-                for (name, value) in &exports {
+                let mut names = exports.keys().collect::<Vec<_>>();
+                names.sort_unstable();
+                for name in names {
+                    let value = &exports[name];
                     self.set_prop(&object, name, value.clone());
+                    set_property_attributes(
+                        &object,
+                        name,
+                        PropertyAttributes {
+                            // Module namespace descriptors report writable
+                            // true for exported bindings, while the
+                            // namespace [[Set]] operation remains rejecting.
+                            writable: true,
+                            enumerable: true,
+                            configurable: false,
+                        },
+                    );
+                }
+                let tag = self.well_known_symbol_key("toStringTag");
+                self.set_prop(&object, &tag, Value::string_value(namespace_tag));
+                set_property_attributes(
+                    &object,
+                    &tag,
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: false,
+                    },
+                );
+                self.set_prop(&object, MODULE_NAMESPACE_PROP, Value::Bool(true));
+                if let Some(object_data) = object.as_object_ref() {
+                    let mut object_data = object_data.borrow_mut();
+                    object_data.prototype = None;
+                    object_data.extensible = false;
                 }
                 object
             };
