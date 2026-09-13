@@ -154,6 +154,10 @@ Verification completed:
   ancestry, descriptors, receiver validation, and UTF-16 surrogate pairs
 - the stencil SuppressedError stage reaches 19/22; the three remaining cases
   require Proxy/custom-realm construction semantics
+- the stencil AggregateError stage reaches 22/25 after deriving constructor
+  arity, iterable consumption, message/cause fields, and non-enumerable
+  `errors` storage; the three remaining cases require Proxy/custom-realm
+  construction semantics
 - the stencil Annex B built-ins stage reaches 214/241; remaining cases are
   advanced RegExp grammar/Unicode behavior, Proxy/custom-realm RegExp
   receivers, and TypedArray iterator lowering
