@@ -11415,6 +11415,7 @@ impl Vm {
         let Some(parent) = path.parent() else {
             return Ok(());
         };
+        let mut has_deferred_async_dependencies = false;
         for statement in &program.body {
             let import = match statement {
                 Statement::ImportDeclaration(import) => import,
@@ -11446,14 +11447,10 @@ impl Vm {
             let source_phase = import.phase == Some(ImportPhase::Source);
             let target_evaluating = self.module_is_evaluating(&target);
             if deferred {
+                has_deferred_async_dependencies = true;
                 for dependency in self.deferred_async_dependencies(&target)? {
                     self.load_module_exports(&dependency)?;
                 }
-                // `import defer` eagerly evaluates asynchronous transitive
-                // dependencies before exposing the deferred namespace. Their
-                // continuations are VM microtasks, so drain that queue as one
-                // graph step after all dependencies have been discovered.
-                self.run_timers()?;
             }
             let exports = if source_phase {
                 HashMap::new()
@@ -11595,6 +11592,12 @@ impl Vm {
                         .insert(local.to_owned());
                 }
             }
+        }
+        if has_deferred_async_dependencies {
+            // `import defer` eagerly evaluates asynchronous transitive
+            // dependencies after the complete static evaluation list has
+            // been discovered, preserving sibling order.
+            self.run_timers()?;
         }
         Ok(())
     }
@@ -11879,9 +11882,10 @@ impl Vm {
                 }
                 let mut lexical_names = HashSet::new();
                 collect_lexical_binding_names(&r.program.body, &mut lexical_names);
-                if lexical_names
-                    .iter()
-                    .any(|name| environment.borrow().lexical_names.contains(name))
+                if Environment::get(&environment, SCRIPT_EVAL_ENV_NAME).is_some()
+                    && lexical_names
+                        .iter()
+                        .any(|name| environment.borrow().lexical_names.contains(name))
                 {
                     return Err(JsError::Throw(syntax_error(
                         self,
