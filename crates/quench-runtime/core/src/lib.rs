@@ -4756,6 +4756,16 @@ fn is_html_dda_value(value: &Value) -> bool {
             .is_some_and(|function| function.props.borrow().contains_key("\0html-dda"))
 }
 fn instance_of(value: &Value, ctor: &Value) -> bool {
+    if value.is_function()
+        && ctor.as_function_ref().is_some_and(|function| {
+            matches!(
+                function.kind,
+                FunctionKind::Builtin(BuiltinId::FunctionConstructor)
+            )
+        })
+    {
+        return true;
+    }
     if value.as_regexp_ref().is_some() {
         return ctor.as_function_ref().is_some_and(|function| {
             matches!(
@@ -5383,10 +5393,20 @@ impl Vm {
             .map(|function| function.prototype.clone())
         {
             async_prototype.borrow_mut().prototype = Some(function_prototype);
+            let to_string_tag = self.well_known_symbol_key("toStringTag");
             self.set_prop(
                 &Value::Object(async_prototype.clone()),
-                &self.well_known_symbol_key("toStringTag"),
+                &to_string_tag,
                 Value::string_value("AsyncFunction"),
+            );
+            set_property_attributes(
+                &Value::Object(async_prototype.clone()),
+                &to_string_tag,
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
             );
             self.set_prop(
                 &Value::Object(async_prototype),
@@ -6630,6 +6650,12 @@ impl Vm {
                     }
                     FunctionKind::Native(native)
                         if *native as *const () == native_symbol as *const () =>
+                    {
+                        true
+                    }
+                    FunctionKind::Native(native)
+                        if *native as *const ()
+                            == native_async_function_constructor as *const () =>
                     {
                         true
                     }
