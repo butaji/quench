@@ -293,7 +293,7 @@ fn accept_one(
     let object = if is_pipe {
         object
     } else {
-        install_methods(object, net_info_props(peer, local))?
+        crate::host::install_methods(object, net_info_props(peer, local))?
     };
     let tls_options = state
         .borrow()

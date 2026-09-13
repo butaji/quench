@@ -1085,7 +1085,7 @@ fn build_req(
         &[Value::String("HTTPINCOMINGMESSAGE".into())],
     )?;
     let req = crate::modules::events::new_emitter_object(state)?;
-    let req = install_req_props(
+    let req = crate::host::install_enumerable_properties(
         req,
         vec![
             ("method".to_string(), Value::String(method)),
@@ -1261,19 +1261,6 @@ fn insert_response(
             ended: false,
         },
     );
-}
-
-fn install_req_props(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
-    for (key, value) in props {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(true)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, &key, descriptor)?;
-    }
-    Ok(object)
 }
 
 /// Parse the request line and headers; return the declared Content-Length.
@@ -1477,7 +1464,7 @@ pub fn incoming_construct(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     let object = crate::modules::events::new_emitter_object(state)?;
-    install_req_props(
+    crate::host::install_enumerable_properties(
         object,
         vec![
             ("signal".into(), new_http_signal(state)?),

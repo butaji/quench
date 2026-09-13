@@ -121,7 +121,7 @@ pub fn pipe_construct(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result
         net.net.next_pipe_fd += 1;
         fd
     };
-    install_methods(
+    crate::host::install_methods(
         object,
         vec![
             (PIPE_MARKER_PROP.to_string(), Value::Boolean(true)),
@@ -153,7 +153,7 @@ pub fn tcp_construct(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<
         ("port".into(), Value::Number(0.0)),
     ]);
     let object = bound_socket_construct(state, &[options])?;
-    let object = install_methods(
+    let object = crate::host::install_methods(
         object,
         vec![(
             "bind".into(),
@@ -560,7 +560,7 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
             super::set_socket_property(&object, "writable", Value::Boolean(value));
         }
     }
-    let object = install_methods(
+    let object = crate::host::install_methods(
         object,
         vec![(
             "connect".to_string(),
