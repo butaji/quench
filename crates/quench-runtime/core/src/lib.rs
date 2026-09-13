@@ -1811,6 +1811,7 @@ struct Environment {
     parameter_names: HashSet<String>,
     lexical_names: HashSet<String>,
     catch_names: HashSet<String>,
+    catch_simple_names: HashSet<String>,
 }
 impl Environment {
     fn new(parent: Option<Env>) -> Env {
@@ -1830,6 +1831,7 @@ impl Environment {
             parameter_names: HashSet::new(),
             lexical_names: HashSet::new(),
             catch_names: HashSet::new(),
+            catch_simple_names: HashSet::new(),
         };
         environment.publish_access();
         Rc::new(RefCell::new(environment))
@@ -7345,6 +7347,18 @@ impl Vm {
         function: &FunctionValue<'static>,
         node: &Function<'static>,
     ) -> JsResult<()> {
+        // Parameter defaults and destructuring are initialized by the shared
+        // environment binder. Keep these shapes on that path until their
+        // stencil lowering carries the same binding semantics.
+        if node.params.items.iter().any(|parameter| {
+            parameter.initializer.is_some()
+                || !matches!(&parameter.pattern, BindingPattern::BindingIdentifier(_))
+        }) || node.params.rest.as_ref().is_some_and(|rest| {
+            !matches!(&rest.rest.argument, BindingPattern::BindingIdentifier(_))
+        }) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         // Annex B block functions need the shared environment transition
         // (lexical binding plus conditional var binding), so keep this
         // structural edge on the interpreter path of the same VM.
@@ -7536,21 +7550,30 @@ impl Vm {
         set_property_attributes(&av, "toString", PropertyAttributes::BUILTIN_METHOD);
         e.borrow_mut().declare("arguments", av);
         for (i, p) in n.params.items.iter().enumerate() {
-            if let Some(name) = pattern_name(&p.pattern) {
-                let mut environment = e.borrow_mut();
-                environment.parameter_names.insert(name.clone());
-                environment.declare(&name, args.get(i).cloned().unwrap_or(Value::Undefined));
-            }
+            let mut names = Vec::new();
+            pattern_bound_names(&p.pattern, &mut names);
+            e.borrow_mut().parameter_names.extend(names);
+            let argument = args.get(i).cloned().unwrap_or(Value::Undefined);
+            let argument = if argument.is_undefined() {
+                p.initializer
+                    .as_ref()
+                    .map(|initializer| self.eval_expr(initializer, e.clone()))
+                    .transpose()?
+                    .unwrap_or(argument)
+            } else {
+                argument
+            };
+            self.bind_pattern(&p.pattern, argument, e.clone())?;
         }
-        if let Some(rest) = &n.params.rest
-            && let Some(name) = pattern_name(&rest.rest.argument)
-        {
-            let mut environment = e.borrow_mut();
-            environment.parameter_names.insert(name.clone());
-            environment.declare(
-                &name,
+        if let Some(rest) = &n.params.rest {
+            let mut names = Vec::new();
+            pattern_bound_names(&rest.rest.argument, &mut names);
+            e.borrow_mut().parameter_names.extend(names);
+            self.bind_pattern(
+                &rest.rest.argument,
                 self.array_from_values(args.iter().skip(n.params.items.len()).cloned().collect()),
-            );
+                e.clone(),
+            )?;
         }
         let result = (|| {
             if let Some(b) = &n.body {
@@ -7855,9 +7878,19 @@ impl Vm {
             )),
             IfStatement(x) => {
                 if self.eval_expr(&x.test, e.clone())?.truthy() {
-                    self.exec_stmt(&x.consequent, e)
+                    if let Statement::FunctionDeclaration(function) = &x.consequent {
+                        self.declare_conditional_function(&*function, e);
+                        Ok(Signal::Normal(Value::Undefined))
+                    } else {
+                        self.exec_stmt(&x.consequent, e)
+                    }
                 } else if let Some(a) = &x.alternate {
-                    self.exec_stmt(a, e)
+                    if let Statement::FunctionDeclaration(function) = a {
+                        self.declare_conditional_function(&*function, e);
+                        Ok(Signal::Normal(Value::Undefined))
+                    } else {
+                        self.exec_stmt(a, e)
+                    }
                 } else {
                     Ok(Signal::Normal(Value::Undefined))
                 }
@@ -7910,20 +7943,36 @@ impl Vm {
             }
             ForStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
+                let loop_environment = match &x.init {
+                    Some(ForStatementInit::VariableDeclaration(declaration))
+                        if declaration.kind != VariableDeclarationKind::Var =>
+                    {
+                        let environment = Environment::new(Some(e.clone()));
+                        if let Some(name) = declaration
+                            .declarations
+                            .first()
+                            .and_then(|declarator| pattern_name(&declarator.id))
+                        {
+                            environment.borrow_mut().lexical_names.insert(name);
+                        }
+                        environment
+                    }
+                    _ => e.clone(),
+                };
                 if let Some(i) = &x.init {
                     if let Some(z) = i.as_expression() {
-                        self.eval_expr(z, e.clone())?;
+                        self.eval_expr(z, loop_environment.clone())?;
                     } else if let ForStatementInit::VariableDeclaration(v) = i {
-                        self.exec_var(v, e.clone())?
+                        self.exec_var(v, loop_environment.clone())?
                     }
                 }
                 loop {
                     if let Some(t) = &x.test {
-                        if !self.eval_expr(t, e.clone())?.truthy() {
+                        if !self.eval_expr(t, loop_environment.clone())?.truthy() {
                             break;
                         }
                     }
-                    match self.exec_stmt(&x.body, e.clone())? {
+                    match self.exec_stmt(&x.body, loop_environment.clone())? {
                         Signal::Break(None) => break,
                         Signal::Break(Some(label))
                             if loop_label.as_deref() == Some(label.as_str()) =>
@@ -7938,7 +7987,7 @@ impl Vm {
                         Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
                     }
                     if let Some(u) = &x.update {
-                        self.eval_expr(u, e.clone())?;
+                        self.eval_expr(u, loop_environment.clone())?;
                     }
                 }
                 Ok(Signal::Normal(Value::Undefined))
@@ -8102,6 +8151,15 @@ impl Vm {
             }
             SwitchStatement(x) => {
                 let d = self.eval_expr(&x.discriminant, e.clone())?;
+                let switch_environment = Environment::new(Some(e.clone()));
+                let mut switch_lexical_names = HashSet::new();
+                for case in &x.cases {
+                    collect_lexical_binding_names(&case.consequent, &mut switch_lexical_names);
+                }
+                switch_environment
+                    .borrow_mut()
+                    .lexical_names
+                    .extend(switch_lexical_names);
                 let mut active = false;
                 for c in &x.cases {
                     if !active {
@@ -8112,7 +8170,7 @@ impl Vm {
                     }
                     if active {
                         for st in &c.consequent {
-                            match self.exec_stmt(st, e.clone())? {
+                            match self.exec_stmt(st, switch_environment.clone())? {
                                 Signal::Break(None) => return Ok(Signal::Normal(Value::Undefined)),
                                 Signal::Break(Some(label)) => {
                                     return Ok(Signal::Break(Some(label)));
@@ -8130,19 +8188,31 @@ impl Vm {
                 Ok(Signal::Normal(Value::Undefined))
             }
             TryStatement(x) => {
-                let r = self.exec_stmts(&x.block.body, e.clone());
+                let try_environment = Environment::new(Some(e.clone()));
+                let r = self.exec_stmts(&x.block.body, try_environment);
                 let out = match r {
                     Ok(v) => Ok(v),
                     Err(JsError::Throw(v)) => {
                         if let Some(h) = &x.handler {
                             let ce = Environment::new(Some(e.clone()));
                             if let Some(p) = &h.param {
-                                if let Some(n) = pattern_name(&p.pattern) {
+                                let mut names = Vec::new();
+                                pattern_bound_names(&p.pattern, &mut names);
+                                {
                                     let mut catch_environment = ce.borrow_mut();
-                                    catch_environment.lexical_names.insert(n.clone());
-                                    catch_environment.catch_names.insert(n.clone());
-                                    catch_environment.declare(&n, v)
+                                    let simple =
+                                        matches!(&p.pattern, BindingPattern::BindingIdentifier(_));
+                                    for name in names {
+                                        catch_environment.lexical_names.insert(name.clone());
+                                        if simple {
+                                            catch_environment
+                                                .catch_simple_names
+                                                .insert(name.clone());
+                                        }
+                                        catch_environment.catch_names.insert(name);
+                                    }
                                 }
+                                self.bind_pattern(&p.pattern, v, ce.clone())?;
                             }
                             self.exec_stmts(&h.body.body, ce)
                         } else {
@@ -8304,6 +8374,34 @@ impl Vm {
     /// sloppy block declaration, update the nearest variable environment as
     /// required by Annex B. Keeping this transition in one helper makes the
     /// interpreter and every statement/declaration entry point agree.
+    fn declare_conditional_function<'a>(&mut self, function: &'a Function<'a>, environment: Env) {
+        let Some(id) = &function.id else {
+            return;
+        };
+        let name = id.name.as_str();
+        let mut current = Some(environment.clone());
+        while let Some(candidate) = current {
+            let is_global = Rc::ptr_eq(&candidate, &self.global);
+            let (parent, is_variable, blocked) = {
+                let candidate = candidate.borrow();
+                (
+                    candidate.parent.clone(),
+                    candidate.contains_local("arguments") || is_global,
+                    candidate.parameter_names.contains(name)
+                        || candidate.lexical_names.contains(name),
+                )
+            };
+            if blocked {
+                return;
+            }
+            if is_variable {
+                break;
+            }
+            current = parent;
+        }
+        self.declare_function_binding(function, environment, name, true);
+    }
+
     fn declare_function_binding<'a>(
         &mut self,
         function: &'a Function<'a>,
@@ -8333,7 +8431,11 @@ impl Vm {
                     candidate.contains_local(EVAL_CODE_ENV_NAME),
                 )
             };
-            if !first_environment && has_name && is_lexical {
+            if !first_environment
+                && has_name
+                && is_lexical
+                && !candidate.borrow().catch_simple_names.contains(name)
+            {
                 lexical_conflict = true;
             }
             first_environment = false;
@@ -9496,6 +9598,31 @@ fn pattern_name<'a>(p: &BindingPattern<'a>) -> Option<String> {
     }
 }
 
+fn pattern_bound_names<'a>(pattern: &BindingPattern<'a>, names: &mut Vec<String>) {
+    match pattern {
+        BindingPattern::BindingIdentifier(identifier) => names.push(identifier.name.to_string()),
+        BindingPattern::AssignmentPattern(assignment) => {
+            pattern_bound_names(&assignment.left, names)
+        }
+        BindingPattern::ArrayPattern(array) => {
+            for element in array.elements.iter().flatten() {
+                pattern_bound_names(element, names);
+            }
+            if let Some(rest) = &array.rest {
+                pattern_bound_names(&rest.argument, names);
+            }
+        }
+        BindingPattern::ObjectPattern(object) => {
+            for property in &object.properties {
+                pattern_bound_names(&property.value, names);
+            }
+            if let Some(rest) = &object.rest {
+                pattern_bound_names(&rest.argument, names);
+            }
+        }
+    }
+}
+
 fn variable_environment(environment: &Env) -> Env {
     let mut current = environment.clone();
     loop {
@@ -9605,7 +9732,28 @@ fn collect_script_binding_names(statements: &[Statement<'_>], names: &mut Vec<St
             Statement::TryStatement(statement) => {
                 collect_script_binding_names(&statement.block.body, names);
                 if let Some(handler) = &statement.handler {
-                    collect_script_binding_names(&handler.body.body, names);
+                    if matches!(
+                        &handler.param,
+                        Some(param)
+                            if !matches!(
+                                &param.pattern,
+                                BindingPattern::BindingIdentifier(_)
+                            )
+                    ) {
+                        let mut catch_names = Vec::new();
+                        if let Some(param) = &handler.param {
+                            pattern_bound_names(&param.pattern, &mut catch_names);
+                        }
+                        let mut catch_bindings = Vec::new();
+                        collect_script_binding_names(&handler.body.body, &mut catch_bindings);
+                        names.extend(
+                            catch_bindings
+                                .into_iter()
+                                .filter(|name| !catch_names.contains(name)),
+                        );
+                    } else {
+                        collect_script_binding_names(&handler.body.body, names);
+                    }
                 }
                 if let Some(finalizer) = &statement.finalizer {
                     collect_script_binding_names(&finalizer.body, names);
