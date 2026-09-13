@@ -58,6 +58,16 @@ macro_rules! with_strict_mode {
     }};
 }
 
+// Native functions are represented as function pointers in the shared value
+// model. Keep pointer-identity checks as a declarative set so constructor and
+// intrinsic classification cannot drift between execution tiers.
+macro_rules! native_fn_matches {
+    ($native:expr, $( $target:path ),+ $(,)?) => {{
+        let native = $native as *const ();
+        false $(|| native == $target as *const ())+
+    }};
+}
+
 mod dynbytecode;
 mod dynjit;
 #[cfg(any(test, feature = "inline-census"))]
@@ -4996,11 +5006,10 @@ fn instance_of(value: &Value, ctor: &Value) -> bool {
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key(PROMISE_MARKER_PROP))
         && ctor.as_function_ref().is_some_and(|function| {
-            matches!(
-                function.kind,
-                FunctionKind::Native(native)
-                    if native as *const () == native_promise_constructor as *const ()
-            )
+            matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(
+                native,
+                native_promise_constructor,
+            ))
         })
     {
         return true;
@@ -7623,39 +7632,18 @@ impl Vm {
                         FunctionKind::User { node, .. } => !node.r#async || node.generator,
                         FunctionKind::Builtin(id) => id.is_constructable(),
                         FunctionKind::Native(native)
-                            if *native as *const () == native_bigint as *const () =>
-                        {
-                            true
-                        }
-                        FunctionKind::Native(native)
-                            if *native as *const () == native_symbol as *const () =>
-                        {
-                            true
-                        }
-                        FunctionKind::Native(native)
-                            if *native as *const ()
-                                == native_async_function_constructor as *const () =>
-                        {
-                            true
-                        }
-                        FunctionKind::Native(native)
-                            if *native as *const ()
-                                == native_async_generator_constructor as *const () =>
-                        {
-                            true
-                        }
-                        FunctionKind::Native(native)
-                            if *native as *const () == native_promise_constructor as *const () =>
-                        {
-                            true
-                        }
-                        FunctionKind::Native(native)
-                            if *native as *const ()
-                                == native_array_buffer_constructor as *const ()
-                                || *native as *const ()
-                                    == native_typed_array_constructor as *const ()
-                                || *native as *const () == native_map_constructor as *const ()
-                                || *native as *const () == native_set_constructor as *const () =>
+                            if native_fn_matches!(
+                                *native,
+                                native_bigint,
+                                native_symbol,
+                                native_async_function_constructor,
+                                native_async_generator_constructor,
+                                native_promise_constructor,
+                                native_array_buffer_constructor,
+                                native_typed_array_constructor,
+                                native_map_constructor,
+                                native_set_constructor,
+                            ) =>
                         {
                             true
                         }
@@ -9052,7 +9040,7 @@ impl Vm {
             matches!(
                 function.kind,
                 FunctionKind::Native(native)
-                    if native as *const () == native_proxy_constructor as *const ()
+                    if native_fn_matches!(native, native_proxy_constructor)
             )
         }) && self
             .current_new_target
@@ -12569,7 +12557,7 @@ impl Vm {
                     matches!(
                         function.kind,
                         FunctionKind::Native(native)
-                            if native as *const () == native_proxy_constructor as *const ()
+                            if native_fn_matches!(native, native_proxy_constructor)
                     )
                 }) {
                     return Err(JsError::Throw(type_error(
@@ -12630,7 +12618,7 @@ impl Vm {
                         "function is not a constructor",
                     )));
                 }
-                if matches!(function.kind, FunctionKind::Native(native) if native as *const () == native_bigint as *const ())
+                if matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_bigint))
                 {
                     return Err(JsError::Throw(type_error(
                         self,
@@ -19780,7 +19768,7 @@ fn native_regexp_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> 
         .as_function_ref()
         .is_some_and(|function| match function.kind {
             FunctionKind::Builtin(BuiltinId::RegExpExec) => true,
-            FunctionKind::Native(native) => native as *const () == native_regexp_exec as *const (),
+            FunctionKind::Native(native) => native_fn_matches!(native, native_regexp_exec),
             _ => false,
         });
     if default_exec && regexp.borrow().regex.is_match("") && index <= source.len() {
@@ -21869,7 +21857,7 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     if target.as_function_ref().is_some_and(|function| {
         matches!(
             function.kind,
-            FunctionKind::Native(native) if native as *const () == native_symbol as *const ()
+            FunctionKind::Native(native) if native_fn_matches!(native, native_symbol)
         )
     }) {
         return Err(JsError::Throw(type_error(
@@ -21879,7 +21867,7 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     }
     if target
         .as_function_ref()
-        .is_some_and(|function| matches!(function.kind, FunctionKind::Native(native) if native as *const () == native_bigint as *const ()))
+        .is_some_and(|function| matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_bigint)))
     {
         return Err(JsError::Throw(type_error(vm, "BigInt is not a constructor")));
     }
@@ -21894,13 +21882,16 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     // that early here so a poisoned newTarget.prototype cannot mask the
     // required TypeError for a non-callable executor.
     if target.as_function_ref().is_some_and(|function| {
-        matches!(
-            function.kind,
-            FunctionKind::Native(native) if native as *const () == native_promise_constructor as *const ()
-        )
+        matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(
+            native,
+            native_promise_constructor,
+        ))
     }) && !arguments.first().is_some_and(Value::is_function)
     {
-        return Err(JsError::Throw(type_error(vm, "Promise resolver is not a function")));
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise resolver is not a function",
+        )));
     }
     let new_target = args.get(2).cloned().unwrap_or_else(|| target.clone());
     if !constructable(&new_target) {
@@ -23185,10 +23176,12 @@ fn native_async_generator_constructor(
 }
 
 fn is_dynamic_constructor_native(native: fn(&mut Vm, Value, &[Value]) -> JsResult<Value>) -> bool {
-    let pointer = native as *const ();
-    pointer == native_function_constructor as *const ()
-        || pointer == native_async_function_constructor as *const ()
-        || pointer == native_async_generator_constructor as *const ()
+    native_fn_matches!(
+        native,
+        native_function_constructor,
+        native_async_function_constructor,
+        native_async_generator_constructor,
+    )
 }
 
 fn dynamic_function_constructor(
