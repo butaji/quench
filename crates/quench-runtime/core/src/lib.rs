@@ -7591,6 +7591,8 @@ impl Vm {
                 .iter()
                 .any(|directive| directive.directive.as_str() == "use strict")
         });
+        let previous_strict_mode = self.strict_mode;
+        self.strict_mode = strict;
         // Ordinary (non-strict) calls substitute the global object for a
         // nullish this value. Keep this normalization at the shared call
         // boundary so stencil and interpreter execution agree.
@@ -7622,22 +7624,35 @@ impl Vm {
         for (i, p) in n.params.items.iter().enumerate() {
             let argument = args.get(i).cloned().unwrap_or(Value::Undefined);
             let argument = if argument.is_undefined() {
-                p.initializer
+                match p
+                    .initializer
                     .as_ref()
                     .map(|initializer| self.eval_expr(initializer, e.clone()))
-                    .transpose()?
-                    .unwrap_or(argument)
+                    .transpose()
+                {
+                    Ok(value) => value.unwrap_or(argument),
+                    Err(error) => {
+                        self.strict_mode = previous_strict_mode;
+                        return Err(error);
+                    }
+                }
             } else {
                 argument
             };
-            self.bind_pattern(&p.pattern, argument, e.clone())?;
+            if let Err(error) = self.bind_pattern(&p.pattern, argument, e.clone()) {
+                self.strict_mode = previous_strict_mode;
+                return Err(error);
+            }
         }
         if let Some(rest) = &n.params.rest {
-            self.bind_pattern(
+            if let Err(error) = self.bind_pattern(
                 &rest.rest.argument,
                 self.array_from_values(args.iter().skip(n.params.items.len()).cloned().collect()),
                 e.clone(),
-            )?;
+            ) {
+                self.strict_mode = previous_strict_mode;
+                return Err(error);
+            }
         }
         let result = (|| {
             if let Some(b) = &n.body {
@@ -7652,6 +7667,7 @@ impl Vm {
         if source_id.is_some() {
             self.source_ids.pop();
         }
+        self.strict_mode = previous_strict_mode;
         result
     }
 
@@ -7710,6 +7726,13 @@ impl Vm {
         if let Some(body) = n.body.as_function_body() {
             reserve_script_bindings(&e, &body.statements);
         }
+        let strict = n.body.as_function_body().is_some_and(|body| {
+            body.directives
+                .iter()
+                .any(|directive| directive.directive.as_str() == "use strict")
+        });
+        let previous_strict_mode = self.strict_mode;
+        self.strict_mode = strict;
         {
             let mut parameter_names = e.borrow_mut();
             for parameter in &n.params.items {
@@ -7726,22 +7749,35 @@ impl Vm {
         for (i, p) in n.params.items.iter().enumerate() {
             let argument = args.get(i).cloned().unwrap_or(Value::Undefined);
             let argument = if argument.is_undefined() {
-                p.initializer
+                match p
+                    .initializer
                     .as_ref()
                     .map(|initializer| self.eval_expr(initializer, e.clone()))
-                    .transpose()?
-                    .unwrap_or(argument)
+                    .transpose()
+                {
+                    Ok(value) => value.unwrap_or(argument),
+                    Err(error) => {
+                        self.strict_mode = previous_strict_mode;
+                        return Err(error);
+                    }
+                }
             } else {
                 argument
             };
-            self.bind_pattern(&p.pattern, argument, e.clone())?;
+            if let Err(error) = self.bind_pattern(&p.pattern, argument, e.clone()) {
+                self.strict_mode = previous_strict_mode;
+                return Err(error);
+            }
         }
         if let Some(rest) = &n.params.rest {
-            self.bind_pattern(
+            if let Err(error) = self.bind_pattern(
                 &rest.rest.argument,
                 self.array_from_values(args.iter().skip(n.params.items.len()).cloned().collect()),
                 e.clone(),
-            )?;
+            ) {
+                self.strict_mode = previous_strict_mode;
+                return Err(error);
+            }
         }
         let result = (|| {
             if let Some(expression) = n.body.as_expression() {
@@ -7758,6 +7794,7 @@ impl Vm {
         if source_id.is_some() {
             self.source_ids.pop();
         }
+        self.strict_mode = previous_strict_mode;
         result
     }
     fn run_source(&mut self, p: &Path) -> JsResult<Value> {
@@ -7888,20 +7925,36 @@ impl Vm {
         // before a stencil image is entered). Reserve lexical slots and
         // materialize the observable global `var`/Annex-B function projection
         // once so both execution tiers see the same pre-evaluation state.
-        reserve_script_bindings(&environment, &r.program.body);
-        self.materialize_script_bindings(&environment, &r.program.body);
-        self.hydrate_global_bindings(&environment, &r.program.body);
+        let eval_code = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
+        let strict_eval = eval_code && self.strict_mode;
+        let execution_environment = if strict_eval {
+            let eval_environment = Environment::new(Some(environment.clone()));
+            eval_environment
+                .borrow_mut()
+                .declare(EVAL_CODE_ENV_NAME, Value::Bool(true));
+            eval_environment
+        } else {
+            environment.clone()
+        };
+        if strict_eval {
+            reserve_strict_eval_bindings(&execution_environment, &r.program.body);
+        } else {
+            reserve_script_bindings(&execution_environment, &r.program.body);
+        }
+        if !strict_eval {
+            self.materialize_script_bindings(&execution_environment, &r.program.body);
+            self.hydrate_global_bindings(&execution_environment, &r.program.body);
+        }
         self.source_stack.push(p.to_path_buf());
         self.source_ids.push(source_id);
         // Eval declaration instantiation can mutate the surrounding
         // environment (including deleting local var bindings). Keep this
         // semantic boundary on the interpreter tier of the same VM until the
         // stencil image carries those environment effects explicitly.
-        let eval_code = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
         let eval_tdz_names = if eval_code {
             let mut names = HashSet::new();
             collect_lexical_binding_names(&r.program.body, &mut names);
-            environment
+            execution_environment
                 .borrow_mut()
                 .tdz_names
                 .extend(names.iter().cloned());
@@ -7921,9 +7974,9 @@ impl Vm {
                 ) {
                     Ok(code) => code,
                     Err(_) => {
-                        reserve_script_bindings(&environment, statements);
+                        reserve_script_bindings(&execution_environment, statements);
                         return self
-                            .exec_stmts(statements, environment.clone())
+                            .exec_stmts(statements, execution_environment.clone())
                             .and_then(|signal| self.complete_script_signal(signal));
                     }
                 };
@@ -7933,9 +7986,9 @@ impl Vm {
                     dynjit::DynJitCode::build(code, &mut arena, instrumented_kernels)
                 };
                 let Some(image) = image else {
-                    reserve_script_bindings(&environment, statements);
+                    reserve_script_bindings(&execution_environment, statements);
                     return self
-                        .exec_stmts(statements, environment.clone())
+                        .exec_stmts(statements, execution_environment.clone())
                         .and_then(|signal| self.complete_script_signal(signal));
                 };
                 let (direct_blocks, direct_opcodes) = image.direct_selection();
@@ -7948,23 +8001,23 @@ impl Vm {
                     .jit_stats
                     .compiled_direct_opcodes
                     .saturating_add(direct_opcodes as u64);
-                match image.call_script(self, environment.clone()) {
+                match image.call_script(self, execution_environment.clone()) {
                     Err(error) if is_stencil_fallback_error(&error) => {
-                        reserve_script_bindings(&environment, statements);
-                        self.exec_stmts(statements, environment.clone())
+                        reserve_script_bindings(&execution_environment, statements);
+                        self.exec_stmts(statements, execution_environment.clone())
                             .and_then(|signal| self.complete_script_signal(signal))
                     }
                     result => result,
                 }
             })()
         } else {
-            self.exec_stmts(&r.program.body, environment.clone())
+            self.exec_stmts(&r.program.body, execution_environment.clone())
                 .and_then(|signal| self.complete_script_signal(signal))
         };
         self.source_stack.pop();
         self.source_ids.pop();
         if !eval_tdz_names.is_empty() {
-            environment
+            execution_environment
                 .borrow_mut()
                 .tdz_names
                 .retain(|name| !eval_tdz_names.contains(name));
@@ -9937,6 +9990,7 @@ fn variable_environment(environment: &Env) -> Env {
         let is_variable = {
             let candidate = current.borrow();
             candidate.contains_local(dynbytecode::ARGUMENTS_BINDING_NAME)
+                || candidate.contains_local(EVAL_CODE_ENV_NAME)
                 || candidate.parent.is_none()
         };
         if is_variable {
@@ -9958,6 +10012,117 @@ fn reserve_script_bindings(environment: &Env, statements: &[Statement<'_>]) {
     collect_lexical_binding_names(statements, &mut lexical);
     names.retain(|name| !lexical.contains(name));
     environment.borrow_mut().reserve(names);
+}
+
+fn reserve_strict_eval_bindings(environment: &Env, statements: &[Statement<'_>]) {
+    let mut names = Vec::new();
+    collect_strict_eval_var_names(statements, &mut names, true);
+    environment.borrow_mut().reserve(names);
+}
+
+fn collect_strict_eval_var_names(
+    statements: &[Statement<'_>],
+    names: &mut Vec<String>,
+    top_level: bool,
+) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind == VariableDeclarationKind::Var =>
+            {
+                names.extend(
+                    declaration
+                        .declarations
+                        .iter()
+                        .filter_map(|declarator| pattern_name(&declarator.id)),
+                );
+            }
+            Statement::FunctionDeclaration(function) if top_level => {
+                if let Some(id) = &function.id {
+                    names.push(id.name.to_string());
+                }
+            }
+            Statement::BlockStatement(block) => {
+                collect_strict_eval_var_names(&block.body, names, false)
+            }
+            Statement::IfStatement(statement) => {
+                collect_strict_eval_var_names(
+                    std::slice::from_ref(&statement.consequent),
+                    names,
+                    false,
+                );
+                if let Some(alternate) = &statement.alternate {
+                    collect_strict_eval_var_names(std::slice::from_ref(alternate), names, false);
+                }
+            }
+            Statement::WhileStatement(statement) => {
+                collect_strict_eval_var_names(std::slice::from_ref(&statement.body), names, false)
+            }
+            Statement::DoWhileStatement(statement) => {
+                collect_strict_eval_var_names(std::slice::from_ref(&statement.body), names, false)
+            }
+            Statement::ForStatement(statement) => {
+                if let Some(ForStatementInit::VariableDeclaration(declaration)) = &statement.init
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
+                collect_strict_eval_var_names(std::slice::from_ref(&statement.body), names, false);
+            }
+            Statement::ForInStatement(statement) => {
+                if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
+                collect_strict_eval_var_names(std::slice::from_ref(&statement.body), names, false);
+            }
+            Statement::ForOfStatement(statement) => {
+                if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
+                collect_strict_eval_var_names(std::slice::from_ref(&statement.body), names, false);
+            }
+            Statement::LabeledStatement(statement) => {
+                collect_strict_eval_var_names(std::slice::from_ref(&statement.body), names, false)
+            }
+            Statement::WithStatement(statement) => {
+                collect_strict_eval_var_names(std::slice::from_ref(&statement.body), names, false)
+            }
+            Statement::SwitchStatement(statement) => {
+                for case in &statement.cases {
+                    collect_strict_eval_var_names(&case.consequent, names, false);
+                }
+            }
+            Statement::TryStatement(statement) => {
+                collect_strict_eval_var_names(&statement.block.body, names, false);
+                if let Some(handler) = &statement.handler {
+                    collect_strict_eval_var_names(&handler.body.body, names, false);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    collect_strict_eval_var_names(&finalizer.body, names, false);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn collect_script_binding_names(statements: &[Statement<'_>], names: &mut Vec<String>) {
@@ -21392,6 +21557,21 @@ mod tests {
             "\"use strict\"; eval('var public = 1;');",
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn strict_eval_var_does_not_mutate_caller() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<strict-eval-var>"),
+            "function f(){ var x = 0; eval('\"use strict\";var x = 1'); return x; } result = f();",
+        )
+        .expect("strict eval var probe executes");
+        assert_eq!(
+            Environment::get(&vm.global, "result").and_then(|value| value.as_number()),
+            Some(0.0)
+        );
     }
 
     #[test]
