@@ -1826,6 +1826,11 @@ struct Environment {
     // evaluated in a sloppy function body.
     parameter_names: HashSet<String>,
     implicit_arguments: bool,
+    // Eval-created `var` bindings are the only declarative bindings that can
+    // be removed by sloppy `delete`. Keep that fact beside the binding table
+    // instead of encoding it in call sites.
+    deletable_names: HashSet<String>,
+    deleted_names: HashSet<String>,
     tdz_names: HashSet<String>,
     lexical_names: HashSet<String>,
     catch_names: HashSet<String>,
@@ -1848,6 +1853,8 @@ impl Environment {
             parent,
             parameter_names: HashSet::new(),
             implicit_arguments: false,
+            deletable_names: HashSet::new(),
+            deleted_names: HashSet::new(),
             tdz_names: HashSet::new(),
             lexical_names: HashSet::new(),
             catch_names: HashSet::new(),
@@ -1864,6 +1871,7 @@ impl Environment {
         };
     }
     fn declare(&mut self, k: &str, v: Value) {
+        self.deleted_names.remove(k);
         if let Some(&slot) = self.names.get(k) {
             Value::overwrite(&mut self.values[slot], v);
             return;
@@ -1894,6 +1902,19 @@ impl Environment {
         self.names = Rc::new(next_names);
         self.values.resize(next_slot, Value::Undefined);
         self.publish_access();
+    }
+    fn mark_deletable(&mut self, names: impl IntoIterator<Item = String>) {
+        self.deletable_names.extend(names);
+    }
+    fn delete_local(&mut self, name: &str) -> bool {
+        if !self.deletable_names.remove(name) {
+            return false;
+        }
+        self.deleted_names.insert(name.to_owned());
+        if let Some(slot) = self.names.get(name).copied() {
+            Value::overwrite(&mut self.values[slot], Value::Undefined);
+        }
+        true
     }
     fn contains_local(&self, k: &str) -> bool {
         self.names.contains_key(k)
@@ -2004,7 +2025,9 @@ impl Environment {
         let mut depth = 0;
         while let Some(current) = environment {
             let current = current.borrow();
-            if let Some(&slot) = current.names.get(k) {
+            if let Some(&slot) = current.names.get(k)
+                && !current.deleted_names.contains(k)
+            {
                 return Some(NameIc {
                     depth,
                     slot,
@@ -2013,6 +2036,17 @@ impl Environment {
             }
             environment = current.parent.clone();
             depth += 1;
+        }
+        None
+    }
+    fn binding_environment(e: &Env, k: &str) -> Option<Env> {
+        let mut environment = Some(e.clone());
+        while let Some(current) = environment {
+            let borrowed = current.borrow();
+            if borrowed.names.contains_key(k) && !borrowed.deleted_names.contains(k) {
+                return Some(current.clone());
+            }
+            environment = borrowed.parent.clone();
         }
         None
     }
@@ -7186,9 +7220,22 @@ impl Vm {
                 let key = self.to_property_key(key_value)?;
                 Ok(Value::Bool(self.delete_prop(&object, &key)))
             }
-            Expression::Identifier(identifier) => Ok(Value::Bool(
-                !self.readonly_global_binding(&e, identifier.name.as_str()),
-            )),
+            Expression::Identifier(identifier) => {
+                let name = identifier.name.as_str();
+                let Some(binding) = Environment::binding_environment(&e, name) else {
+                    return Ok(Value::Bool(true));
+                };
+                if self.readonly_global_binding(&e, name) {
+                    return Ok(Value::Bool(false));
+                }
+                let deleted = binding.borrow_mut().delete_local(name);
+                if deleted && Rc::ptr_eq(&binding, &self.global) {
+                    if let Some(global_this) = Environment::get(&self.global, "globalThis") {
+                        return Ok(Value::Bool(self.delete_prop(&global_this, name)));
+                    }
+                }
+                Ok(Value::Bool(deleted))
+            }
             _ => Ok(Value::Bool(true)),
         }
     }
@@ -7426,6 +7473,16 @@ impl Vm {
         function: &FunctionValue<'static>,
         node: &Function<'static>,
     ) -> JsResult<()> {
+        // A closure may observe an eval-created binding after sloppy `delete`.
+        // Stencil name loads use immutable layout slots, so retain the shared
+        // interpreter for this dynamic environment shape until deletion is
+        // represented in the stencil image itself.
+        if let FunctionKind::User { env, .. } = &function.kind
+            && environment_has_deleted_bindings(env)
+        {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         // Parameter defaults and destructuring are initialized by the shared
         // environment binder. Keep these shapes on that path until their
         // stencil lowering carries the same binding semantics.
@@ -8072,7 +8129,20 @@ impl Vm {
         if strict_eval {
             reserve_strict_eval_bindings(&variable_environment, &r.program.body);
         } else {
+            let mut eval_var_names = Vec::new();
+            collect_global_object_binding_names(&r.program.body, &mut eval_var_names);
+            let newly_created = {
+                let environment = variable_environment.borrow();
+                eval_var_names
+                    .iter()
+                    .filter(|name| !environment.contains_local(name))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
             reserve_script_bindings(&variable_environment, &r.program.body);
+            variable_environment
+                .borrow_mut()
+                .mark_deletable(newly_created);
         }
         if !strict_eval {
             self.materialize_script_bindings(&variable_environment, &r.program.body);
@@ -10170,6 +10240,18 @@ fn is_variable_environment(environment: &Env) -> bool {
         || candidate.contains_local(FUNCTION_ENV_NAME)
         || candidate.contains_local(STRICT_EVAL_ENV_NAME)
         || candidate.parent.is_none()
+}
+
+fn environment_has_deleted_bindings(environment: &Env) -> bool {
+    let mut current = Some(environment.clone());
+    while let Some(candidate) = current {
+        let borrowed = candidate.borrow();
+        if !borrowed.deleted_names.is_empty() {
+            return true;
+        }
+        current = borrowed.parent.clone();
+    }
+    false
 }
 
 fn nearest_local_binding(environment: &Env, name: &str) -> Option<Value> {
@@ -20909,6 +20991,20 @@ mod tests {
         assert!(
             result.is_err(),
             "strict assignment must reject read-only global"
+        );
+    }
+
+    #[test]
+    fn sloppy_eval_bindings_are_deletable_and_unresolvable_afterward() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        let result = vm.run_source_text(
+            Path::new("<eval-delete>"),
+            "eval('var x; delete x;'); (function () { x; })();",
+        );
+        assert!(
+            result.is_err(),
+            "a closure must observe a deleted eval binding as unresolvable"
         );
     }
 
