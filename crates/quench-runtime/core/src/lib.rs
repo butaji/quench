@@ -1879,8 +1879,28 @@ impl Environment {
         self.names.contains_key(k)
     }
     fn get(e: &Env, k: &str) -> Option<Value> {
-        let location = Self::resolve(e, k)?;
-        Self::get_at(e, location)
+        if let Some(location) = Self::resolve(e, k) {
+            return Self::get_at(e, location);
+        }
+        let mut root = e.clone();
+        loop {
+            let parent = root.borrow().parent.clone();
+            let Some(parent) = parent else {
+                let global_this = {
+                    let root = root.borrow();
+                    root.names
+                        .get("globalThis")
+                        .and_then(|slot| root.values.get(*slot))
+                        .cloned()
+                };
+                return global_this.and_then(|global_this| {
+                    global_this
+                        .as_object_ref()
+                        .and_then(|object| object.borrow().props.get(k).cloned())
+                });
+            };
+            root = parent;
+        }
     }
     fn get_cached(
         e: &Env,
@@ -8402,25 +8422,6 @@ impl Vm {
         }
     }
 
-    fn hydrate_all_global_properties(&self, environment: &Env) {
-        if !Rc::ptr_eq(environment, &self.global) {
-            return;
-        }
-        let Some(global_this) = Environment::get(&self.global, "globalThis") else {
-            return;
-        };
-        let Some(object) = global_this.as_object_ref() else {
-            return;
-        };
-        let properties = object.borrow().props.clone();
-        let mut environment = environment.borrow_mut();
-        for (index, (name, _)) in properties.shape.slots.iter().enumerate() {
-            if let Some(value) = properties.values.as_slice().get(index).cloned() {
-                environment.declare(name, value);
-            }
-        }
-    }
-
     /// Install a function declaration in its lexical environment and, for a
     /// sloppy block declaration, update the nearest variable environment as
     /// required by Annex B. Keeping this transition in one helper makes the
@@ -10421,7 +10422,6 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
     } else {
         source.clone()
     };
-    vm.hydrate_all_global_properties(&environment);
     Environment::set(&environment, EVAL_CODE_ENV_NAME, Value::Bool(true));
     match vm.run_source_text_in_environment(&path, &eval_source, environment) {
         Err(JsError::Message(message)) if message.starts_with("parse error:") => {

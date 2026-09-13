@@ -2187,17 +2187,6 @@ impl Compiler {
                 reason: "direct eval deferred to shared semantics",
             });
         }
-        if matches!(
-            &value.callee,
-            Expression::StaticMemberExpression(member)
-                if matches!(&member.object, Expression::Identifier(identifier) if identifier.name == "$262")
-                    && member.property.name == "evalScript"
-        ) {
-            return Err(CompileGap {
-                span: value.span,
-                reason: "$262.evalScript deferred to shared semantics",
-            });
-        }
         let (receiver, callee) = if let Some(member) = value.callee.as_member_expression() {
             let target = self.member_lvalue(member)?;
             let receiver = target.object();
