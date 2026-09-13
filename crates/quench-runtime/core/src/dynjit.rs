@@ -3022,7 +3022,10 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             put(frame, dst, value);
         }
         DynOp::In { dst, left, right } => {
-            let value = Value::Bool(in_prop(get_ref(frame, *left), get_ref(frame, *right)));
+            let left_value = get_ref(frame, *left).clone();
+            let right_value = get_ref(frame, *right).clone();
+            let key = vm(frame).to_property_key(left_value)?;
+            let value = Value::Bool(vm(frame).has_property_with_proxy(&right_value, &key)?);
             put(frame, dst, value);
         }
         DynOp::GetStatic { dst, object, key } => {
