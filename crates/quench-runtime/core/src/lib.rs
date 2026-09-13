@@ -2075,6 +2075,12 @@ struct Environment {
     // Proxy [[HasProperty]] dynamically in the canonical VM.
     with_object: Option<Value>,
 }
+
+struct IteratorRecord {
+    iterator: Value,
+    done: bool,
+}
+
 impl Environment {
     fn new(parent: Option<Env>) -> Env {
         Self::with_layout(parent, Rc::new(HashMap::new()))
@@ -13498,47 +13504,58 @@ impl Vm {
     }
 
     fn iterable_values(&mut self, value: &Value) -> JsResult<Vec<Value>> {
-        if let Some(object) = value.as_object_ref() {
-            // Even dense arrays must go through @@iterator: callers may
-            // replace or invalidate Array.prototype[Symbol.iterator], and
-            // spread/argument evaluation is observable at that boundary.
-            let _ = object;
-            let iterator_key = self.well_known_symbol_key("iterator");
-            let method = self.get_prop_with_accessors(value, &iterator_key)?;
-            if !method.is_function() {
-                return Err(JsError::Throw(type_error(self, "value is not iterable")));
-            }
-            let iterator = self.call(method, value.clone(), Vec::new())?;
-            let mut values = Vec::new();
-            loop {
-                let next = self.get_prop_with_accessors(&iterator, "next")?;
-                if !next.is_function() {
-                    return Err(JsError::Throw(type_error(
-                        self,
-                        "iterator next method is not callable",
-                    )));
-                }
-                let result = self.call(next, iterator.clone(), Vec::new())?;
-                if !result.is_object_like() {
-                    return Err(JsError::Throw(type_error(
-                        self,
-                        "iterator result is not an object",
-                    )));
-                }
-                if self.get_prop_with_accessors(&result, "done")?.truthy() {
-                    break;
-                }
-                values.push(self.get_prop_with_accessors(&result, "value")?);
-            }
-            return Ok(values);
+        let mut record = self.iterator_record(value)?;
+        let mut values = Vec::new();
+        while let Some(value) = self.iterator_step(&mut record)? {
+            values.push(value);
         }
-        if let Some(string) = value.as_string() {
-            return Ok(utf16_units(string)
-                .into_iter()
-                .map(|unit| Value::string_value(string_from_utf16_units(&[unit])))
-                .collect());
+        Ok(values)
+    }
+
+    fn iterator_record(&mut self, value: &Value) -> JsResult<IteratorRecord> {
+        let iterator_key = self.well_known_symbol_key("iterator");
+        let method = self.get_prop_with_accessors(value, &iterator_key)?;
+        if !method.is_function() {
+            return Err(JsError::Throw(type_error(self, "value is not iterable")));
         }
-        Err(JsError::Throw(type_error(self, "value is not iterable")))
+        let iterator = self.call(method, value.clone(), Vec::new())?;
+        Ok(IteratorRecord {
+            iterator,
+            done: false,
+        })
+    }
+
+    fn iterator_step(&mut self, record: &mut IteratorRecord) -> JsResult<Option<Value>> {
+        if record.done {
+            return Ok(None);
+        }
+        let next = self.get_prop_with_accessors(&record.iterator, "next")?;
+        if !next.is_function() {
+            record.done = true;
+            return Err(JsError::Throw(type_error(
+                self,
+                "iterator next method is not callable",
+            )));
+        }
+        let result = match self.call(next, record.iterator.clone(), Vec::new()) {
+            Ok(result) => result,
+            Err(error) => {
+                record.done = true;
+                return Err(error);
+            }
+        };
+        if !result.is_object_like() {
+            record.done = true;
+            return Err(JsError::Throw(type_error(
+                self,
+                "iterator result is not an object",
+            )));
+        }
+        if self.get_prop_with_accessors(&result, "done")?.truthy() {
+            record.done = true;
+            return Ok(None);
+        }
+        Ok(Some(self.get_prop_with_accessors(&result, "value")?))
     }
 
     fn iterator_close(&mut self, iterator: &Value) -> JsResult<()> {
@@ -13582,6 +13599,9 @@ impl Vm {
         target: Env,
         eval_env: Env,
     ) -> JsResult<()> {
+        if matches!(pattern, BindingPattern::ArrayPattern(_)) {
+            return self.bind_array_pattern_from_iterator(pattern, value, target, eval_env);
+        }
         match pattern {
             BindingPattern::BindingIdentifier(identifier) => {
                 let name = identifier.name.as_str();
@@ -13617,36 +13637,7 @@ impl Vm {
                 }
                 self.bind_pattern_with_eval_env(&assignment.left, value, target, eval_env)
             }
-            BindingPattern::ArrayPattern(array) => {
-                if value.is_undefined() || value.is_null() {
-                    return Err(JsError::Throw(type_error(
-                        self,
-                        "cannot destructure nullish value",
-                    )));
-                }
-                let values = self.iterable_values(&value)?;
-                for (index, element) in array.elements.iter().enumerate() {
-                    if let Some(element) = element {
-                        self.bind_pattern_with_eval_env(
-                            element,
-                            values.get(index).cloned().unwrap_or(Value::Undefined),
-                            target.clone(),
-                            eval_env.clone(),
-                        )?;
-                    }
-                }
-                if let Some(rest) = &array.rest {
-                    self.bind_pattern_with_eval_env(
-                        &rest.argument,
-                        self.array_from_values(
-                            values.into_iter().skip(array.elements.len()).collect(),
-                        ),
-                        target,
-                        eval_env,
-                    )?;
-                }
-                Ok(())
-            }
+            BindingPattern::ArrayPattern(_) => unreachable!(),
             BindingPattern::ObjectPattern(object) => {
                 if value.is_null() || value.is_undefined() {
                     return Err(JsError::Throw(type_error(
@@ -13675,6 +13666,54 @@ impl Vm {
                 Ok(())
             }
         }
+    }
+
+    fn bind_array_pattern_from_iterator<'a>(
+        &mut self,
+        pattern: &BindingPattern<'a>,
+        value: Value,
+        target: Env,
+        eval_env: Env,
+    ) -> JsResult<()> {
+        if value.is_undefined() || value.is_null() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "cannot destructure nullish value",
+            )));
+        }
+        let BindingPattern::ArrayPattern(array) = pattern else {
+            unreachable!();
+        };
+        let mut record = self.iterator_record(&value)?;
+        for element in &array.elements {
+            let Some(element) = element else {
+                let _ = self.iterator_step(&mut record)?;
+                continue;
+            };
+            let element_value = self.iterator_step(&mut record)?.unwrap_or(Value::Undefined);
+            self.bind_pattern_with_eval_env(
+                element,
+                element_value,
+                target.clone(),
+                eval_env.clone(),
+            )?;
+        }
+        if let Some(rest) = &array.rest {
+            let mut values = Vec::new();
+            while let Some(value) = self.iterator_step(&mut record)? {
+                values.push(value);
+            }
+            self.bind_pattern_with_eval_env(
+                &rest.argument,
+                self.array_from_values(values),
+                target,
+                eval_env,
+            )?;
+        } else if !record.done {
+            self.iterator_close(&record.iterator)?;
+            record.done = true;
+        }
+        Ok(())
     }
 
     fn probe_with_binding(&mut self, environment: &Env, name: &str) -> JsResult<()> {
