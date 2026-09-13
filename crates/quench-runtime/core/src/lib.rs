@@ -8054,6 +8054,12 @@ impl Vm {
     }
 
     fn has_property(&self, value: &Value, key: &str) -> bool {
+        // Private names are not string properties.  Their compact storage is
+        // still reachable by the dedicated private-member evaluator, but
+        // ordinary `in`/reflection queries must not expose it.
+        if key.starts_with('#') {
+            return false;
+        }
         if let Some(object) = value.as_object() {
             let borrowed = object.borrow();
             if let Some(array) = &borrowed.array {
@@ -14210,10 +14216,8 @@ impl Vm {
                 if is_module_namespace(&object) {
                     return Ok(Value::Bool(false));
                 }
-                Ok(Value::Bool(self.has_property_with_proxy(
-                    &object,
-                    &format!("#{}", private_in.left.name),
-                )?))
+                let key = format!("#{}", private_in.left.name);
+                Ok(Value::Bool(self.has_own_property_key(&object, &key)))
             }
             YieldExpression(yield_expression) => {
                 let value = yield_expression
@@ -24004,6 +24008,9 @@ fn native_reflect_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
 fn native_reflect_delete_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "deleteProperty")?;
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    if key.starts_with('#') {
+        return Ok(Value::Undefined);
+    }
     Ok(Value::Bool(vm.delete_prop_with_vm(&target, &key)?))
 }
 
@@ -29257,7 +29264,7 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             object
                 .props
                 .keys()
-                .filter(|key| !key.contains('\0'))
+                .filter(|key| !key.contains('\0') && !key.starts_with('#'))
                 .cloned()
                 .map(Value::string_value),
         );
@@ -29265,6 +29272,7 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             .props
             .keys()
             .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
+            .filter(|key| !key.starts_with('#'))
             .filter(|key| !keys.iter().any(|existing| existing.string() == *key))
             .map(Value::string_value)
             .collect::<Vec<_>>();
@@ -30156,6 +30164,7 @@ fn function_own_property_keys(
     let is_builtin = matches!(function.kind, FunctionKind::Builtin(_));
     let visible = |key: &str| {
         if (key.starts_with('\0') && !is_symbol_key(key))
+            || key.starts_with('#')
             || (!include_symbols && is_symbol_key(key))
         {
             return false;
@@ -30733,6 +30742,9 @@ fn object_receiver(vm: &mut Vm, value: &Value) -> JsResult<Value> {
 fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    if key.starts_with('#') {
+        return Ok(Value::Bool(false));
+    }
     if is_module_namespace(&target) {
         let descriptor = native_object_get_own_property_descriptor(
             vm,
@@ -30805,6 +30817,9 @@ fn native_object_property_is_enumerable(
     // non-enumerable because it is held on function metadata, not props.
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    if key.starts_with('#') {
+        return Ok(Value::Undefined);
+    }
     if is_module_namespace(&target) {
         let descriptor = native_object_get_own_property_descriptor(
             vm,
