@@ -10099,6 +10099,27 @@ impl Vm {
         let function_scope_error = function_scope_block_redeclaration(&r.program.body);
         let statement_position_error = has_statement_position_function(&r.program);
         let nested_strict_error = has_nested_strict_function_error(&r.program.body);
+        let restricted_global_lexical_error = if Environment::get(&environment, EVAL_CODE_ENV_NAME)
+            .is_none()
+            && self.is_global_environment(&environment)
+        {
+            let mut lexical_names = HashSet::new();
+            collect_direct_lexical_names(&r.program.body, &mut lexical_names);
+            self.global_object_for_environment(&environment)
+                .is_some_and(|global| {
+                    global.as_object_ref().is_some_and(|object| {
+                        let object = object.borrow();
+                        lexical_names.iter().any(|name| {
+                            object
+                                .attributes
+                                .get(name)
+                                .is_some_and(|attributes| !attributes.configurable)
+                        })
+                    })
+                })
+        } else {
+            false
+        };
         // Test262 harnesses contain helper implementations that may
         // legitimately assign to names such as `static`. Apply this parser
         // compatibility check only to eval code, where the source boundary
@@ -10111,6 +10132,7 @@ impl Vm {
             || function_scope_error
             || statement_position_error
             || nested_strict_error
+            || restricted_global_lexical_error
             || strict_assignment_error
         {
             return Err(JsError::Throw(syntax_error(
