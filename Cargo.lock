@@ -2815,6 +2815,7 @@ dependencies = [
  "oxc_span 0.149.0",
  "oxc_syntax 0.149.0",
  "regex",
+ "serde_json",
  "unicode-normalization",
  "wasmparser",
 ]
