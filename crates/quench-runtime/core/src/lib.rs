@@ -16155,6 +16155,36 @@ fn collect_lexical_binding_names(statements: &[Statement<'_>], names: &mut HashS
 /// identifier; strict mode and destructuring bindings are early SyntaxErrors.
 /// Keeping this as a tree fact makes the check apply before any user code (or
 /// `$DONOTEVALUATE`) executes.
+fn expression_contains_yield(expression: &Expression<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_yield_expression(&mut self, expression: &YieldExpression<'a>) {
+            self.found = true;
+            ast_walk::walk_yield_expression(self, expression);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_expression(expression);
+    scan.found
+}
+
+fn expression_contains_await(expression: &Expression<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_await_expression(&mut self, expression: &AwaitExpression<'a>) {
+            self.found = true;
+            ast_walk::walk_await_expression(self, expression);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_expression(expression);
+    scan.found
+}
+
 fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bool {
     struct Validator {
         strict_stack: Vec<bool>,
@@ -16176,6 +16206,8 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
             strict: bool,
             arrow: bool,
             body_strict: bool,
+            generator: bool,
+            asynchronous: bool,
         ) {
             let mut names = Vec::new();
             for parameter in &parameters.items {
@@ -16193,7 +16225,7 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
             if duplicate && (arrow || strict || non_simple) {
                 self.invalid = true;
             }
-            if (arrow || strict)
+            if strict
                 && names
                     .iter()
                     .any(|name| matches!(name.as_str(), "eval" | "arguments"))
@@ -16223,6 +16255,14 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
             if body_strict && non_simple {
                 self.invalid = true;
             }
+            if parameters.items.iter().any(|parameter| {
+                parameter.initializer.as_ref().is_some_and(|initializer| {
+                    (arrow || generator) && expression_contains_yield(initializer)
+                        || asynchronous && expression_contains_await(initializer)
+                })
+            }) {
+                self.invalid = true;
+            }
         }
     }
 
@@ -16234,7 +16274,14 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
                     .any(|directive| directive.directive.as_str() == "use strict")
             });
             let strict = self.strict() || body_strict;
-            self.check_parameters(&function.params, strict, false, body_strict);
+            self.check_parameters(
+                &function.params,
+                strict,
+                false,
+                body_strict,
+                function.generator,
+                function.r#async,
+            );
             self.strict_stack.push(strict);
             ast_walk::walk_function(self, function, flags);
             self.strict_stack.pop();
@@ -16247,7 +16294,14 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
                     .any(|directive| directive.directive.as_str() == "use strict")
             });
             let strict = self.strict() || body_strict;
-            self.check_parameters(&arrow.params, strict, true, body_strict);
+            self.check_parameters(
+                &arrow.params,
+                strict,
+                true,
+                body_strict,
+                false,
+                arrow.r#async,
+            );
             self.strict_stack.push(strict);
             ast_walk::walk_arrow_function_expression(self, arrow);
             self.strict_stack.pop();
