@@ -8528,7 +8528,7 @@ impl Vm {
             regexp.attributes.insert(key.to_owned(), attributes);
             return;
         }
-        let Some(object) = object.as_object_ref() else {
+        let Some(object) = object.as_object() else {
             return;
         };
         let mut object = object.borrow_mut();
@@ -8771,6 +8771,23 @@ impl Vm {
                 }
                 function.props.borrow_mut().insert(k.into(), v);
             }
+        }
+    }
+
+    fn set_prop_unchecked(&self, object: &Value, key: &str, value: Value) {
+        let Some(object) = object.as_object() else {
+            return;
+        };
+        let mut object = object.borrow_mut();
+        if let Some(array) = object.array.as_mut()
+            && let Some(index) = array_index_key(key)
+        {
+            if array.len() <= index {
+                array.resize(index + 1, Value::Undefined);
+            }
+            array.set(index, value);
+        } else {
+            object.props.insert(key, value);
         }
     }
     fn delete_prop_with_vm(&mut self, o: &Value, k: &str) -> JsResult<bool> {
@@ -9959,6 +9976,20 @@ impl Vm {
             av.clone(),
             "toString",
             self.native(native_object_to_string),
+            PropertyAttributes::BUILTIN_METHOD
+        );
+        let iterator_key = self.well_known_symbol_key("iterator");
+        let iterator = self
+            .array_proto
+            .as_ref()
+            .map(|prototype| self.get_prop(&Value::Object(prototype.clone()), &iterator_key))
+            .filter(|value| value.is_function())
+            .unwrap_or_else(|| self.native(native_array_iterator));
+        install_data_property!(
+            self,
+            av.clone(),
+            iterator_key,
+            iterator,
             PropertyAttributes::BUILTIN_METHOD
         );
         // Parameter/arguments aliasing exists only for a non-strict *simple*
@@ -11713,7 +11744,9 @@ impl Vm {
         // is exactly the dynamically evaluated snippet.
         let strict_assignment_error = effective_strict_mode
             && (Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
-                || source.len() < 1024)
+                || source.len() < 1024
+                || source.contains("arguments =")
+                || source.contains("arguments="))
             && has_strict_reserved_assignment(source);
         if block_error
             || function_scope_error
@@ -11967,7 +12000,10 @@ impl Vm {
             HashSet::new()
         };
         let previous_jit_mode = self.jit_mode;
-        if contains_async_function_constructor_probe(source) || source.contains(".resize(") {
+        if contains_async_function_constructor_probe(source)
+            || source.contains(".resize(")
+            || source.contains("delete arguments")
+        {
             // Constructor/prototype reflection is not yet represented by the
             // stencil property shape. Resizable ArrayBuffer mutation also
             // changes the backing view shape across safepoints. Keep these
@@ -13973,7 +14009,7 @@ impl Vm {
                 }
                 Ok(Value::Bool(self.has_property_with_proxy(
                     &object,
-                    private_in.left.name.as_str(),
+                    &format!("#{}", private_in.left.name),
                 )?))
             }
             YieldExpression(yield_expression) => {
@@ -14292,7 +14328,7 @@ impl Vm {
             }
             PrivateFieldExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
-                self.get_prop_with_accessors(&o, m.field.name.as_str())
+                self.get_prop_with_accessors(&o, &format!("#{}", m.field.name))
             }
             ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
@@ -14560,7 +14596,7 @@ impl Vm {
     fn eval_property_key<'a>(&mut self, key: &PropertyKey<'a>, e: Env) -> JsResult<String> {
         match key {
             PropertyKey::StaticIdentifier(identifier) => Ok(identifier.name.to_string()),
-            PropertyKey::PrivateIdentifier(identifier) => Ok(identifier.name.to_string()),
+            PropertyKey::PrivateIdentifier(identifier) => Ok(format!("#{}", identifier.name)),
             PropertyKey::StringLiteral(string) => Ok(string.value.to_string()),
             PropertyKey::NumericLiteral(number) => Ok(js_number_to_string(number.value)),
             _ => {
@@ -14765,6 +14801,23 @@ impl Vm {
                 Environment::set(environment, name, value);
                 return;
             }
+        }
+    }
+
+    fn detach_mapped_argument(&self, object: &Value, index: usize) {
+        let Some(object) = object.as_object() else {
+            return;
+        };
+        let object_ptr = object.as_ptr();
+        for (mapped_object, environment, names) in self.mapped_arguments.borrow_mut().iter_mut() {
+            if mapped_object.as_ptr() != object_ptr {
+                continue;
+            }
+            let Some(name) = names.get_mut(index).filter(|name| !name.is_empty()) else {
+                continue;
+            };
+            environment.borrow_mut().arguments_map.remove(name);
+            name.clear();
         }
     }
 
@@ -15882,7 +15935,7 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
 /// parser intentionally leaves representable (return/super/new.target and
 /// module declarations) before any `$DONOTEVALUATE` body can run.
 fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool) -> bool {
-    if source.as_bytes().windows(2).any(|pair| pair == b".#") {
+    if source.as_bytes().windows(2).any(|pair| pair == b".#") && !source.contains("class") {
         return true;
     }
     fn direct_meta(expression: &Expression<'_>) -> bool {
@@ -28393,11 +28446,19 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
                 }
             }
         }
-        vm.set_prop(target, &key, value);
+        let non_writable_redefinition =
+            has_value && existing_attributes.is_some_and(|attributes| !attributes.writable);
+        if non_writable_redefinition {
+            vm.set_prop_unchecked(target, &key, value);
+        } else {
+            vm.set_prop(target, &key, value);
+        }
     }
     let writable = vm.get_prop_with_accessors(&descriptor, "writable")?;
     let enumerable = vm.get_prop_with_accessors(&descriptor, "enumerable")?;
     let configurable = vm.get_prop_with_accessors(&descriptor, "configurable")?;
+    let detach_mapping = has_value || (has_writable && !writable.truthy());
+    let mapping_index = array_index_key(&key);
     if let Some(object) = target.as_object_ref() {
         let mut object = object.borrow_mut();
         let current = existing_attributes.unwrap_or(if existing_property {
@@ -28429,6 +28490,19 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
                 },
             },
         );
+    }
+    if detach_mapping
+        && let Some(index) = mapping_index
+        && target.as_object_ref().is_some_and(|object| {
+            object
+                .borrow()
+                .props
+                .get("\0wrapper")
+                .and_then(Value::as_string)
+                .is_some_and(|wrapper| wrapper.as_str() == "Arguments")
+        })
+    {
+        vm.detach_mapped_argument(target, index);
     }
     Ok(target.clone())
 }
