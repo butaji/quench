@@ -7556,6 +7556,16 @@ impl Vm {
     }
 
     pub(crate) fn get_prop_with_accessors(&mut self, object: &Value, key: &str) -> JsResult<Value> {
+        let receiver = object.clone();
+        self.get_prop_with_receiver(object, key, &receiver)
+    }
+
+    fn get_prop_with_receiver(
+        &mut self,
+        object: &Value,
+        key: &str,
+        receiver: &Value,
+    ) -> JsResult<Value> {
         if let Some(target) = proxy_target(object) {
             if proxy_revoked(object) {
                 return Err(JsError::Throw(type_error(self, "revoked Proxy")));
@@ -7575,8 +7585,11 @@ impl Vm {
                     handler,
                     vec![
                         target,
-                        Value::string_value(key),
-                        object.clone(),
+                        self.symbol_keys
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| Value::string_value(key)),
+                        receiver.clone(),
                     ],
                 )?;
                 // Enforce the two observable [[Get]] invariants for frozen
@@ -7610,13 +7623,37 @@ impl Vm {
                 }
                 return Ok(result);
             }
-            return self.get_prop_with_accessors(&target, key);
+            return self.get_prop_with_receiver(&target, key, receiver);
+        }
+        if let Some(prototype_function) = object.as_object_ref().and_then(|object| {
+            let object = object.borrow();
+            let own = object.props.contains_key(key)
+                || object.props.contains_key(&accessor_slot("get", key))
+                || object.props.contains_key(&accessor_slot("set", key));
+            (!own)
+                .then(|| object.props.get("\0prototype_function").cloned())
+                .flatten()
+        }) {
+            return self.get_prop_with_receiver(&prototype_function, key, receiver);
+        }
+        if let Some(next_prototype) = object.as_object_ref().and_then(|object| {
+            let object = object.borrow();
+            let own = object.props.contains_key(key)
+                || object.props.contains_key(&accessor_slot("get", key))
+                || object.props.contains_key(&accessor_slot("set", key))
+                || object.array.as_ref().is_some_and(|array| {
+                    key == "length"
+                        || array_index_key(key).is_some_and(|index| index < array.len())
+                });
+            (!own).then(|| object.prototype.clone()).flatten()
+        }) {
+            return self.get_prop_with_receiver(&Value::Object(next_prototype), key, receiver);
         }
         if let Some((getter, _)) = self.find_accessor(object, key) {
             let Some(getter) = getter else {
                 return Ok(Value::Undefined);
             };
-            return self.call_arguments(&getter, object.clone(), &[] as &[Value]);
+            return self.call_arguments(&getter, receiver.clone(), &[] as &[Value]);
         }
         Ok(self.get_prop(object, key))
     }
@@ -7648,7 +7685,7 @@ impl Vm {
                 let result = self.call(
                     trap,
                     handler,
-                    vec![target.clone(), Value::string_value(key), value.clone(), object.clone()],
+                vec![target.clone(), Value::string_value(key), value.clone(), receiver.clone()],
                 )?;
                 if result.truthy() {
                     validate_proxy_set_invariant(self, &target, key, &value)?;
@@ -7690,6 +7727,24 @@ impl Vm {
             };
             self.call_arguments(&setter, receiver.clone(), &[value][..])?;
             return Ok(());
+        }
+        if let Some(next_prototype) = object.as_object_ref().and_then(|object| {
+            let object = object.borrow();
+            let own = object.props.contains_key(key)
+                || object.props.contains_key(&accessor_slot("get", key))
+                || object.props.contains_key(&accessor_slot("set", key))
+                || object.array.as_ref().is_some_and(|array| {
+                    key == "length"
+                        || array_index_key(key).is_some_and(|index| index < array.len())
+                });
+            (!own).then(|| object.prototype.clone()).flatten()
+        }) {
+            return self.set_prop_with_receiver(
+                &Value::Object(next_prototype),
+                key,
+                value,
+                receiver,
+            );
         }
         if let Some(target) = object.as_object() {
             let borrowed = target.borrow();
@@ -7836,9 +7891,12 @@ impl Vm {
         });
         while let Some(prototype) = current {
             let object = prototype.borrow();
-            if let Some(v) = object.props.get(k) {
-                return v.clone();
-            }
+                if let Some(v) = object.props.get(k) {
+                    return v.clone();
+                }
+                if let Some(prototype_function) = object.props.get("\0prototype_function") {
+                    return self.get_prop(prototype_function, k);
+                }
             current = object.prototype.clone();
         }
         Value::Undefined
@@ -18750,6 +18808,22 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
     {
         return Ok(Value::Bool(false));
     }
+    if target.as_regexp_ref().is_some()
+        && matches!(
+            key.as_str(),
+            "source"
+                | "global"
+                | "ignoreCase"
+                | "multiline"
+                | "dotAll"
+                | "unicode"
+                | "unicodeSets"
+                | "sticky"
+                | "hasIndices"
+        )
+    {
+        return Ok(Value::Bool(false));
+    }
     if let Some(object) = receiver.as_object_ref()
         && object
             .borrow()
@@ -22247,10 +22321,18 @@ fn native_object_get_own_property_descriptor(
                     .borrow()
                     .get(&key)
                     .copied()
-                    .unwrap_or(PropertyAttributes {
-                        writable: false,
-                        enumerable: false,
-                        configurable: false,
+                    .unwrap_or(if key == "prototype" && constructable(target) {
+                        PropertyAttributes {
+                            writable: true,
+                            enumerable: false,
+                            configurable: false,
+                        }
+                    } else {
+                        PropertyAttributes {
+                            writable: false,
+                            enumerable: false,
+                            configurable: false,
+                        }
                     });
             vm.set_prop(
                 &descriptor,
@@ -22302,7 +22384,12 @@ fn native_object_get_own_property_descriptor(
     }
     let value = if let Some(function) = target.as_function_ref() {
         if key == "prototype" && !function.props.borrow().contains_key(PROXY_NO_PROTOTYPE_PROP) {
-            Some(Value::Object(function.prototype.clone()))
+            function
+                .props
+                .borrow()
+                .get("\0prototype_override")
+                .cloned()
+                .or_else(|| Some(Value::Object(function.prototype.clone())))
         } else {
             function.props.borrow().get(&key).cloned()
         }
@@ -22378,7 +22465,7 @@ fn native_object_get_own_property_descriptor(
         })
         .unwrap_or(PropertyAttributes {
             writable: if prototype_metadata {
-                user_prototype
+                constructable(target)
             } else {
                 !function_metadata && !is_number_constant
             },
@@ -22973,6 +23060,11 @@ fn define_function_property(
             props.insert(accessor_slot("set", key), setter);
         }
     } else if let Some(value) = value {
+        if key == "prototype" && internal_prototype {
+            props.insert("\0prototype_override".into(), value);
+            attributes.insert(key.to_owned(), next_attributes);
+            return Ok(target.clone());
+        }
         props.shift_remove(&accessor_slot("get", key));
         props.shift_remove(&accessor_slot("set", key));
         props.insert(key.to_owned(), value);
@@ -23403,7 +23495,8 @@ fn native_object_get_own_property_descriptors(
 }
 fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let prototype_value = args.first().cloned().unwrap_or(Value::Undefined);
-    let prototype = if prototype_value.is_null() {
+    let prototype_function = prototype_value.as_function_ref().map(|_| prototype_value.clone());
+    let prototype = if prototype_value.is_null() || prototype_function.is_some() {
         None
     } else if prototype_value.is_object() || prototype_value.is_function() {
         prototype_value.as_object()
@@ -23416,6 +23509,9 @@ fn native_object_create(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
     // `Object.create(null)` must retain a null prototype; `Vm::object` creates
     // ordinary objects with the default Object.prototype for language literals.
     let object = vm.object_value(Object::ordinary(prototype));
+    if let Some(prototype_function) = prototype_function {
+        vm.set_prop(&object, "\0prototype_function", prototype_function);
+    }
     if let Some(descriptors) = args.get(1).filter(|value| !value.is_undefined()) {
         if descriptors.is_null() {
             return Err(JsError::Throw(type_error(
