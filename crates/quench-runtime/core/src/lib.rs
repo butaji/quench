@@ -6000,6 +6000,7 @@ impl Vm {
         self.install_global_aliases();
         let test262 = self.object(None);
         self.set_prop(&test262, "createRealm", self.native(native_create_realm));
+        self.set_prop(&test262, "evalScript", self.native(native_eval_script));
         // Test262's IsHTMLDDA fixture is a callable host object whose call
         // result is not an iterator. Keep it VM-owned so Array.from and
         // Object.is observe the same sentinel without a second host runtime.
@@ -8401,6 +8402,25 @@ impl Vm {
         }
     }
 
+    fn hydrate_all_global_properties(&self, environment: &Env) {
+        if !Rc::ptr_eq(environment, &self.global) {
+            return;
+        }
+        let Some(global_this) = Environment::get(&self.global, "globalThis") else {
+            return;
+        };
+        let Some(object) = global_this.as_object_ref() else {
+            return;
+        };
+        let properties = object.borrow().props.clone();
+        let mut environment = environment.borrow_mut();
+        for (index, (name, _)) in properties.shape.slots.iter().enumerate() {
+            if let Some(value) = properties.values.as_slice().get(index).cloned() {
+                environment.declare(name, value);
+            }
+        }
+    }
+
     /// Install a function declaration in its lexical environment and, for a
     /// sloppy block declaration, update the nearest variable environment as
     /// required by Annex B. Keeping this transition in one helper makes the
@@ -10401,6 +10421,7 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
     } else {
         source.clone()
     };
+    vm.hydrate_all_global_properties(&environment);
     Environment::set(&environment, EVAL_CODE_ENV_NAME, Value::Bool(true));
     match vm.run_source_text_in_environment(&path, &eval_source, environment) {
         Err(JsError::Message(message)) if message.starts_with("parse error:") => {
@@ -10411,6 +10432,10 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
 }
 
 fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    native_eval_in_environment(vm, a, vm.global.clone())
+}
+
+fn native_eval_script(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     native_eval_in_environment(vm, a, vm.global.clone())
 }
 
