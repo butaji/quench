@@ -14198,32 +14198,38 @@ impl Vm {
             ObjectExpression(v) => {
                 let o = self.ordinary_object();
                 for p in &v.properties {
-                    if let ObjectPropertyKind::ObjectProperty(p) = p {
-                        let k = self.eval_property_key(&p.key, e.clone())?;
-                        let z = self.eval_expr(&p.value, e.clone())?;
-                        if (p.method || matches!(p.kind, PropertyKind::Get | PropertyKind::Set))
-                            && let Some(function) = z.as_function_ref()
-                            && let FunctionKind::User { env, .. } = &function.kind
-                        {
-                            env.borrow_mut()
-                                .declare(CLASS_HOME_OBJECT_ENV_NAME, o.clone());
+                    match p {
+                        ObjectPropertyKind::SpreadProperty(spread) => {
+                            let source = self.eval_expr(&spread.argument, e.clone())?;
+                            copy_object_spread(self, &o, &source)?;
                         }
-                        match p.kind {
-                            PropertyKind::Get => self.define_accessor_slot(
-                                &o,
-                                &k,
-                                Some(z),
-                                None,
-                                PropertyAttributes::DEFAULT,
-                            ),
-                            PropertyKind::Set => self.define_accessor_slot(
-                                &o,
-                                &k,
-                                None,
-                                Some(z),
-                                PropertyAttributes::DEFAULT,
-                            ),
-                            _ => self.set_prop(&o, &k, z),
+                        ObjectPropertyKind::ObjectProperty(p) => {
+                            let k = self.eval_property_key(&p.key, e.clone())?;
+                            let z = self.eval_expr(&p.value, e.clone())?;
+                            if (p.method || matches!(p.kind, PropertyKind::Get | PropertyKind::Set))
+                                && let Some(function) = z.as_function_ref()
+                                && let FunctionKind::User { env, .. } = &function.kind
+                            {
+                                env.borrow_mut()
+                                    .declare(CLASS_HOME_OBJECT_ENV_NAME, o.clone());
+                            }
+                            match p.kind {
+                                PropertyKind::Get => self.define_accessor_slot(
+                                    &o,
+                                    &k,
+                                    Some(z),
+                                    None,
+                                    PropertyAttributes::DEFAULT,
+                                ),
+                                PropertyKind::Set => self.define_accessor_slot(
+                                    &o,
+                                    &k,
+                                    None,
+                                    Some(z),
+                                    PropertyAttributes::DEFAULT,
+                                ),
+                                _ => self.set_prop(&o, &k, z),
+                            }
                         }
                     }
                 }
@@ -29405,6 +29411,45 @@ fn native_object_assign(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value
         }
     }
     Ok(target)
+}
+
+/// Lower object spread through the same enumerable-key projection as
+/// `Object.assign`, but commit each entry as a fresh data property. This keeps
+/// spread's `__proto__` and accessor behavior distinct without duplicating the
+/// source traversal in the expression evaluator.
+fn copy_object_spread(vm: &mut Vm, target: &Value, source: &Value) -> JsResult<()> {
+    if source.is_null() || source.is_undefined() {
+        return Ok(());
+    }
+    if source.as_object_ref().is_some() || source.as_function_ref().is_some() {
+        for key in object_own_enumerable_keys_with_symbols(source) {
+            let value = vm.get_prop_with_accessors(source, &key)?;
+            define_spread_property(vm, target, key.clone(), value)?;
+        }
+    } else if let Some(text) = source.as_string() {
+        for (index, value) in text
+            .chars()
+            .map(|character| Value::string_value(character.to_string()))
+            .enumerate()
+        {
+            define_spread_property(vm, target, index.to_string(), value)?;
+        }
+    }
+    Ok(())
+}
+
+fn define_spread_property(vm: &mut Vm, target: &Value, key: String, value: Value) -> JsResult<()> {
+    let descriptor = vm.ordinary_object();
+    vm.set_prop(&descriptor, "value", value);
+    vm.set_prop(&descriptor, "writable", Value::Bool(true));
+    vm.set_prop(&descriptor, "enumerable", Value::Bool(true));
+    vm.set_prop(&descriptor, "configurable", Value::Bool(true));
+    native_object_define_property(
+        vm,
+        Value::Undefined,
+        &[target.clone(), Value::string_value(key), descriptor],
+    )?;
+    Ok(())
 }
 
 fn object_own_enumerable_keys(target: &Value) -> Vec<String> {
