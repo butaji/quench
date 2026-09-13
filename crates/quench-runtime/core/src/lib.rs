@@ -121,6 +121,8 @@ environment_keys! {
     NEW_TARGET_VALUE_NAME => "new-target",
     NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
 }
+const PROMISE_STATE_PROP: &str = "\0quench:promise-state";
+const PROMISE_RESULT_PROP: &str = "\0quench:promise-result";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5349,6 +5351,22 @@ impl Vm {
         }
         value
     }
+    fn promise_from_result(&mut self, result: JsResult<Value>) -> Value {
+        let (state, value) = match result {
+            Ok(value) => ("fulfilled", value),
+            Err(JsError::Throw(value)) => ("rejected", value),
+            Err(JsError::Message(message)) => ("rejected", Value::string_value(message)),
+        };
+        let promise = self.object(None);
+        self.set_prop(&promise, PROMISE_STATE_PROP, Value::string_value(state));
+        self.set_prop(&promise, PROMISE_RESULT_PROP, value);
+        self.set_prop(
+            &promise,
+            "then",
+            self.native_named(native_promise_then, "then", 2),
+        );
+        promise
+    }
     fn mark_nonconstructable(&self, value: &Value) {
         self.set_prop(value, "\0nonconstructable", Value::Bool(true));
     }
@@ -7275,6 +7293,30 @@ impl Vm {
         self.call_arguments(&c, t, a.as_slice())
     }
 
+    fn call_user_or_async(
+        &mut self,
+        node: &'static Function<'static>,
+        env: Env,
+        this: Value,
+        args: Vec<Value>,
+        source_id: Option<usize>,
+        strict: bool,
+    ) -> JsResult<Value> {
+        let is_async = node.r#async;
+        let is_async_generator = is_async && node.generator;
+        let result = self.call_user(node, env, this, args, source_id, strict);
+        if is_async_generator {
+            // Async-generator suspension is not lowered yet. Preserve the
+            // synchronous parameter/declaration error boundary rather than
+            // hiding it inside a rejected Promise-like result.
+            result
+        } else if is_async {
+            Ok(self.promise_from_result(result))
+        } else {
+            result
+        }
+    }
+
     fn call_arguments<A: CallArguments + ?Sized>(
         &mut self,
         c: &Value,
@@ -7298,6 +7340,10 @@ impl Vm {
                     if environment_has_deleted_bindings(env)
             )
         });
+        let is_async_function = c.as_function_ref().is_some_and(|function| {
+            matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async)
+                || matches!(&function.kind, FunctionKind::Arrow { node, .. } if node.r#async)
+        });
         if let Some(call_ic) = call_ic
             && call_ic.matches(c)
             && !captures_deleted_binding
@@ -7316,6 +7362,7 @@ impl Vm {
                 _ => t,
             };
             if self.jit_mode == JitMode::Stencil
+                && !is_async_function
                 && matches!(
                     f.kind,
                     FunctionKind::User { .. } | FunctionKind::Arrow { .. }
@@ -7334,6 +7381,7 @@ impl Vm {
             if self.jit_mode == JitMode::Stencil
                 && let Some(code) = f.numeric_jit.borrow().clone()
                 && !captures_deleted_binding
+                && !is_async_function
                 && let Some(contiguous) = a.contiguous()
                 && let Some(result) = code.call(contiguous)
             {
@@ -7353,6 +7401,7 @@ impl Vm {
             }
             if self.jit_mode == JitMode::Stencil
                 && !captures_deleted_binding
+                && !is_async_function
                 && let Some(code) = f.dyn_jit.borrow().clone()
             {
                 let env = match &f.kind {
@@ -7372,7 +7421,7 @@ impl Vm {
                     if call_ic.matches(c) {
                         return match call_ic.call(self, t.clone(), a) {
                             Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
-                                FunctionKind::User { node, env } => self.call_user(
+                                FunctionKind::User { node, env } => self.call_user_or_async(
                                     node,
                                     env.clone(),
                                     t,
@@ -7399,7 +7448,7 @@ impl Vm {
                 }
                 return match code.call(self, env.clone(), t.clone(), a) {
                     Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
-                        FunctionKind::User { node, env } => self.call_user(
+                        FunctionKind::User { node, env } => self.call_user_or_async(
                             node,
                             env.clone(),
                             t,
@@ -7442,9 +7491,14 @@ impl Vm {
                     combined.extend(a.materialize());
                     self.call_arguments_with_ic(target, this_arg.clone(), combined.as_slice(), None)
                 }
-                FunctionKind::User { node, env } => {
-                    self.call_user(node, env.clone(), t, a.materialize(), f.source_id, f.strict)
-                }
+                FunctionKind::User { node, env } => self.call_user_or_async(
+                    node,
+                    env.clone(),
+                    t,
+                    a.materialize(),
+                    f.source_id,
+                    f.strict,
+                ),
                 FunctionKind::Arrow { node, env } => {
                     self.call_arrow(node, env.clone(), a.materialize(), f.source_id, f.strict)
                 }
@@ -12854,6 +12908,26 @@ fn native_string_value_of(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
 }
 fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
+}
+fn native_promise_then(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let fulfilled = vm
+        .get_prop(&this, PROMISE_STATE_PROP)
+        .as_string()
+        .is_some_and(|state| state.as_str() == "fulfilled");
+    let handler = args
+        .get(if fulfilled { 0 } else { 1 })
+        .cloned()
+        .unwrap_or(Value::Undefined);
+    let value = vm.get_prop(&this, PROMISE_RESULT_PROP);
+    if !handler.is_function() {
+        return Ok(vm.promise_from_result(if fulfilled {
+            Ok(value)
+        } else {
+            Err(JsError::Throw(value))
+        }));
+    }
+    let result = vm.call(handler, Value::Undefined, vec![value]);
+    Ok(vm.promise_from_result(result))
 }
 fn native_html_dda(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Null)
