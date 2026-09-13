@@ -11494,9 +11494,32 @@ impl Vm {
                     self.symbol_keys
                         .get(key)
                         .cloned()
-                        .unwrap_or_else(|| Value::string_value(key)),
+                    .unwrap_or_else(|| Value::string_value(key)),
                 ],
             )?;
+            if !result.truthy() {
+                let descriptor = native_object_get_own_property_descriptor(
+                    self,
+                    Value::Undefined,
+                    &[target.clone(), Value::string_value(key)],
+                )?;
+                if descriptor.is_object_like()
+                    && (!self
+                        .get_prop_with_accessors(&descriptor, "configurable")?
+                        .truthy()
+                        || !native_object_is_extensible(
+                            self,
+                            Value::Undefined,
+                            &[target.clone()],
+                        )?
+                        .truthy())
+                {
+                    return Err(proxy_invariant_error(
+                        self,
+                        "Proxy has trap cannot hide target property",
+                    ));
+                }
+            }
             return Ok(result.truthy());
         }
         if self.has_property(&handler, "has") && !trap.is_null() && !trap.is_undefined() {
