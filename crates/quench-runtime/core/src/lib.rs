@@ -11825,15 +11825,6 @@ impl Vm {
             }
         }
         let module_source = st.is_module();
-        if module_source && std::env::var_os("QUENCH_DEBUG_ASSERT").is_some() {
-            let assert_value = Environment::get(&self.global, "assert").unwrap_or(Value::Undefined);
-            eprintln!(
-                "ASSERT kind fn={} obj={} same={}",
-                assert_value.is_function(),
-                assert_value.is_object_like(),
-                self.get_prop(&assert_value, "sameValue").is_function()
-            );
-        }
         let module_key = module_source.then(|| self.module_key(p));
         let module_owner = module_key
             .as_ref()
