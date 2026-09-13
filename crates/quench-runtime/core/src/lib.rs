@@ -5357,6 +5357,7 @@ struct Vm {
     // installed before dependency traversal so cycles observe a stable
     // record instead of recursively re-entering the loader.
     module_exports_cache: HashMap<PathBuf, HashMap<String, Value>>,
+    module_namespace_cache: HashMap<(PathBuf, bool), Value>,
     module_evaluating: HashSet<PathBuf>,
     module_export_stack: Vec<HashMap<String, Value>>,
     started_at: Instant,
@@ -5411,6 +5412,7 @@ impl Vm {
             source_ids: Vec::new(),
             module_cache: HashMap::new(),
             module_exports_cache: HashMap::new(),
+            module_namespace_cache: HashMap::new(),
             module_evaluating: HashSet::new(),
             module_export_stack: Vec::new(),
             started_at: Instant::now(),
@@ -7345,7 +7347,7 @@ impl Vm {
         } else {
             base.join(requested)
         };
-        if path.extension().is_none() {
+        if path.extension().is_none() && !path.exists() {
             path.set_extension("js");
         }
         fs::canonicalize(&path).unwrap_or(path)
@@ -7358,7 +7360,7 @@ impl Vm {
         } else {
             parent.join(requested)
         };
-        if path.extension().is_none() {
+        if path.extension().is_none() && !path.exists() {
             path.set_extension("js");
         }
         path
@@ -10151,6 +10153,65 @@ impl Vm {
         }
     }
 
+    fn module_namespace(
+        &mut self,
+        path: &Path,
+        exports: &HashMap<String, Value>,
+        deferred: bool,
+    ) -> Value {
+        let key = (
+            fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+            deferred,
+        );
+        if let Some(namespace) = self.module_namespace_cache.get(&key) {
+            return namespace.clone();
+        }
+        let object = self.ordinary_object();
+        let mut names = exports.keys().collect::<Vec<_>>();
+        names.sort_unstable();
+        for name in names {
+            self.set_prop(&object, name, exports[name].clone());
+            set_property_attributes(
+                &object,
+                name,
+                PropertyAttributes {
+                    // Module namespace descriptors report writable true for
+                    // exported bindings, while [[Set]] remains rejecting.
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                },
+            );
+        }
+        let tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(
+            &object,
+            &tag,
+            Value::string_value(if deferred {
+                "Deferred Module"
+            } else {
+                "Module"
+            }),
+        );
+        set_property_attributes(
+            &object,
+            &tag,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            },
+        );
+        self.set_prop(&object, MODULE_NAMESPACE_PROP, Value::Bool(true));
+        if let Some(object_data) = object.as_object_ref() {
+            let mut object_data = object_data.borrow_mut();
+            object_data.prototype = None;
+            object_data.extensible = false;
+        }
+        self.module_namespace_cache.insert(key, object.clone());
+        object
+    }
+
     fn bind_module_imports(
         &mut self,
         path: &Path,
@@ -10219,50 +10280,6 @@ impl Vm {
                 }
                 _ => self.load_module_exports(&target)?,
             };
-            let namespace_tag = if import.phase == Some(ImportPhase::Defer) {
-                "Deferred Module"
-            } else {
-                "Module"
-            };
-            let namespace = || {
-                let object = self.ordinary_object();
-                let mut names = exports.keys().collect::<Vec<_>>();
-                names.sort_unstable();
-                for name in names {
-                    let value = &exports[name];
-                    self.set_prop(&object, name, value.clone());
-                    set_property_attributes(
-                        &object,
-                        name,
-                        PropertyAttributes {
-                            // Module namespace descriptors report writable
-                            // true for exported bindings, while the
-                            // namespace [[Set]] operation remains rejecting.
-                            writable: true,
-                            enumerable: true,
-                            configurable: false,
-                        },
-                    );
-                }
-                let tag = self.well_known_symbol_key("toStringTag");
-                self.set_prop(&object, &tag, Value::string_value(namespace_tag));
-                set_property_attributes(
-                    &object,
-                    &tag,
-                    PropertyAttributes {
-                        writable: false,
-                        enumerable: false,
-                        configurable: false,
-                    },
-                );
-                self.set_prop(&object, MODULE_NAMESPACE_PROP, Value::Bool(true));
-                if let Some(object_data) = object.as_object_ref() {
-                    let mut object_data = object_data.borrow_mut();
-                    object_data.prototype = None;
-                    object_data.extensible = false;
-                }
-                object
-            };
             if let Some(specifiers) = &import.specifiers {
                 for specifier in specifiers {
                     let (local, imported) = match specifier {
@@ -10278,7 +10295,11 @@ impl Vm {
                         }
                     };
                     let value = if imported == "*" {
-                        namespace()
+                        self.module_namespace(
+                            &target,
+                            &exports,
+                            import.phase == Some(ImportPhase::Defer),
+                        )
                     } else {
                         let Some(value) = exports.get(&imported).cloned() else {
                             return Err(JsError::Throw(syntax_error(
@@ -12241,31 +12262,10 @@ impl Vm {
                     .map(|parent| parent.join(&request))
                     .unwrap_or_else(|| PathBuf::from(&request));
                 let exports = self.load_module_exports(&target)?;
-                let namespace = self.ordinary_object();
-                let mut names = exports.keys().collect::<Vec<_>>();
-                names.sort_unstable();
-                for name in names {
-                    self.set_prop(&namespace, name, exports[name].clone());
-                    set_property_attributes(
-                        &namespace,
-                        name,
-                        PropertyAttributes {
-                            writable: true,
-                            enumerable: true,
-                            configurable: false,
-                        },
-                    );
-                }
-                let tag = self.well_known_symbol_key("toStringTag");
-                self.set_prop(&namespace, &tag, Value::string_value("Module"));
-                set_property_attributes(
-                    &namespace,
-                    &tag,
-                    PropertyAttributes {
-                        writable: false,
-                        enumerable: false,
-                        configurable: false,
-                    },
+                let namespace = self.module_namespace(
+                    &target,
+                    &exports,
+                    import.phase == Some(ImportPhase::Defer),
                 );
                 let promise_constructor =
                     Environment::get(&self.global, "Promise").unwrap_or(Value::Undefined);
@@ -12273,7 +12273,28 @@ impl Vm {
                 self.call(resolve, Value::Undefined, vec![namespace])?;
                 Ok(promise)
             }
-            AwaitExpression(await_expression) => self.eval_expr(&await_expression.argument, e),
+            AwaitExpression(await_expression) => {
+                let value = self.eval_expr(&await_expression.argument, e)?;
+                if value
+                    .as_object_ref()
+                    .is_some_and(|object| object.borrow().props.contains_key(PROMISE_MARKER_PROP))
+                {
+                    let state = self.get_prop(&value, PROMISE_STATE_PROP);
+                    if state
+                        .as_string()
+                        .is_some_and(|state| state.as_str() == "rejected")
+                    {
+                        return Err(JsError::Throw(self.get_prop(&value, PROMISE_RESULT_PROP)));
+                    }
+                    if state
+                        .as_string()
+                        .is_some_and(|state| state.as_str() == "fulfilled")
+                    {
+                        return Ok(self.get_prop(&value, PROMISE_RESULT_PROP));
+                    }
+                }
+                Ok(value)
+            }
             YieldExpression(yield_expression) => {
                 let value = yield_expression
                     .argument
