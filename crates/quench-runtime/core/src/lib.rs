@@ -7950,6 +7950,12 @@ impl Vm {
         key: &str,
         receiver: &Value,
     ) -> JsResult<Value> {
+        if (!object.is_object_like() || is_symbol_carrier(object)) {
+            let own = self.get_prop(object, key);
+            if !own.is_undefined() {
+                return Ok(own);
+            }
+        }
         if (!object.is_object_like() || is_symbol_carrier(object))
             && let Some(prototype) = self.primitive_prototype(object)
         {
