@@ -8026,6 +8026,8 @@ impl Vm {
         if Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some() {
             let mut var_names = Vec::new();
             collect_global_object_binding_names(&r.program.body, &mut var_names);
+            let mut function_names = Vec::new();
+            collect_function_declaration_names(&r.program.body, &mut function_names);
             let var_environment = variable_environment(&environment);
             if Rc::ptr_eq(&var_environment, &self.global)
                 && let Some(global_this) = Environment::get(&self.global, "globalThis")
@@ -8040,6 +8042,17 @@ impl Vm {
                     return Err(JsError::Throw(type_error(
                         self,
                         "cannot declare global binding on a non-extensible object",
+                    )));
+                }
+                if function_names.iter().any(|name| {
+                    global_object
+                        .attributes
+                        .get(name)
+                        .is_some_and(|attributes| !attributes.configurable && !attributes.writable)
+                }) {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot declare global function",
                     )));
                 }
             }
@@ -10691,6 +10704,67 @@ fn collect_global_object_binding_names(statements: &[Statement<'_>], names: &mut
             _ => {}
         }
     }
+}
+
+fn visit_nested_statements(statements: &[Statement<'_>], visit: &mut impl FnMut(&Statement<'_>)) {
+    for statement in statements {
+        visit(statement);
+        match statement {
+            Statement::BlockStatement(block) => visit_nested_statements(&block.body, visit),
+            Statement::IfStatement(statement) => {
+                visit_nested_statements(std::slice::from_ref(&statement.consequent), visit);
+                if let Some(alternate) = &statement.alternate {
+                    visit_nested_statements(std::slice::from_ref(alternate), visit);
+                }
+            }
+            Statement::LabeledStatement(statement) => {
+                visit_nested_statements(std::slice::from_ref(&statement.body), visit)
+            }
+            Statement::DoWhileStatement(statement) => {
+                visit_nested_statements(std::slice::from_ref(&statement.body), visit)
+            }
+            Statement::WhileStatement(statement) => {
+                visit_nested_statements(std::slice::from_ref(&statement.body), visit)
+            }
+            Statement::ForStatement(statement) => {
+                visit_nested_statements(std::slice::from_ref(&statement.body), visit)
+            }
+            Statement::ForInStatement(statement) => {
+                visit_nested_statements(std::slice::from_ref(&statement.body), visit)
+            }
+            Statement::ForOfStatement(statement) => {
+                visit_nested_statements(std::slice::from_ref(&statement.body), visit)
+            }
+            Statement::WithStatement(statement) => {
+                visit_nested_statements(std::slice::from_ref(&statement.body), visit)
+            }
+            Statement::SwitchStatement(statement) => {
+                for case in &statement.cases {
+                    visit_nested_statements(&case.consequent, visit);
+                }
+            }
+            Statement::TryStatement(statement) => {
+                visit_nested_statements(&statement.block.body, visit);
+                if let Some(handler) = &statement.handler {
+                    visit_nested_statements(&handler.body.body, visit);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    visit_nested_statements(&finalizer.body, visit);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_function_declaration_names(statements: &[Statement<'_>], names: &mut Vec<String>) {
+    visit_nested_statements(statements, &mut |statement| {
+        if let Statement::FunctionDeclaration(function) = statement
+            && let Some(id) = &function.id
+        {
+            names.push(id.name.to_string());
+        }
+    });
 }
 
 fn collect_lexical_binding_names(statements: &[Statement<'_>], names: &mut HashSet<String>) {
