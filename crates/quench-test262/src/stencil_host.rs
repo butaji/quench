@@ -77,7 +77,12 @@ impl Test262Host for StencilHost {
         source: &str,
         path: &Path,
     ) -> Result<(), String> {
-        self.run_source_at(&Self::compose(harness, source, false), path)
+        // The path-aware runner receives Test262's `.js` fixture path even
+        // for files flagged `module`.  The shared core derives OXC's
+        // SourceType from the path, so preserve the module grammar explicitly
+        // at this boundary while retaining the original basename/location.
+        let module_path = path.with_extension("mjs");
+        self.run_source_at(&Self::compose(harness, source, false), &module_path)
     }
 }
 

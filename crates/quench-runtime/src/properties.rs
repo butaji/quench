@@ -233,6 +233,12 @@ pub(crate) fn execute_set_property(
             && !object_data.is_realm_global()
             && crate::builtins::object_alias::plain_named_write(object_data, &key)
             && object_data.hot_properties().position_rev(&key).is_none()
+            // Descriptor metadata is stored in the canonical descriptor-key
+            // entry, not under the public name.  An own setter therefore
+            // does not show up in `position_rev`; consult the descriptor
+            // table before taking the allocation-free plain-write fast path.
+            && crate::property_define::accessor(&target, &key, "set").is_none()
+            && crate::property_define::accessor(&target, &key, "get").is_none()
             && inherited_prototype_allows_plain_write(&target, &key)?
         {
             let updated =
