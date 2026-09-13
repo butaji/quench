@@ -9831,6 +9831,14 @@ impl Vm {
         function: &FunctionValue<'static>,
         node: &ArrowFunctionExpression<'static>,
     ) -> JsResult<()> {
+        // Arrow closures carry lexical `this`, `arguments`, `super`, and
+        // `new.target`. The current stencil call frame cannot encode those
+        // captures as immutable closure facts, so retain the correct shared
+        // evaluator for every arrow until that ABI is explicit.
+        if !self.stencil_arrow_closure_abi_ready() {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         if node.params.items.iter().any(|parameter| {
             parameter.initializer.is_some()
                 || !matches!(&parameter.pattern, BindingPattern::BindingIdentifier(_))
@@ -9864,6 +9872,20 @@ impl Vm {
                     return Ok(());
                 }
             };
+        // Arrow `this` is lexical. The compact dynamic frame receives the
+        // call-site receiver, so a compiled LoadThis would let `.call`/`.bind`
+        // override the captured value. Keep such arrows on the interpreter
+        // path until the stencil closure image carries its lexical receiver.
+        if bytecode.ops.iter().any(|instruction| {
+            matches!(instruction.op, dynbytecode::DynOp::LoadThis { .. })
+                || matches!(
+                    instruction.op,
+                    dynbytecode::DynOp::LoadName { ref name, .. } if name == "this"
+                )
+        }) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         // Arrow functions inherit `arguments` lexically. The generic call
         // recipe materializes an own arguments object for compiled code, so
         // keep this case on the shared interpreter path until that recipe can
@@ -9916,6 +9938,11 @@ impl Vm {
             .compiled_code_bytes
             .saturating_add(code_bytes);
         Ok(())
+    }
+
+    #[inline]
+    fn stencil_arrow_closure_abi_ready(&self) -> bool {
+        false
     }
 
     fn call_user(
@@ -13576,7 +13603,9 @@ impl Vm {
             .params
             .items
             .iter()
-            .take_while(|parameter| !parameter.pattern.is_assignment_pattern())
+            .take_while(|parameter| {
+                parameter.initializer.is_none() && !parameter.pattern.is_assignment_pattern()
+            })
             .count();
         let name = n.id.as_ref().map_or("", |id| id.name.as_str());
         let f = FunctionValue {
@@ -13623,7 +13652,9 @@ impl Vm {
             .params
             .items
             .iter()
-            .take_while(|parameter| !parameter.pattern.is_assignment_pattern())
+            .take_while(|parameter| {
+                parameter.initializer.is_none() && !parameter.pattern.is_assignment_pattern()
+            })
             .count();
         let f = FunctionValue {
             kind: FunctionKind::Arrow {
@@ -28027,6 +28058,7 @@ fn native_object_get_own_property_descriptor(
     }
     let value = if let Some(function) = target.as_function_ref() {
         if key == "prototype"
+            && constructable(target)
             && !function
                 .props
                 .borrow()
