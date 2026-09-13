@@ -13574,8 +13574,10 @@ impl Vm {
                         "cannot destructure nullish value",
                     )));
                 }
+                let mut excluded = Vec::with_capacity(object.properties.len());
                 for property in &object.properties {
                     let key = self.eval_property_key(&property.key, eval_env.clone())?;
+                    excluded.push(key.clone());
                     self.probe_pattern_bindings(&property.value, &eval_env)?;
                     let property_value = self.get_prop_with_accessors(&value, &key)?;
                     self.bind_pattern_with_eval_env(
@@ -13586,12 +13588,9 @@ impl Vm {
                     )?;
                 }
                 if let Some(rest) = &object.rest {
-                    self.bind_pattern_with_eval_env(
-                        &rest.argument,
-                        self.ordinary_object(),
-                        target,
-                        eval_env,
-                    )?;
+                    let rest_object = self.ordinary_object();
+                    copy_object_rest(self, &rest_object, &value, &excluded)?;
+                    self.bind_pattern_with_eval_env(&rest.argument, rest_object, target, eval_env)?;
                 }
                 Ok(())
             }
@@ -29697,6 +29696,30 @@ fn copy_object_spread(vm: &mut Vm, target: &Value, source: &Value) -> JsResult<(
         {
             define_spread_property(vm, target, index.to_string(), value)?;
         }
+    }
+    Ok(())
+}
+
+fn copy_object_rest(
+    vm: &mut Vm,
+    target: &Value,
+    source: &Value,
+    excluded: &[String],
+) -> JsResult<()> {
+    if source.is_null() || source.is_undefined() {
+        return Ok(());
+    }
+    let keys = if proxy_target(source).is_some() {
+        proxy_own_enumerable_keys(vm, source)?
+    } else {
+        object_own_enumerable_keys_with_symbols(source)
+    };
+    for key in keys {
+        if excluded.iter().any(|excluded| excluded == &key) {
+            continue;
+        }
+        let value = vm.get_prop_with_accessors(source, &key)?;
+        define_spread_property(vm, target, key, value)?;
     }
     Ok(())
 }
