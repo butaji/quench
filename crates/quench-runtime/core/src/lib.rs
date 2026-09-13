@@ -8306,7 +8306,7 @@ impl Vm {
                 let offset = offset.number().max(0.0) as usize;
                 let width = bytes.number().max(1.0) as usize;
                 let data = self.get_prop(&buffer, ARRAY_BUFFER_DATA);
-                if let Some(data_object) = data.as_object_ref() {
+                if data.as_object_ref().is_some() {
                     self.set_prop(&data, &(offset / width + index).to_string(), v.clone());
                 }
             }
