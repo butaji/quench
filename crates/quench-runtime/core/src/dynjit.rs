@@ -3772,7 +3772,9 @@ fn construct(
         && matches!(function.kind, FunctionKind::Class { .. })
     {
         let previous_new_target = vm(frame).current_new_target.replace(callee.clone());
+        vm(frame).construct_depth = vm(frame).construct_depth.saturating_add(1);
         let result = vm(frame).call_class(&function, object.clone(), arguments.materialize());
+        vm(frame).construct_depth = vm(frame).construct_depth.saturating_sub(1);
         vm(frame).current_new_target = previous_new_target;
         let result = result?;
         let returns_object = result.is_object() || result.is_function() || result.is_regexp();
@@ -3792,12 +3794,14 @@ fn construct(
         )));
     }
     let previous_new_target = vm(frame).current_new_target.replace(callee.clone());
+    vm(frame).construct_depth = vm(frame).construct_depth.saturating_add(1);
     let result = unsafe { &mut *frame.vm }.call_arguments_with_ic(
         &callee,
         object.clone(),
         &arguments,
         call_ic,
     );
+    vm(frame).construct_depth = vm(frame).construct_depth.saturating_sub(1);
     vm(frame).current_new_target = previous_new_target;
     let result = result?;
     // Error constructors return ordinary objects, but those objects must retain
