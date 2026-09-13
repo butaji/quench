@@ -7611,7 +7611,26 @@ impl Vm {
             })
             .parse();
         if let Some(e) = r.diagnostics.first() {
-            return Err(JsError::Message(format!("parse error: {e:?}")));
+            // Parser diagnostics are ECMAScript SyntaxErrors, not host
+            // strings. Preserve that completion type so negative tests and
+            // callers observe the same constructor identity as runtime
+            // syntax failures.
+            return Err(JsError::Throw(syntax_error(
+                self,
+                &format!("parse error: {e:?}"),
+            )));
+        }
+        if has_for_in_initializer_early_error(
+            &r.program,
+            r.program
+                .directives
+                .iter()
+                .any(|directive| directive.directive.as_str() == "use strict"),
+        ) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "for-in statement initializer is not permitted",
+            )));
         }
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = r
@@ -7841,6 +7860,17 @@ impl Vm {
             }
             ForInStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
+                // Annex B permits a sloppy `var` identifier initializer in a
+                // `for-in` head. It runs exactly once, before evaluating the
+                // RHS, and its value remains observable when the RHS refers
+                // back to the binding.
+                if let ForStatementLeft::VariableDeclaration(declaration) = &x.left
+                    && let Some(declarator) = declaration.declarations.first()
+                    && let Some(initializer) = &declarator.init
+                {
+                    let value = self.eval_expr(initializer, e.clone())?;
+                    self.bind_pattern(&declarator.id, value, e.clone())?;
+                }
                 let o = self.eval_expr(&x.right, e.clone())?;
                 let mut ks = Vec::new();
                 if let Some(o) = o.as_object() {
@@ -9160,6 +9190,94 @@ fn reserve_script_bindings(environment: &Env, statements: &[Statement<'_>]) {
         .filter_map(|declarator| pattern_name(&declarator.id));
     environment.borrow_mut().reserve(names);
 }
+
+/// Validate the Annex B grammar cases OXC intentionally accepts as an AST.
+/// A `for-in` initializer is allowed only for a sloppy `var` binding
+/// identifier; strict mode and destructuring bindings are early SyntaxErrors.
+/// Keeping this as a tree fact makes the check apply before any user code (or
+/// `$DONOTEVALUATE`) executes.
+fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bool {
+    program
+        .body
+        .iter()
+        .any(|statement| for_in_error_in_statement(statement, strict))
+}
+
+fn for_in_error_in_statement(statement: &Statement<'_>, strict: bool) -> bool {
+    match statement {
+        Statement::ForInStatement(statement) => {
+            let invalid = match &statement.left {
+                ForStatementLeft::VariableDeclaration(declaration) => {
+                    declaration.declarations.first().is_some_and(|declarator| {
+                        declarator.init.is_some()
+                            && (strict
+                                || !matches!(declarator.id, BindingPattern::BindingIdentifier(_)))
+                    })
+                }
+                _ => false,
+            };
+            invalid || for_in_error_in_statement(&statement.body, strict)
+        }
+        Statement::ForOfStatement(statement) => for_in_error_in_statement(&statement.body, strict),
+        Statement::ForStatement(statement) => for_in_error_in_statement(&statement.body, strict),
+        Statement::BlockStatement(statement) => statement
+            .body
+            .iter()
+            .any(|statement| for_in_error_in_statement(statement, strict)),
+        Statement::IfStatement(statement) => {
+            for_in_error_in_statement(&statement.consequent, strict)
+                || statement
+                    .alternate
+                    .as_ref()
+                    .is_some_and(|alternate| for_in_error_in_statement(alternate, strict))
+        }
+        Statement::LabeledStatement(statement) => {
+            for_in_error_in_statement(&statement.body, strict)
+        }
+        Statement::DoWhileStatement(statement) => {
+            for_in_error_in_statement(&statement.body, strict)
+        }
+        Statement::WhileStatement(statement) => for_in_error_in_statement(&statement.body, strict),
+        Statement::WithStatement(statement) => for_in_error_in_statement(&statement.body, strict),
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .flat_map(|case| case.consequent.iter())
+            .any(|statement| for_in_error_in_statement(statement, strict)),
+        Statement::TryStatement(statement) => {
+            statement
+                .block
+                .body
+                .iter()
+                .any(|statement| for_in_error_in_statement(statement, strict))
+                || statement.handler.as_ref().is_some_and(|handler| {
+                    handler
+                        .body
+                        .body
+                        .iter()
+                        .any(|statement| for_in_error_in_statement(statement, strict))
+                })
+                || statement.finalizer.as_ref().is_some_and(|finalizer| {
+                    finalizer
+                        .body
+                        .iter()
+                        .any(|statement| for_in_error_in_statement(statement, strict))
+                })
+        }
+        Statement::FunctionDeclaration(function) => function.body.as_ref().is_some_and(|body| {
+            let nested_strict = strict
+                || body
+                    .directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict");
+            body.statements
+                .iter()
+                .any(|statement| for_in_error_in_statement(statement, nested_strict))
+        }),
+        _ => false,
+    }
+}
+
 fn catch_name<'a>(p: &CatchParameter<'a>) -> Option<String> {
     pattern_name(&p.pattern)
 }

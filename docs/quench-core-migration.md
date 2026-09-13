@@ -158,7 +158,7 @@ Verification completed:
   arity, iterable consumption, message/cause fields, and non-enumerable
   `errors` storage; the three remaining cases require Proxy/custom-realm
   construction semantics
-- the stencil Annex B language stage reaches 200/845; remaining cases are
+- the stencil Annex B language stage reaches 207/845; remaining cases are
   legacy eval/global declaration semantics, advanced RegExp grammar, and
   unsupported control-flow syntax
 - the stencil Annex B built-ins stage reaches 214/241; remaining cases are
