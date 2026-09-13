@@ -9118,6 +9118,17 @@ impl Vm {
             }
             AssignmentExpression(v) => {
                 use oxc_syntax::operator::AssignmentOperator::*;
+                if matches!(v.operator, Assign)
+                    && matches!(
+                        &v.left,
+                        AssignmentTarget::ArrayAssignmentTarget(_)
+                            | AssignmentTarget::ObjectAssignmentTarget(_)
+                    )
+                {
+                    let value = self.eval_expr(&v.right, e.clone())?;
+                    self.assign_target(&v.left, value.clone(), e)?;
+                    return Ok(value);
+                }
                 let target = self.resolve_target(&v.left, e.clone())?;
                 let old = self.read_lvalue(&target);
                 let right = match v.operator {
@@ -9534,12 +9545,93 @@ impl Vm {
         }
     }
     fn assign_target<'a>(&mut self, t: &AssignmentTarget<'a>, v: Value, e: Env) -> JsResult<()> {
-        if let Some(s) = t.as_simple_assignment_target() {
-            self.assign_simple_target(s, v, e)
-        } else {
-            Err(JsError::Message("target unsupported".into()))
+        match t {
+            AssignmentTarget::ArrayAssignmentTarget(pattern) => {
+                let values = self.iterable_values(&v)?;
+                for (index, element) in pattern.elements.iter().enumerate() {
+                    if let Some(element) = element {
+                        let value = values.get(index).cloned().unwrap_or(Value::Undefined);
+                        self.assign_maybe_default_target(element, value, e.clone())?;
+                    }
+                }
+                if let Some(rest) = &pattern.rest {
+                    self.assign_target(
+                        &rest.target,
+                        self.array_from_values(
+                            values.into_iter().skip(pattern.elements.len()).collect(),
+                        ),
+                        e,
+                    )?;
+                }
+                Ok(())
+            }
+            AssignmentTarget::ObjectAssignmentTarget(pattern) => {
+                if v.is_null() || v.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot destructure nullish value",
+                    )));
+                }
+                for property in &pattern.properties {
+                    match property {
+                        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                            let key = property.binding.name.as_str();
+                            let value = self.get_prop(&v, key);
+                            let value = if value.is_undefined() {
+                                property
+                                    .init
+                                    .as_ref()
+                                    .map(|init| self.eval_expr(init, e.clone()))
+                                    .transpose()?
+                                    .unwrap_or(value)
+                            } else {
+                                value
+                            };
+                            Environment::set(&e, key, value);
+                        }
+                        AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                            let key = self.eval_property_key(&property.name, e.clone())?;
+                            let value = self.get_prop(&v, &key);
+                            self.assign_maybe_default_target(&property.binding, value, e.clone())?;
+                        }
+                    }
+                }
+                if let Some(rest) = &pattern.rest {
+                    self.assign_target(&rest.target, self.ordinary_object(), e)?;
+                }
+                Ok(())
+            }
+            _ => {
+                let Some(s) = t.as_simple_assignment_target() else {
+                    return Err(JsError::Message("target unsupported".into()));
+                };
+                self.assign_simple_target(s, v, e)
+            }
         }
     }
+
+    fn assign_maybe_default_target<'a>(
+        &mut self,
+        target: &AssignmentTargetMaybeDefault<'a>,
+        value: Value,
+        e: Env,
+    ) -> JsResult<()> {
+        match target {
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
+                let value = if value.is_undefined() {
+                    self.eval_expr(&default.init, e.clone())?
+                } else {
+                    value
+                };
+                self.assign_target(&default.binding, value, e)
+            }
+            _ => target.as_assignment_target().map_or_else(
+                || Err(JsError::Message("target unsupported".into())),
+                |target| self.assign_target(target, value, e),
+            ),
+        }
+    }
+
     fn assign_simple_target<'a>(
         &mut self,
         t: &SimpleAssignmentTarget<'a>,
