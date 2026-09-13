@@ -7764,6 +7764,21 @@ impl Vm {
             .directives
             .iter()
             .any(|directive| directive.directive.as_str() == "use strict");
+        if Rc::ptr_eq(&environment, &self.global)
+            && Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
+        {
+            let mut lexical_names = HashSet::new();
+            collect_lexical_binding_names(&r.program.body, &mut lexical_names);
+            if lexical_names.iter().any(|name| {
+                Environment::resolve(&environment, name).is_some()
+                    || Environment::get(&environment, name).is_some()
+            }) {
+                return Err(JsError::Throw(syntax_error(
+                    self,
+                    "lexical declaration conflicts with global binding",
+                )));
+            }
+        }
         // Script declaration instantiation happens before any statement (and
         // before a stencil image is entered). Reserve lexical slots and
         // materialize the observable global `var`/Annex-B function projection
