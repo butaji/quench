@@ -104,6 +104,7 @@ const CLASS_METHOD_STRICT_ENV_NAME: &str = "\0quench:class-method-strict";
 const CLASS_SUPER_CONSTRUCTOR_ENV_NAME: &str = "\0quench:class-super-constructor";
 const CLASS_SUPER_PROTOTYPE_ENV_NAME: &str = "\0quench:class-super-prototype";
 const EVAL_CODE_ENV_NAME: &str = "\0quench:eval-code";
+const STRICT_EVAL_ENV_NAME: &str = "\0quench:strict-eval";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7888,6 +7889,12 @@ impl Vm {
                     "eval var declaration conflicts with parameter binding",
                 )));
             }
+            if !self.strict_mode && eval_var_conflicts_with_lexical(&environment, &var_names) {
+                return Err(JsError::Throw(syntax_error(
+                    self,
+                    "eval var declaration conflicts with lexical binding",
+                )));
+            }
             if Rc::ptr_eq(&environment, &self.global) {
                 let global_lexical_names = self.global.borrow().lexical_names.clone();
                 if !self.strict_mode
@@ -7931,11 +7938,19 @@ impl Vm {
             let eval_environment = Environment::new(Some(environment.clone()));
             eval_environment
                 .borrow_mut()
-                .declare(EVAL_CODE_ENV_NAME, Value::Bool(true));
+                .declare(STRICT_EVAL_ENV_NAME, Value::Bool(true));
             eval_environment
         } else {
             environment.clone()
         };
+        if !eval_code || strict_eval {
+            let mut lexical_names = HashSet::new();
+            collect_direct_lexical_names(&r.program.body, &mut lexical_names);
+            execution_environment
+                .borrow_mut()
+                .lexical_names
+                .extend(lexical_names);
+        }
         if strict_eval {
             reserve_strict_eval_bindings(&execution_environment, &r.program.body);
         } else {
@@ -9990,7 +10005,7 @@ fn variable_environment(environment: &Env) -> Env {
         let is_variable = {
             let candidate = current.borrow();
             candidate.contains_local(dynbytecode::ARGUMENTS_BINDING_NAME)
-                || candidate.contains_local(EVAL_CODE_ENV_NAME)
+                || candidate.contains_local(STRICT_EVAL_ENV_NAME)
                 || candidate.parent.is_none()
         };
         if is_variable {
@@ -10003,6 +10018,25 @@ fn variable_environment(environment: &Env) -> Env {
             .expect("non-root environment has a parent");
         current = parent;
     }
+}
+
+fn eval_var_conflicts_with_lexical(environment: &Env, names: &[String]) -> bool {
+    let variable = variable_environment(environment);
+    let mut current = Some(environment.clone());
+    while let Some(candidate) = current {
+        if Rc::ptr_eq(&candidate, &variable) {
+            break;
+        }
+        let borrowed = candidate.borrow();
+        if names
+            .iter()
+            .any(|name| borrowed.lexical_names.contains(name))
+        {
+            return true;
+        }
+        current = borrowed.parent.clone();
+    }
+    false
 }
 
 fn reserve_script_bindings(environment: &Env, statements: &[Statement<'_>]) {
@@ -10018,6 +10052,29 @@ fn reserve_strict_eval_bindings(environment: &Env, statements: &[Statement<'_>])
     let mut names = Vec::new();
     collect_strict_eval_var_names(statements, &mut names, true);
     environment.borrow_mut().reserve(names);
+}
+
+fn collect_direct_lexical_names(statements: &[Statement<'_>], names: &mut HashSet<String>) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind != VariableDeclarationKind::Var =>
+            {
+                names.extend(
+                    declaration
+                        .declarations
+                        .iter()
+                        .filter_map(|declarator| pattern_name(&declarator.id)),
+                );
+            }
+            Statement::ClassDeclaration(class) => {
+                if let Some(id) = &class.id {
+                    names.insert(id.name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn collect_strict_eval_var_names(
@@ -21571,6 +21628,23 @@ mod tests {
         assert_eq!(
             Environment::get(&vm.global, "result").and_then(|value| value.as_number()),
             Some(0.0)
+        );
+    }
+
+    #[test]
+    fn strict_indirect_eval_does_not_leak_function() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<strict-indirect-eval>"),
+            "(0,eval)(\"'use strict'; function fun(){}\"); result = typeof fun;",
+        )
+        .expect("strict indirect eval executes");
+        assert_eq!(
+            Environment::get(&vm.global, "result")
+                .and_then(|value| value.as_string().cloned())
+                .as_deref(),
+            Some("undefined")
         );
     }
 
