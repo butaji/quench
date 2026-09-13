@@ -158,7 +158,7 @@ Verification completed:
   arity, iterable consumption, message/cause fields, and non-enumerable
   `errors` storage; the two remaining cases require Proxy construction
   semantics
-- the stencil Annex B language stage reaches 428/845; shared binding
+- the stencil Annex B language stage reaches 444/845; shared binding
   reservation, Annex B block-function transitions, catch redeclarations,
   HTMLDDA, and iterator-close behavior now run through the same core;
   remaining cases are legacy eval/global declaration semantics, advanced
