@@ -266,6 +266,7 @@ const ASYNC_GENERATOR_THIS_PROP: &str = "\0quench:async-generator-this";
 const ASYNC_GENERATOR_STARTED_PROP: &str = "\0quench:async-generator-started";
 const ASYNC_GENERATOR_EXECUTING_PROP: &str = "\0quench:async-generator-executing";
 const ASYNC_GENERATOR_QUEUE_PROP: &str = "\0quench:async-generator-queue";
+const ARGUMENTS_LENGTH_DELETED_PROP: &str = "\0quench:arguments-length-deleted";
 const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
 const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
@@ -7496,7 +7497,7 @@ impl Vm {
             let (prototype, builtin_prototype) = {
                 let object = x.borrow();
                 if let Some(a) = &object.array {
-                    if k == "length" {
+                    if k == "length" && !object.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP) {
                         return Value::Number(array_length(&object) as f64);
                     }
                     if let Some(i) = array_index_key(k) {
@@ -7873,7 +7874,7 @@ impl Vm {
         if let Some(object) = value.as_object() {
             let borrowed = object.borrow();
             if let Some(array) = &borrowed.array {
-                if key == "length" {
+                if key == "length" && !borrowed.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP) {
                     return true;
                 }
                 if let Some(index) = array_index_key(key)
@@ -8617,11 +8618,23 @@ impl Vm {
                     object.props.shift_remove(&accessor_slot("get", k));
                     object.props.shift_remove(&accessor_slot("set", k));
                     object.attributes.remove(k);
+                    return true;
                 }
                 if k == "length" {
-                    return false;
+                    let is_arguments = object
+                        .props
+                        .get("\0wrapper")
+                        .and_then(Value::as_string)
+                        .is_some_and(|wrapper| wrapper == "Arguments");
+                    if !is_arguments {
+                        return false;
+                    }
+                    object
+                        .props
+                        .insert(ARGUMENTS_LENGTH_DELETED_PROP, Value::Bool(true));
+                    object.attributes.remove(k);
+                    return true;
                 }
-                return true;
             }
             object.props.shift_remove(k);
             object.props.shift_remove(&accessor_slot("get", k));
@@ -24783,7 +24796,10 @@ fn native_object_get_own_property_descriptor(
         }
     } else if let Some(object) = target.as_object_ref() {
         let object = object.borrow();
-        if key == "length" && object.array.is_some() {
+        if key == "length"
+            && object.array.is_some()
+            && !object.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP)
+        {
             Some(Value::Number(array_length(&object) as f64))
         } else if let Some(index) = array_index_key(&key) {
             object
@@ -27292,7 +27308,7 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
         target.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
             if let Some(array) = &object.array {
-                key == "length"
+                (key == "length" && !object.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP))
                     || array_index_key(&key)
                         .is_some_and(|index| index < array.len() && !array.holes[index])
                     || object.props.contains_key(&key)
