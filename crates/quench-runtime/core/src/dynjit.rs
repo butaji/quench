@@ -2855,6 +2855,11 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         }
         DynOp::StoreName { name, src } => {
             let value = get(frame, src);
+            if unsafe { (*frame.code).strict }
+                && Environment::get(&frame.environment, name).is_none()
+            {
+                return Err(JsError::Throw(super::reference_error(vm(frame), name)));
+            }
             if let Some(cache) = name_ic() {
                 Environment::set_cached(
                     &frame.environment,

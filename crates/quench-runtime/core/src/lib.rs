@@ -7304,10 +7304,15 @@ impl Vm {
                                     t,
                                     a.materialize(),
                                     f.source_id,
+                                    f.strict,
                                 ),
-                                FunctionKind::Arrow { node, env } => {
-                                    self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
-                                }
+                                FunctionKind::Arrow { node, env } => self.call_arrow(
+                                    node,
+                                    env.clone(),
+                                    a.materialize(),
+                                    f.source_id,
+                                    f.strict,
+                                ),
                                 FunctionKind::Class { .. } => Err(JsError::Throw(type_error(
                                     self,
                                     "class constructor cannot be invoked without 'new'",
@@ -7320,12 +7325,21 @@ impl Vm {
                 }
                 return match code.call(self, env.clone(), t.clone(), a) {
                     Err(error) if is_stencil_fallback_error(&error) => match &f.kind {
-                        FunctionKind::User { node, env } => {
-                            self.call_user(node, env.clone(), t, a.materialize(), f.source_id)
-                        }
-                        FunctionKind::Arrow { node, env } => {
-                            self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
-                        }
+                        FunctionKind::User { node, env } => self.call_user(
+                            node,
+                            env.clone(),
+                            t,
+                            a.materialize(),
+                            f.source_id,
+                            f.strict,
+                        ),
+                        FunctionKind::Arrow { node, env } => self.call_arrow(
+                            node,
+                            env.clone(),
+                            a.materialize(),
+                            f.source_id,
+                            f.strict,
+                        ),
                         FunctionKind::Class { .. } => Err(JsError::Throw(type_error(
                             self,
                             "class constructor cannot be invoked without 'new'",
@@ -7355,10 +7369,10 @@ impl Vm {
                     self.call_arguments_with_ic(target, this_arg.clone(), combined.as_slice(), None)
                 }
                 FunctionKind::User { node, env } => {
-                    self.call_user(node, env.clone(), t, a.materialize(), f.source_id)
+                    self.call_user(node, env.clone(), t, a.materialize(), f.source_id, f.strict)
                 }
                 FunctionKind::Arrow { node, env } => {
-                    self.call_arrow(node, env.clone(), a.materialize(), f.source_id)
+                    self.call_arrow(node, env.clone(), a.materialize(), f.source_id, f.strict)
                 }
                 FunctionKind::Class { .. } => Err(JsError::Throw(type_error(
                     self,
@@ -7604,6 +7618,7 @@ impl Vm {
         this: Value,
         args: Vec<Value>,
         source_id: Option<usize>,
+        function_strict: bool,
     ) -> JsResult<Value> {
         if let Some(source_id) = source_id {
             self.source_ids.push(source_id);
@@ -7613,11 +7628,12 @@ impl Vm {
         if let Some(body) = &n.body {
             reserve_script_bindings(&body_environment, &body.statements);
         }
-        let strict = n.body.as_ref().is_some_and(|body| {
-            body.directives
-                .iter()
-                .any(|directive| directive.directive.as_str() == "use strict")
-        });
+        let strict = function_strict
+            || n.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = strict;
         // Ordinary (non-strict) calls substitute the global object for a
@@ -7743,6 +7759,7 @@ impl Vm {
         outer: Env,
         args: Vec<Value>,
         source_id: Option<usize>,
+        function_strict: bool,
     ) -> JsResult<Value> {
         if let Some(source_id) = source_id {
             self.source_ids.push(source_id);
@@ -7764,11 +7781,12 @@ impl Vm {
         if let Some(body) = n.body.as_function_body() {
             reserve_script_bindings(&body_environment, &body.statements);
         }
-        let strict = n.body.as_function_body().is_some_and(|body| {
-            body.directives
-                .iter()
-                .any(|directive| directive.directive.as_str() == "use strict")
-        });
+        let strict = function_strict
+            || n.body.as_function_body().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = strict;
         {
@@ -9796,7 +9814,12 @@ impl Vm {
                     )));
                 }
             }
-            LValue::Var(e, name) => Environment::set(&e, &name, v),
+            LValue::Var(e, name) => {
+                if self.strict_mode && Environment::get(&e, &name).is_none() {
+                    return Err(JsError::Throw(reference_error(self, &name)));
+                }
+                Environment::set(&e, &name, v);
+            }
             LValue::Prop(o, k) => {
                 if self.strict_mode {
                     self.set_prop_with_accessors(&o, &k, v)?;
