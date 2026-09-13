@@ -10081,10 +10081,14 @@ impl Vm {
         let source =
             fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
         if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            let parsed: serde_json::Value = serde_json::from_str(&source).map_err(|error| {
+                JsError::Message(format!("SyntaxError: invalid JSON module: {error}"))
+            })?;
+            let value = self.json_module_value(&parsed);
+            let exports = HashMap::from([(String::from("default"), value)]);
             self.module_evaluating.remove(&key);
-            return Err(JsError::Message(
-                "JSON module loading is not available in the core loader".into(),
-            ));
+            self.module_exports_cache.insert(key, exports.clone());
+            return Ok(exports);
         }
         // Test262 and Node commonly use `.js` for module sources.  Feed a
         // synthetic `.mjs` identity to the parser while retaining the actual
@@ -10100,6 +10104,32 @@ impl Vm {
         self.module_evaluating.remove(&key);
         self.module_exports_cache.insert(key, exports.clone());
         Ok(exports)
+    }
+
+    fn json_module_value(&mut self, value: &serde_json::Value) -> Value {
+        match value {
+            serde_json::Value::Null => Value::Null,
+            serde_json::Value::Bool(value) => Value::Bool(*value),
+            serde_json::Value::Number(value) => Value::Number(value.as_f64().unwrap_or(f64::NAN)),
+            serde_json::Value::String(value) => Value::string_value(value),
+            serde_json::Value::Array(values) => {
+                let array = self.array();
+                for (index, value) in values.iter().enumerate() {
+                    let converted = self.json_module_value(value);
+                    self.set_prop(&array, &index.to_string(), converted);
+                }
+                self.set_prop(&array, "length", Value::Number(values.len() as f64));
+                array
+            }
+            serde_json::Value::Object(values) => {
+                let object = self.ordinary_object();
+                for (name, value) in values {
+                    let converted = self.json_module_value(value);
+                    self.set_prop(&object, name, converted);
+                }
+                object
+            }
+        }
     }
 
     fn bind_module_imports(
@@ -10121,7 +10151,43 @@ impl Vm {
             } else {
                 parent.join(requested)
             };
-            let exports = self.load_module_exports(&target)?;
+            let import_type = import.with_clause.as_ref().and_then(|clause| {
+                clause.with_entries.iter().find_map(|entry| {
+                    let key = match &entry.key {
+                        ImportAttributeKey::Identifier(key) => key.name.as_str(),
+                        ImportAttributeKey::StringLiteral(key) => key.value.as_str(),
+                    };
+                    (key == "type").then(|| entry.value.value.to_string())
+                })
+            });
+            let exports = match import_type.as_deref() {
+                Some("text") => {
+                    let text = fs::read_to_string(&target)
+                        .map_err(|error| JsError::Message(error.to_string()))?;
+                    HashMap::from([(String::from("default"), Value::string_value(text))])
+                }
+                Some("bytes") => {
+                    let bytes =
+                        fs::read(&target).map_err(|error| JsError::Message(error.to_string()))?;
+                    let values = self.array_from_values(
+                        bytes
+                            .iter()
+                            .map(|byte| Value::Number(f64::from(*byte)))
+                            .collect(),
+                    );
+                    let constructor = Environment::get(&self.global, "Uint8Array")
+                        .ok_or_else(|| JsError::Message("Uint8Array is unavailable".into()))?;
+                    let prototype = constructor
+                        .as_function_ref()
+                        .map(|function| function.prototype.clone());
+                    let receiver = self.object(prototype);
+                    self.construct_depth = self.construct_depth.saturating_add(1);
+                    let typed = native_typed_array_constructor(self, receiver, &[values]);
+                    self.construct_depth = self.construct_depth.saturating_sub(1);
+                    HashMap::from([(String::from("default"), typed?)])
+                }
+                _ => self.load_module_exports(&target)?,
+            };
             let namespace = || {
                 let object = self.ordinary_object();
                 for (name, value) in &exports {
