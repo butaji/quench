@@ -8725,6 +8725,28 @@ impl Vm {
             environment.declare(name, closure.clone());
         }
         self.sync_global_binding(&environment, name, closure.clone());
+        if is_global_environment {
+            if let Some(global_this) = Environment::get(&self.global, "globalThis") {
+                let configurable = global_this.as_object_ref().is_none_or(|object| {
+                    object
+                        .borrow()
+                        .attributes
+                        .get(name)
+                        .is_none_or(|attributes| attributes.configurable)
+                });
+                if configurable {
+                    set_property_attributes(
+                        &global_this,
+                        name,
+                        PropertyAttributes {
+                            writable: true,
+                            enumerable: true,
+                            configurable: true,
+                        },
+                    );
+                }
+            }
+        }
         if !annex_b_allowed || self.strict_mode || Rc::ptr_eq(&environment, &self.global) {
             return;
         }
@@ -9511,10 +9533,12 @@ impl Vm {
                     (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
                 };
                 let args = self.eval_args(&v.arguments, e.clone())?;
-                if matches!(
-                    c.as_function_ref().map(|function| &function.kind),
-                    Some(FunctionKind::Builtin(BuiltinId::Eval))
-                ) {
+                if matches!(&v.callee, Expression::Identifier(identifier) if identifier.name == "eval")
+                    && matches!(
+                        c.as_function_ref().map(|function| &function.kind),
+                        Some(FunctionKind::Builtin(BuiltinId::Eval))
+                    )
+                {
                     return native_eval_in_environment(self, &args, e);
                 }
                 let result = match self.call(c, t, args) {
