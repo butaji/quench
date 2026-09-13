@@ -1810,6 +1810,7 @@ struct Environment {
     // evaluated in a sloppy function body.
     parameter_names: HashSet<String>,
     implicit_arguments: bool,
+    tdz_names: HashSet<String>,
     lexical_names: HashSet<String>,
     catch_names: HashSet<String>,
     catch_simple_names: HashSet<String>,
@@ -1831,6 +1832,7 @@ impl Environment {
             parent,
             parameter_names: HashSet::new(),
             implicit_arguments: false,
+            tdz_names: HashSet::new(),
             lexical_names: HashSet::new(),
             catch_names: HashSet::new(),
             catch_simple_names: HashSet::new(),
@@ -1879,6 +1881,17 @@ impl Environment {
     }
     fn contains_local(&self, k: &str) -> bool {
         self.names.contains_key(k)
+    }
+    fn is_tdz(e: &Env, name: &str) -> bool {
+        let mut current = Some(e.clone());
+        while let Some(environment) = current {
+            let borrowed = environment.borrow();
+            if borrowed.tdz_names.contains(name) {
+                return true;
+            }
+            current = borrowed.parent.clone();
+        }
+        false
     }
     fn get(e: &Env, k: &str) -> Option<Value> {
         if let Some(location) = Self::resolve(e, k) {
@@ -7879,6 +7892,17 @@ impl Vm {
         // semantic boundary on the interpreter tier of the same VM until the
         // stencil image carries those environment effects explicitly.
         let eval_code = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
+        let eval_tdz_names = if eval_code {
+            let mut names = HashSet::new();
+            collect_lexical_binding_names(&r.program.body, &mut names);
+            environment
+                .borrow_mut()
+                .tdz_names
+                .extend(names.iter().cloned());
+            names
+        } else {
+            HashSet::new()
+        };
         let out = if self.jit_mode == JitMode::Stencil && !eval_code {
             (|| {
                 let statements: &'static [Statement<'static>] =
@@ -7938,7 +7962,7 @@ impl Vm {
                 }
             })()
         } else {
-            self.exec_stmts(&r.program.body, environment)
+            self.exec_stmts(&r.program.body, environment.clone())
                 .map(|signal| match signal {
                     Signal::Normal(value) | Signal::Return(value) => value,
                     _ => Value::Undefined,
@@ -7946,6 +7970,12 @@ impl Vm {
         };
         self.source_stack.pop();
         self.source_ids.pop();
+        if !eval_tdz_names.is_empty() {
+            environment
+                .borrow_mut()
+                .tdz_names
+                .retain(|name| !eval_tdz_names.contains(name));
+        }
         self.strict_mode = previous_strict_mode;
         out
     }
@@ -8446,7 +8476,9 @@ impl Vm {
             if v.kind != VariableDeclarationKind::Var
                 && let Some(name) = pattern_name(&d.id)
             {
-                e.borrow_mut().lexical_names.insert(name);
+                let mut environment = e.borrow_mut();
+                environment.lexical_names.insert(name.clone());
+                environment.tdz_names.remove(&name);
             }
             let value = d
                 .init
@@ -9054,6 +9086,9 @@ impl Vm {
             .map_err(|_| JsError::Throw(syntax_error(self, "invalid BigInt literal"))),
             StringLiteral(v) => Ok(Value::String(Rc::new(string_literal_value(v).into()))),
             Identifier(v) => {
+                if Environment::is_tdz(&e, v.name.as_str()) {
+                    return Err(JsError::Throw(reference_error(self, v.name.as_str())));
+                }
                 let value = Environment::get(&e, v.name.as_str());
                 value.ok_or_else(|| JsError::Throw(reference_error(self, v.name.as_str())))
             }
@@ -9151,6 +9186,7 @@ impl Vm {
                 }
                 if v.operator == oxc_syntax::operator::UnaryOperator::Typeof
                     && let Expression::Identifier(identifier) = &v.argument
+                    && !Environment::is_tdz(&e, identifier.name.as_str())
                     && Environment::get(&e, identifier.name.as_str()).is_none()
                 {
                     return Ok(Value::string_value("undefined"));
