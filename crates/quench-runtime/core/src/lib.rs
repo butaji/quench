@@ -7219,19 +7219,7 @@ impl Vm {
             }
             match &f.kind {
                 FunctionKind::Builtin(id) => {
-                    let error_constructor = matches!(
-                        id,
-                        BuiltinId::ErrorConstructor
-                            | BuiltinId::TypeErrorConstructor
-                            | BuiltinId::RangeErrorConstructor
-                            | BuiltinId::URIErrorConstructor
-                            | BuiltinId::SyntaxErrorConstructor
-                            | BuiltinId::ReferenceErrorConstructor
-                            | BuiltinId::EvalErrorConstructor
-                            | BuiltinId::AggregateErrorConstructor
-                            | BuiltinId::SuppressedErrorConstructor
-                    );
-                    let receiver = if error_constructor && !t.is_object() {
+                    let receiver = if id.is_error_constructor() && !t.is_object() {
                         self.object(Some(f.prototype.clone()))
                     } else {
                         t
@@ -8798,17 +8786,7 @@ impl Vm {
                 );
                 let error_constructor = matches!(
                     function.kind,
-                    FunctionKind::Builtin(
-                        BuiltinId::ErrorConstructor
-                            | BuiltinId::TypeErrorConstructor
-                            | BuiltinId::RangeErrorConstructor
-                            | BuiltinId::URIErrorConstructor
-                            | BuiltinId::SyntaxErrorConstructor
-                            | BuiltinId::ReferenceErrorConstructor
-                            | BuiltinId::EvalErrorConstructor
-                            | BuiltinId::AggregateErrorConstructor
-                            | BuiltinId::SuppressedErrorConstructor
-                    )
+                    FunctionKind::Builtin(id) if id.is_error_constructor()
                 );
                 if wrapped {
                     self.set_prop(&o, "\0primitive", r.clone());
