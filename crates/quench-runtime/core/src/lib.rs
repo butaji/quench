@@ -14661,7 +14661,7 @@ impl Vm {
                     return Ok(value);
                 }
                 let target = self.resolve_target(&v.left, e.clone())?;
-                let old = self.read_lvalue(&target);
+                let old = self.read_lvalue(&target)?;
                 let right = match v.operator {
                     LogicalOr if old.truthy() => None,
                     LogicalAnd if !old.truthy() => None,
@@ -15142,16 +15142,21 @@ impl Vm {
             _ => Err(JsError::Message("target unsupported".into())),
         }
     }
-    fn read_lvalue(&self, target: &LValue) -> Value {
+    fn read_lvalue(&mut self, target: &LValue) -> JsResult<Value> {
         match target {
-            LValue::Var(e, name) => Environment::get(e, name).unwrap_or(Value::Undefined),
-            LValue::UnresolvedVar(_, _) => Value::Undefined,
-            LValue::WithProp(object, key) => self.get_prop(object, key),
+            LValue::Var(e, name) => Ok(Environment::get(e, name).unwrap_or(Value::Undefined)),
+            LValue::UnresolvedVar(_, name) => Err(JsError::Throw(reference_error(self, name))),
+            LValue::WithProp(object, key) | LValue::Prop(object, key) => {
+                self.get_prop_with_accessors(object, key)
+            }
             // Prepared destructuring targets are write-only references; the
             // source value is read from the other object before PutValue.
-            LValue::DeferredProp { .. } => Value::Undefined,
-            LValue::Prop(o, k) => self.get_prop(o, k),
-            LValue::SuperProp { base, key, .. } => self.get_prop(base, key),
+            LValue::DeferredProp { .. } => Ok(Value::Undefined),
+            LValue::SuperProp {
+                base,
+                receiver,
+                key,
+            } => self.get_prop_with_receiver(base, key, receiver),
         }
     }
     fn write_lvalue(&mut self, target: LValue, v: Value) -> JsResult<()> {
@@ -15172,7 +15177,7 @@ impl Vm {
                         return Err(JsError::Throw(reference_error(self, &key)));
                     }
                 }
-                self.set_prop_with_accessors(&object, &key, v)?;
+                set_assignment_property(self, &object, &key, v)?;
             }
             LValue::DeferredProp { object, key } => {
                 let key = self.to_property_key(key)?;
