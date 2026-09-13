@@ -9467,10 +9467,15 @@ impl Vm {
         source: &str,
         environment: Env,
     ) -> JsResult<Value> {
-        let source_id = self.coverage.register_source(p, source);
+        // OXC accepts the common LF shebang form, but Test262 also exercises
+        // CR/LS/PS terminators. Mask the hashbang payload while preserving
+        // byte offsets and the line terminator so all source locations remain
+        // stable for diagnostics and coverage.
+        let parsed_source = normalize_hashbang(source);
+        let source_id = self.coverage.register_source(p, &parsed_source);
         // OXC nodes and their interned strings are retained by closures after
         // `run_source`; keep the backing source alive for the same VM lifetime.
-        let src: &'static str = Box::leak(source.to_owned().into_boxed_str());
+        let src: &'static str = Box::leak(parsed_source.into_boxed_str());
         let a: &'static Allocator = Box::leak(Box::new(Allocator::default()));
         let st = SourceType::from_path(p).unwrap_or_default();
         let r = Parser::new(&a, src, st)
@@ -21048,6 +21053,23 @@ fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
     body.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|token| token == "with")
 }
+
+fn normalize_hashbang(source: &str) -> String {
+    if !source.starts_with("#!") {
+        return source.to_owned();
+    }
+    let end = source
+        .char_indices()
+        .skip(2)
+        .find(|(_, ch)| matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
+        .map_or(source.len(), |(index, _)| index);
+    let mut normalized = source.to_owned();
+    for byte in unsafe { normalized.as_bytes_mut().get_unchecked_mut(0..end) } {
+        *byte = b' ';
+    }
+    normalized
+}
+
 fn native_date(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     // `new Date(...)` supplies the freshly allocated receiver. Preserve it so
     // prototype identity and `instanceof Date` remain observable to descriptor

@@ -121,6 +121,25 @@ impl TestMetadata {
         // source bytes for execution and Function#toString semantics.
         let normalized = source.replace('\r', "\n");
         let frontmatter = extract_frontmatter(&normalized)?;
+        // Raw hashbang fixtures may place executable source before the
+        // copyright/frontmatter block. Their metadata is still authoritative;
+        // keep the normal anti-preamble rule for every non-hashbang source.
+        let frontmatter_storage;
+        let frontmatter = if frontmatter.is_empty() && normalized.starts_with("#!") {
+            if let Some(start) = normalized.find("/*---") {
+                let rest = &normalized[start + 5..];
+                if let Some(end) = rest.find("---*/") {
+                    frontmatter_storage = rest[..end].to_owned();
+                    &frontmatter_storage
+                } else {
+                    frontmatter
+                }
+            } else {
+                frontmatter
+            }
+        } else {
+            frontmatter
+        };
         let mut metadata = Self::default();
         let mut in_negative = false;
         for line in frontmatter.lines() {
