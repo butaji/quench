@@ -493,6 +493,7 @@ pub(crate) fn instantiate(vm: &Vm) -> Box<[Value]> {
 fn builtin_length(id: BuiltinId) -> usize {
     match id {
         BuiltinId::SuppressedErrorConstructor => 3,
+        BuiltinId::AggregateErrorConstructor => 2,
         BuiltinId::StringFromCharCode
         | BuiltinId::StringFromCodePoint
         | BuiltinId::StringRaw
@@ -554,8 +555,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::URIErrorConstructor
         | BuiltinId::SyntaxErrorConstructor
         | BuiltinId::ReferenceErrorConstructor
-        | BuiltinId::EvalErrorConstructor
-        | BuiltinId::AggregateErrorConstructor => 1,
+        | BuiltinId::EvalErrorConstructor => 1,
         BuiltinId::FunctionConstructor | BuiltinId::FunctionBind | BuiltinId::FunctionCall => 1,
         BuiltinId::FunctionApply => 2,
         BuiltinId::ObjectCreate => 2,

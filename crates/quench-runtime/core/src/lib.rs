@@ -8051,14 +8051,44 @@ impl Vm {
         Ok(())
     }
 
-    fn iterable_values(&self, value: &Value) -> JsResult<Vec<Value>> {
+    fn iterable_values(&mut self, value: &Value) -> JsResult<Vec<Value>> {
         if let Some(object) = value.as_object_ref() {
-            return object
+            if let Some(values) = object
                 .borrow()
                 .array
                 .as_ref()
                 .map(|array| array.values.clone())
-                .ok_or_else(|| JsError::Throw(type_error(self, "value is not iterable")));
+            {
+                return Ok(values);
+            }
+            let iterator_key = self.well_known_symbol_key("iterator");
+            let method = self.get_prop_with_accessors(value, &iterator_key)?;
+            if !method.is_function() {
+                return Err(JsError::Throw(type_error(self, "value is not iterable")));
+            }
+            let iterator = self.call(method, value.clone(), Vec::new())?;
+            let mut values = Vec::new();
+            loop {
+                let next = self.get_prop_with_accessors(&iterator, "next")?;
+                if !next.is_function() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "iterator next method is not callable",
+                    )));
+                }
+                let result = self.call(next, iterator.clone(), Vec::new())?;
+                if !result.is_object_like() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "iterator result is not an object",
+                    )));
+                }
+                if self.get_prop_with_accessors(&result, "done")?.truthy() {
+                    break;
+                }
+                values.push(self.get_prop_with_accessors(&result, "value")?);
+            }
+            return Ok(values);
         }
         if let Some(string) = value.as_string() {
             return Ok(utf16_units(string)
@@ -16145,6 +16175,67 @@ fn native_error(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
             set_property_attributes(
                 &o,
                 key,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+        return Ok(o);
+    }
+    let aggregate_prototype = vm
+        .builtin(BuiltinId::AggregateErrorConstructor)
+        .as_function_ref()
+        .map(|function| function.prototype.clone());
+    let is_aggregate = o
+        .as_object_ref()
+        .and_then(|object| object.borrow().prototype.clone())
+        .zip(aggregate_prototype)
+        .is_some_and(|(actual, expected)| actual.as_ptr() == expected.as_ptr());
+    if is_aggregate {
+        if let Some(message) = a.get(1).filter(|value| !value.is_undefined()) {
+            if is_symbol_carrier(message) {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "Cannot convert a Symbol value to a string",
+                )));
+            }
+            let message = Value::string_value(to_string_with_vm(vm, message)?);
+            vm.set_prop(&o, "message", message);
+            set_property_attributes(
+                &o,
+                "message",
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+        let source = a.first().cloned().unwrap_or(Value::Undefined);
+        let errors = vm.iterable_values(&source)?;
+        let errors = vm.array_from_values(errors);
+        vm.set_prop(&o, "errors", errors);
+        set_property_attributes(
+            &o,
+            "errors",
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        if let Some(options) = a
+            .get(2)
+            .filter(|value| value.is_object() || value.is_function())
+            && vm.has_property(options, "cause")
+        {
+            let cause = vm.get_prop_with_accessors(options, "cause")?;
+            vm.set_prop(&o, "cause", cause);
+            set_property_attributes(
+                &o,
+                "cause",
                 PropertyAttributes {
                     writable: true,
                     enumerable: false,
