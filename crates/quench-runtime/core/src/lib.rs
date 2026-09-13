@@ -9998,6 +9998,16 @@ impl Vm {
         }
         let e = Environment::new(Some(outer.clone()));
         let body_environment = e.clone();
+        let non_simple_parameters = n.params.items.iter().any(|parameter| {
+            parameter.initializer.is_some()
+                || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+        }) || n.params.rest.is_some();
+        if non_simple_parameters {
+            e.borrow_mut().declare(
+                dynbytecode::NON_SIMPLE_ARGUMENTS_ENV_NAME,
+                Value::Bool(true),
+            );
+        }
         let strict = function_strict
             || n.body.as_ref().is_some_and(|body| {
                 body.directives
@@ -10006,6 +10016,12 @@ impl Vm {
             });
         if let Some(body) = &n.body {
             reserve_function_bindings(&body_environment, &body.statements, strict);
+            let mut lexical_names = HashSet::new();
+            collect_direct_lexical_names(&body.statements, &mut lexical_names);
+            body_environment
+                .borrow_mut()
+                .lexical_names
+                .extend(lexical_names);
         }
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = strict;
@@ -10364,13 +10380,34 @@ impl Vm {
             parameter.initializer.is_some()
                 || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
         }) || n.params.rest.is_some();
+        if non_simple_parameters {
+            e.borrow_mut().declare(
+                dynbytecode::NON_SIMPLE_ARGUMENTS_ENV_NAME,
+                Value::Bool(true),
+            );
+        }
         let body_environment = if non_simple_parameters {
-            Environment::new(Some(e.clone()))
+            let body_environment = Environment::new(Some(e.clone()));
+            // A non-simple parameter list splits the parameter and body
+            // variable environments. Mark the latter as the function's
+            // variable environment so `var` declarations stay out of the
+            // parameter scope while closures created by defaults retain the
+            // parameter-only view.
+            body_environment
+                .borrow_mut()
+                .declare(FUNCTION_ENV_NAME, Value::Bool(true));
+            body_environment
         } else {
             e.clone()
         };
         if let Some(body) = n.body.as_function_body() {
             reserve_script_bindings(&body_environment, &body.statements);
+            let mut lexical_names = HashSet::new();
+            collect_direct_lexical_names(&body.statements, &mut lexical_names);
+            body_environment
+                .borrow_mut()
+                .lexical_names
+                .extend(lexical_names);
         }
         let strict = function_strict
             || n.body.as_function_body().is_some_and(|body| {
@@ -15528,14 +15565,21 @@ fn eval_var_conflicts_with_lexical(environment: &Env, names: &[String]) -> bool 
     let variable = variable_environment(environment);
     let mut current = Some(environment.clone());
     while let Some(candidate) = current {
-        if Rc::ptr_eq(&candidate, &variable) {
-            break;
-        }
         let borrowed = candidate.borrow();
+        let non_simple_parameters = borrowed
+            .names
+            .get(dynbytecode::NON_SIMPLE_ARGUMENTS_ENV_NAME)
+            .and_then(|slot| borrowed.values.get(*slot))
+            .is_some_and(Value::truthy);
         if names.iter().any(|name| {
-            borrowed.lexical_names.contains(name) && !borrowed.catch_names.contains(name)
+            (borrowed.lexical_names.contains(name)
+                || borrowed.parameter_names.contains(name) && non_simple_parameters)
+                && !borrowed.catch_names.contains(name)
         }) {
             return true;
+        }
+        if Rc::ptr_eq(&candidate, &variable) {
+            break;
         }
         current = borrowed.parent.clone();
     }
