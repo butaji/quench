@@ -5020,7 +5020,7 @@ fn instance_of_with_vm(vm: &mut Vm, value: &Value, ctor: &Value) -> JsResult<boo
         } else if let Some(function) = current.as_function_ref() {
             Value::Object(function.prototype.clone())
         } else {
-            return Ok(self.has_property(value, key));
+            return Ok(false);
         };
         if current_prototype.is_null() {
             return Ok(false);
