@@ -194,6 +194,13 @@ Verification completed:
   retain explicit sloppy-`delete` state and become unresolvable in closures;
   remaining failures are primarily generator, super, and global declaration
   semantics
+- the canonical module core now passes the focused compatibility gates for
+  harness realm sharing (116/116), arguments objects (263/263), global code
+  (42/42), deferred imports (127/127), and module code (599/599); async module
+  continuations are dependency-ordered and released from one graph scheduler
+- module graph edges are declared once by the `module_request!` Rust macro and
+  reused by linking, deferred namespace checks, and async continuation release;
+  this keeps graph facts data-first instead of duplicating OXC pattern matches
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
