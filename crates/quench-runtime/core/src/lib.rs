@@ -6352,6 +6352,17 @@ impl Vm {
                         "has",
                         self.native_named(native_map_has, "has", 1),
                     );
+                    self.define_accessor_slot(
+                        &Value::Object(prototype.clone()),
+                        "size",
+                        Some(self.native_named(native_map_size, "get size", 0)),
+                        None,
+                        PropertyAttributes {
+                            writable: false,
+                            enumerable: false,
+                            configurable: true,
+                        },
+                    );
                     let iterator = self.well_known_symbol_key("iterator");
                     self.set_prop(
                         &Value::Object(prototype.clone()),
@@ -6368,6 +6379,17 @@ impl Vm {
                         &Value::Object(prototype.clone()),
                         "has",
                         self.native_named(native_set_has, "has", 1),
+                    );
+                    self.define_accessor_slot(
+                        &Value::Object(prototype.clone()),
+                        "size",
+                        Some(self.native_named(native_set_size, "get size", 0)),
+                        None,
+                        PropertyAttributes {
+                            writable: false,
+                            enumerable: false,
+                            configurable: true,
+                        },
                     );
                     let iterator = self.well_known_symbol_key("iterator");
                     self.set_prop(
@@ -7548,6 +7570,14 @@ impl Vm {
             return self.get_prop(&target, k);
         }
         if let Some(x) = o.as_object_ref() {
+            if k == "size" {
+                if let Some(entries) = x.borrow().props.get(MAP_ENTRIES_PROP).cloned() {
+                    return Value::Number(array_length(&entries) as f64);
+                }
+                if let Some(values) = x.borrow().props.get(SET_VALUES_PROP).cloned() {
+                    return Value::Number(array_length(&values) as f64);
+                }
+            }
             // Typed-array elements and length are views over the shared
             // backing buffer, not independent ordinary properties.
             let typed_view = {
@@ -8106,6 +8136,17 @@ impl Vm {
         key: &str,
         receiver: &Value,
     ) -> JsResult<Value> {
+        if key == "size"
+            && let Some(object_ref) = object.as_object_ref()
+        {
+            let object = object_ref.borrow();
+            if let Some(entries) = object.props.get(MAP_ENTRIES_PROP).cloned() {
+                return Ok(Value::Number(array_length(&entries) as f64));
+            }
+            if let Some(values) = object.props.get(SET_VALUES_PROP).cloned() {
+                return Ok(Value::Number(array_length(&values) as f64));
+            }
+        }
         if key != DEFERRED_NAMESPACE_PATH_PROP
             && key != "then"
             && !key.starts_with('\0')
@@ -18533,6 +18574,17 @@ fn native_map_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
     Ok(map)
 }
 
+fn native_map_size(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let entries = vm.get_prop(&this, MAP_ENTRIES_PROP);
+    if !entries.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Method get Map.prototype.size called on incompatible receiver",
+        )));
+    }
+    Ok(Value::Number(array_length(&entries) as f64))
+}
+
 fn map_entries(vm: &Vm, map: &Value) -> Vec<Value> {
     let entries = vm.get_prop(map, MAP_ENTRIES_PROP);
     let length = entries
@@ -18625,6 +18677,17 @@ fn native_set_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<
         }
     }
     Ok(set)
+}
+
+fn native_set_size(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let values = vm.get_prop(&this, SET_VALUES_PROP);
+    if !values.is_object_like() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Method get Set.prototype.size called on incompatible receiver",
+        )));
+    }
+    Ok(Value::Number(array_length(&values) as f64))
 }
 
 fn set_values(vm: &Vm, set: &Value) -> Vec<Value> {
