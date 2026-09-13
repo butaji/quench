@@ -586,6 +586,12 @@ impl Compiler {
                 reason: "catch environments deferred to shared semantics",
             });
         }
+        if contains_nested_var_declaration(statements, false) {
+            return Err(CompileGap {
+                span,
+                reason: "nested var hoisting deferred to shared semantics",
+            });
+        }
         let mut compiler = Self {
             ops: Vec::new(),
             next_register: 0,
@@ -644,6 +650,12 @@ impl Compiler {
             return Err(CompileGap {
                 span: function.span,
                 reason: "catch environments deferred to shared semantics",
+            });
+        }
+        if contains_nested_var_declaration(&body.statements, false) {
+            return Err(CompileGap {
+                span: function.span,
+                reason: "nested var hoisting deferred to shared semantics",
             });
         }
         let params = function
@@ -2579,6 +2591,57 @@ fn contains_catch_binding(statements: &[Statement<'static>]) -> bool {
             .any(|case| contains_catch_binding(&case.consequent)),
         Statement::WithStatement(statement) => {
             contains_catch_binding(std::slice::from_ref(&statement.body))
+        }
+        _ => false,
+    })
+}
+
+fn contains_nested_var_declaration(statements: &[Statement<'static>], nested: bool) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::VariableDeclaration(declaration) => {
+            nested && declaration.kind == VariableDeclarationKind::Var
+        }
+        Statement::BlockStatement(block) => contains_nested_var_declaration(&block.body, true),
+        Statement::IfStatement(statement) => {
+            contains_nested_var_declaration(std::slice::from_ref(&statement.consequent), true)
+                || statement.alternate.as_ref().is_some_and(|alternate| {
+                    contains_nested_var_declaration(std::slice::from_ref(alternate), true)
+                })
+        }
+        Statement::LabeledStatement(statement) => {
+            contains_nested_var_declaration(std::slice::from_ref(&statement.body), nested)
+        }
+        Statement::WhileStatement(statement) => {
+            contains_nested_var_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::DoWhileStatement(statement) => {
+            contains_nested_var_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::ForStatement(statement) => {
+            contains_nested_var_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::ForInStatement(statement) => {
+            contains_nested_var_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::ForOfStatement(statement) => {
+            contains_nested_var_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .any(|case| contains_nested_var_declaration(&case.consequent, true)),
+        Statement::TryStatement(statement) => {
+            contains_nested_var_declaration(&statement.block.body, true)
+                || statement.handler.as_ref().is_some_and(|handler| {
+                    contains_nested_var_declaration(&handler.body.body, true)
+                })
+                || statement
+                    .finalizer
+                    .as_ref()
+                    .is_some_and(|finalizer| contains_nested_var_declaration(&finalizer.body, true))
+        }
+        Statement::WithStatement(statement) => {
+            contains_nested_var_declaration(std::slice::from_ref(&statement.body), true)
         }
         _ => false,
     })

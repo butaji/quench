@@ -9772,6 +9772,14 @@ impl Vm {
                 "for-in statement initializer is not permitted",
             )));
         }
+        if has_block_redeclaration_early_error(&r.program)
+            || has_statement_position_function(&r.program)
+        {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "invalid lexical declaration or statement-position function",
+            )));
+        }
         self.strict_mode = effective_strict_mode;
         if self.strict_mode && has_strict_yield_binding(&r.program) {
             return Err(JsError::Throw(syntax_error(
@@ -10122,7 +10130,12 @@ impl Vm {
                 let previous = self.pending_loop_label.replace(x.label.name.to_string());
                 let result = self.exec_stmt(&x.body, e);
                 self.pending_loop_label = previous;
-                result
+                match result? {
+                    Signal::Break(Some(label)) if label == x.label.name.as_str() => {
+                        Ok(Signal::Normal(Value::Undefined))
+                    }
+                    signal => Ok(signal),
+                }
             }
             ReturnStatement(x) => Ok(Signal::Return(
                 x.argument
@@ -13022,6 +13035,141 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
         .body
         .iter()
         .any(|statement| for_in_error_in_statement(statement, strict))
+}
+
+fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
+    fn block_error(statements: &[Statement<'_>]) -> bool {
+        let mut lexical = HashSet::new();
+        collect_direct_lexical_names(statements, &mut lexical);
+        let function_names = statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::FunctionDeclaration(function) => {
+                    function.id.as_ref().map(|id| id.name.to_string())
+                }
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        let vars = statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::VariableDeclaration(declaration)
+                    if declaration.kind == VariableDeclarationKind::Var =>
+                {
+                    Some(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id))
+                            .collect::<Vec<_>>(),
+                    )
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        lexical
+            .iter()
+            .any(|name| vars.iter().any(|candidate| candidate == name))
+            || lexical.iter().any(|name| function_names.contains(name))
+            || statements.iter().any(|statement| match statement {
+                Statement::BlockStatement(block) => block_error(&block.body),
+                Statement::IfStatement(statement) => {
+                    block_error(std::slice::from_ref(&statement.consequent))
+                        || statement
+                            .alternate
+                            .as_ref()
+                            .is_some_and(|alternate| block_error(std::slice::from_ref(alternate)))
+                }
+                Statement::LabeledStatement(statement) => {
+                    block_error(std::slice::from_ref(&statement.body))
+                }
+                Statement::WhileStatement(statement) => {
+                    block_error(std::slice::from_ref(&statement.body))
+                }
+                Statement::DoWhileStatement(statement) => {
+                    block_error(std::slice::from_ref(&statement.body))
+                }
+                Statement::ForStatement(statement) => {
+                    block_error(std::slice::from_ref(&statement.body))
+                }
+                Statement::ForInStatement(statement) => {
+                    block_error(std::slice::from_ref(&statement.body))
+                }
+                Statement::ForOfStatement(statement) => {
+                    block_error(std::slice::from_ref(&statement.body))
+                }
+                Statement::SwitchStatement(statement) => statement
+                    .cases
+                    .iter()
+                    .any(|case| block_error(&case.consequent)),
+                Statement::TryStatement(statement) => {
+                    block_error(&statement.block.body)
+                        || statement
+                            .handler
+                            .as_ref()
+                            .is_some_and(|handler| block_error(&handler.body.body))
+                        || statement
+                            .finalizer
+                            .as_ref()
+                            .is_some_and(|finalizer| block_error(&finalizer.body))
+                }
+                Statement::WithStatement(statement) => {
+                    block_error(std::slice::from_ref(&statement.body))
+                }
+                _ => false,
+            })
+    }
+    block_error(&program.body)
+}
+
+fn has_statement_position_function(program: &Program<'_>) -> bool {
+    fn nested(statement: &Statement<'_>) -> bool {
+        match statement {
+            Statement::IfStatement(statement) => {
+                matches!(statement.consequent, Statement::FunctionDeclaration(_))
+                    || statement.alternate.as_ref().is_some_and(|alternate| {
+                        matches!(alternate, Statement::FunctionDeclaration(_))
+                    })
+            }
+            Statement::WhileStatement(statement) => {
+                matches!(statement.body, Statement::FunctionDeclaration(_))
+            }
+            Statement::DoWhileStatement(statement) => {
+                matches!(statement.body, Statement::FunctionDeclaration(_))
+            }
+            Statement::ForStatement(statement) => {
+                matches!(statement.body, Statement::FunctionDeclaration(_))
+            }
+            Statement::ForInStatement(statement) => {
+                matches!(statement.body, Statement::FunctionDeclaration(_))
+            }
+            Statement::ForOfStatement(statement) => {
+                matches!(statement.body, Statement::FunctionDeclaration(_))
+            }
+            Statement::LabeledStatement(statement) => nested(&statement.body),
+            Statement::WithStatement(statement) => nested(&statement.body),
+            Statement::BlockStatement(block) => block.body.iter().any(nested),
+            Statement::SwitchStatement(statement) => statement
+                .cases
+                .iter()
+                .flat_map(|case| case.consequent.iter())
+                .any(nested),
+            Statement::TryStatement(statement) => {
+                statement.block.body.iter().any(nested)
+                    || statement
+                        .handler
+                        .as_ref()
+                        .is_some_and(|handler| handler.body.body.iter().any(nested))
+                    || statement
+                        .finalizer
+                        .as_ref()
+                        .is_some_and(|finalizer| finalizer.body.iter().any(nested))
+            }
+            _ => false,
+        }
+    }
+    program.body.iter().any(nested)
 }
 
 /// Detect legacy octal escapes in template literal raw text.
