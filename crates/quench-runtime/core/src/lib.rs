@@ -49,6 +49,85 @@ mod raw_value_holes;
 mod region_plan;
 #[cfg(feature = "inline-census")]
 mod static_call_census;
+// Wasm's typed substrate is hosted by this same VM crate. Keeping the frontend,
+// HIR, instance, interpreter, and native value ladder under one module tree
+// makes the shared-executor invariant structural rather than convention-only.
+#[path = "wasm_runtime/identity.rs"]
+pub mod identity;
+pub mod facts {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+    pub enum SharedBinaryFact {
+        Add,
+        Subtract,
+        Multiply,
+    }
+
+    impl SharedBinaryFact {
+        pub const fn to_wasm_i32(self) -> crate::native::BinI32 {
+            match self {
+                Self::Add => crate::native::BinI32::Add,
+                Self::Subtract => crate::native::BinI32::Sub,
+                Self::Multiply => crate::native::BinI32::Mul,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum Certainty {
+        Proven,
+        Guarded,
+        Unknown,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum Guard {
+        Number,
+    }
+
+    pub enum Fact<T> {
+        Proven(T),
+        Guarded { value: T, guard: Guard },
+        Unknown,
+    }
+
+    impl<T> Fact<T> {
+        pub const fn certainty(&self) -> Certainty {
+            match self {
+                Self::Proven(_) => Certainty::Proven,
+                Self::Guarded { .. } => Certainty::Guarded,
+                Self::Unknown => Certainty::Unknown,
+            }
+        }
+    }
+}
+#[path = "wasm_runtime/bulk.rs"]
+pub mod bulk;
+#[path = "wasm_runtime/dynamic/mod.rs"]
+pub mod dynamic;
+#[path = "wasm_runtime/fast.rs"]
+pub mod fast;
+#[path = "wasm_runtime/gc.rs"]
+pub mod gc;
+#[path = "wasm_runtime/hir.rs"]
+pub mod hir;
+#[path = "wasm_runtime/hir_gc.rs"]
+pub mod hir_gc;
+#[path = "wasm_runtime/instance/mod.rs"]
+pub mod instance;
+#[path = "wasm_runtime/interp.rs"]
+pub mod interp;
+#[path = "wasm_runtime/layer.rs"]
+pub mod layer;
+#[path = "wasm_runtime/native.rs"]
+pub mod native;
+#[path = "wasm_runtime/slot.rs"]
+pub mod slot;
+#[path = "wasm_runtime/unwind.rs"]
+pub mod unwind;
+#[path = "wasm_runtime/wasm/mod.rs"]
+pub mod wasm;
+#[path = "wasm_runtime/wasm_atomic.rs"]
+pub mod wasm_atomic;
 
 use builtins::{BuiltinId, BuiltinInstallTarget, BuiltinOwner};
 use chrono::{Datelike, Duration, TimeZone, Timelike};

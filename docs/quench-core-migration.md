@@ -21,15 +21,13 @@ compatibility APIs (argv, output, modules, timers, and exit handling), while
 Wasm format loading and spec-suite adaptation. These layers pass host data into
 the core; they do not create a second VM.
 
-WebAssembly must enter this same core through a lowering-only frontend. A
-Wasm-specific interpreter, MIR executor, or native dispatch loop is not an
-acceptable implementation path.
-
-The Wasm lowering is still an active migration boundary: the existing
-`quench-runtime::instance` API remains compiled for compatibility tests until
-its typed module lowering is hosted by `quench-runtime-core`. It is not used by
-the JavaScript file runner, and this temporary boundary must be removed before
-the migration is declared complete.
+WebAssembly must enter this same core through a lowering-only frontend. The
+typed Wasm substrate (`hir`, `instance`, `interp`, `native`, `slot`, `unwind`,
+and the loader) now lives physically under
+`crates/quench-runtime/core/src/wasm_runtime/`; `quench-runtime` only
+re-exports that API through `vm_core::wasm`. There is no second Wasm executor
+compiled from the runtime crate. The current substrate is still an interpreter
+and remains a migration gate until its operations are lowered to stencils.
 
 The source implementation was copied as-is, with only the package/library
 boundary and internal symbol prefix renamed to Quench-native names. Its AOT
@@ -64,7 +62,7 @@ semantic layers stable while the execution core changes underneath them.
 | CJS/Node modules | `vm_core::run_source_with_argv_and_output_status` + core `require` | `require`, module cache/identity, timers, and host effects run in the same core context |
 | `node -e` / eval | `eval_script_with_exec_argv` | eval and file execution share one core context contract |
 | Test262 harness | `quench-test262::runtime_host` (compatibility) or `QUENCH_TEST262_ENGINE=stencil` | all realm, descriptor, identity, ordering, and error checks pass through the selected core |
-| WebAssembly | `quench-runtime::instance` | Wasm lowering, typed calls, memory/tables, traps, exceptions, and imports execute in the core |
+| WebAssembly | `vm_core::wasm` (re-exported from `quench-runtime-core`) | Wasm lowering, typed calls, memory/tables, traps, exceptions, and imports execute in the core; stencil lowering remains the final gate |
 
 Until every row is green, deleting `crates/quench-runtime/src/vm` or the Wasm
 interpreter would be a compatibility regression, not a migration.
@@ -72,7 +70,7 @@ interpreter would be a compatibility regression, not a migration.
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (194 tests)
+- `cargo test -p quench-runtime-core --lib` (238 tests, including the core-owned Wasm substrate)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - production `quench-node` build and a core-backed Node smoke test
@@ -93,9 +91,9 @@ Verification completed:
   back
 - after initializing the pinned upstream WebAssembly testsuite submodule,
   `cargo run -p quench-wasm-test --bin run` executes 67,124 directives with
-  67,124 passed and 0 failed; this validates the current Wasm frontend/runner,
-  while migration of its execution backend into `quench-runtime-core` remains
-  an explicit gate above
+  67,124 passed and 0 failed; this validates the core-owned Wasm
+  frontend/runner, while stencil lowering of its execution backend remains an
+  explicit gate above
 - the stencil Number stage now reaches 340/340 after deriving numeric
   predicates from one Rust macro, sharing exact number formatting helpers,
   preserving error prototypes, validating constructor/radix behavior, and

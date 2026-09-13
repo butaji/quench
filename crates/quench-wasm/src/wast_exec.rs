@@ -320,7 +320,7 @@ fn run_invoke(invoke: &WastInvoke<'_>, store: &mut Store) -> Outcome {
     };
     match result {
         Ok(values) => Outcome::Values(values),
-        Err(InvokeError::Failure(quench_runtime::unwind::Failure::Exception { .. })) => {
+        Err(InvokeError::Failure(quench_runtime::vm_core::wasm::Failure::Exception { .. })) => {
             Outcome::Exception
         }
         Err(InvokeError::Failure(failure)) => Outcome::Trap(failure.message()),
@@ -338,27 +338,31 @@ fn args_slots(args: &[WastArg<'_>]) -> Option<Vec<Slot>> {
 fn arg_slot(arg: &WastArg<'_>) -> Option<Slot> {
     match arg {
         WastArg::Core(WastArgCore::I32(value)) => Some(Slot::native_i32(*value)),
-        WastArg::Core(WastArgCore::I64(value)) => {
-            Some(Slot::Native(quench_runtime::native::Native::I64(*value)))
-        }
+        WastArg::Core(WastArgCore::I64(value)) => Some(Slot::Native(
+            quench_runtime::vm_core::wasm::Native::I64(*value),
+        )),
         WastArg::Core(WastArgCore::F32(value)) => Some(Slot::Native(
-            quench_runtime::native::Native::F32(value.bits),
+            quench_runtime::vm_core::wasm::Native::F32(value.bits),
         )),
         WastArg::Core(WastArgCore::F64(value)) => Some(Slot::Native(
-            quench_runtime::native::Native::F64(value.bits),
+            quench_runtime::vm_core::wasm::Native::F64(value.bits),
         )),
         WastArg::Core(WastArgCore::V128(value)) => Some(Slot::Native(
-            quench_runtime::native::Native::V128(v128_bits(value)),
+            quench_runtime::vm_core::wasm::Native::V128(v128_bits(value)),
         )),
         WastArg::Core(WastArgCore::RefNull(_)) => Some(Slot::Native(
-            quench_runtime::native::Native::Ref(quench_runtime::native::RefVal::Null),
+            quench_runtime::vm_core::wasm::Native::Ref(quench_runtime::vm_core::wasm::RefVal::Null),
         )),
-        WastArg::Core(WastArgCore::RefExtern(id)) => Some(Slot::Native(
-            quench_runtime::native::Native::Ref(quench_runtime::native::RefVal::Extern(*id)),
-        )),
-        WastArg::Core(WastArgCore::RefHost(id)) => Some(Slot::Native(
-            quench_runtime::native::Native::Ref(quench_runtime::native::RefVal::Host(*id)),
-        )),
+        WastArg::Core(WastArgCore::RefExtern(id)) => {
+            Some(Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Extern(*id),
+            )))
+        }
+        WastArg::Core(WastArgCore::RefHost(id)) => {
+            Some(Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Host(*id),
+            )))
+        }
         _ => None,
     }
 }
@@ -429,97 +433,101 @@ fn ret_matches(want: &WastRet<'_>, got: &Slot) -> bool {
         return opts.iter().any(|opt| match (opt, got) {
             (
                 WastRetCore::V128(pattern),
-                Slot::Native(quench_runtime::native::Native::V128(bits)),
+                Slot::Native(quench_runtime::vm_core::wasm::Native::V128(bits)),
             ) => v128_matches(pattern, *bits),
-            (WastRetCore::I32(v), Slot::Native(quench_runtime::native::Native::I32(g))) => v == g,
+            (WastRetCore::I32(v), Slot::Native(quench_runtime::vm_core::wasm::Native::I32(g))) => {
+                v == g
+            }
             _ => false,
         });
     }
     match (want, got) {
         (
             WastRet::Core(WastRetCore::I32(v)),
-            Slot::Native(quench_runtime::native::Native::I32(g)),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::I32(g)),
         ) => v == g,
         (
             WastRet::Core(WastRetCore::I64(v)),
-            Slot::Native(quench_runtime::native::Native::I64(g)),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::I64(g)),
         ) => v == g,
         (
             WastRet::Core(WastRetCore::F32(pattern)),
-            Slot::Native(quench_runtime::native::Native::F32(bits)),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::F32(bits)),
         ) => nan_f32(pattern, *bits),
         (
             WastRet::Core(WastRetCore::F64(pattern)),
-            Slot::Native(quench_runtime::native::Native::F64(bits)),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::F64(bits)),
         ) => nan_f64(pattern, *bits),
         (
             WastRet::Core(WastRetCore::RefNull(_)),
-            Slot::Native(quench_runtime::native::Native::Ref(quench_runtime::native::RefVal::Null)),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Null,
+            )),
         ) => true,
         (
             WastRet::Core(WastRetCore::RefExtern(Some(id))),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::Extern(g),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Extern(g),
             )),
         ) => id == g,
         (
             WastRet::Core(WastRetCore::RefExtern(None)),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::Extern(_)
-                | quench_runtime::native::RefVal::ExternBox(_),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Extern(_)
+                | quench_runtime::vm_core::wasm::RefVal::ExternBox(_),
             )),
         ) => true,
         (
             WastRet::Core(WastRetCore::RefHost(id)),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::Host(g),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Host(g),
             )),
         ) => id == g,
         (
             WastRet::Core(WastRetCore::RefAny),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::Host(_)
-                | quench_runtime::native::RefVal::I31(_)
-                | quench_runtime::native::RefVal::Struct(_)
-                | quench_runtime::native::RefVal::Array(_)
-                | quench_runtime::native::RefVal::Func { .. },
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Host(_)
+                | quench_runtime::vm_core::wasm::RefVal::I31(_)
+                | quench_runtime::vm_core::wasm::RefVal::Struct(_)
+                | quench_runtime::vm_core::wasm::RefVal::Array(_)
+                | quench_runtime::vm_core::wasm::RefVal::Func { .. },
             )),
         ) => true,
         (
             WastRet::Core(WastRetCore::RefFunc(_)),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::Func { .. },
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Func { .. },
             )),
         ) => true,
         (
             WastRet::Core(WastRetCore::RefI31),
-            Slot::Native(quench_runtime::native::Native::Ref(quench_runtime::native::RefVal::I31(
-                _,
-            ))),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::I31(_),
+            )),
         ) => true,
         (
             WastRet::Core(WastRetCore::RefArray),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::Array(_),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Array(_),
             )),
         ) => true,
         (
             WastRet::Core(WastRetCore::RefStruct),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::Struct(_),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Struct(_),
             )),
         ) => true,
         (
             WastRet::Core(WastRetCore::RefEq),
-            Slot::Native(quench_runtime::native::Native::Ref(
-                quench_runtime::native::RefVal::Array(_)
-                | quench_runtime::native::RefVal::Struct(_)
-                | quench_runtime::native::RefVal::I31(_),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::Ref(
+                quench_runtime::vm_core::wasm::RefVal::Array(_)
+                | quench_runtime::vm_core::wasm::RefVal::Struct(_)
+                | quench_runtime::vm_core::wasm::RefVal::I31(_),
             )),
         ) => true,
         (
             WastRet::Core(WastRetCore::V128(pattern)),
-            Slot::Native(quench_runtime::native::Native::V128(bits)),
+            Slot::Native(quench_runtime::vm_core::wasm::Native::V128(bits)),
         ) => v128_matches(pattern, *bits),
         _ => false,
     }
