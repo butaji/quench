@@ -539,6 +539,7 @@ pub struct Compiler {
     next_register: Register,
     params: Vec<String>,
     local_bindings: Option<Vec<String>>,
+    known_names: HashSet<String>,
     hoisted: Vec<(String, *const Function<'static>)>,
     controls: Vec<Control>,
     source_id: Option<usize>,
@@ -573,6 +574,7 @@ impl Compiler {
             next_register: 0,
             params: Vec::new(),
             local_bindings: None,
+            known_names: HashSet::new(),
             hoisted: Vec::new(),
             controls: Vec::new(),
             source_id: Some(source_id),
@@ -631,6 +633,7 @@ impl Compiler {
             next_register: 0,
             params,
             local_bindings: Some(Vec::new()),
+            known_names: HashSet::new(),
             hoisted: Vec::new(),
             controls: Vec::new(),
             source_id,
@@ -675,6 +678,7 @@ impl Compiler {
             next_register: 0,
             params,
             local_bindings: Some(Vec::new()),
+            known_names: HashSet::new(),
             hoisted: Vec::new(),
             controls: Vec::new(),
             source_id,
@@ -742,6 +746,7 @@ impl Compiler {
             if let Statement::FunctionDeclaration(function) = statement
                 && let Some(id) = &function.id
             {
+                self.known_names.insert(id.name.to_string());
                 self.hoisted
                     .push((id.name.to_string(), &**function as *const Function<'static>));
             }
@@ -868,6 +873,7 @@ impl Compiler {
     }
 
     fn declare_binding(&mut self, name: String, src: Register, span: Span) {
+        self.known_names.insert(name.clone());
         if let Some(bindings) = &mut self.local_bindings
             && !bindings.contains(&name)
         {
@@ -1852,7 +1858,21 @@ impl Compiler {
             UnaryNegation => UnaryKind::Negate,
             LogicalNot => UnaryKind::Not,
             BitwiseNot => UnaryKind::BitNot,
-            Typeof => UnaryKind::Typeof,
+            Typeof => {
+                // `typeof missingName` is the one identifier operation that
+                // intentionally suppresses a ReferenceError. Let the shared
+                // evaluator perform that environment-sensitive lookup until
+                // the stencil carries an explicit unresolvable-name result.
+                if let Expression::Identifier(identifier) = &value.argument
+                    && !self.known_names.contains(identifier.name.as_str())
+                {
+                    return Err(CompileGap {
+                        span: value.span,
+                        reason: "typeof unresolved identifier deferred to shared semantics",
+                    });
+                }
+                UnaryKind::Typeof
+            }
             Void => UnaryKind::Void,
             Delete => unreachable!(),
         };
