@@ -385,6 +385,7 @@ builtin_catalog! {
     Load, Global, "load", native_load, Generic, EFFECTFUL;
     Require, Global, "require", native_require, Generic, EFFECTFUL;
     Assert, Global, "assert", native_assert, Generic, EFFECTFUL;
+    AssertSameValue, Assert, "sameValue", native_assert_same_value, Generic, EFFECTFUL;
     AssertStrictEqual, Assert, "strictEqual", native_assert_strict_equal, Generic, EFFECTFUL;
     AssertThrows, Assert, "throws", native_assert_throws, Generic, MAY_CALL_JS;
     SetTimeout, Global, "setTimeout", native_set_timeout, Generic, EFFECTFUL;

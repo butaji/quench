@@ -11797,6 +11797,15 @@ impl Vm {
             }
         }
         let module_source = st.is_module();
+        if module_source && std::env::var_os("QUENCH_DEBUG_ASSERT").is_some() {
+            let assert_value = Environment::get(&self.global, "assert").unwrap_or(Value::Undefined);
+            eprintln!(
+                "ASSERT kind fn={} obj={} same={}",
+                assert_value.is_function(),
+                assert_value.is_object_like(),
+                self.get_prop(&assert_value, "sameValue").is_function()
+            );
+        }
         let module_key = module_source.then(|| self.module_key(p));
         let module_owner = module_key
             .as_ref()
@@ -24278,6 +24287,28 @@ fn native_assert(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
         .map(Value::string)
         .unwrap_or_else(|| "The expression evaluated to a falsy value".to_owned());
     Err(JsError::Throw(assertion_error(vm, &message)))
+}
+fn native_assert_same_value(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let left = args.first().cloned().unwrap_or(Value::Undefined);
+    let right = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let equal = if let (Some(left), Some(right)) = (left.as_number(), right.as_number()) {
+        (left.is_nan() && right.is_nan())
+            || (left == right && left.is_sign_positive() == right.is_sign_positive())
+    } else {
+        eq_strict(&left, &right)
+    };
+    if equal {
+        Ok(Value::Undefined)
+    } else {
+        let message = args.get(2).map(Value::string).unwrap_or_else(|| {
+            format!(
+                "Expected SameValue(«{}», «{}») to be true",
+                left.display(),
+                right.display()
+            )
+        });
+        Err(JsError::Throw(assertion_error(vm, &message)))
+    }
 }
 fn native_assert_strict_equal(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let left = args.first().cloned().unwrap_or(Value::Undefined);
