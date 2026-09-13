@@ -2,80 +2,21 @@
 
 use crate::unwind::Trap;
 
-macro_rules! bin_i64 {
-    ($($name:ident => $apply:ident),+ $(,)?) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-        #[repr(u8)]
-        pub enum BinI64 {
-            $($name),+
-        }
-
-        impl BinI64 {
-            pub fn is_rel(self) -> bool {
-                (self as u8) >= BinI64::Eq as u8
-            }
-
-            pub fn apply(self, lhs: i64, rhs: i64) -> Result<i64, Trap> {
-                const TABLE: &[fn(i64, i64) -> Result<i64, Trap>] = &[$($apply),+];
-                TABLE[self as usize](lhs, rhs)
-            }
-        }
-    };
-}
-
-macro_rules! un_i64 {
-    ($($name:ident => $apply:ident),+ $(,)?) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-        #[repr(u8)]
-        pub enum UnI64 {
-            $($name),+
-        }
-
-        impl UnI64 {
-            pub fn apply(self, src: i64) -> i64 {
-                const TABLE: &[fn(i64) -> i64] = &[$($apply),+];
-                TABLE[self as usize](src)
-            }
-        }
-    };
-}
-
-bin_i64! {
-    Add => add,
-    Sub => sub,
-    Mul => mul,
-    DivS => div_s,
-    DivU => div_u,
-    RemS => rem_s,
-    RemU => rem_u,
-    And => and,
-    Or => or,
-    Xor => xor,
-    Shl => shl,
-    ShrS => shr_s,
-    ShrU => shr_u,
-    Rotl => rotl,
-    Rotr => rotr,
-    Eq => eq,
-    Ne => ne,
-    LtS => lt_s,
-    LtU => lt_u,
-    LeS => le_s,
-    LeU => le_u,
-    GtS => gt_s,
-    GtU => gt_u,
-    GeS => ge_s,
-    GeU => ge_u,
-}
-
-un_i64! {
-    Clz => clz,
-    Ctz => ctz,
-    Popcnt => popcnt,
-    Eqz => eqz,
-    Extend8S => extend8_s,
-    Extend16S => extend16_s,
-    Extend32S => extend32_s,
+define_integer_kernels! {
+    binary BinI64,
+    unary UnI64,
+    type i64;
+    binary_ops {
+        Add => add, Sub => sub, Mul => mul, DivS => div_s, DivU => div_u,
+        RemS => rem_s, RemU => rem_u, And => and, Or => or, Xor => xor,
+        Shl => shl, ShrS => shr_s, ShrU => shr_u, Rotl => rotl, Rotr => rotr,
+        Eq => eq, Ne => ne, LtS => lt_s, LtU => lt_u, LeS => le_s, LeU => le_u,
+        GtS => gt_s, GtU => gt_u, GeS => ge_s, GeU => ge_u,
+    }
+    unary_ops {
+        Clz => clz, Ctz => ctz, Popcnt => popcnt, Eqz => eqz,
+        Extend8S => extend8_s, Extend16S => extend16_s, Extend32S => extend32_s,
+    }
 }
 
 fn add(lhs: i64, rhs: i64) -> Result<i64, Trap> {
