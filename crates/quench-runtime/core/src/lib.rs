@@ -8365,6 +8365,7 @@ impl Vm {
             // Ordinary [[Set]] defines the property on the original receiver;
             // this is what lets a Proxy's defineProperty trap observe writes
             // forwarded through a target Proxy.
+            self.ensure_deferred_namespace(receiver, Some(key))?;
             let descriptor = vm_assignment_descriptor(self, receiver, key, value)?;
             native_object_define_property(
                 self,
@@ -8670,6 +8671,7 @@ impl Vm {
         }
     }
     fn delete_prop_with_vm(&mut self, o: &Value, k: &str) -> JsResult<bool> {
+        self.ensure_deferred_namespace(o, Some(k))?;
         if let Some(target) = proxy_target(o) {
             if proxy_revoked(o) {
                 return Err(JsError::Throw(type_error(self, "revoked Proxy")));
@@ -9996,22 +9998,63 @@ impl Vm {
             };
             (method.kind == MethodDefinitionKind::Constructor).then_some(&*method.value)
         });
-        if let Some(constructor) = constructor {
-            let constructor = self.make_user(constructor, env);
+        let result = if let Some(constructor) = constructor {
+            let constructor = self.make_user(constructor, env.clone());
             let result = self.call_arguments(&constructor, this.clone(), args.as_slice())?;
             if let Some(regexp) = result.as_regexp_ref() {
                 regexp.borrow_mut().prototype = this.as_object();
             }
-            Ok(result)
+            result
         } else if let Some(super_constructor) = super_constructor {
             let result = self.call_arguments(&super_constructor, this.clone(), args.as_slice())?;
             if let Some(regexp) = result.as_regexp_ref() {
                 regexp.borrow_mut().prototype = this.as_object();
             }
-            Ok(result)
+            result
         } else {
-            Ok(Value::Undefined)
+            this.clone()
+        };
+        // Class fields are initialized after the constructor returns.  Keep
+        // the field declaration as the single source of truth and route
+        // public fields through [[DefineOwnProperty]], so deferred module
+        // namespaces observe the specified evaluation trigger.  Private
+        // names use the same compact property representation; a namespace
+        // target still rejects the write with the required TypeError.
+        let receiver = if result.is_object_like() {
+            result
+        } else {
+            this
+        };
+        for element in &class.body.body {
+            let ClassElement::PropertyDefinition(field) = element else {
+                continue;
+            };
+            if field.r#static {
+                continue;
+            }
+            let key = self.eval_property_key(&field.key, env.clone())?;
+            let value = field
+                .value
+                .as_ref()
+                .map(|value| self.eval_expr(value, env.clone()))
+                .transpose()?
+                .unwrap_or(Value::Undefined);
+            if matches!(&field.key, PropertyKey::PrivateIdentifier(_)) {
+                self.set_prop_with_accessors(&receiver, &key, value)?;
+                continue;
+            }
+            let descriptor = self.ordinary_object();
+            self.set_prop(&descriptor, "value", value);
+            self.set_prop(&descriptor, "writable", Value::Bool(true));
+            self.set_prop(&descriptor, "enumerable", Value::Bool(true));
+            self.set_prop(&descriptor, "configurable", Value::Bool(true));
+            native_object_define_property(
+                self,
+                Value::Undefined,
+                &[receiver.clone(), Value::string_value(key), descriptor],
+            )?;
         }
+        Ok(receiver)
     }
 
     fn call_arrow(
@@ -10292,6 +10335,67 @@ impl Vm {
         Ok(names)
     }
 
+    /// Collect the asynchronous transitive dependencies of a deferred module.
+    /// The module graph is represented by the parsed import declarations; a
+    /// module containing top-level `await` is an async boundary, while its
+    /// synchronous parents are evaluated when the deferred namespace is
+    /// first materialized.  Keeping this fact pass separate from execution
+    /// lets the same module loader serve static and dynamic imports.
+    fn deferred_async_dependencies(&mut self, path: &Path) -> JsResult<Vec<PathBuf>> {
+        fn visit(
+            vm: &mut Vm,
+            path: &Path,
+            seen: &mut HashSet<PathBuf>,
+            result: &mut Vec<PathBuf>,
+        ) -> JsResult<()> {
+            let key = vm.module_key(path);
+            if !seen.insert(key.clone()) {
+                return Ok(());
+            }
+            let source =
+                fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
+            if contains_identifier_token(&source, "await") {
+                result.push(key);
+                return Ok(());
+            }
+            let parsed_source: &'static str = Box::leak(source.into_boxed_str());
+            let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+            let parsed = Parser::new(allocator, parsed_source, SourceType::mjs())
+                .with_options(ParseOptions {
+                    parse_regular_expression: true,
+                    ..Default::default()
+                })
+                .parse();
+            if let Some(error) = parsed.diagnostics.first() {
+                return Err(JsError::Throw(syntax_error(
+                    vm,
+                    &format!("parse error: {error:?}"),
+                )));
+            }
+            let Some(parent) = key.parent() else {
+                return Ok(());
+            };
+            for statement in &parsed.program.body {
+                let request = match statement {
+                    Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
+                    Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
+                    Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
+                    _ => None,
+                };
+                if let Some(request) = request {
+                    let dependency = vm.resolve_module_request(parent, request);
+                    visit(vm, &dependency, seen, result)?;
+                }
+            }
+            Ok(())
+        }
+
+        let mut seen = HashSet::new();
+        let mut result = Vec::new();
+        visit(self, path, &mut seen, &mut result)?;
+        Ok(result)
+    }
+
     fn json_module_value(&mut self, value: &serde_json::Value) -> Value {
         match value {
             serde_json::Value::Null => Value::Null,
@@ -10422,6 +10526,21 @@ impl Vm {
         Ok(())
     }
 
+    fn ensure_deferred_namespace(&mut self, object: &Value, key: Option<&str>) -> JsResult<()> {
+        if key.is_some_and(|key| key == "then" || key.starts_with('\0')) {
+            return Ok(());
+        }
+        if object.as_object_ref().is_some_and(|object| {
+            object
+                .borrow()
+                .props
+                .contains_key(DEFERRED_NAMESPACE_PATH_PROP)
+        }) {
+            self.materialize_deferred_namespace(object)?;
+        }
+        Ok(())
+    }
+
     fn bind_module_imports(
         &mut self,
         path: &Path,
@@ -10446,6 +10565,11 @@ impl Vm {
                 })
             });
             let deferred = import.phase == Some(ImportPhase::Defer);
+            if deferred {
+                for dependency in self.deferred_async_dependencies(&target)? {
+                    self.load_module_exports(&dependency)?;
+                }
+            }
             let exports = if deferred {
                 self.module_export_names(&target)?
                     .into_iter()
@@ -10940,7 +11064,16 @@ impl Vm {
                 .and_then(|signal| self.complete_script_signal(signal))
         };
         if module_source {
-            if let Some(exports) = self.module_export_stack.pop() {
+            if let Some(mut exports) = self.module_export_stack.pop() {
+                // Exported `let`/`var` bindings are live cells.  The compact
+                // cache stores values, so refresh each declared name from the
+                // module environment after execution to preserve assignments
+                // performed during initialization.
+                for name in exports.keys().cloned().collect::<Vec<_>>() {
+                    if let Some(value) = Environment::get(&environment, &name) {
+                        exports.insert(name, value);
+                    }
+                }
                 if let Some(key) = module_key.as_ref() {
                     self.module_exports_cache
                         .insert(key.clone(), exports.clone());
@@ -12476,16 +12609,26 @@ impl Vm {
                     .and_then(|path| path.parent())
                     .map(|parent| parent.join(&request))
                     .unwrap_or_else(|| PathBuf::from(&request));
-                let exports = self.load_module_exports(&target)?;
-                let namespace = self.module_namespace(
-                    &target,
-                    &exports,
-                    import.phase == Some(ImportPhase::Defer),
-                );
                 let promise_constructor =
                     Environment::get(&self.global, "Promise").unwrap_or(Value::Undefined);
-                let (promise, resolve, _) = new_promise_capability(self, promise_constructor)?;
-                self.call(resolve, Value::Undefined, vec![namespace])?;
+                let (promise, resolve, reject) = new_promise_capability(self, promise_constructor)?;
+                match self.load_module_exports(&target) {
+                    Ok(exports) => {
+                        let namespace = self.module_namespace(
+                            &target,
+                            &exports,
+                            import.phase == Some(ImportPhase::Defer),
+                        );
+                        self.call(resolve, Value::Undefined, vec![namespace])?;
+                    }
+                    Err(error) => {
+                        let reason = match error {
+                            JsError::Throw(value) => value,
+                            JsError::Message(message) => Value::string_value(message),
+                        };
+                        self.call(reject, Value::Undefined, vec![reason])?;
+                    }
+                }
                 Ok(promise)
             }
             AwaitExpression(await_expression) => {
@@ -12509,6 +12652,27 @@ impl Vm {
                     }
                 }
                 Ok(value)
+            }
+            PrivateInExpression(private_in) => {
+                let object = self.eval_expr(&private_in.right, e)?;
+                if !object.is_object_like() {
+                    return Ok(Value::Bool(false));
+                }
+                // Private names never participate in module-namespace
+                // evaluation.  The compact representation stores ordinary
+                // private fields under their identifier, which is sufficient
+                // for class-brand checks while keeping the namespace fast
+                // path side-effect free.
+                if object
+                    .as_object_ref()
+                    .is_some_and(|object| object.borrow().props.contains_key(MODULE_NAMESPACE_PROP))
+                {
+                    return Ok(Value::Bool(false));
+                }
+                Ok(Value::Bool(self.has_property_with_proxy(
+                    &object,
+                    private_in.left.name.as_str(),
+                )?))
             }
             YieldExpression(yield_expression) => {
                 let value = yield_expression
@@ -12835,8 +12999,16 @@ impl Vm {
                     let callee = Environment::get(&e, CLASS_SUPER_CONSTRUCTOR_ENV_NAME)
                         .unwrap_or(Value::Undefined);
                     let this = Environment::get(&e, "this").unwrap_or(Value::Undefined);
-                    let args = self.eval_args(&v.arguments, e)?;
-                    return self.call(callee, this, args);
+                    let args = self.eval_args(&v.arguments, e.clone())?;
+                    let result = self.call(callee, this, args)?;
+                    // A derived constructor adopts the object returned by
+                    // `super()` as its actual this binding.  This is also the
+                    // receiver used by subsequent super-property writes and
+                    // class-field initialization.
+                    if result.is_object_like() {
+                        Environment::set(&e, "this", result.clone());
+                    }
+                    return Ok(result);
                 }
                 let (t, c) = if let Some(m) = v.callee.as_member_expression() {
                     let (o, k) = self.member_parts(m, e.clone())?;
@@ -22141,6 +22313,7 @@ fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResu
 
 fn native_reflect_own_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "ownKeys")?;
+    vm.ensure_deferred_namespace(&target, None)?;
     let keys = proxy_own_property_keys_with_vm(vm, &target)?;
     Ok(vm.array_from_values(
         keys.into_iter()
@@ -26179,6 +26352,17 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
         )));
     }
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    if key != "then"
+        && !key.starts_with('\0')
+        && target.as_object_ref().is_some_and(|object| {
+            object
+                .borrow()
+                .props
+                .contains_key(DEFERRED_NAMESPACE_PATH_PROP)
+        })
+    {
+        vm.materialize_deferred_namespace(target)?;
+    }
     let descriptor = args.get(2).cloned().unwrap_or(Value::Undefined);
     if !descriptor.is_object_like() {
         return Err(JsError::Throw(type_error(
@@ -27044,6 +27228,7 @@ fn native_object_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             "TypeError: keys target is undefined".into(),
         ));
     };
+    vm.ensure_deferred_namespace(target, None)?;
     let keys = proxy_own_enumerable_keys(vm, target)?
         .into_iter()
         .filter(|key| !is_symbol_key(key))
@@ -27058,6 +27243,7 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             "Object.getOwnPropertyNames target is undefined",
         )));
     };
+    vm.ensure_deferred_namespace(target, None)?;
     if proxy_target(target).is_some() {
         let keys = proxy_own_property_keys_with_vm(vm, target)?
             .into_iter()
@@ -27152,6 +27338,7 @@ fn native_object_get_own_property_symbols(
             "Object.getOwnPropertySymbols target is undefined",
         )));
     };
+    vm.ensure_deferred_namespace(target, None)?;
     if proxy_target(target).is_some() {
         let keys = proxy_own_property_keys_with_vm(vm, target)?
             .into_iter()
