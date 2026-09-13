@@ -7802,11 +7802,7 @@ impl Vm {
                 return Err(JsError::Throw(type_error(self, "object is not extensible")));
             }
         } else if let Some(function) = object.as_function_ref()
-            && function
-                .attributes
-                .borrow()
-                .get(key)
-                .is_some_and(|attributes| !attributes.writable)
+            && !function_property_writable(function, key)
         {
             return Err(JsError::Throw(type_error(
                 self,
@@ -8485,6 +8481,22 @@ impl Vm {
         if proxy_target(c).is_some() {
             return self.call_proxy(c, t, a);
         }
+        if c.as_function_ref().is_some_and(|function| {
+            matches!(
+                function.kind,
+                FunctionKind::Native(native)
+                    if native as *const () == native_proxy_constructor as *const ()
+            )
+        }) && self
+            .current_new_target
+            .as_ref()
+            .is_none_or(|new_target| !new_target.same_bits(c))
+        {
+            return Err(JsError::Throw(type_error(
+                self,
+                "Proxy constructor must be called with new",
+            )));
+        }
         let captures_deleted_binding = c.as_function_ref().is_some_and(|function| {
             matches!(
                 &function.kind,
@@ -8514,7 +8526,23 @@ impl Vm {
             if call_ic.has_loop() {
                 self.jit_stats.native_loop_entries += 1;
             }
-            return call_ic.call(self, t, a);
+            let effective_strict = c.as_function_ref().is_some_and(|function| {
+                function.strict
+                    || match &function.kind {
+                        FunctionKind::User { node, .. } => node.body.as_ref().is_some_and(|body| {
+                            body.directives
+                                .iter()
+                                .any(|directive| directive.directive.as_str() == "use strict")
+                        }),
+                        FunctionKind::Arrow { node, .. } => node.body.as_function_body().is_some_and(|body| {
+                            body.directives
+                                .iter()
+                                .any(|directive| directive.directive.as_str() == "use strict")
+                        }),
+                        _ => false,
+                    }
+            });
+            return with_strict_mode!(self, effective_strict, call_ic.call(self, t, a));
         }
         if let Some(f) = c.as_function_ref() {
             let effective_strict = f.strict
@@ -8537,6 +8565,29 @@ impl Vm {
                     a.materialize(),
                     Some(f.prototype),
                 );
+            }
+            if let FunctionKind::User { node, env } = &f.kind
+                && node.generator
+                && !node.r#async
+            {
+                // Synchronous generator suspension is not yet a stencil
+                // frame, so materialize its yields through the same AST
+                // evaluator and expose the canonical array iterator protocol.
+                let previous_yields = self.async_generator_yields.take();
+                self.async_generator_yields = Some(Vec::new());
+                let result = self.call_user(
+                    node,
+                    env.clone(),
+                    t,
+                    a.materialize(),
+                    f.source_id,
+                    f.strict,
+                );
+                let yields = self.async_generator_yields.take().unwrap_or_default();
+                self.async_generator_yields = previous_yields;
+                result?;
+                let values = self.array_from_values(yields);
+                return native_array_iterator(self, values, &[]);
             }
             if matches!(f.kind, FunctionKind::Class { .. }) && self.current_new_target.is_some() {
                 return self.call_class(&f, t, a.materialize());
@@ -9666,6 +9717,28 @@ impl Vm {
         use Statement::*;
         match s {
             EmptyStatement(_) | DebuggerStatement(_) => Ok(Signal::Normal(Value::Undefined)),
+            ImportDeclaration(import) => {
+                // Module linking is supplied by the host for full modules;
+                // this evaluator still needs an object namespace binding for
+                // local module probes (including Proxy target forwarding).
+                if let Some(specifiers) = &import.specifiers {
+                    for specifier in specifiers {
+                        let (name, value) = match specifier {
+                            oxc_ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(
+                                specifier,
+                            ) => (specifier.local.name.as_str(), self.object(None)),
+                            oxc_ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(
+                                specifier,
+                            ) => (specifier.local.name.as_str(), Value::Undefined),
+                            oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                                (specifier.local.name.as_str(), Value::Undefined)
+                            }
+                        };
+                        e.borrow_mut().declare(name, value);
+                    }
+                }
+                Ok(Signal::Normal(Value::Undefined))
+            }
             ExpressionStatement(x) => Ok(Signal::Normal(self.eval_expr(&x.expression, e)?)),
             BlockStatement(x) => self.exec_stmts(&x.body, Environment::new(Some(e))),
             // Labels do not introduce a scope. Re-enter the labeled body when
@@ -10785,7 +10858,7 @@ impl Vm {
                 let local = borrowed
                     .names
                     .get(name)
-                    .filter(|slot| !borrowed.deleted_names.contains(name))
+                    .filter(|_| !borrowed.deleted_names.contains(name))
                     .and_then(|slot| borrowed.values.get(*slot))
                     .cloned();
                 (local, borrowed.with_object.clone(), borrowed.parent.clone())
@@ -11758,6 +11831,14 @@ impl Vm {
             _ => Err(JsError::Message("target unsupported".into())),
         }
     }
+}
+
+fn function_property_writable(function: &FunctionValue<'_>, key: &str) -> bool {
+    function
+        .attributes
+        .borrow()
+        .get(key)
+        .map_or(!matches!(key, "name" | "length"), |attributes| attributes.writable)
 }
 
 impl Vm {
@@ -12982,11 +13063,14 @@ fn native_eval(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
     )
 }
 
-fn native_eval_script(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+fn native_eval_script(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
+    let environment = vm
+        .realm_environment_for_global(&this)
+        .unwrap_or_else(|| vm.global.clone());
     with_strict_mode!(
         vm,
         false,
-        native_eval_in_environment(vm, a, vm.global.clone(), true, true)
+        native_eval_in_environment(vm, a, environment, true, true)
     )
 }
 
@@ -18939,17 +19023,9 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
         return Ok(Value::Bool(false));
     }
     if target.as_function_ref().is_some_and(|function| {
-        function
-            .attributes
-            .borrow()
-            .get(&key)
-            .is_some_and(|attributes| !attributes.writable)
+        !function_property_writable(function, &key)
     }) || receiver.as_function_ref().is_some_and(|function| {
-        function
-            .attributes
-            .borrow()
-            .get(&key)
-            .is_some_and(|attributes| !attributes.writable)
+        !function_property_writable(function, &key)
     }) {
         return Ok(Value::Bool(false));
     }
@@ -19263,7 +19339,9 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     vm.set_prop(&global, "eval", eval.clone());
     Environment::set(&environment, "eval", eval);
     vm.realm_globals.push((global_handle, environment));
-    vm.set_prop(&realm, "global", global);
+    vm.set_prop(&realm, "global", global.clone());
+    let eval_script = native_function_bind(vm, vm.native(native_eval_script), &[global.clone()])?;
+    vm.set_prop(&realm, "evalScript", eval_script);
     Ok(realm)
 }
 
