@@ -10378,6 +10378,12 @@ impl Vm {
             && !eval_code
             && !script_eval
             && !contains_eval_call(source)
+            // Accessor bodies can mutate an outer binding through a call
+            // boundary.  Until the stencil image carries environment-cell
+            // invalidation for those writes, keep this shape on the shared
+            // interpreter path (the same VM semantics, with a correct
+            // fallback) rather than exposing a stale cached global register.
+            && !contains_accessor_syntax(source)
             && !contains_async_function_constructor_probe(source)
             && !has_direct_lexical_declaration(&r.program.body)
         {
@@ -14588,6 +14594,14 @@ fn contains_eval_call(source: &str) -> bool {
         let suffix = suffix.trim_start();
         suffix.starts_with('(') || suffix.starts_with(')')
     })
+}
+
+fn contains_accessor_syntax(source: &str) -> bool {
+    // OXC owns the grammar; this is only a conservative admission guard for
+    // the JIT, not a parser.  Requiring a keyword boundary avoids matching
+    // ordinary words such as "getter" while covering object/class accessors.
+    source.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|token| matches!(token, "get" | "set"))
 }
 
 fn contains_async_function_constructor_probe(source: &str) -> bool {
