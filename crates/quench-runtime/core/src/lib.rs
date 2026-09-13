@@ -8582,6 +8582,24 @@ impl Vm {
         object.attributes.insert(key.to_owned(), attributes);
     }
 
+    fn own_accessor_slots(&self, object: &Value, key: &str) -> (Option<Value>, Option<Value>) {
+        if let Some(function) = object.as_function_ref() {
+            let props = function.props.borrow();
+            return (
+                props.get(&accessor_slot("get", key)).cloned(),
+                props.get(&accessor_slot("set", key)).cloned(),
+            );
+        }
+        if let Some(object) = object.as_object_ref() {
+            let props = object.borrow();
+            return (
+                props.props.get(&accessor_slot("get", key)).cloned(),
+                props.props.get(&accessor_slot("set", key)).cloned(),
+            );
+        }
+        (None, None)
+    }
+
     pub(crate) fn install_accessor_slot(&self, object: &Value, slot: &str, value: Value) {
         let Some((kind, key)) = accessor_key(slot) else {
             return;
@@ -13860,28 +13878,30 @@ impl Vm {
                         PropertyAttributes::BUILTIN_METHOD
                     );
                 }
-                MethodDefinitionKind::Get => self.define_accessor_slot(
-                    target,
-                    &key,
-                    Some(method_value),
-                    None,
-                    PropertyAttributes {
-                        writable: false,
-                        enumerable: false,
-                        configurable: true,
-                    },
-                ),
-                MethodDefinitionKind::Set => self.define_accessor_slot(
-                    target,
-                    &key,
-                    None,
-                    Some(method_value),
-                    PropertyAttributes {
-                        writable: false,
-                        enumerable: false,
-                        configurable: true,
-                    },
-                ),
+                MethodDefinitionKind::Get | MethodDefinitionKind::Set => {
+                    // Class accessor declarations are accumulated by key: a
+                    // getter followed by a setter (or the reverse) produces
+                    // one descriptor carrying both functions.  Preserve the
+                    // already-installed half instead of replacing it when
+                    // the second declaration is evaluated.
+                    let (existing_getter, existing_setter) = self.own_accessor_slots(target, &key);
+                    let (getter, setter) = match method.kind {
+                        MethodDefinitionKind::Get => (Some(method_value), existing_setter),
+                        MethodDefinitionKind::Set => (existing_getter, Some(method_value)),
+                        _ => unreachable!(),
+                    };
+                    self.define_accessor_slot(
+                        target,
+                        &key,
+                        getter,
+                        setter,
+                        PropertyAttributes {
+                            writable: false,
+                            enumerable: false,
+                            configurable: true,
+                        },
+                    );
+                }
                 MethodDefinitionKind::Constructor => unreachable!(),
             }
         }
