@@ -46,6 +46,19 @@ macro_rules! define_integer_kernels {
     };
 }
 
+macro_rules! define_native_accessors {
+    ($( $name:ident => $variant:ident : $ty:ty ),+ $(,)?) => {
+        $(
+            pub fn $name(self) -> Option<$ty> {
+                match self {
+                    Self::$variant(value) => Some(value),
+                    _ => None,
+                }
+            }
+        )+
+    };
+}
+
 mod conv;
 mod float;
 mod i32_ops;
@@ -90,46 +103,13 @@ pub enum Native {
 }
 
 impl Native {
-    pub fn as_i32(self) -> Option<i32> {
-        match self {
-            Self::I32(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn as_i64(self) -> Option<i64> {
-        match self {
-            Self::I64(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn as_f32_bits(self) -> Option<u32> {
-        match self {
-            Self::F32(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn as_f64_bits(self) -> Option<u64> {
-        match self {
-            Self::F64(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn as_v128(self) -> Option<u128> {
-        match self {
-            Self::V128(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn as_ref(self) -> Option<RefVal> {
-        match self {
-            Self::Ref(value) => Some(value),
-            _ => None,
-        }
+    define_native_accessors! {
+        as_i32 => I32: i32,
+        as_i64 => I64: i64,
+        as_f32_bits => F32: u32,
+        as_f64_bits => F64: u64,
+        as_v128 => V128: u128,
+        as_ref => Ref: RefVal,
     }
 
     pub fn zero_i32() -> Self {
@@ -139,12 +119,20 @@ impl Native {
 
 #[cfg(test)]
 mod tests {
-    use super::Native;
+    use super::{Native, RefVal};
 
     #[test]
     fn v128_is_sixteen_bytes() {
         assert_eq!(std::mem::size_of::<u128>(), 16);
         let slot = Native::V128(0);
         assert!(matches!(slot, Native::V128(0)));
+    }
+
+    #[test]
+    fn generated_accessors_preserve_native_tags() {
+        assert_eq!(Native::I32(7).as_i32(), Some(7));
+        assert_eq!(Native::I32(7).as_i64(), None);
+        assert_eq!(Native::F64(11).as_f64_bits(), Some(11));
+        assert_eq!(Native::Ref(RefVal::Null).as_ref(), Some(RefVal::Null));
     }
 }
