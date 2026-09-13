@@ -5023,6 +5023,10 @@ struct Timer {
 
 struct Vm {
     global: Env,
+    // Child realms share this VM's evaluator and builtins, but keep an
+    // explicit global object/environment pair so indirect eval resolves in
+    // the realm selected by its receiver.
+    realm_globals: Vec<(ObjectHandle, Env)>,
     cwd: PathBuf,
     source_stack: Vec<PathBuf>,
     source_ids: Vec<usize>,
@@ -5065,6 +5069,7 @@ impl Vm {
         let g = Environment::new(None);
         let mut v = Self {
             global: g.clone(),
+            realm_globals: Vec::new(),
             cwd: env::current_dir().unwrap(),
             source_stack: Vec::new(),
             source_ids: Vec::new(),
@@ -5152,6 +5157,10 @@ impl Vm {
         }
         let mut tracer = ObjectTracer::new(&self.object_heap);
         tracer.environment(self.global.clone());
+        self.realm_globals.iter().for_each(|(global, environment)| {
+            tracer.object(*global);
+            tracer.environment(environment.clone());
+        });
         if let Some(prototype) = self.array_proto {
             tracer.object(prototype);
         }
@@ -5408,6 +5417,30 @@ impl Vm {
         builtins::lookup(owner, key)
             .map(|id| self.builtin(id))
             .unwrap_or(Value::Undefined)
+    }
+    fn is_global_environment(&self, environment: &Env) -> bool {
+        Rc::ptr_eq(environment, &self.global)
+            || self
+                .realm_globals
+                .iter()
+                .any(|(_, candidate)| Rc::ptr_eq(environment, candidate))
+    }
+    fn global_object_for_environment(&self, environment: &Env) -> Option<Value> {
+        if Rc::ptr_eq(environment, &self.global) {
+            return Environment::get(&self.global, "globalThis");
+        }
+        self.realm_globals
+            .iter()
+            .find(|(_, candidate)| Rc::ptr_eq(environment, candidate))
+            .map(|(global, _)| Value::Object(*global))
+    }
+    fn realm_environment_for_global(&self, value: &Value) -> Option<Env> {
+        let object = value.as_object_ref()?;
+        let pointer = object as *const ObjectCell;
+        self.realm_globals
+            .iter()
+            .find(|(global, _)| global.as_ptr() == pointer)
+            .map(|(_, environment)| environment.clone())
     }
     fn install(&mut self) {
         let g = self.global.clone();
@@ -7248,8 +7281,8 @@ impl Vm {
                     return Ok(Value::Bool(false));
                 }
                 let deleted = binding.borrow_mut().delete_local(name);
-                if deleted && Rc::ptr_eq(&binding, &self.global) {
-                    if let Some(global_this) = Environment::get(&self.global, "globalThis") {
+                if deleted && self.is_global_environment(&binding) {
+                    if let Some(global_this) = self.global_object_for_environment(&binding) {
                         return Ok(Value::Bool(self.delete_prop(&global_this, name)));
                     }
                 }
@@ -8102,8 +8135,8 @@ impl Vm {
             let mut function_names = Vec::new();
             collect_function_declaration_names(&r.program.body, &mut function_names);
             let var_environment = variable_environment(&environment);
-            if Rc::ptr_eq(&var_environment, &self.global)
-                && let Some(global_this) = Environment::get(&self.global, "globalThis")
+            if self.is_global_environment(&var_environment)
+                && let Some(global_this) = self.global_object_for_environment(&var_environment)
                 && let Some(global_object) = global_this.as_object_ref()
             {
                 let global_object = global_object.borrow();
@@ -8146,8 +8179,8 @@ impl Vm {
                     "eval var declaration conflicts with lexical binding",
                 )));
             }
-            if Rc::ptr_eq(&environment, &self.global) {
-                let global_lexical_names = self.global.borrow().lexical_names.clone();
+            if self.is_global_environment(&environment) {
+                let global_lexical_names = environment.borrow().lexical_names.clone();
                 if !self.strict_mode
                     && var_names
                         .iter()
@@ -8160,7 +8193,8 @@ impl Vm {
                 }
                 let mut lexical_names = HashSet::new();
                 collect_lexical_binding_names(&r.program.body, &mut lexical_names);
-                let restricted = Environment::get(&self.global, "globalThis")
+                let restricted = self
+                    .global_object_for_environment(&environment)
                     .and_then(|global| global.as_object())
                     .is_some_and(|object| {
                         let object = object.borrow();
@@ -8874,19 +8908,19 @@ impl Vm {
     }
 
     fn sync_global_binding(&self, environment: &Env, name: &str, value: Value) {
-        if !Rc::ptr_eq(environment, &self.global) {
+        if !self.is_global_environment(environment) {
             return;
         }
-        if let Some(global_this) = Environment::get(&self.global, "globalThis") {
+        if let Some(global_this) = self.global_object_for_environment(environment) {
             self.set_prop(&global_this, name, value);
         }
     }
 
     fn materialize_script_bindings(&self, environment: &Env, statements: &[Statement<'_>]) {
-        if !Rc::ptr_eq(environment, &self.global) {
+        if !self.is_global_environment(environment) {
             return;
         }
-        let Some(global_this) = Environment::get(&self.global, "globalThis") else {
+        let Some(global_this) = self.global_object_for_environment(environment) else {
             return;
         };
         let mut names = Vec::new();
@@ -8918,10 +8952,10 @@ impl Vm {
     }
 
     fn hydrate_global_bindings(&self, environment: &Env, statements: &[Statement<'_>]) {
-        if !Rc::ptr_eq(environment, &self.global) {
+        if !self.is_global_environment(environment) {
             return;
         }
-        let Some(global_this) = Environment::get(&self.global, "globalThis") else {
+        let Some(global_this) = self.global_object_for_environment(environment) else {
             return;
         };
         let mut names = Vec::new();
@@ -8947,7 +8981,7 @@ impl Vm {
         let name = id.name.as_str();
         let mut current = Some(environment.clone());
         while let Some(candidate) = current {
-            let is_global = Rc::ptr_eq(&candidate, &self.global);
+            let is_global = self.is_global_environment(&candidate);
             let (parent, is_variable, blocked) = {
                 let candidate_ref = candidate.borrow();
                 (
@@ -8984,7 +9018,7 @@ impl Vm {
             return;
         }
         let closure = self.make_user(function, environment.clone());
-        let is_global_environment = Rc::ptr_eq(&environment, &self.global);
+        let is_global_environment = self.is_global_environment(&environment);
         let is_lexical_environment =
             !is_variable_environment(&environment) && !is_global_environment;
         {
@@ -9017,14 +9051,14 @@ impl Vm {
                 }
             }
         }
-        if !annex_b_allowed || self.strict_mode || Rc::ptr_eq(&environment, &self.global) {
+        if !annex_b_allowed || self.strict_mode || self.is_global_environment(&environment) {
             return;
         }
         let mut current = Some(environment);
         let mut lexical_conflict = false;
         let mut first_environment = true;
         while let Some(candidate) = current {
-            let is_global = Rc::ptr_eq(&candidate, &self.global);
+            let is_global = self.is_global_environment(&candidate);
             let (parent, is_variable_environment, has_name, is_parameter, is_lexical, is_eval) = {
                 let candidate_ref = candidate.borrow();
                 (
@@ -10112,7 +10146,7 @@ impl Vm {
         }
         let mut current = Some(environment.clone());
         while let Some(candidate) = current {
-            if Rc::ptr_eq(&candidate, &self.global) {
+            if self.is_global_environment(&candidate) {
                 return true;
             }
             current = candidate.borrow().parent.clone();
@@ -11485,11 +11519,14 @@ macro_rules! with_strict_mode {
     }};
 }
 
-fn native_eval(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+fn native_eval(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
+    let environment = vm
+        .realm_environment_for_global(&this)
+        .unwrap_or_else(|| vm.global.clone());
     with_strict_mode!(
         vm,
         false,
-        native_eval_in_environment(vm, a, vm.global.clone(), true, false)
+        native_eval_in_environment(vm, a, environment, true, false)
     )
 }
 
@@ -16279,6 +16316,10 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     // constructor identity.  The compact host does not need a second
     // execution environment for this compatibility boundary.
     let global = vm.object(None);
+    let global_handle = global.as_object().expect("realm global object");
+    let environment = Environment::new(None);
+    Environment::set(&environment, "undefined", Value::Undefined);
+    Environment::set(&environment, "globalThis", global.clone());
     let symbol = vm.native_named(native_symbol, "Symbol", 0);
     let function = vm.native_named(native_function_constructor, "Function", 1);
     let throw_type_error = vm.new_throw_type_error();
@@ -16351,6 +16392,10 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     );
     vm.set_prop(&global, "Function", function);
     vm.set_prop(&global, "globalThis", global.clone());
+    let eval = native_function_bind(vm, vm.builtin(BuiltinId::Eval), &[global.clone()])?;
+    vm.set_prop(&global, "eval", eval.clone());
+    Environment::set(&environment, "eval", eval);
+    vm.realm_globals.push((global_handle, environment));
     vm.set_prop(&realm, "global", global);
     Ok(realm)
 }
