@@ -569,6 +569,23 @@ impl Compiler {
                 reason: "catch var redeclaration deferred to shared semantics",
             });
         }
+        // Lexical declarations create a fresh declarative environment for
+        // every block/iteration.  The compact script stencil has one lexical
+        // frame, so reject only the shapes whose scope cannot be represented
+        // by that frame; the same VM interpreter then supplies the precise
+        // environment semantics.  Top-level let/const remains stencilable.
+        if contains_nested_lexical_declaration(statements, false) {
+            return Err(CompileGap {
+                span,
+                reason: "nested lexical scope deferred to shared semantics",
+            });
+        }
+        if contains_catch_binding(statements) {
+            return Err(CompileGap {
+                span,
+                reason: "catch environments deferred to shared semantics",
+            });
+        }
         let mut compiler = Self {
             ops: Vec::new(),
             next_register: 0,
@@ -617,6 +634,18 @@ impl Compiler {
             span: function.span,
             reason: "function has no body",
         })?;
+        if contains_nested_lexical_declaration(&body.statements, false) {
+            return Err(CompileGap {
+                span: function.span,
+                reason: "nested lexical scope deferred to shared semantics",
+            });
+        }
+        if contains_catch_binding(&body.statements) {
+            return Err(CompileGap {
+                span: function.span,
+                reason: "catch environments deferred to shared semantics",
+            });
+        }
         let params = function
             .params
             .items
@@ -2436,6 +2465,120 @@ pub(crate) fn contains_nested_function_declaration(statements: &[Statement<'stat
                     .finalizer
                     .as_ref()
                     .is_some_and(|finalizer| contains_function_declaration(&finalizer.body))
+        }
+        _ => false,
+    })
+}
+
+fn contains_nested_lexical_declaration(statements: &[Statement<'static>], nested: bool) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::VariableDeclaration(declaration) => {
+            nested && declaration.kind != VariableDeclarationKind::Var
+        }
+        Statement::BlockStatement(block) => contains_nested_lexical_declaration(&block.body, true),
+        Statement::IfStatement(statement) => {
+            contains_nested_lexical_declaration(std::slice::from_ref(&statement.consequent), true)
+                || statement.alternate.as_ref().is_some_and(|alternate| {
+                    contains_nested_lexical_declaration(std::slice::from_ref(alternate), true)
+                })
+        }
+        Statement::LabeledStatement(statement) => {
+            contains_nested_lexical_declaration(std::slice::from_ref(&statement.body), nested)
+        }
+        Statement::WhileStatement(statement) => {
+            contains_nested_lexical_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::DoWhileStatement(statement) => {
+            contains_nested_lexical_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::ForStatement(statement) => {
+            statement.init.as_ref().is_some_and(|init| {
+                matches!(
+                    init,
+                    ForStatementInit::VariableDeclaration(declaration)
+                        if declaration.kind != VariableDeclarationKind::Var
+                )
+            }) || contains_nested_lexical_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::ForInStatement(statement) => {
+            matches!(
+                &statement.left,
+                ForStatementLeft::VariableDeclaration(declaration)
+                    if declaration.kind != VariableDeclarationKind::Var
+            ) || contains_nested_lexical_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::ForOfStatement(statement) => {
+            matches!(
+                &statement.left,
+                ForStatementLeft::VariableDeclaration(declaration)
+                    if declaration.kind != VariableDeclarationKind::Var
+            ) || contains_nested_lexical_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .any(|case| contains_nested_lexical_declaration(&case.consequent, true)),
+        Statement::TryStatement(statement) => {
+            contains_nested_lexical_declaration(&statement.block.body, true)
+                || statement.handler.as_ref().is_some_and(|handler| {
+                    contains_nested_lexical_declaration(&handler.body.body, true)
+                })
+                || statement.finalizer.as_ref().is_some_and(|finalizer| {
+                    contains_nested_lexical_declaration(&finalizer.body, true)
+                })
+        }
+        Statement::WithStatement(statement) => {
+            contains_nested_lexical_declaration(std::slice::from_ref(&statement.body), true)
+        }
+        _ => false,
+    })
+}
+
+fn contains_catch_binding(statements: &[Statement<'static>]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::TryStatement(statement) => {
+            statement.handler.is_some()
+                || contains_catch_binding(&statement.block.body)
+                || statement
+                    .handler
+                    .as_ref()
+                    .is_some_and(|handler| contains_catch_binding(&handler.body.body))
+                || statement
+                    .finalizer
+                    .as_ref()
+                    .is_some_and(|finalizer| contains_catch_binding(&finalizer.body))
+        }
+        Statement::BlockStatement(block) => contains_catch_binding(&block.body),
+        Statement::IfStatement(statement) => {
+            contains_catch_binding(std::slice::from_ref(&statement.consequent))
+                || statement.alternate.as_ref().is_some_and(|alternate| {
+                    contains_catch_binding(std::slice::from_ref(alternate))
+                })
+        }
+        Statement::LabeledStatement(statement) => {
+            contains_catch_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::WhileStatement(statement) => {
+            contains_catch_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::DoWhileStatement(statement) => {
+            contains_catch_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForStatement(statement) => {
+            contains_catch_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForInStatement(statement) => {
+            contains_catch_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForOfStatement(statement) => {
+            contains_catch_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .any(|case| contains_catch_binding(&case.consequent)),
+        Statement::WithStatement(statement) => {
+            contains_catch_binding(std::slice::from_ref(&statement.body))
         }
         _ => false,
     })
