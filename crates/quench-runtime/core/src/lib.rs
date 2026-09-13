@@ -10180,9 +10180,26 @@ impl Vm {
                         .map(|function| function.prototype.clone());
                     let receiver = self.object(prototype);
                     self.construct_depth = self.construct_depth.saturating_add(1);
-                    let typed = native_typed_array_constructor(self, receiver, &[values]);
+                    let typed = native_typed_array_constructor(self, receiver, &[values])?;
                     self.construct_depth = self.construct_depth.saturating_sub(1);
-                    HashMap::from([(String::from("default"), typed?)])
+                    // Bytes modules expose an immutable ArrayBuffer-backed
+                    // Uint8Array.  Stamp the ordinary backing object with the
+                    // canonical ArrayBuffer prototype and immutable fact so
+                    // `instanceof`, `.immutable`, and mutating methods all
+                    // observe the same representation.
+                    let buffer = self.get_prop(&typed, "buffer");
+                    if let Some(buffer_object) = buffer.as_object_ref() {
+                        if let Some(array_buffer) = Environment::get(&self.global, "ArrayBuffer") {
+                            if let Some(prototype) = array_buffer
+                                .as_function_ref()
+                                .map(|function| function.prototype.clone())
+                            {
+                                buffer_object.borrow_mut().prototype = Some(prototype);
+                            }
+                        }
+                        self.set_prop(&buffer, "immutable", Value::Bool(true));
+                    }
+                    HashMap::from([(String::from("default"), typed)])
                 }
                 _ => self.load_module_exports(&target)?,
             };
@@ -10305,6 +10322,7 @@ impl Vm {
             })
             .parse();
         if let Some(e) = r.diagnostics.first() {
+            eprintln!("parse-diagnostic path={} error={e:?}", p.display());
             // Parser diagnostics are ECMAScript SyntaxErrors, not host
             // strings. Preserve that completion type so negative tests and
             // callers observe the same constructor identity as runtime
@@ -12188,6 +12206,55 @@ impl Vm {
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
             NewTarget(_) => {
                 Ok(Environment::get(&e, NEW_TARGET_VALUE_NAME).unwrap_or(Value::Undefined))
+            }
+            ImportExpression(import) => {
+                // Dynamic import is linked through the same module cache as
+                // static imports, then fulfilled through the realm's Promise
+                // constructor.  Keeping the namespace materialization here
+                // data-driven avoids a second evaluator or module registry.
+                let request = self.eval_expr(&import.source, e.clone())?;
+                let request = request
+                    .as_string()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| request.number().to_string());
+                let target = self
+                    .source_stack
+                    .last()
+                    .and_then(|path| path.parent())
+                    .map(|parent| parent.join(&request))
+                    .unwrap_or_else(|| PathBuf::from(&request));
+                let exports = self.load_module_exports(&target)?;
+                let namespace = self.ordinary_object();
+                let mut names = exports.keys().collect::<Vec<_>>();
+                names.sort_unstable();
+                for name in names {
+                    self.set_prop(&namespace, name, exports[name].clone());
+                    set_property_attributes(
+                        &namespace,
+                        name,
+                        PropertyAttributes {
+                            writable: true,
+                            enumerable: true,
+                            configurable: false,
+                        },
+                    );
+                }
+                let tag = self.well_known_symbol_key("toStringTag");
+                self.set_prop(&namespace, &tag, Value::string_value("Module"));
+                set_property_attributes(
+                    &namespace,
+                    &tag,
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: false,
+                    },
+                );
+                let promise_constructor =
+                    Environment::get(&self.global, "Promise").unwrap_or(Value::Undefined);
+                let (promise, resolve, _) = new_promise_capability(self, promise_constructor)?;
+                self.call(resolve, Value::Undefined, vec![namespace])?;
+                Ok(promise)
             }
             AwaitExpression(await_expression) => self.eval_expr(&await_expression.argument, e),
             YieldExpression(yield_expression) => {
@@ -14710,6 +14777,10 @@ fn has_strict_legacy_literal_escape(source: &str) -> bool {
             && bytes
                 .get(index + 1)
                 .is_some_and(|next| next.is_ascii_digit())
+            && !index
+                .checked_sub(1)
+                .and_then(|previous| bytes.get(previous))
+                .is_some_and(|previous| previous.is_ascii_digit())
             && !matches!(
                 bytes.get(index + 1),
                 Some(b'x' | b'X' | b'b' | b'B' | b'o' | b'O')
@@ -16776,6 +16847,12 @@ fn native_array_buffer_resize(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         .is_some_and(|object| object.borrow().props.contains_key("\0array-buffer"))
     {
         return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    }
+    if vm.get_prop(&this, "immutable").truthy() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot resize an immutable ArrayBuffer",
+        )));
     }
     let next = args
         .first()
