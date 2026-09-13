@@ -4810,6 +4810,19 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     if matches!(op, Op::StrictEq | Op::StrictNe) {
         return Ok(exec_op_ref(op, left, right));
     }
+    if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge)
+        && let (Some(left), Some(right)) = (left.as_string(), right.as_string())
+    {
+        let ordering = utf16_units(left).cmp(&utf16_units(right));
+        let result = match op {
+            Op::Lt => ordering.is_lt(),
+            Op::Le => !ordering.is_gt(),
+            Op::Gt => ordering.is_gt(),
+            Op::Ge => !ordering.is_lt(),
+            _ => unreachable!(),
+        };
+        return Ok(Value::Bool(result));
+    }
     let needs_primitive = left.is_object()
         || left.is_function()
         || right.is_object()
@@ -4834,19 +4847,6 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     }
     if matches!(op, Op::Eq | Op::Ne) && !is_bigint_marker(&left) && !is_bigint_marker(&right) {
         return Ok(exec_op_ref(op, &left, &right));
-    }
-    if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge)
-        && let (Some(left), Some(right)) = (left.as_string(), right.as_string())
-    {
-        let ordering = utf16_units(left).cmp(&utf16_units(right));
-        let result = match op {
-            Op::Lt => ordering.is_lt(),
-            Op::Le => !ordering.is_gt(),
-            Op::Gt => ordering.is_gt(),
-            Op::Ge => !ordering.is_lt(),
-            _ => unreachable!(),
-        };
-        return Ok(Value::Bool(result));
     }
     if is_bigint_marker(&left) || is_bigint_marker(&right) {
         if is_bigint_marker(&left) && is_bigint_marker(&right) {
@@ -8908,7 +8908,7 @@ impl Vm {
                     Instanceof => return Ok(Value::Bool(instance_of(&a, &b))),
                     In => return Ok(Value::Bool(in_prop(&a, &b))),
                 };
-                Ok(exec_op(op, a, Some(b)))
+                binary_with_vm(self, op, &a, &b)
             }
             LogicalExpression(v) => {
                 let a = self.eval_expr(&v.left, e.clone())?;
