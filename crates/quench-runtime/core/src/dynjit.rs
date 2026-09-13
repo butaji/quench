@@ -3053,12 +3053,10 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                 }
                 let cache = property_ic();
                 let vm = unsafe { &mut *frame.vm };
-                let cached = (vm
-                    .find_accessor(&object, key)
-                    .is_none()
+                let cached = (vm.find_accessor(&object, key).is_none()
                     && super::proxy_target(&object).is_none())
-                    .then(|| cache.and_then(|cache| get_static_cached(&object, key, cache)))
-                    .flatten();
+                .then(|| cache.and_then(|cache| get_static_cached(&object, key, cache)))
+                .flatten();
                 cached.unwrap_or(vm.get_prop_with_accessors(&object, key)?)
             };
             put(frame, dst, value);
@@ -3132,9 +3130,7 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                     "cannot assign to read-only property",
                 )));
             }
-            if vm.find_accessor(&object, key).is_none()
-                && super::proxy_target(&object).is_none()
-            {
+            if vm.find_accessor(&object, key).is_none() && super::proxy_target(&object).is_none() {
                 if let Some(cache) = cache {
                     if set_static_cached(&object, key, value.clone(), cache).is_ok() {
                         return Ok(next);
@@ -3747,8 +3743,11 @@ fn construct(
             };
             is_native_constructor.then(|| function.prototype.clone())
         });
-        let proxy_prototype = super::proxy_target(&callee)
-            .and_then(|target| target.as_function_ref().map(|function| function.prototype.clone()));
+        let proxy_prototype = super::proxy_target(&callee).and_then(|target| {
+            target
+                .as_function_ref()
+                .map(|function| function.prototype.clone())
+        });
         let error_prototype = callee.as_function_ref().and_then(|function| {
             matches!(function.kind, FunctionKind::Builtin(id) if id.is_error_constructor())
                 .then(|| function.prototype.clone())
