@@ -9773,6 +9773,7 @@ impl Vm {
             )));
         }
         if has_block_redeclaration_early_error(&r.program)
+            || function_scope_block_redeclaration(&r.program.body)
             || has_statement_position_function(&r.program)
         {
             return Err(JsError::Throw(syntax_error(
@@ -10299,6 +10300,11 @@ impl Vm {
                     }
                     _ => e.clone(),
                 };
+                let lexical_iteration = matches!(
+                    &x.left,
+                    ForStatementLeft::VariableDeclaration(declaration)
+                        if declaration.kind != VariableDeclarationKind::Var
+                );
                 // `for-in` is an ordinary [[OwnPropertyKeys]] projection.
                 // Keep it on the same core path as Object.keys so proxy
                 // targets, traps, and hidden implementation slots cannot
@@ -10309,12 +10315,26 @@ impl Vm {
                     object_own_enumerable_keys(&o)
                 };
                 for k in ks {
+                    let iteration_environment = if lexical_iteration {
+                        let environment = Environment::new(Some(e.clone()));
+                        if let ForStatementLeft::VariableDeclaration(declaration) = &x.left
+                            && let Some(name) = declaration
+                                .declarations
+                                .first()
+                                .and_then(|declarator| pattern_name(&declarator.id))
+                        {
+                            environment.borrow_mut().lexical_names.insert(name);
+                        }
+                        environment
+                    } else {
+                        loop_environment.clone()
+                    };
                     self.assign_for_left(
                         &x.left,
                         Value::String(Rc::new(k.into())),
-                        loop_environment.clone(),
+                        iteration_environment.clone(),
                     )?;
-                    match self.exec_stmt(&x.body, loop_environment.clone())? {
+                    match self.exec_stmt(&x.body, iteration_environment)? {
                         Signal::Break(None) => break,
                         Signal::Break(Some(label))
                             if loop_label.as_deref() == Some(label.as_str()) =>
@@ -13039,8 +13059,27 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
 
 fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
     fn block_error(statements: &[Statement<'_>]) -> bool {
-        let mut lexical = HashSet::new();
-        collect_direct_lexical_names(statements, &mut lexical);
+        let lexical_names = statements
+            .iter()
+            .flat_map(|statement| match statement {
+                Statement::VariableDeclaration(declaration)
+                    if declaration.kind != VariableDeclarationKind::Var =>
+                {
+                    declaration
+                        .declarations
+                        .iter()
+                        .filter_map(|declarator| pattern_name(&declarator.id))
+                        .collect::<Vec<_>>()
+                }
+                Statement::ClassDeclaration(class) => class
+                    .id
+                    .as_ref()
+                    .map(|id| vec![id.name.to_string()])
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let lexical = lexical_names.iter().collect::<HashSet<_>>();
         let function_names = statements
             .iter()
             .filter_map(|statement| match statement {
@@ -13049,29 +13088,27 @@ fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
                 }
                 _ => None,
             })
-            .collect::<HashSet<_>>();
-        let vars = statements
-            .iter()
-            .filter_map(|statement| match statement {
-                Statement::VariableDeclaration(declaration)
-                    if declaration.kind == VariableDeclarationKind::Var =>
-                {
-                    Some(
-                        declaration
-                            .declarations
-                            .iter()
-                            .filter_map(|declarator| pattern_name(&declarator.id))
-                            .collect::<Vec<_>>(),
-                    )
-                }
-                _ => None,
-            })
-            .flatten()
             .collect::<Vec<_>>();
+        let mut vars = Vec::new();
+        collect_strict_eval_var_names(statements, &mut vars, false);
         lexical
             .iter()
-            .any(|name| vars.iter().any(|candidate| candidate == name))
-            || lexical.iter().any(|name| function_names.contains(name))
+            .any(|name| vars.iter().any(|candidate| candidate == *name))
+            || lexical_names.iter().enumerate().any(|(index, name)| {
+                lexical_names
+                    .iter()
+                    .skip(index + 1)
+                    .any(|candidate| candidate == name)
+            })
+            || lexical
+                .iter()
+                .any(|name| function_names.iter().any(|candidate| candidate == *name))
+            || function_names.iter().enumerate().any(|(index, name)| {
+                function_names
+                    .iter()
+                    .skip(index + 1)
+                    .any(|candidate| candidate == name)
+            })
             || statements.iter().any(|statement| match statement {
                 Statement::BlockStatement(block) => block_error(&block.body),
                 Statement::IfStatement(statement) => {
@@ -13117,10 +13154,75 @@ fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
                 Statement::WithStatement(statement) => {
                     block_error(std::slice::from_ref(&statement.body))
                 }
+                Statement::FunctionDeclaration(function) => {
+                    function.body.as_ref().is_some_and(|body| {
+                        block_error(&body.statements)
+                            || function_scope_block_redeclaration(&body.statements)
+                    })
+                }
                 _ => false,
             })
     }
     block_error(&program.body)
+}
+
+fn function_scope_block_redeclaration(statements: &[Statement<'_>]) -> bool {
+    fn walk(statements: &[Statement<'_>]) -> bool {
+        statements.iter().any(|statement| match statement {
+            Statement::BlockStatement(block) => {
+                let functions = block
+                    .body
+                    .iter()
+                    .filter_map(|statement| match statement {
+                        Statement::FunctionDeclaration(function) => {
+                            function.id.as_ref().map(|id| id.name.to_string())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let mut vars = Vec::new();
+                collect_strict_eval_var_names(&block.body, &mut vars, false);
+                functions
+                    .iter()
+                    .any(|name| vars.iter().any(|candidate| candidate == name))
+                    || walk(&block.body)
+            }
+            Statement::FunctionDeclaration(function) => function
+                .body
+                .as_ref()
+                .is_some_and(|body| walk(&body.statements)),
+            Statement::IfStatement(statement) => {
+                walk(std::slice::from_ref(&statement.consequent))
+                    || statement
+                        .alternate
+                        .as_ref()
+                        .is_some_and(|alternate| walk(std::slice::from_ref(alternate)))
+            }
+            Statement::LabeledStatement(statement) => walk(std::slice::from_ref(&statement.body)),
+            Statement::WhileStatement(statement) => walk(std::slice::from_ref(&statement.body)),
+            Statement::DoWhileStatement(statement) => walk(std::slice::from_ref(&statement.body)),
+            Statement::ForStatement(statement) => walk(std::slice::from_ref(&statement.body)),
+            Statement::ForInStatement(statement) => walk(std::slice::from_ref(&statement.body)),
+            Statement::ForOfStatement(statement) => walk(std::slice::from_ref(&statement.body)),
+            Statement::SwitchStatement(statement) => {
+                statement.cases.iter().any(|case| walk(&case.consequent))
+            }
+            Statement::TryStatement(statement) => {
+                walk(&statement.block.body)
+                    || statement
+                        .handler
+                        .as_ref()
+                        .is_some_and(|handler| walk(&handler.body.body))
+                    || statement
+                        .finalizer
+                        .as_ref()
+                        .is_some_and(|finalizer| walk(&finalizer.body))
+            }
+            Statement::WithStatement(statement) => walk(std::slice::from_ref(&statement.body)),
+            _ => false,
+        })
+    }
+    walk(statements)
 }
 
 fn has_statement_position_function(program: &Program<'_>) -> bool {
@@ -25646,7 +25748,7 @@ fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let mut seen = HashSet::new();
+        let mut seen = keys.iter().cloned().collect::<HashSet<_>>();
         // PropertyStorage is insertion ordered. Project hidden accessor slots
         // back to their logical key while walking that one order, so an
         // accessor created before a later data property remains before it.
@@ -25658,6 +25760,9 @@ fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec
                 && accessor_key(raw_key).is_none()
                 && !is_symbol_key(raw_key)
             {
+                continue;
+            }
+            if object.array.is_some() && key == "length" {
                 continue;
             }
             if is_symbol_key(key) && !include_symbols {
@@ -25674,24 +25779,26 @@ fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec
                 keys.push(key.to_owned());
             }
         }
-        keys.extend(
-            object
-                .attributes
-                .keys()
-                .filter(|key| {
-                    (!key.starts_with('\0') || is_symbol_key(key))
-                        && (!is_symbol_key(key) || include_symbols)
-                        && !object.props.contains_key(*key)
-                        && !has_accessor_slots(&object.props, key)
-                })
-                .filter(|key| {
-                    object
-                        .attributes
-                        .get(*key)
-                        .is_none_or(|attrs| attrs.enumerable)
-                })
-                .cloned(),
-        );
+        let attribute_keys = object
+            .attributes
+            .keys()
+            .filter(|key| {
+                (!key.starts_with('\0') || is_symbol_key(key))
+                    && (!is_symbol_key(key) || include_symbols)
+                    && !(object.array.is_some() && *key == "length")
+                    && !object.props.contains_key(*key)
+                    && !has_accessor_slots(&object.props, key)
+                    && !keys.iter().any(|existing| existing == *key)
+            })
+            .filter(|key| {
+                object
+                    .attributes
+                    .get(*key)
+                    .is_none_or(|attrs| attrs.enumerable)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.extend(attribute_keys);
         return partition_symbol_keys(keys);
     }
     if let Some(regexp) = target.as_regexp_ref() {
