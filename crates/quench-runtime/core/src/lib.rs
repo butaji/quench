@@ -10352,7 +10352,9 @@ impl Vm {
                 "for-in statement initializer is not permitted",
             )));
         }
-        if st.is_module() && has_module_early_error(&r.program) {
+        if st.is_module()
+            && (has_module_early_error(&r.program) || has_invalid_module_control_flow(&r.program))
+        {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "invalid module binding or export declaration",
@@ -14168,8 +14170,30 @@ fn has_module_early_error(program: &Program<'_>) -> bool {
                     add_export(&mut exports, name, &mut duplicate);
                 }
             }
-            Statement::ExportDefaultDeclaration(_) => {
-                add_export(&mut exports, "default".to_owned(), &mut duplicate)
+            Statement::ExportDefaultDeclaration(default) => {
+                add_export(&mut exports, "default".to_owned(), &mut duplicate);
+                // A named default declaration contributes its local binding
+                // to the module environment.  Treat it like every other
+                // declaration so collisions are rejected before evaluation.
+                match &default.declaration {
+                    ExportDefaultDeclarationKind::FunctionDeclaration(function)
+                        if function.id.is_some() =>
+                    {
+                        add_name(
+                            &mut bindings,
+                            function.id.as_ref().expect("checked above").name.as_str(),
+                            &mut duplicate,
+                        );
+                    }
+                    ExportDefaultDeclarationKind::ClassDeclaration(class) if class.id.is_some() => {
+                        add_name(
+                            &mut bindings,
+                            class.id.as_ref().expect("checked above").name.as_str(),
+                            &mut duplicate,
+                        );
+                    }
+                    _ => {}
+                }
             }
             Statement::ExportNamedDeclaration(export) => {
                 for specifier in &export.specifiers {
@@ -14225,6 +14249,174 @@ fn has_module_early_error(program: &Program<'_>) -> bool {
         || unresolved_exports
             .into_iter()
             .any(|name| !bindings.contains(&name))
+}
+
+/// Check the module-only control-flow facts that are intentionally preserved
+/// in OXC's AST: duplicate labels and undefined break/continue targets.  The
+/// traversal carries the active label set and loop/switch depth as explicit
+/// data, so nested blocks share one implementation and function bodies form
+/// the natural boundary for control-flow reachability.
+fn has_invalid_module_control_flow(program: &Program<'_>) -> bool {
+    fn walk(
+        statements: &[Statement<'_>],
+        labels: &[(String, bool)],
+        iteration_depth: usize,
+        switch_depth: usize,
+    ) -> bool {
+        for statement in statements {
+            match statement {
+                Statement::BreakStatement(statement) => {
+                    if let Some(label) = &statement.label {
+                        if !labels.iter().any(|(name, _)| name == label.name.as_str()) {
+                            return true;
+                        }
+                    } else if iteration_depth == 0 && switch_depth == 0 {
+                        return true;
+                    }
+                }
+                Statement::ContinueStatement(statement) => {
+                    if let Some(label) = &statement.label {
+                        if !labels.iter().any(|(name, is_iteration)| {
+                            name == label.name.as_str() && *is_iteration
+                        }) {
+                            return true;
+                        }
+                    } else if iteration_depth == 0 {
+                        return true;
+                    }
+                }
+                Statement::LabeledStatement(statement) => {
+                    let name = statement.label.name.to_string();
+                    if labels.iter().any(|(label, _)| label == &name) {
+                        return true;
+                    }
+                    let is_iteration = matches!(
+                        &statement.body,
+                        Statement::DoWhileStatement(_)
+                            | Statement::WhileStatement(_)
+                            | Statement::ForStatement(_)
+                            | Statement::ForInStatement(_)
+                            | Statement::ForOfStatement(_)
+                    );
+                    let mut nested = labels.to_vec();
+                    nested.push((name, is_iteration));
+                    if walk(
+                        std::slice::from_ref(&statement.body),
+                        &nested,
+                        iteration_depth,
+                        switch_depth,
+                    ) {
+                        return true;
+                    }
+                }
+                Statement::BlockStatement(statement) => {
+                    if walk(&statement.body, labels, iteration_depth, switch_depth) {
+                        return true;
+                    }
+                }
+                Statement::IfStatement(statement) => {
+                    if walk(
+                        std::slice::from_ref(&statement.consequent),
+                        labels,
+                        iteration_depth,
+                        switch_depth,
+                    ) || statement.alternate.as_ref().is_some_and(|alternate| {
+                        walk(
+                            std::slice::from_ref(alternate),
+                            labels,
+                            iteration_depth,
+                            switch_depth,
+                        )
+                    }) {
+                        return true;
+                    }
+                }
+                Statement::DoWhileStatement(statement) => {
+                    if walk(
+                        std::slice::from_ref(&statement.body),
+                        labels,
+                        iteration_depth + 1,
+                        switch_depth,
+                    ) {
+                        return true;
+                    }
+                }
+                Statement::WhileStatement(statement) => {
+                    if walk(
+                        std::slice::from_ref(&statement.body),
+                        labels,
+                        iteration_depth + 1,
+                        switch_depth,
+                    ) {
+                        return true;
+                    }
+                }
+                Statement::ForStatement(statement) => {
+                    if walk(
+                        std::slice::from_ref(&statement.body),
+                        labels,
+                        iteration_depth + 1,
+                        switch_depth,
+                    ) {
+                        return true;
+                    }
+                }
+                Statement::ForInStatement(statement) => {
+                    if walk(
+                        std::slice::from_ref(&statement.body),
+                        labels,
+                        iteration_depth + 1,
+                        switch_depth,
+                    ) {
+                        return true;
+                    }
+                }
+                Statement::ForOfStatement(statement) => {
+                    if walk(
+                        std::slice::from_ref(&statement.body),
+                        labels,
+                        iteration_depth + 1,
+                        switch_depth,
+                    ) {
+                        return true;
+                    }
+                }
+                Statement::SwitchStatement(statement) => {
+                    if statement.cases.iter().any(|case| {
+                        walk(&case.consequent, labels, iteration_depth, switch_depth + 1)
+                    }) {
+                        return true;
+                    }
+                }
+                Statement::TryStatement(statement) => {
+                    if walk(&statement.block.body, labels, iteration_depth, switch_depth)
+                        || statement.handler.as_ref().is_some_and(|handler| {
+                            walk(&handler.body.body, labels, iteration_depth, switch_depth)
+                        })
+                        || statement.finalizer.as_ref().is_some_and(|finalizer| {
+                            walk(&finalizer.body, labels, iteration_depth, switch_depth)
+                        })
+                    {
+                        return true;
+                    }
+                }
+                Statement::WithStatement(statement) => {
+                    if walk(
+                        std::slice::from_ref(&statement.body),
+                        labels,
+                        iteration_depth,
+                        switch_depth,
+                    ) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    walk(&program.body, &[], 0, 0)
 }
 
 fn module_export_name_for_early_error(name: &ModuleExportName<'_>) -> String {
