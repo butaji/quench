@@ -250,6 +250,7 @@ environment_keys! {
     FUNCTION_ENV_NAME => "function",
     NEW_TARGET_VALUE_NAME => "new-target",
     NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
+    SUPER_CALLED_ENV_NAME => "super-called",
 }
 // Internal object markers are semantic facts, not ad-hoc property probes.
 // Declare each marker once and derive the predicate used by every execution
@@ -9766,6 +9767,14 @@ impl Vm {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
         }
+        // `new.target` is a lexical capture. Until the stencil closure ABI
+        // carries that value explicitly, keep constructors and nested arrow
+        // creators on the shared evaluator so ordinary and construct calls
+        // observe the same target.
+        if function_contains_new_target(node) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         let cache_key = node as *const Function<'static> as usize;
         if let Some(code) = self.jit_cache.get(&cache_key) {
             *function.dyn_jit.borrow_mut() = Some(code.clone());
@@ -13145,12 +13154,17 @@ impl Vm {
                     .as_object_ref()
                     .map(|object| object.borrow().props.keys().cloned().collect::<Vec<_>>())
                     .unwrap_or_default();
+                let mut bound_keys = Vec::new();
                 for key in &keys {
+                    if !self.with_binding_allowed(&object, key)? {
+                        continue;
+                    }
                     let value = self.get_prop(&object, key);
                     with_env.borrow_mut().declare(key, value);
+                    bound_keys.push(key.clone());
                 }
                 let result = self.exec_stmt(&x.body, with_env.clone());
-                for key in keys {
+                for key in bound_keys {
                     if let Some(value) = Environment::get(&with_env, &key) {
                         // Sloppy `with` assignments silently ignore writes to
                         // read-only properties; the ordinary setter path has
@@ -14026,6 +14040,12 @@ impl Vm {
                     .cloned();
                 (local, borrowed.with_object.clone(), borrowed.parent.clone())
             };
+            if let Some(object) = &with_object
+                && !self.with_binding_allowed(object, name)?
+            {
+                current = parent;
+                continue;
+            }
             if let Some(value) = local {
                 if let (Some(path), Some(imported)) = (
                     value
@@ -14063,6 +14083,18 @@ impl Vm {
             current = parent;
         }
         Environment::get(e, name).ok_or_else(|| JsError::Throw(reference_error(self, name)))
+    }
+
+    fn with_binding_allowed(&mut self, object: &Value, name: &str) -> JsResult<bool> {
+        if !self.has_property_with_proxy(object, name)? {
+            return Ok(false);
+        }
+        let unscopables =
+            self.get_prop_with_accessors(object, &self.well_known_symbol_key("unscopables"))?;
+        if !unscopables.is_object_like() {
+            return Ok(true);
+        }
+        Ok(!self.get_prop_with_accessors(&unscopables, name)?.truthy())
     }
 
     fn module_binding_is_var(&mut self, path: &Path, name: &str) -> bool {
@@ -14625,7 +14657,22 @@ impl Vm {
                         .unwrap_or(Value::Undefined);
                     let this = Environment::get(&e, "this").unwrap_or(Value::Undefined);
                     let args = self.eval_args(&v.arguments, e.clone())?;
-                    let result = self.call(callee, this, args)?;
+                    let already_initialized = Environment::get(&e, SUPER_CALLED_ENV_NAME)
+                        .is_some_and(|value| value.truthy());
+                    let result = if let Some(function) = callee.as_function_ref()
+                        && matches!(function.kind, FunctionKind::Class { .. })
+                    {
+                        self.call_class(function, this, args)?
+                    } else {
+                        self.call(callee, this, args)?
+                    };
+                    if already_initialized {
+                        return Err(JsError::Throw(reference_error(
+                            self,
+                            "Super constructor may only be called once",
+                        )));
+                    }
+                    Environment::set(&e, SUPER_CALLED_ENV_NAME, Value::Bool(true));
                     // A derived constructor adopts the object returned by
                     // `super()` as its actual this binding.  This is also the
                     // receiver used by subsequent super-property writes and
@@ -16279,6 +16326,21 @@ fn expression_contains_await(expression: &Expression<'_>) -> bool {
     }
     let mut scan = Scan { found: false };
     scan.visit_expression(expression);
+    scan.found
+}
+
+fn function_contains_new_target(function: &Function<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_new_target(&mut self, target: &NewTarget) {
+            self.found = true;
+            ast_walk::walk_new_target(self, target);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_function(function, ScopeFlags::empty());
     scan.found
 }
 
