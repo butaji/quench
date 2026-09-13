@@ -6932,6 +6932,7 @@ impl Vm {
             ("MIN_SAFE_INTEGER", Value::Number(-9_007_199_254_740_991.0)),
         ] {
             self.set_prop(&number, name, value);
+            set_property_attributes(&number, name, PropertyAttributes::BUILTIN_CONSTANT);
         }
         if let Some(array_value) = Environment::get(&g, "Array")
             && let Some(array) = array_value.as_function()
@@ -15181,14 +15182,7 @@ impl Vm {
                 Environment::set(&e, &name, v.clone());
                 self.sync_mapped_argument(&e, &name, v);
             }
-            LValue::Prop(o, k) => match self.set_prop_with_accessors(&o, &k, v) {
-                Ok(()) => {}
-                Err(JsError::Throw(value))
-                    if !self.strict_mode
-                        && proxy_target(&o).is_none()
-                        && is_type_error_value(&value) => {}
-                Err(error) => return Err(error),
-            },
+            LValue::Prop(o, k) => set_assignment_property(self, &o, &k, v)?,
             LValue::SuperProp {
                 base,
                 receiver,
@@ -15524,6 +15518,21 @@ impl Vm {
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
+    }
+}
+
+/// ECMAScript [[Set]] for an assignment target.  Ordinary non-strict writes
+/// to inherited/non-writable or non-extensible properties are ignored, while
+/// strict writes and all Proxy paths preserve their observable TypeError.
+fn set_assignment_property(vm: &mut Vm, object: &Value, key: &str, value: Value) -> JsResult<()> {
+    match vm.set_prop_with_accessors(object, key, value) {
+        Ok(()) => Ok(()),
+        Err(JsError::Throw(error))
+            if !vm.strict_mode && proxy_target(object).is_none() && is_type_error_value(&error) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
 }
 
