@@ -1520,21 +1520,7 @@ impl Compiler {
                     })
                     .unwrap_or(value.regex.pattern.text.as_str())
                     .to_string();
-                let flags = [
-                    (RegExpFlags::D, 'd'),
-                    (RegExpFlags::G, 'g'),
-                    (RegExpFlags::I, 'i'),
-                    (RegExpFlags::M, 'm'),
-                    (RegExpFlags::S, 's'),
-                    (RegExpFlags::U, 'u'),
-                    (RegExpFlags::V, 'v'),
-                    (RegExpFlags::Y, 'y'),
-                ]
-                .into_iter()
-                .filter_map(|(flag, character)| {
-                    value.regex.flags.contains(flag).then_some(character)
-                })
-                .collect::<String>();
+                let flags = regexp_flags!(value.regex.flags);
                 self.emit(
                     DynOp::RegExp {
                         dst,
