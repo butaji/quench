@@ -19680,6 +19680,11 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     ] {
         vm.set_prop(&global, name, vm.builtin(builtin));
     }
+    // Error constructors are realm-owned identities. Keep the shared semantic
+    // recipe, but publish a fresh TypeError function so cross-realm instances
+    // do not satisfy an assertion against the caller's TypeError.
+    let realm_type_error = vm.native_named(native_realm_type_error, "TypeError", 1);
+    vm.set_prop(&global, "TypeError", realm_type_error);
     vm.set_prop(
         &global,
         "BigInt",
@@ -19710,6 +19715,21 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     let eval_script = native_function_bind(vm, vm.native(native_eval_script), &[global.clone()])?;
     vm.set_prop(&realm, "evalScript", eval_script);
     Ok(realm)
+}
+
+fn native_realm_type_error(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let error = if this.is_object_like() { this } else { vm.object(None) };
+    vm.set_prop(&error, "name", Value::string_value("TypeError"));
+    let message = args
+        .first()
+        .map(|value| to_string_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or_default();
+    vm.set_prop(&error, "message", Value::string_value(message));
+    if let Some(constructor) = vm.current_new_target.clone() {
+        vm.set_prop(&error, "constructor", constructor);
+    }
+    Ok(error)
 }
 
 fn native_random(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
