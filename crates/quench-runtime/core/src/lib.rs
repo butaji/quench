@@ -252,6 +252,7 @@ environment_keys! {
     NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
     SUPER_CALLED_ENV_NAME => "super-called",
 }
+const CLASS_FIELD_KEY_PREFIX: &str = "\0quench:class-field-key:";
 // Internal object markers are semantic facts, not ad-hoc property probes.
 // Declare each marker once and derive the predicate used by every execution
 // tier.  This keeps marker spelling and object classification in one place.
@@ -10341,14 +10342,17 @@ impl Vm {
         } else {
             this
         };
-        for element in &class.body.body {
+        for (index, element) in class.body.body.iter().enumerate() {
             let ClassElement::PropertyDefinition(field) = element else {
                 continue;
             };
             if field.r#static {
                 continue;
             }
-            let key = self.eval_property_key(&field.key, env.clone())?;
+            let key = Environment::get(&env, &format!("{CLASS_FIELD_KEY_PREFIX}{index}"))
+                .and_then(|value| value.as_string().cloned())
+                .map(|value| value.to_string())
+                .map_or_else(|| self.eval_property_key(&field.key, env.clone()), Ok)?;
             let value = field
                 .value
                 .as_ref()
@@ -13996,72 +14000,104 @@ impl Vm {
                 );
             }
         }
-        for element in &n.body.body {
-            let ClassElement::MethodDefinition(method) = element else {
-                continue;
-            };
-            if method.kind == MethodDefinitionKind::Constructor {
-                continue;
-            }
-            let key = self.eval_property_key(&method.key, class_env.clone())?;
-            if method.r#static && key == "prototype" {
-                return Err(JsError::Throw(type_error(
-                    self,
-                    "Class static property cannot be named prototype",
-                )));
-            }
-            let method_value = self.make_user(&method.value, class_env.clone());
-            install_data_property!(
-                self,
-                method_value.clone(),
-                "name",
-                Value::string_value(key.clone()),
-                PropertyAttributes::BUILTIN_CONSTANT
-            );
-            let target = if method.r#static { &class } else { &prototype };
-            if method.r#static && key == "name" {
-                // A static `name` method is an ordinary class property and
-                // intentionally shadows the constructor's inferred name.
-                if let Some(function) = class.as_function_ref() {
-                    function.props.borrow_mut().shift_remove("name");
-                    function.attributes.borrow_mut().remove("name");
+        for (index, element) in n.body.body.iter().enumerate() {
+            match element {
+                ClassElement::PropertyDefinition(field) => {
+                    // Computed field keys are evaluated once during class
+                    // definition. Store the resulting property key beside
+                    // the class environment so each instance reuses that
+                    // semantic fact without re-running user code.
+                    let key = self.eval_property_key(&field.key, class_env.clone())?;
+                    class_env.borrow_mut().declare(
+                        &format!("{CLASS_FIELD_KEY_PREFIX}{index}"),
+                        Value::string_value(key.clone()),
+                    );
+                    if field.r#static {
+                        let value = field
+                            .value
+                            .as_ref()
+                            .map(|value| self.eval_expr(value, class_env.clone()))
+                            .transpose()?
+                            .unwrap_or(Value::Undefined);
+                        let descriptor = self.ordinary_object();
+                        self.set_prop(&descriptor, "value", value);
+                        self.set_prop(&descriptor, "writable", Value::Bool(true));
+                        self.set_prop(&descriptor, "enumerable", Value::Bool(true));
+                        self.set_prop(&descriptor, "configurable", Value::Bool(true));
+                        native_object_define_property(
+                            self,
+                            Value::Undefined,
+                            &[class.clone(), Value::string_value(key), descriptor],
+                        )?;
+                    }
                 }
-            }
-            match method.kind {
-                MethodDefinitionKind::Method => {
+                ClassElement::MethodDefinition(method) => {
+                    if method.kind == MethodDefinitionKind::Constructor {
+                        continue;
+                    }
+                    let key = self.eval_property_key(&method.key, class_env.clone())?;
+                    if method.r#static && key == "prototype" {
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "Class static property cannot be named prototype",
+                        )));
+                    }
+                    let method_value = self.make_user(&method.value, class_env.clone());
                     install_data_property!(
                         self,
-                        target.clone(),
-                        key,
-                        method_value,
-                        PropertyAttributes::BUILTIN_METHOD
+                        method_value.clone(),
+                        "name",
+                        Value::string_value(key.clone()),
+                        PropertyAttributes::BUILTIN_CONSTANT
                     );
+                    let target = if method.r#static { &class } else { &prototype };
+                    if method.r#static && key == "name" {
+                        // A static `name` method is an ordinary class property and
+                        // intentionally shadows the constructor's inferred name.
+                        if let Some(function) = class.as_function_ref() {
+                            function.props.borrow_mut().shift_remove("name");
+                            function.attributes.borrow_mut().remove("name");
+                        }
+                    }
+                    match method.kind {
+                        MethodDefinitionKind::Method => {
+                            install_data_property!(
+                                self,
+                                target.clone(),
+                                key,
+                                method_value,
+                                PropertyAttributes::BUILTIN_METHOD
+                            );
+                        }
+                        MethodDefinitionKind::Get | MethodDefinitionKind::Set => {
+                            // Class accessor declarations are accumulated by key: a
+                            // getter followed by a setter (or the reverse) produces
+                            // one descriptor carrying both functions.  Preserve the
+                            // already-installed half instead of replacing it when
+                            // the second declaration is evaluated.
+                            let (existing_getter, existing_setter) =
+                                self.own_accessor_slots(target, &key);
+                            let (getter, setter) = match method.kind {
+                                MethodDefinitionKind::Get => (Some(method_value), existing_setter),
+                                MethodDefinitionKind::Set => (existing_getter, Some(method_value)),
+                                _ => unreachable!(),
+                            };
+                            self.define_accessor_slot(
+                                target,
+                                &key,
+                                getter,
+                                setter,
+                                PropertyAttributes {
+                                    writable: false,
+                                    enumerable: false,
+                                    configurable: true,
+                                },
+                            );
+                        }
+                        MethodDefinitionKind::Constructor => unreachable!(),
+                    }
                 }
-                MethodDefinitionKind::Get | MethodDefinitionKind::Set => {
-                    // Class accessor declarations are accumulated by key: a
-                    // getter followed by a setter (or the reverse) produces
-                    // one descriptor carrying both functions.  Preserve the
-                    // already-installed half instead of replacing it when
-                    // the second declaration is evaluated.
-                    let (existing_getter, existing_setter) = self.own_accessor_slots(target, &key);
-                    let (getter, setter) = match method.kind {
-                        MethodDefinitionKind::Get => (Some(method_value), existing_setter),
-                        MethodDefinitionKind::Set => (existing_getter, Some(method_value)),
-                        _ => unreachable!(),
-                    };
-                    self.define_accessor_slot(
-                        target,
-                        &key,
-                        getter,
-                        setter,
-                        PropertyAttributes {
-                            writable: false,
-                            enumerable: false,
-                            configurable: true,
-                        },
-                    );
-                }
-                MethodDefinitionKind::Constructor => unreachable!(),
+                _ => {}
             }
         }
         Ok(class)
