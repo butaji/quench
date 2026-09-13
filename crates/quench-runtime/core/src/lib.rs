@@ -18447,7 +18447,21 @@ fn native_reflect_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
         let trap = vm.get_prop_with_accessors(&handler, "getPrototypeOf")?;
         if trap.is_function() {
             let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
-            if result.is_null() || result.is_object_like() {
+            if result.is_null() || (result.is_object_like() && !is_symbol_carrier(&result)) {
+                let target_proto = native_object_get_prototype_of(
+                    vm,
+                    Value::Undefined,
+                    &[proxy_target_value.clone()],
+                )?;
+                let extensible = native_object_is_extensible(
+                    vm,
+                    Value::Undefined,
+                    &[proxy_target_value.clone()],
+                )?
+                .truthy();
+                if !extensible && !result.same_bits(&target_proto) {
+                    return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap violated target invariant")));
+                }
                 return Ok(result);
             }
             return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap must return object or null")));
@@ -18491,6 +18505,10 @@ fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResu
         let trap = vm.get_prop_with_accessors(&handler, "isExtensible")?;
         if trap.is_function() {
             let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
+            let target_result = native_reflect_is_extensible(vm, Value::Undefined, &[proxy_target_value])?;
+            if result.truthy() != target_result.truthy() {
+                return Err(JsError::Throw(type_error(vm, "Proxy isExtensible trap result disagrees with target")));
+            }
             return Ok(Value::Bool(result.truthy()));
         }
         if vm.has_property(&handler, "isExtensible") && !trap.is_null() && !trap.is_undefined() {
@@ -22779,6 +22797,9 @@ fn native_object_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> Js
             if !result.truthy() {
                 return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap returned false")));
             }
+            if native_reflect_is_extensible(vm, Value::Undefined, &[proxy_target_value])?.truthy() {
+                return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap did not make target non-extensible")));
+            }
             return Ok(target.clone());
         }
         if vm.has_property(&handler, "preventExtensions") && !trap.is_null() && !trap.is_undefined() {
@@ -22806,6 +22827,10 @@ fn native_object_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResul
         let trap = vm.get_prop_with_accessors(&handler, "isExtensible")?;
         if trap.is_function() {
             let result = vm.call(trap, handler, vec![target.clone()])?;
+            let target_result = native_object_is_extensible(vm, Value::Undefined, &[target])?;
+            if result.truthy() != target_result.truthy() {
+                return Err(JsError::Throw(type_error(vm, "Proxy isExtensible trap result disagrees with target")));
+            }
             return Ok(Value::Bool(result.truthy()));
         }
         if vm.has_property(&handler, "isExtensible") && !trap.is_null() && !trap.is_undefined() {
@@ -22842,7 +22867,12 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
         let trap = vm.get_prop_with_accessors(&handler, "getPrototypeOf")?;
         if trap.is_function() {
             let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
-            if result.is_null() || result.is_object_like() {
+            if result.is_null() || (result.is_object_like() && !is_symbol_carrier(&result)) {
+                let target_proto = native_object_get_prototype_of(vm, Value::Undefined, &[proxy_target_value.clone()])?;
+                let extensible = native_object_is_extensible(vm, Value::Undefined, &[proxy_target_value.clone()])?.truthy();
+                if !extensible && !result.same_bits(&target_proto) {
+                    return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap violated target invariant")));
+                }
                 return Ok(result);
             }
             return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap must return object or null")));
