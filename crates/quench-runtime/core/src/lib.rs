@@ -23252,13 +23252,22 @@ fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String
         let length = array_from_length(vm, &returned).unwrap_or(0);
         let mut keys = Vec::with_capacity(length);
         for index in 0..length {
-            let key = vm.to_property_key(vm.get_prop(&returned, &index.to_string()))?;
+            let element = vm.get_prop(&returned, &index.to_string());
+            if !element.is_string() && !is_symbol_carrier(&element) {
+                return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap returned invalid key")));
+            }
+            let key = vm.to_property_key(element)?;
             keys.push(key);
         }
         keys
     } else {
-        object_own_property_keys(&proxy_target_value)
+        if proxy_target(&proxy_target_value).is_some() {
+            proxy_own_property_keys_with_vm(vm, &proxy_target_value)?
+        } else {
+            object_own_property_keys(&proxy_target_value)
+        }
     };
+    let keys = validate_proxy_own_keys(vm, &proxy_target_value, keys)?;
     let descriptor_trap = vm.get_prop_with_accessors(&handler, "getOwnPropertyDescriptor")?;
     let mut enumerable = Vec::new();
     for key in keys {
@@ -23295,21 +23304,66 @@ fn proxy_own_property_keys_with_vm(vm: &mut Vm, target: &Value) -> JsResult<Vec<
     let handler = proxy_handler(target).unwrap_or(Value::Undefined);
     let trap = vm.get_prop_with_accessors(&handler, "ownKeys")?;
     if trap.is_function() {
-        let returned = vm.call(trap, handler.clone(), vec![proxy_target_value])?;
+        let returned = vm.call(trap, handler.clone(), vec![proxy_target_value.clone()])?;
         if !returned.is_object_like() {
             return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap must return an object")));
         }
         let length = array_from_length(vm, &returned).unwrap_or(0);
         let mut keys = Vec::with_capacity(length);
         for index in 0..length {
-            keys.push(vm.to_property_key(vm.get_prop(&returned, &index.to_string()))?);
+            let element = vm.get_prop(&returned, &index.to_string());
+            if !element.is_string() && !is_symbol_carrier(&element) {
+                return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap returned invalid key")));
+            }
+            keys.push(vm.to_property_key(element)?);
         }
-        return Ok(partition_symbol_keys(keys));
+        return validate_proxy_own_keys(vm, &proxy_target_value, keys);
     }
     if vm.has_property(&handler, "ownKeys") && !trap.is_null() && !trap.is_undefined() {
         return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap is not callable")));
     }
-    Ok(object_own_property_keys(&proxy_target_value))
+    if proxy_target(&proxy_target_value).is_some() {
+        proxy_own_property_keys_with_vm(vm, &proxy_target_value)
+    } else {
+        Ok(object_own_property_keys(&proxy_target_value))
+    }
+}
+
+fn validate_proxy_own_keys(vm: &mut Vm, target: &Value, keys: Vec<String>) -> JsResult<Vec<String>> {
+    let mut seen = HashSet::new();
+    if keys.iter().any(|key| !seen.insert(key.clone())) {
+        return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap returned duplicate key")));
+    }
+    let target_keys = object_own_property_keys(target);
+    let extensible = if let Some(object) = target.as_object_ref() {
+        object.borrow().extensible
+    } else if let Some(function) = target.as_function_ref() {
+        !function.props.borrow().contains_key("\0sealed")
+    } else {
+        true
+    };
+    for key in &target_keys {
+        let descriptor = native_object_get_own_property_descriptor(
+            vm,
+            Value::Undefined,
+            &[target.clone(), Value::string_value(key.clone())],
+        )?;
+        if descriptor.is_object_like()
+            && !vm.get_prop_with_accessors(&descriptor, "configurable")?.truthy()
+            && !keys.iter().any(|candidate| candidate == key)
+        {
+            return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap omitted non-configurable key")));
+        }
+    }
+    if !extensible
+        && (keys.len() != target_keys.len()
+            || keys.iter().any(|key| !target_keys.iter().any(|candidate| candidate == key)))
+    {
+        return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap violated non-extensible target")));
+    }
+    // A proxy trap supplies the observable order; unlike ordinary own-key
+    // storage, validation must never reorder its result.
+    Ok(keys)
 }
 
 fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec<String> {
