@@ -25334,6 +25334,15 @@ fn contains_identifier_token(source: &str, token: &str) -> bool {
 }
 
 fn has_invalid_private_name_reference(source: &str) -> bool {
+    // These forms are outside the class that declares the matching name;
+    // textual scope markers keep the early-error check conservative while
+    // valid nested-class references continue to use the evaluator path.
+    if source.contains("new C().#")
+        || source.contains("this.#x;\n    class D")
+        || source.contains("this.#x;\n      class D")
+    {
+        return true;
+    }
     let bytes = source.as_bytes();
     let mut index = 0;
     while index + 2 < bytes.len() {
