@@ -17658,6 +17658,18 @@ fn dynamic_function_constructor(
     } else {
         String::new()
     };
+    // Dynamic async functions apply the parameter grammar's early-error
+    // restrictions after concatenation. OXC parses these identifiers in a
+    // default initializer, but the ECMAScript grammar rejects the resulting
+    // AwaitExpression/YieldExpression for async and generator parameters.
+    if (prefix.starts_with("async function") && contains_identifier_token(&parameters, "await"))
+        || (prefix.ends_with('*') && contains_identifier_token(&parameters, "yield"))
+    {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "invalid async or generator Function constructor parameters",
+        )));
+    }
     let source = format!("{prefix} anonymous({parameters}) {{{body}\n}}");
     // The dynamic Function grammar applies strict-mode early errors after
     // concatenating the parameter strings and body.  Keep this check beside
@@ -17727,6 +17739,60 @@ fn strip_legacy_html_comment_parameters(source: &str) -> String {
     }
     output.push_str(&source[cursor..]);
     output
+}
+
+fn contains_identifier_token(source: &str, token: &str) -> bool {
+    let bytes = source.as_bytes();
+    let token = token.as_bytes();
+    let mut index = 0;
+    let mut quote = None;
+    let mut escaped = false;
+    while index < bytes.len() {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if bytes[index] == b'\\' {
+                escaped = true;
+            } else if bytes[index] == delimiter {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if bytes[index] == b'\'' || bytes[index] == b'"' || bytes[index] == b'`' {
+            quote = Some(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes.get(index..index + token.len()) == Some(token)
+            && (index == 0 || !is_identifier_byte(bytes[index - 1]))
+            && (index + token.len() == bytes.len()
+                || !is_identifier_byte(bytes[index + token.len()]))
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
 }
 
 fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
