@@ -5020,7 +5020,7 @@ fn instance_of_with_vm(vm: &mut Vm, value: &Value, ctor: &Value) -> JsResult<boo
         } else if let Some(function) = current.as_function_ref() {
             Value::Object(function.prototype.clone())
         } else {
-            return Ok(false);
+            return Ok(self.has_property(value, key));
         };
         if current_prototype.is_null() {
             return Ok(false);
@@ -7531,6 +7531,22 @@ impl Vm {
                 return true;
             }
             drop(borrowed);
+            if matches!(
+                key,
+                "source"
+                    | "flags"
+                    | "global"
+                    | "ignoreCase"
+                    | "multiline"
+                    | "dotAll"
+                    | "unicode"
+                    | "unicodeSets"
+                    | "sticky"
+                    | "hasIndices"
+                    | "lastIndex"
+            ) {
+                return true;
+            }
             return self.has_property(
                 &Value::Object(
                     self.builtin(BuiltinId::RegExpConstructor)
@@ -11418,8 +11434,22 @@ impl Vm {
 
     fn has_property_with_proxy(&mut self, value: &Value, key: &str) -> JsResult<bool> {
         let Some(target) = proxy_target(value) else {
-            if self.has_property(value, key) {
+            if value.is_object_like() {
+                let own = native_object_get_own_property_descriptor(
+                    self,
+                    Value::Undefined,
+                    &[value.clone(), Value::string_value(key)],
+                )?;
+                if own.is_object_like() {
+                    return Ok(true);
+                }
+            } else if self.has_property(value, key) {
                 return Ok(true);
+            }
+            if let Some(prototype_function) = value.as_object_ref().and_then(|object| {
+                object.borrow().props.get("\0prototype_function").cloned()
+            }) {
+                return self.has_property_with_proxy(&prototype_function, key);
             }
             // The ordinary fast path cannot see a proxy hidden behind an
             // ordinary object's prototype. Walk that chain here and re-enter
@@ -11430,12 +11460,25 @@ impl Vm {
                 if proxy_target(&candidate).is_some() {
                     return self.has_property_with_proxy(&candidate, key);
                 }
-                if self.has_property(&candidate, key) {
+                if let Some(prototype_function) = prototype
+                    .borrow()
+                    .props
+                    .get("\0prototype_function")
+                    .cloned()
+                {
+                    return self.has_property_with_proxy(&prototype_function, key);
+                }
+                let own = native_object_get_own_property_descriptor(
+                    self,
+                    Value::Undefined,
+                    &[candidate.clone(), Value::string_value(key)],
+                )?;
+                if own.is_object_like() {
                     return Ok(true);
                 }
                 current = prototype.borrow().prototype.clone();
             }
-            return Ok(false);
+            return Ok(self.has_property(value, key));
         };
         if proxy_revoked(value) {
             return Err(JsError::Throw(type_error(self, "revoked Proxy")));
@@ -11446,7 +11489,13 @@ impl Vm {
             let result = self.call(
                 trap,
                 handler,
-                vec![target.clone(), Value::string_value(key)],
+                vec![
+                    target.clone(),
+                    self.symbol_keys
+                        .get(key)
+                        .cloned()
+                        .unwrap_or_else(|| Value::string_value(key)),
+                ],
             )?;
             return Ok(result.truthy());
         }
@@ -18669,22 +18718,7 @@ fn native_reflect_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
 fn native_reflect_has(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "has")?;
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
-    if let Some(proxy_target_value) = proxy_target(&target) {
-        if proxy_revoked(&target) {
-            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
-        }
-        let handler = proxy_handler(&target).unwrap_or(Value::Undefined);
-        let trap = vm.get_prop_with_accessors(&handler, "has")?;
-        if trap.is_function() {
-            let result = vm.call(trap, handler, vec![proxy_target_value.clone(), Value::string_value(key)])?;
-            return Ok(Value::Bool(result.truthy()));
-        }
-        if vm.has_property(&handler, "has") && !trap.is_null() && !trap.is_undefined() {
-            return Err(JsError::Throw(type_error(vm, "Proxy has trap is not callable")));
-        }
-        return native_reflect_has(vm, Value::Undefined, &[proxy_target_value, Value::string_value(key)]);
-    }
-    Ok(Value::Bool(vm.has_property(&target, &key)))
+    Ok(Value::Bool(vm.has_property_with_proxy(&target, &key)?))
 }
 
 fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
@@ -18806,6 +18840,21 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             .get(&key)
             .is_some_and(|attributes| !attributes.writable)
     {
+        return Ok(Value::Bool(false));
+    }
+    if target.as_function_ref().is_some_and(|function| {
+        function
+            .attributes
+            .borrow()
+            .get(&key)
+            .is_some_and(|attributes| !attributes.writable)
+    }) || receiver.as_function_ref().is_some_and(|function| {
+        function
+            .attributes
+            .borrow()
+            .get(&key)
+            .is_some_and(|attributes| !attributes.writable)
+    }) {
         return Ok(Value::Bool(false));
     }
     if target.as_regexp_ref().is_some()
@@ -23024,6 +23073,12 @@ fn define_function_property(
                 writable: true,
                 enumerable: false,
                 configurable: false,
+            }
+        } else if matches!(key, "name" | "length") && props.contains_key(key) {
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
             }
         } else {
             PropertyAttributes::DEFAULT
