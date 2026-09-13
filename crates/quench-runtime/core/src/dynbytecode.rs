@@ -2156,6 +2156,17 @@ impl Compiler {
     }
 
     fn call_expression(&mut self, value: &CallExpression<'static>) -> Result<Register, CompileGap> {
+        if matches!(&value.callee, Expression::Identifier(identifier) if identifier.name == "eval")
+        {
+            // Direct eval observes the caller's lexical/variable environments;
+            // a stencil activation cannot safely expose that transition yet.
+            // Keep it on the shared evaluator instead of compiling a call that
+            // would execute with an incomplete activation model.
+            return Err(CompileGap {
+                span: value.span,
+                reason: "direct eval deferred to shared semantics",
+            });
+        }
         let (receiver, callee) = if let Some(member) = value.callee.as_member_expression() {
             let target = self.member_lvalue(member)?;
             let receiver = target.object();
