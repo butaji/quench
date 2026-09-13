@@ -6354,6 +6354,7 @@ impl Vm {
         Environment::set(&g, "Promise", promise);
         let proxy = self.native_named(native_proxy_constructor, "Proxy", 2);
         let revocable = self.native_named(native_proxy_revocable, "revocable", 2);
+        self.mark_nonconstructable(&revocable);
         self.set_prop(&proxy, "revocable", revocable);
         Environment::set(&g, "Proxy", proxy);
         let json = self.object(None);
@@ -14222,6 +14223,16 @@ fn native_proxy_revocable(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Val
     let revoke = vm.native_named(native_proxy_revoke, "", 0);
     vm.mark_nonconstructable(&revoke);
     let revoke = native_function_bind(vm, revoke, std::slice::from_ref(&proxy))?;
+    set_function_name(&revoke, "");
+    set_property_attributes(
+        &revoke,
+        "name",
+        PropertyAttributes {
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
     let result = vm.object(None);
     vm.set_prop(&result, "proxy", proxy);
     vm.set_prop(&result, "revoke", revoke);
