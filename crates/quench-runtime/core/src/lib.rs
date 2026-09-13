@@ -7746,6 +7746,7 @@ impl Vm {
         // once so both execution tiers see the same pre-evaluation state.
         reserve_script_bindings(&environment, &r.program.body);
         self.materialize_script_bindings(&environment, &r.program.body);
+        self.hydrate_global_bindings(&environment, &r.program.body);
         self.source_stack.push(p.to_path_buf());
         self.source_ids.push(source_id);
         let out = if self.jit_mode == JitMode::Stencil {
@@ -8357,6 +8358,7 @@ impl Vm {
         collect_global_object_binding_names(statements, &mut names);
         let mut lexical = HashSet::new();
         collect_lexical_binding_names(statements, &mut lexical);
+        let eval_binding = Environment::get(environment, EVAL_CODE_ENV_NAME).is_some();
         for name in names {
             if lexical.contains(&name) {
                 continue;
@@ -8374,9 +8376,28 @@ impl Vm {
                 PropertyAttributes {
                     writable: true,
                     enumerable: true,
-                    configurable: false,
+                    configurable: eval_binding,
                 },
             );
+        }
+    }
+
+    fn hydrate_global_bindings(&self, environment: &Env, statements: &[Statement<'_>]) {
+        if !Rc::ptr_eq(environment, &self.global) {
+            return;
+        }
+        let Some(global_this) = Environment::get(&self.global, "globalThis") else {
+            return;
+        };
+        let mut names = Vec::new();
+        collect_script_binding_names(statements, &mut names);
+        for name in names {
+            let value = global_this
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get(&name).cloned());
+            if let Some(value) = value {
+                environment.borrow_mut().declare(&name, value);
+            }
         }
     }
 
