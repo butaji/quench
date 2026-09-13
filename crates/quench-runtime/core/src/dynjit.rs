@@ -3714,20 +3714,8 @@ fn construct(
             .then(|| function.prototype.clone())
         });
         let error_prototype = callee.as_function_ref().and_then(|function| {
-            matches!(
-                function.kind,
-                FunctionKind::Builtin(
-                    BuiltinId::ErrorConstructor
-                        | BuiltinId::TypeErrorConstructor
-                        | BuiltinId::RangeErrorConstructor
-                        | BuiltinId::URIErrorConstructor
-                        | BuiltinId::SyntaxErrorConstructor
-                        | BuiltinId::ReferenceErrorConstructor
-                        | BuiltinId::EvalErrorConstructor
-                        | BuiltinId::AggregateErrorConstructor
-                )
-            )
-            .then(|| function.prototype.clone())
+            matches!(function.kind, FunctionKind::Builtin(id) if id.is_error_constructor())
+                .then(|| function.prototype.clone())
         });
         error_prototype
             .or(native_prototype)
@@ -3793,16 +3781,7 @@ fn construct(
     let error_constructor = callee
         .as_function_ref()
         .and_then(|function| match function.kind {
-            FunctionKind::Builtin(
-                BuiltinId::ErrorConstructor
-                | BuiltinId::TypeErrorConstructor
-                | BuiltinId::RangeErrorConstructor
-                | BuiltinId::URIErrorConstructor
-                | BuiltinId::SyntaxErrorConstructor
-                | BuiltinId::ReferenceErrorConstructor
-                | BuiltinId::EvalErrorConstructor
-                | BuiltinId::AggregateErrorConstructor,
-            ) => Some(()),
+            FunctionKind::Builtin(id) if id.is_error_constructor() => Some(()),
             _ => None,
         });
     if error_constructor.is_some() && result.as_object_ref().is_some() {
