@@ -137,6 +137,20 @@ macro_rules! builtin_catalog {
             pub(crate) fn recipe(self) -> &'static BuiltinRecipe {
                 &BUILTIN_RECIPES[self as usize]
             }
+
+            /// Name of the primitive wrapper represented by this constructor.
+            ///
+            /// Keeping this projection on the builtin identity avoids subtly
+            /// divergent `Boolean`/`Number`/`String` matches across the
+            /// interpreter and stencil construction paths.
+            pub(crate) const fn wrapper_name(self) -> Option<&'static str> {
+                match self {
+                    Self::BooleanConstructor => Some("Boolean"),
+                    Self::NumberConstructor => Some("Number"),
+                    Self::StringConstructor => Some("String"),
+                    _ => None,
+                }
+            }
         }
 
         pub(crate) static BUILTIN_RECIPES: &[BuiltinRecipe] = &[

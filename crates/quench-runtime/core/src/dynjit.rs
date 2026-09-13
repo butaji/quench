@@ -3816,9 +3816,7 @@ fn construct(
     if wrapper_constructor {
         vm(frame).set_prop(&object, "\0primitive", result.clone());
         let wrapper = match callee.as_function_ref().map(|function| &function.kind) {
-            Some(FunctionKind::Builtin(BuiltinId::BooleanConstructor)) => "Boolean",
-            Some(FunctionKind::Builtin(BuiltinId::NumberConstructor)) => "Number",
-            Some(FunctionKind::Builtin(BuiltinId::StringConstructor)) => "String",
+            Some(FunctionKind::Builtin(id)) => id.wrapper_name().unwrap_or("Object"),
             _ => "Object",
         };
         vm(frame).set_prop(&object, "\0wrapper", Value::string_value(wrapper));
