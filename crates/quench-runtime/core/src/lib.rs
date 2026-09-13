@@ -10117,6 +10117,12 @@ impl Vm {
                 "for-in statement initializer is not permitted",
             )));
         }
+        if st.is_module() && has_module_early_error(&r.program) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "invalid module binding or export declaration",
+            )));
+        }
         let block_error = has_block_redeclaration_early_error(&r.program);
         let function_scope_error = function_scope_block_redeclaration(&r.program.body);
         let statement_position_error = has_statement_position_function(&r.program);
@@ -13742,6 +13748,149 @@ fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool
         && (source.contains("new.target")
             || source.contains("super")
             || strict && source.contains("yield"))
+}
+
+/// Module-only static semantics that OXC deliberately leaves representable
+/// in its AST.  Keep this as a data-first pass over the module declaration
+/// facts: bindings and exported names are collected once, then duplicate and
+/// unresolved edges are checked before any module statement executes.
+fn has_module_early_error(program: &Program<'_>) -> bool {
+    let mut bindings = HashSet::new();
+    let mut imports = HashSet::new();
+    let mut exports = HashSet::new();
+    let mut unresolved_exports = Vec::new();
+    let mut duplicate = false;
+    fn add_name(set: &mut HashSet<String>, name: &str, duplicate: &mut bool) {
+        if !set.insert(name.to_owned()) {
+            *duplicate = true;
+        }
+    }
+    fn add_export(set: &mut HashSet<String>, name: String, duplicate: &mut bool) {
+        if !set.insert(name) {
+            *duplicate = true;
+        }
+    }
+    for statement in &program.body {
+        match statement {
+            Statement::ImportDeclaration(import) => {
+                if let Some(specifiers) = &import.specifiers {
+                    for specifier in specifiers {
+                        let local = match specifier {
+                            ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                                specifier.local.name.as_str()
+                            }
+                            ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                                specifier.local.name.as_str()
+                            }
+                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                                specifier.local.name.as_str()
+                            }
+                        };
+                        if matches!(local, "eval" | "arguments")
+                            || !imports.insert(local.to_owned())
+                        {
+                            duplicate = true;
+                        }
+                        add_name(&mut bindings, local, &mut duplicate);
+                    }
+                }
+            }
+            Statement::ExportDeclaration(export) => {
+                let mut names = Vec::new();
+                declaration_names_for_early_error(&export.declaration, &mut names);
+                for name in names {
+                    add_name(&mut bindings, &name, &mut duplicate);
+                    add_export(&mut exports, name, &mut duplicate);
+                }
+            }
+            Statement::ExportDefaultDeclaration(_) => {
+                add_export(&mut exports, "default".to_owned(), &mut duplicate)
+            }
+            Statement::ExportNamedDeclaration(export) => {
+                for specifier in &export.specifiers {
+                    let local = module_export_name_for_early_error(&specifier.local);
+                    let exported = module_export_name_for_early_error(&specifier.exported);
+                    add_export(&mut exports, exported, &mut duplicate);
+                    unresolved_exports.push(local);
+                }
+            }
+            Statement::ExportFromDeclaration(export) => {
+                for specifier in &export.specifiers {
+                    add_export(
+                        &mut exports,
+                        module_export_name_for_early_error(&specifier.exported),
+                        &mut duplicate,
+                    );
+                }
+            }
+            Statement::ExportAllDeclaration(export) => {
+                if let Some(name) = &export.exported {
+                    add_export(
+                        &mut exports,
+                        module_export_name_for_early_error(name),
+                        &mut duplicate,
+                    );
+                }
+            }
+            Statement::VariableDeclaration(declaration) => {
+                let mut names = Vec::new();
+                for declarator in &declaration.declarations {
+                    if let Some(name) = pattern_name(&declarator.id) {
+                        names.push(name);
+                    }
+                }
+                for name in names {
+                    add_name(&mut bindings, &name, &mut duplicate);
+                }
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(id) = &function.id {
+                    add_name(&mut bindings, id.name.as_str(), &mut duplicate);
+                }
+            }
+            Statement::ClassDeclaration(class) => {
+                if let Some(id) = &class.id {
+                    add_name(&mut bindings, id.name.as_str(), &mut duplicate);
+                }
+            }
+            _ => {}
+        }
+    }
+    duplicate
+        || unresolved_exports
+            .into_iter()
+            .any(|name| !bindings.contains(&name))
+}
+
+fn module_export_name_for_early_error(name: &ModuleExportName<'_>) -> String {
+    match name {
+        ModuleExportName::IdentifierName(name) => name.name.to_string(),
+        ModuleExportName::IdentifierReference(name) => name.name.to_string(),
+        ModuleExportName::StringLiteral(name) => name.value.to_string(),
+    }
+}
+
+fn declaration_names_for_early_error(declaration: &Declaration<'_>, names: &mut Vec<String>) {
+    match declaration {
+        Declaration::VariableDeclaration(declaration) => {
+            for declarator in &declaration.declarations {
+                if let Some(name) = pattern_name(&declarator.id) {
+                    names.push(name);
+                }
+            }
+        }
+        Declaration::FunctionDeclaration(function) => {
+            if let Some(id) = &function.id {
+                names.push(id.name.to_string());
+            }
+        }
+        Declaration::ClassDeclaration(class) => {
+            if let Some(id) = &class.id {
+                names.push(id.name.to_string());
+            }
+        }
+        _ => {}
+    }
 }
 
 fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
