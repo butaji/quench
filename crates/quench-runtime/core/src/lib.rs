@@ -14396,12 +14396,6 @@ fn native_async_iterator_dispose(vm: &mut Vm, this: Value, _: &[Value]) -> JsRes
 }
 
 fn native_proxy_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    if vm.current_new_target.is_none() {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "Proxy constructor must be called with new",
-        )));
-    }
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let handler = args.get(1).cloned().unwrap_or(Value::Undefined);
     if !target.is_object_like() || is_symbol_carrier(&target) {
