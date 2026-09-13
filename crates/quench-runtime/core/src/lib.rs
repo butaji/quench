@@ -68,6 +68,29 @@ macro_rules! native_fn_matches {
     }};
 }
 
+// Strict assignment targets share one reserved-name fact across the AST
+// validator and the parser-compatibility scanner. Keeping the set declarative
+// prevents direct and destructuring assignments from drifting apart.
+macro_rules! strict_assignment_reserved_name {
+    ($name:expr) => {
+        matches!(
+            $name,
+            "arguments"
+                | "enum"
+                | "eval"
+                | "implements"
+                | "interface"
+                | "let"
+                | "package"
+                | "private"
+                | "protected"
+                | "public"
+                | "static"
+                | "yield"
+        )
+    };
+}
+
 // A module edge is one fact regardless of whether it is consumed by linking,
 // deferred-namespace checks, or async scheduling. Keep the OXC statement
 // shapes in one declarative matcher so those phases cannot drift apart.
@@ -16641,21 +16664,8 @@ fn expression_contains_identifier(expression: &Expression<'_>, name: &str) -> bo
 /// grammar's single target algebra and are shared by simple and destructuring
 /// assignments.
 fn assignment_target_contains_strict_reserved(target: &AssignmentTarget<'_>) -> bool {
-    const RESERVED: [&str; 11] = [
-        "arguments",
-        "enum",
-        "eval",
-        "implements",
-        "interface",
-        "let",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "static",
-    ];
     fn name_is_reserved(name: &str) -> bool {
-        RESERVED.contains(&name)
+        strict_assignment_reserved_name!(name)
     }
     fn maybe_default_is_reserved(target: &AssignmentTargetMaybeDefault<'_>) -> bool {
         match target {
@@ -16697,6 +16707,28 @@ fn assignment_target_contains_strict_reserved(target: &AssignmentTarget<'_>) -> 
         // identifier; any identifiers they contain are ordinary expressions.
         _ => false,
     }
+}
+
+/// `yield` is a reserved identifier in strict assignment target expressions,
+/// including computed member keys and default initializers. OXC keeps these
+/// expression positions representable, so use its generated target walk to
+/// inspect identifier references without confusing static property names for
+/// references.
+fn assignment_target_contains_strict_yield(target: &AssignmentTarget<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            if identifier.name == "yield" {
+                self.found = true;
+            }
+            ast_walk::walk_identifier_reference(self, identifier);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_assignment_target(target);
+    scan.found
 }
 
 fn function_contains_new_target(function: &Function<'_>) -> bool {
@@ -16892,7 +16924,10 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
         }
 
         fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
-            if self.strict() && assignment_target_contains_strict_reserved(&expression.left) {
+            if self.strict()
+                && (assignment_target_contains_strict_reserved(&expression.left)
+                    || assignment_target_contains_strict_yield(&expression.left))
+            {
                 self.invalid = true;
             }
             ast_walk::walk_assignment_expression(self, expression);
@@ -17796,7 +17831,7 @@ fn has_strict_reserved_assignment(source: &str) -> bool {
                 index += 1;
             }
             let word = &source[start..index];
-            if RESERVED.contains(&word) {
+            if strict_assignment_reserved_name!(word) {
                 let mut previous = start;
                 while previous > 0 && bytes[previous - 1].is_ascii_whitespace() {
                     previous -= 1;
