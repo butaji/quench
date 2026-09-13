@@ -2155,14 +2155,20 @@ impl RegExpKernel {
 
     fn find_at(&self, text: &str, start: usize) -> Option<KernelMatch> {
         match self {
-            Self::Linear(regex) => regex
-                .find_at(text, start)
-                .map(|m| KernelMatch { start: m.start(), end: m.end() }),
-            Self::Fancy(regex) => regex
-                .find_from_pos(text, start)
-                .ok()
-                .flatten()
-                .map(|m| KernelMatch { start: m.start(), end: m.end() }),
+            Self::Linear(regex) => regex.find_at(text, start).map(|m| KernelMatch {
+                start: m.start(),
+                end: m.end(),
+            }),
+            Self::Fancy(regex) => {
+                regex
+                    .find_from_pos(text, start)
+                    .ok()
+                    .flatten()
+                    .map(|m| KernelMatch {
+                        start: m.start(),
+                        end: m.end(),
+                    })
+            }
         }
     }
 
@@ -2170,12 +2176,18 @@ impl RegExpKernel {
         match self {
             Self::Linear(regex) => regex
                 .find_iter(text)
-                .map(|m| KernelMatch { start: m.start(), end: m.end() })
+                .map(|m| KernelMatch {
+                    start: m.start(),
+                    end: m.end(),
+                })
                 .collect(),
             Self::Fancy(regex) => regex
                 .find_iter(text)
                 .filter_map(Result::ok)
-                .map(|m| KernelMatch { start: m.start(), end: m.end() })
+                .map(|m| KernelMatch {
+                    start: m.start(),
+                    end: m.end(),
+                })
                 .collect(),
         }
     }
@@ -2204,22 +2216,24 @@ impl RegExpKernel {
 
     fn captures_at(&self, text: &str, start: usize) -> Option<KernelCaptures> {
         match self {
-            Self::Linear(regex) => regex.captures_at(text, start).map(|captures| {
-                KernelCaptures {
-                    groups: (0..captures.len())
-                        .map(|index| captures.get(index).map(|m| m.start()..m.end()))
-                        .collect(),
-                }
-            }),
-            Self::Fancy(regex) => regex
-                .captures_from_pos(text, start)
-                .ok()
-                .flatten()
+            Self::Linear(regex) => regex
+                .captures_at(text, start)
                 .map(|captures| KernelCaptures {
                     groups: (0..captures.len())
                         .map(|index| captures.get(index).map(|m| m.start()..m.end()))
                         .collect(),
                 }),
+            Self::Fancy(regex) => {
+                regex
+                    .captures_from_pos(text, start)
+                    .ok()
+                    .flatten()
+                    .map(|captures| KernelCaptures {
+                        groups: (0..captures.len())
+                            .map(|index| captures.get(index).map(|m| m.start()..m.end()))
+                            .collect(),
+                    })
+            }
         }
     }
 }
@@ -2401,12 +2415,7 @@ fn named_group_catalog(source: &str) -> Vec<(String, Vec<usize>)> {
     groups
 }
 
-fn attach_regexp_match_metadata(
-    vm: &Vm,
-    result: &Value,
-    regexp: &RegExpValue,
-    source: &str,
-) {
+fn attach_regexp_match_metadata(vm: &Vm, result: &Value, regexp: &RegExpValue, source: &str) {
     let names = named_group_catalog(&regexp.source);
     if names.is_empty() {
         return;
@@ -10075,40 +10084,26 @@ define_string_html_methods! {
     native_string_sup => ("sup", None),
 }
 
-fn native_string_trim_left(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() || symbol_primitive(&this).is_some() {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "String.prototype.trimLeft called on null or undefined",
-        )));
-    }
-    Ok(Value::string_value(
-        to_string_with_vm(vm, &this)?.trim_start_matches(js_whitespace),
-    ))
+macro_rules! define_string_trim_methods {
+    ($( $name:ident, $method:literal, $trim:ident; )+) => {
+        $(
+            fn $name(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+                if this.is_null() || this.is_undefined() || symbol_primitive(&this).is_some() {
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        concat!("String.prototype.", $method, " called on null or undefined"),
+                    )));
+                }
+                Ok(Value::string_value(to_string_with_vm(vm, &this)?.$trim(js_whitespace)))
+            }
+        )+
+    };
 }
 
-fn native_string_trim(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() || symbol_primitive(&this).is_some() {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "String.prototype.trim called on null or undefined",
-        )));
-    }
-    Ok(Value::string_value(
-        to_string_with_vm(vm, &this)?.trim_matches(js_whitespace),
-    ))
-}
-
-fn native_string_trim_right(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if this.is_null() || this.is_undefined() || symbol_primitive(&this).is_some() {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "String.prototype.trimRight called on null or undefined",
-        )));
-    }
-    Ok(Value::string_value(
-        to_string_with_vm(vm, &this)?.trim_end_matches(js_whitespace),
-    ))
+define_string_trim_methods! {
+    native_string_trim_left, "trimLeft", trim_start_matches;
+    native_string_trim, "trim", trim_matches;
+    native_string_trim_right, "trimRight", trim_end_matches;
 }
 
 fn js_whitespace(character: char) -> bool {
@@ -12247,10 +12242,7 @@ fn native_regexp_symbol_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         // A non-Unicode dot consumes one UTF-16 code unit. The Rust regex
         // backend is scalar-oriented, so materialize this small semantic
         // kernel explicitly and preserve lone surrogates in VM strings.
-        if regexp.source == "."
-            && !regexp.flags.contains('u')
-            && !regexp.flags.contains('v')
-        {
+        if regexp.source == "." && !regexp.flags.contains('u') && !regexp.flags.contains('v') {
             let values = utf16_units(&source)
                 .into_iter()
                 .filter(|unit| !matches!(*unit, 0x000a | 0x000d | 0x2028 | 0x2029))
@@ -14693,51 +14685,31 @@ fn native_date_to_json(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value>
     vm.call_arguments(&method, object, &[] as &[Value])
 }
 
-fn native_date_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if date_millis(&this).is_none() {
-        return Err(JsError::Throw(type_error(vm, "Date receiver required")));
-    }
-    let Some(date) = date_utc(&this) else {
-        return Ok(Value::string_value("Invalid Date"));
+macro_rules! define_date_string_methods {
+    ($( $name:ident => $format:literal ),+ $(,)?) => {
+        $(
+            fn $name(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+                date_string_value(vm, &this, $format)
+            }
+        )+
     };
-    Ok(Value::string_value(
-        date.format("%a %b %d %Y %H:%M:%S GMT+0000 (UTC)")
-            .to_string(),
-    ))
 }
 
-fn native_date_to_date_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if date_millis(&this).is_none() {
+fn date_string_value(vm: &mut Vm, this: &Value, format: &str) -> JsResult<Value> {
+    if date_millis(this).is_none() {
         return Err(JsError::Throw(type_error(vm, "Date receiver required")));
     }
-    let Some(date) = date_utc(&this) else {
+    let Some(date) = date_utc(this) else {
         return Ok(Value::string_value("Invalid Date"));
     };
-    Ok(Value::string_value(date.format("%a %b %d %Y").to_string()))
+    Ok(Value::string_value(date.format(format).to_string()))
 }
 
-fn native_date_to_time_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if date_millis(&this).is_none() {
-        return Err(JsError::Throw(type_error(vm, "Date receiver required")));
-    }
-    let Some(date) = date_utc(&this) else {
-        return Ok(Value::string_value("Invalid Date"));
-    };
-    Ok(Value::string_value(
-        date.format("%H:%M:%S GMT+0000 (UTC)").to_string(),
-    ))
-}
-
-fn native_date_to_utc_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    if date_millis(&this).is_none() {
-        return Err(JsError::Throw(type_error(vm, "Date receiver required")));
-    }
-    let Some(date) = date_utc(&this) else {
-        return Ok(Value::string_value("Invalid Date"));
-    };
-    Ok(Value::string_value(
-        date.format("%a, %d %b %Y %H:%M:%S GMT").to_string(),
-    ))
+define_date_string_methods! {
+    native_date_to_string => "%a %b %d %Y %H:%M:%S GMT+0000 (UTC)",
+    native_date_to_date_string => "%a %b %d %Y",
+    native_date_to_time_string => "%H:%M:%S GMT+0000 (UTC)",
+    native_date_to_utc_string => "%a, %d %b %Y %H:%M:%S GMT",
 }
 
 fn native_date_to_primitive(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -15351,7 +15323,9 @@ fn rename_duplicate_named_groups(pattern: &str) -> String {
             continue;
         }
         if !in_class
-            && bytes.get(index..).is_some_and(|tail| tail.starts_with(b"(?<"))
+            && bytes
+                .get(index..)
+                .is_some_and(|tail| tail.starts_with(b"(?<"))
             && !matches!(bytes.get(index + 3), Some(b'=') | Some(b'!'))
         {
             let name_start = index + 3;
@@ -18534,15 +18508,13 @@ mod tests {
             "result = 'abc'.match(/(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))/);",
         )
         .expect("duplicate groups execute");
-        assert!(!Environment::get(&vm.global, "result")
-            .is_some_and(|value| value.is_null()));
+        assert!(!Environment::get(&vm.global, "result").is_some_and(|value| value.is_null()));
         vm.run_source_text(
             Path::new("<duplicate-groups-const>"),
             "const matcher = /(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))/; result = 'abc'.match(matcher);",
         )
         .expect("duplicate groups const execute");
-        assert!(!Environment::get(&vm.global, "result")
-            .is_some_and(|value| value.is_null()));
+        assert!(!Environment::get(&vm.global, "result").is_some_and(|value| value.is_null()));
     }
 
     #[test]
