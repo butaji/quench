@@ -279,6 +279,8 @@ const ASYNC_GENERATOR_QUEUE_PROP: &str = "\0quench:async-generator-queue";
 const ARGUMENTS_LENGTH_DELETED_PROP: &str = "\0quench:arguments-length-deleted";
 const MODULE_NAMESPACE_PROP: &str = "\0quench:module-namespace";
 const DEFERRED_NAMESPACE_PATH_PROP: &str = "\0quench:deferred-module-path";
+const MODULE_IMPORT_REF_PATH_PROP: &str = "\0quench:module-import-path";
+const MODULE_IMPORT_REF_NAME_PROP: &str = "\0quench:module-import-name";
 const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
 const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
@@ -10330,6 +10332,8 @@ impl Vm {
                 _ => {}
             }
         }
+        let resolutions = self.module_export_bindings(&key)?;
+        names.retain(|name| resolutions.get(name).copied().unwrap_or(0) == 1);
         let mut names = names.into_iter().collect::<Vec<_>>();
         names.sort_unstable();
         Ok(names)
@@ -10396,6 +10400,158 @@ impl Vm {
         Ok(result)
     }
 
+    /// Resolve named module edges before executing any module statement.  OXC
+    /// owns the grammar, while this graph fact covers the host/linking phase:
+    /// a missing imported or re-exported name is a SyntaxError even when the
+    /// source begins with `$DONOTEVALUATE()`.
+    fn has_module_resolution_error(
+        &mut self,
+        path: &Path,
+        program: &Program<'_>,
+    ) -> JsResult<bool> {
+        let Some(parent) = path.parent() else {
+            return Ok(false);
+        };
+        for statement in &program.body {
+            let (source, names) = match statement {
+                Statement::ImportDeclaration(import) => {
+                    let names = import.specifiers.as_ref().map(|specifiers| {
+                        specifiers
+                            .iter()
+                            .filter_map(|specifier| match specifier {
+                                ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                                    Some(module_export_name_for_early_error(&specifier.imported))
+                                }
+                                ImportDeclarationSpecifier::ImportDefaultSpecifier(_) => {
+                                    Some(String::from("default"))
+                                }
+                                ImportDeclarationSpecifier::ImportNamespaceSpecifier(_) => None,
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    (import.source.value.as_str(), names)
+                }
+                Statement::ExportFromDeclaration(export) => {
+                    let names = Some(
+                        export
+                            .specifiers
+                            .iter()
+                            .map(|specifier| module_export_name_for_early_error(&specifier.local))
+                            .collect::<Vec<_>>(),
+                    );
+                    (export.source.value.as_str(), names)
+                }
+                _ => continue,
+            };
+            let Some(names) = names else {
+                continue;
+            };
+            let target = self.resolve_module_request(parent, source);
+            if self.module_key(&target) == self.module_key(path) {
+                // Self-imports resolve against the module's live environment;
+                // their bindings are linked before evaluation completes.
+                continue;
+            }
+            let available = self.module_export_bindings(&target)?;
+            if names
+                .iter()
+                .any(|name| available.get(name).copied().unwrap_or(0) != 1)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Return the number of distinct resolutions for every exported name.
+    /// Star re-exports with the same name are counted as ambiguous so named
+    /// imports fail during linking, while namespace creation can omit them.
+    fn module_export_bindings(&mut self, path: &Path) -> JsResult<HashMap<String, usize>> {
+        fn visit(
+            vm: &mut Vm,
+            path: &Path,
+            seen: &mut HashSet<PathBuf>,
+        ) -> JsResult<HashMap<String, usize>> {
+            let key = vm.module_key(path);
+            if !seen.insert(key.clone()) {
+                return Ok(HashMap::new());
+            }
+            let source =
+                fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
+            if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
+                return Ok(HashMap::from([(String::from("default"), 1)]));
+            }
+            let parsed_source: &'static str = Box::leak(source.into_boxed_str());
+            let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+            let parsed = Parser::new(allocator, parsed_source, SourceType::mjs())
+                .with_options(ParseOptions {
+                    parse_regular_expression: true,
+                    ..Default::default()
+                })
+                .parse();
+            if let Some(error) = parsed.diagnostics.first() {
+                return Err(JsError::Throw(syntax_error(
+                    vm,
+                    &format!("parse error: {error:?}"),
+                )));
+            }
+            let mut bindings = HashMap::new();
+            let Some(parent) = key.parent() else {
+                return Ok(bindings);
+            };
+            for statement in &parsed.program.body {
+                match statement {
+                    Statement::ExportDeclaration(export) => {
+                        let mut names = Vec::new();
+                        declaration_names_for_early_error(&export.declaration, &mut names);
+                        for name in names {
+                            *bindings.entry(name).or_insert(0) += 1;
+                        }
+                    }
+                    Statement::ExportDefaultDeclaration(_) => {
+                        *bindings.entry(String::from("default")).or_insert(0) += 1;
+                    }
+                    Statement::ExportNamedDeclaration(export) => {
+                        for specifier in &export.specifiers {
+                            *bindings
+                                .entry(module_export_name_for_early_error(&specifier.exported))
+                                .or_insert(0) += 1;
+                        }
+                    }
+                    Statement::ExportFromDeclaration(export) => {
+                        let dependency =
+                            vm.resolve_module_request(parent, export.source.value.as_str());
+                        let dependency_bindings = visit(vm, &dependency, seen)?;
+                        for specifier in &export.specifiers {
+                            let local = module_export_name_for_early_error(&specifier.local);
+                            let exported = module_export_name_for_early_error(&specifier.exported);
+                            let count = dependency_bindings.get(&local).copied().unwrap_or(0);
+                            *bindings.entry(exported).or_insert(0) += count;
+                        }
+                    }
+                    Statement::ExportAllDeclaration(export) => {
+                        let dependency =
+                            vm.resolve_module_request(parent, export.source.value.as_str());
+                        let dependency_bindings = visit(vm, &dependency, seen)?;
+                        if let Some(exported) = &export.exported {
+                            let name = module_export_name_for_early_error(exported);
+                            *bindings.entry(name).or_insert(0) += 1;
+                        } else {
+                            for (name, count) in dependency_bindings {
+                                if name != "default" {
+                                    *bindings.entry(name).or_insert(0) += count;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(bindings)
+        }
+        visit(self, path, &mut HashSet::new())
+    }
+
     fn json_module_value(&mut self, value: &serde_json::Value) -> Value {
         match value {
             serde_json::Value::Null => Value::Null,
@@ -10433,7 +10589,11 @@ impl Vm {
             return namespace.clone();
         }
         let object = self.ordinary_object();
-        let mut names = exports.keys().collect::<Vec<_>>();
+        let resolutions = self.module_export_bindings(path).unwrap_or_default();
+        let mut names = exports
+            .keys()
+            .filter(|name| resolutions.get(*name).is_none_or(|count| *count == 1))
+            .collect::<Vec<_>>();
         names.sort_unstable();
         for name in names {
             self.set_prop(&object, name, exports[name].clone());
@@ -10541,6 +10701,21 @@ impl Vm {
         Ok(())
     }
 
+    fn module_import_ref(&self, path: &Path, name: &str) -> Value {
+        let reference = self.ordinary_object();
+        self.set_prop(
+            &reference,
+            MODULE_IMPORT_REF_PATH_PROP,
+            Value::string_value(path.to_string_lossy()),
+        );
+        self.set_prop(
+            &reference,
+            MODULE_IMPORT_REF_NAME_PROP,
+            Value::string_value(name),
+        );
+        reference
+    }
+
     fn bind_module_imports(
         &mut self,
         path: &Path,
@@ -10565,6 +10740,7 @@ impl Vm {
                 })
             });
             let deferred = import.phase == Some(ImportPhase::Defer);
+            let target_evaluating = self.module_is_evaluating(&target);
             if deferred {
                 for dependency in self.deferred_async_dependencies(&target)? {
                     self.load_module_exports(&dependency)?;
@@ -10638,7 +10814,9 @@ impl Vm {
                             (specifier.local.name.as_str(), String::from("*"))
                         }
                     };
-                    let value = if imported == "*" {
+                    let value = if target_evaluating {
+                        self.module_import_ref(&target, &imported)
+                    } else if imported == "*" {
                         self.module_namespace(&target, &exports, deferred)
                     } else {
                         let Some(value) = exports.get(&imported).cloned() else {
@@ -10735,6 +10913,12 @@ impl Vm {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "invalid module binding or export declaration",
+            )));
+        }
+        if st.is_module() && self.has_module_resolution_error(p, &r.program)? {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "requested module export is not provided",
             )));
         }
         let block_error = has_block_redeclaration_early_error(&r.program);
@@ -11216,6 +11400,12 @@ impl Vm {
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
                         let value = self.make_user(function, e);
+                        if let Some(function) = value.as_function_ref() {
+                            function
+                                .props
+                                .borrow_mut()
+                                .insert("name".into(), Value::string_value("default"));
+                        }
                         self.record_module_export("default", value);
                         Ok(Signal::Normal(Value::Undefined))
                     }
@@ -11231,6 +11421,18 @@ impl Vm {
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
                         let value = self.make_class(class, e)?;
+                        if value.as_function_ref().is_some_and(|_| {
+                            let name = self.get_prop(&value, "name");
+                            name.is_undefined()
+                                || name.as_string().is_some_and(|name| name.is_empty())
+                        }) {
+                            if let Some(function) = value.as_function_ref() {
+                                function
+                                    .props
+                                    .borrow_mut()
+                                    .insert("name".into(), Value::string_value("default"));
+                            }
+                        }
                         self.record_module_export("default", value);
                         Ok(Signal::Normal(Value::Undefined))
                     }
@@ -11243,6 +11445,18 @@ impl Vm {
                     .as_expression()
                     .map(|expression| {
                         self.eval_expr(expression, e).map(|value| {
+                            if value.as_function_ref().is_some_and(|function| {
+                                let name = self.get_prop(&value, "name");
+                                name.is_undefined()
+                                    || name.as_string().is_some_and(|name| name.is_empty())
+                            }) {
+                                if let Some(function) = value.as_function_ref() {
+                                    function
+                                        .props
+                                        .borrow_mut()
+                                        .insert("name".into(), Value::string_value("default"));
+                                }
+                            }
                             self.record_module_export("default", value.clone());
                             Signal::Normal(value)
                         })
@@ -12503,6 +12717,14 @@ impl Vm {
                 PropertyAttributes::BUILTIN_CONSTANT
             );
             let target = if method.r#static { &class } else { &prototype };
+            if method.r#static && key == "name" {
+                // A static `name` method is an ordinary class property and
+                // intentionally shadows the constructor's inferred name.
+                if let Some(function) = class.as_function_ref() {
+                    function.props.borrow_mut().shift_remove("name");
+                    function.attributes.borrow_mut().remove("name");
+                }
+            }
             match method.kind {
                 MethodDefinitionKind::Method => {
                     install_data_property!(
@@ -12554,6 +12776,49 @@ impl Vm {
                 (local, borrowed.with_object.clone(), borrowed.parent.clone())
             };
             if let Some(value) = local {
+                if let (Some(path), Some(imported)) = (
+                    value
+                        .as_object_ref()
+                        .and_then(|object| {
+                            object
+                                .borrow()
+                                .props
+                                .get(MODULE_IMPORT_REF_PATH_PROP)
+                                .cloned()
+                        })
+                        .and_then(|value| {
+                            value.as_string().map(|value| PathBuf::from(value.as_str()))
+                        }),
+                    value
+                        .as_object_ref()
+                        .and_then(|object| {
+                            object
+                                .borrow()
+                                .props
+                                .get(MODULE_IMPORT_REF_NAME_PROP)
+                                .cloned()
+                        })
+                        .and_then(|value| value.as_string().cloned()),
+                ) {
+                    if let Some(exports) = self
+                        .module_exports_cache
+                        .get(&self.module_key(&path))
+                        .cloned()
+                    {
+                        if imported == "*" {
+                            return Ok(self.module_namespace(&path, &exports, false));
+                        }
+                        if let Some(export) = exports.get(imported.as_str()) {
+                            return Ok(export.clone());
+                        }
+                    }
+                    if let Some(exports) = self.module_export_stack.last()
+                        && let Some(export) = exports.get(imported.as_str())
+                    {
+                        return Ok(export.clone());
+                    }
+                    return Ok(Value::Undefined);
+                }
                 return Ok(value);
             }
             if let Some(object) = with_object
