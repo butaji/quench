@@ -5253,7 +5253,9 @@ fn to_primitive_for_binary(vm: &mut Vm, value: &Value, hint: PrimitiveHint) -> J
             "@@toPrimitive must return a primitive value",
         )));
     }
-    let methods = if matches!(hint, PrimitiveHint::String | PrimitiveHint::Default) {
+    let methods = if matches!(hint, PrimitiveHint::String)
+        || matches!(hint, PrimitiveHint::Default) && date_millis(value).is_some()
+    {
         ["toString", "valueOf"]
     } else {
         ["valueOf", "toString"]
