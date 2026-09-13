@@ -8095,6 +8095,19 @@ impl Vm {
             }
             return self.get_prop_with_receiver(&target, key, receiver);
         }
+        // An own accessor is the receiver's observable property and must be
+        // invoked before looking through the prototype chain.  Keep this
+        // explicit ownership check separate from the inherited-accessor path
+        // below: an own data property blocks inherited accessors, while an
+        // own getter still has to run.
+        if self.has_own_property_key(object, key)
+            && let Some((getter, _)) = self.find_accessor(object, key)
+        {
+            let Some(getter) = getter else {
+                return Ok(Value::Undefined);
+            };
+            return self.call_arguments(&getter, receiver.clone(), &[] as &[Value]);
+        }
         if let Some(prototype_function) = object.as_object_ref().and_then(|object| {
             let object = object.borrow();
             let own = object.props.contains_key(key)
@@ -9750,7 +9763,16 @@ impl Vm {
             self.native(native_object_to_string),
             PropertyAttributes::BUILTIN_METHOD
         );
-        if !strict {
+        // Parameter/arguments aliasing exists only for a non-strict *simple*
+        // parameter list.  Defaults, destructuring, and rest parameters get
+        // an unmapped arguments object by specification.
+        let mapped_parameter_list = !strict
+            && n.params.rest.is_none()
+            && n.params.items.iter().all(|parameter| {
+                parameter.initializer.is_none()
+                    && matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+            });
+        if mapped_parameter_list {
             let mut environment = e.borrow_mut();
             environment.arguments_object = Some(av.clone());
             let mut mapped_names = vec![String::new(); n.params.items.len()];
@@ -10099,8 +10121,16 @@ impl Vm {
         let function_scope_error = function_scope_block_redeclaration(&r.program.body);
         let statement_position_error = has_statement_position_function(&r.program);
         let nested_strict_error = has_nested_strict_function_error(&r.program.body);
-        let global_code_error =
-            has_global_code_early_error(&r.program, source, effective_strict_mode);
+        // Script-only early errors (return, module declarations, and
+        // top-level `super`/`new.target`) do not apply when the parser was
+        // explicitly given a module source type.  Module files are executed
+        // by the same stencil core, so keep the validation shared while
+        // selecting the grammar's source-level early-error set here.
+        let global_code_error = if st.is_module() {
+            false
+        } else {
+            has_global_code_early_error(&r.program, source, effective_strict_mode)
+        };
         let restricted_global_lexical_error = if Environment::get(&environment, EVAL_CODE_ENV_NAME)
             .is_none()
             && self.is_global_environment(&environment)
@@ -12810,23 +12840,13 @@ impl Vm {
             SimpleAssignmentTarget::StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
                 let k = m.property.name.to_string();
-                if self.strict_mode || proxy_target(&o).is_some() {
-                    self.set_prop_with_accessors(&o, &k, v)
-                } else {
-                    self.set_prop(&o, &k, v);
-                    Ok(())
-                }
+                self.set_prop_with_accessors(&o, &k, v)
             }
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
                 let key_value = self.eval_expr(&m.expression, e)?;
                 let k = self.to_property_key(key_value)?;
-                if self.strict_mode || proxy_target(&o).is_some() {
-                    self.set_prop_with_accessors(&o, &k, v)
-                } else {
-                    self.set_prop(&o, &k, v);
-                    Ok(())
-                }
+                self.set_prop_with_accessors(&o, &k, v)
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
