@@ -937,6 +937,17 @@ impl Compiler {
             if let Some(value) = &declarator.init {
                 let src = self.expression(value)?;
                 self.bind_pattern(&declarator.id, src, declarator.span)?;
+            } else if let Some(name) = pattern_name(&declarator.id) {
+                // Declaration instantiation supplies the initial undefined
+                // value. Register the slot for function stencils without
+                // emitting a second write that could clobber a parameter or
+                // hoisted function binding during statement execution.
+                self.known_names.insert(name.clone());
+                if let Some(bindings) = &mut self.local_bindings
+                    && !bindings.contains(&name)
+                {
+                    bindings.push(name);
+                }
             } else if self.local_bindings.is_none() {
                 let src = self.literal(Literal::Undefined, declarator.span)?;
                 self.bind_pattern(&declarator.id, src, declarator.span)?;
