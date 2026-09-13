@@ -2930,6 +2930,7 @@ enum Signal {
 enum LValue {
     Var(Env, String),
     UnresolvedVar(Env, String),
+    WithProp(Value, String),
     Prop(Value, String),
     SuperProp {
         base: Value,
@@ -13169,29 +13170,12 @@ impl Vm {
                 }
                 let with_env = Environment::new(Some(e));
                 with_env.borrow_mut().with_object = Some(object.clone());
-                let keys = object
-                    .as_object_ref()
-                    .map(|object| object.borrow().props.keys().cloned().collect::<Vec<_>>())
-                    .unwrap_or_default();
-                let mut bound_keys = Vec::new();
-                for key in &keys {
-                    if !self.with_binding_allowed(&object, key)? {
-                        continue;
-                    }
-                    let value = self.get_prop(&object, key);
-                    with_env.borrow_mut().declare(key, value);
-                    bound_keys.push(key.clone());
-                }
-                let result = self.exec_stmt(&x.body, with_env.clone());
-                for key in bound_keys {
-                    if let Some(value) = Environment::get(&with_env, &key) {
-                        // Sloppy `with` assignments silently ignore writes to
-                        // read-only properties; the ordinary setter path has
-                        // exactly that behavior in this snapshot model.
-                        self.set_prop(&object, &key, value);
-                    }
-                }
-                result
+                // A with-environment is an object environment, not a copied
+                // property snapshot.  Keep only the dynamic object edge;
+                // identifier reads and writes below perform [[HasProperty]]
+                // and [[Set]] at the point of use, preserving deletion,
+                // accessors, and Proxy effects.
+                self.exec_stmt(&x.body, with_env)
             }
             VariableDeclaration(v) => {
                 self.exec_var(v, e)?;
@@ -14139,9 +14123,13 @@ impl Vm {
                     .cloned();
                 (local, borrowed.with_object.clone(), borrowed.parent.clone())
             };
-            if let Some(object) = &with_object
-                && !self.with_binding_allowed(object, name)?
-            {
+            if let Some(object) = with_object {
+                // Object environment records resolve dynamically.  Never use
+                // a copied local value for a `with` name: getters, Proxy
+                // [[HasProperty]], and deletes are observable at each read.
+                if self.with_binding_allowed(&object, name)? {
+                    return Ok(self.get_prop(&object, name));
+                }
                 current = parent;
                 continue;
             }
@@ -15092,11 +15080,35 @@ impl Vm {
         match s {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(i) => {
                 let name = i.name.to_string();
-                if Environment::get(&e, &name).is_none() {
-                    Ok(LValue::UnresolvedVar(e, name))
-                } else {
-                    Ok(LValue::Var(e, name))
+                let mut current = Some(e.clone());
+                while let Some(environment) = current {
+                    let (with_object, has_local, parent) = {
+                        let borrowed = environment.borrow();
+                        (
+                            borrowed.with_object.clone(),
+                            borrowed.names.contains_key(&name)
+                                && !borrowed.deleted_names.contains(&name),
+                            borrowed.parent.clone(),
+                        )
+                    };
+                    if let Some(object) = with_object {
+                        if self.with_binding_allowed(&object, &name)? {
+                            return Ok(LValue::WithProp(object, name));
+                        }
+                        current = parent;
+                        continue;
+                    }
+                    if has_local {
+                        return Ok(LValue::Var(environment, name));
+                    }
+                    current = parent;
                 }
+                // A Reference captures its resolved environment at evaluation
+                // time.  Direct eval may add a `var` binding later, but that
+                // declaration must not retarget an already-created lvalue.
+                // Store the concrete binding environment rather than the
+                // lookup origin so PutValue remains stable across eval.
+                Ok(LValue::UnresolvedVar(e, name))
             }
             SimpleAssignmentTarget::StaticMemberExpression(m) => {
                 let base = self.eval_expr(&m.object, e.clone())?;
@@ -15129,6 +15141,7 @@ impl Vm {
         match target {
             LValue::Var(e, name) => Environment::get(e, name).unwrap_or(Value::Undefined),
             LValue::UnresolvedVar(_, _) => Value::Undefined,
+            LValue::WithProp(object, key) => self.get_prop(object, key),
             LValue::Prop(o, k) => self.get_prop(o, k),
             LValue::SuperProp { base, key, .. } => self.get_prop(base, key),
         }
@@ -15140,6 +15153,18 @@ impl Vm {
                     return Err(JsError::Throw(reference_error(self, &name)));
                 }
                 Environment::set(&e, &name, v);
+            }
+            LValue::WithProp(object, key) => {
+                // ObjectEnvironmentRecord.SetMutableBinding performs
+                // HasProperty again after the RHS is evaluated.  A deletion
+                // between target resolution and PutValue therefore becomes a
+                // strict ReferenceError instead of recreating the property.
+                if !self.has_property_with_proxy(&object, &key)? {
+                    if self.strict_mode {
+                        return Err(JsError::Throw(reference_error(self, &key)));
+                    }
+                }
+                self.set_prop_with_accessors(&object, &key, v)?;
             }
             LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {
                 if self.immutable_binding(&e, &name) || self.strict_mode {
