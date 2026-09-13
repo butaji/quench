@@ -7817,6 +7817,12 @@ impl Vm {
                 "yield is reserved as an identifier in strict mode",
             )));
         }
+        if self.strict_mode && has_strict_reserved_binding(&r.program) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "reserved word used as a binding in strict mode",
+            )));
+        }
         if self.strict_mode && has_strict_template_octal_escape(source) {
             return Err(JsError::Throw(syntax_error(
                 self,
@@ -7918,10 +7924,7 @@ impl Vm {
                         reserve_script_bindings(&environment, statements);
                         return self
                             .exec_stmts(statements, environment.clone())
-                            .map(|signal| match signal {
-                                Signal::Normal(value) | Signal::Return(value) => value,
-                                _ => Value::Undefined,
-                            });
+                            .and_then(|signal| self.complete_script_signal(signal));
                     }
                 };
                 let instrumented_kernels = self.instrumented_kernels();
@@ -7933,10 +7936,7 @@ impl Vm {
                     reserve_script_bindings(&environment, statements);
                     return self
                         .exec_stmts(statements, environment.clone())
-                        .map(|signal| match signal {
-                            Signal::Normal(value) | Signal::Return(value) => value,
-                            _ => Value::Undefined,
-                        });
+                        .and_then(|signal| self.complete_script_signal(signal));
                 };
                 let (direct_blocks, direct_opcodes) = image.direct_selection();
                 self.jit_stats.compiled_images += 1;
@@ -7951,22 +7951,15 @@ impl Vm {
                 match image.call_script(self, environment.clone()) {
                     Err(error) if is_stencil_fallback_error(&error) => {
                         reserve_script_bindings(&environment, statements);
-                        self.exec_stmts(statements, environment.clone()).map(
-                            |signal| match signal {
-                                Signal::Normal(value) | Signal::Return(value) => value,
-                                _ => Value::Undefined,
-                            },
-                        )
+                        self.exec_stmts(statements, environment.clone())
+                            .and_then(|signal| self.complete_script_signal(signal))
                     }
                     result => result,
                 }
             })()
         } else {
             self.exec_stmts(&r.program.body, environment.clone())
-                .map(|signal| match signal {
-                    Signal::Normal(value) | Signal::Return(value) => value,
-                    _ => Value::Undefined,
-                })
+                .and_then(|signal| self.complete_script_signal(signal))
         };
         self.source_stack.pop();
         self.source_ids.pop();
@@ -7978,6 +7971,16 @@ impl Vm {
         }
         self.strict_mode = previous_strict_mode;
         out
+    }
+
+    fn complete_script_signal(&mut self, signal: Signal) -> JsResult<Value> {
+        match signal {
+            Signal::Normal(value) | Signal::Return(value) => Ok(value),
+            Signal::Break(_) | Signal::Continue(_) => Err(JsError::Throw(syntax_error(
+                self,
+                "break or continue is not permitted at eval script scope",
+            ))),
+        }
     }
 
     fn coverage_hit(&mut self, span: Span, operation: &str) {
@@ -10423,6 +10426,26 @@ fn has_strict_yield_binding(program: &Program<'_>) -> bool {
                 if declaration.declarations.iter().any(|declarator| {
                     pattern_name(&declarator.id).as_deref() == Some("yield")
                 })
+        )
+    })
+}
+
+fn has_strict_reserved_binding(program: &Program<'_>) -> bool {
+    let mut names = Vec::new();
+    collect_script_binding_names(&program.body, &mut names);
+    names.iter().any(|name| {
+        matches!(
+            name.as_str(),
+            "await"
+                | "enum"
+                | "implements"
+                | "interface"
+                | "let"
+                | "package"
+                | "private"
+                | "protected"
+                | "public"
+                | "static"
         )
     })
 }
@@ -21358,6 +21381,17 @@ mod tests {
         )
         .expect("eval conflict probe executes");
         assert!(Environment::get(&vm.global, "result").is_some_and(|value| value.truthy()));
+    }
+
+    #[test]
+    fn strict_eval_rejects_reserved_var_binding() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        let result = vm.run_source_text(
+            Path::new("<strict-eval>"),
+            "\"use strict\"; eval('var public = 1;');",
+        );
+        assert!(result.is_err());
     }
 
     #[test]
