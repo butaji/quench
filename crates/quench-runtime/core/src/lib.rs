@@ -15935,7 +15935,7 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
 /// parser intentionally leaves representable (return/super/new.target and
 /// module declarations) before any `$DONOTEVALUATE` body can run.
 fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool) -> bool {
-    if source.as_bytes().windows(2).any(|pair| pair == b".#") && !source.contains("class") {
+    if has_invalid_private_name_reference(source) {
         return true;
     }
     fn direct_meta(expression: &Expression<'_>) -> bool {
