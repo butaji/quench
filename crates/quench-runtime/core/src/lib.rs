@@ -7994,6 +7994,14 @@ impl Vm {
                 &format!("parse error: {e:?}"),
             )));
         }
+        if Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
+            && r.program.body.iter().any(is_module_declaration)
+        {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "module declaration is not permitted in eval code",
+            )));
+        }
         let previous_strict_mode = self.strict_mode;
         let source_strict_mode = r
             .program
@@ -10808,6 +10816,18 @@ fn collect_function_declaration_names(statements: &[Statement<'_>], names: &mut 
             names.push(id.name.to_string());
         }
     });
+}
+
+fn is_module_declaration(statement: &Statement<'_>) -> bool {
+    matches!(
+        statement,
+        Statement::ImportDeclaration(_)
+            | Statement::ExportAllDeclaration(_)
+            | Statement::ExportDefaultDeclaration(_)
+            | Statement::ExportDeclaration(_)
+            | Statement::ExportNamedDeclaration(_)
+            | Statement::ExportFromDeclaration(_)
+    )
 }
 
 fn collect_lexical_binding_names(statements: &[Statement<'_>], names: &mut HashSet<String>) {
