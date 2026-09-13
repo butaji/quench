@@ -11195,6 +11195,8 @@ impl Vm {
                             "number"
                         } else if z.is_string() {
                             "string"
+                        } else if is_symbol_carrier(&z) {
+                            "symbol"
                         } else {
                             "object"
                         }
