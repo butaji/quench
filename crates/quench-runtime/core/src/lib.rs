@@ -10226,6 +10226,7 @@ impl Vm {
             let exports = HashMap::from([(String::from("default"), value)]);
             self.module_evaluating.remove(&key);
             self.module_exports_cache.insert(key, exports.clone());
+            self.refresh_module_namespaces(path, &exports);
             return Ok(exports);
         }
         // Test262 and Node commonly use `.js` for module sources.  Feed a
@@ -10247,7 +10248,9 @@ impl Vm {
             .cloned()
             .unwrap_or_default();
         self.module_evaluating.remove(&key);
-        self.module_exports_cache.insert(key, exports.clone());
+        self.module_exports_cache
+            .insert(key.clone(), exports.clone());
+        self.refresh_module_namespaces(&key, &exports);
         Ok(exports)
     }
 
@@ -10286,7 +10289,22 @@ impl Vm {
     }
 
     fn module_export_names(&mut self, path: &Path) -> JsResult<Vec<String>> {
+        let mut visiting = HashSet::new();
+        self.module_export_names_inner(path, &mut visiting)
+    }
+
+    fn module_export_names_inner(
+        &mut self,
+        path: &Path,
+        visiting: &mut HashSet<PathBuf>,
+    ) -> JsResult<Vec<String>> {
         let key = self.module_key(path);
+        if !visiting.insert(key.clone()) {
+            // Cyclic `export *` graphs are valid.  The caller's graph walk
+            // contributes the names discovered on the other side of the
+            // cycle; stopping this edge keeps discovery finite.
+            return Ok(Vec::new());
+        }
         if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
             return Ok(vec![String::from("default")]);
         }
@@ -10338,7 +10356,7 @@ impl Vm {
                         let source =
                             self.resolve_module_request(parent, export.source.value.as_str());
                         names.extend(
-                            self.module_export_names(&source)?
+                            self.module_export_names_inner(&source, visiting)?
                                 .into_iter()
                                 .filter(|name| name != "default"),
                         );
@@ -10350,6 +10368,34 @@ impl Vm {
         let mut names = names.into_iter().collect::<Vec<_>>();
         names.sort_unstable();
         Ok(names)
+    }
+
+    fn refresh_module_namespaces(&mut self, path: &Path, exports: &HashMap<String, Value>) {
+        let key = self.module_key(path);
+        let resolutions = self.module_export_bindings(path).unwrap_or_default();
+        let namespaces = self
+            .module_namespace_cache
+            .iter()
+            .filter(|((namespace_key, _), _)| *namespace_key == key)
+            .map(|(_, namespace)| namespace.clone())
+            .collect::<Vec<_>>();
+        for namespace in namespaces {
+            for (name, value) in exports {
+                if resolutions.get(name).is_some_and(|count| *count != 1) {
+                    continue;
+                }
+                self.set_prop(&namespace, name, value.clone());
+                set_property_attributes(
+                    &namespace,
+                    name,
+                    PropertyAttributes {
+                        writable: true,
+                        enumerable: true,
+                        configurable: false,
+                    },
+                );
+            }
+        }
     }
 
     /// Collect the asynchronous transitive dependencies of a deferred module.
@@ -10634,13 +10680,27 @@ impl Vm {
         let mut names = exports
             .keys()
             .filter(|name| resolutions.get(*name).is_none_or(|count| *count == 1))
+            .cloned()
             .collect::<Vec<_>>();
+        if self.module_is_evaluating(path) {
+            // Namespace imports are instantiated before evaluation.  Seed
+            // their statically-known keys with `undefined`; completion then
+            // refreshes the same interned object with live export values.
+            for name in self.module_export_names(path).unwrap_or_default() {
+                if resolutions.get(&name).is_none_or(|count| *count == 1)
+                    && !names.iter().any(|existing| existing == &name)
+                {
+                    names.push(name);
+                }
+            }
+        }
         names.sort_unstable();
         for name in names {
-            self.set_prop(&object, name, exports[name].clone());
+            let value = exports.get(&name).cloned().unwrap_or(Value::Undefined);
+            self.set_prop(&object, &name, value);
             set_property_attributes(
                 &object,
-                name,
+                &name,
                 PropertyAttributes {
                     // Module namespace descriptors report writable true for
                     // exported bindings, while [[Set]] remains rejecting.
@@ -10861,12 +10921,10 @@ impl Vm {
                         // empty placeholder.
                         self.module_namespace(&target, &exports, true)
                     } else if target_evaluating && import_type.is_none() && imported == "*" {
-                        // Namespace self-imports are instantiated before the
-                        // module has an export object.  Keep the binding
-                        // inert until the module completes; this avoids
-                        // recursively materializing the module while it is
-                        // still evaluating.
-                        Value::Undefined
+                        // Namespace imports are stable identities even while
+                        // the target is evaluating.  The namespace starts
+                        // with static keys and is refreshed after completion.
+                        self.module_namespace(&target, &exports, false)
                     } else if target_evaluating && import_type.is_none() {
                         self.module_import_ref(&target, &imported)
                     } else if imported == "*" {
@@ -10891,6 +10949,14 @@ impl Vm {
         if let Some(exports) = self.module_export_stack.last_mut() {
             let name = name.into();
             exports.insert(name, value);
+            // Namespace objects are observable from imports in the same
+            // module before evaluation completes.  Refresh the interned
+            // identity after each declaration so self/cyclic imports see the
+            // binding as soon as it is initialized.
+            if let Some(path) = self.source_stack.last().cloned() {
+                let snapshot = exports.clone();
+                self.refresh_module_namespaces(&path, &snapshot);
+            }
         }
     }
 
@@ -11315,8 +11381,11 @@ impl Vm {
                     if let Some(key) = module_key.as_ref() {
                         self.module_exports_cache
                             .insert(key.clone(), exports.clone());
+                        self.refresh_module_namespaces(key, &exports);
                     }
-                    self.module_exports_cache.insert(p.to_path_buf(), exports);
+                    self.module_exports_cache
+                        .insert(p.to_path_buf(), exports.clone());
+                    self.refresh_module_namespaces(p, &exports);
                 }
             }
             if module_owner {
