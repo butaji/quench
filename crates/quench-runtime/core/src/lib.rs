@@ -5342,6 +5342,13 @@ struct Vm {
     source_stack: Vec<PathBuf>,
     source_ids: Vec<usize>,
     module_cache: HashMap<PathBuf, Value>,
+    // Module records are owned by this VM instance.  The cache stores the
+    // canonical export map once a source has evaluated; an empty entry is
+    // installed before dependency traversal so cycles observe a stable
+    // record instead of recursively re-entering the loader.
+    module_exports_cache: HashMap<PathBuf, HashMap<String, Value>>,
+    module_evaluating: HashSet<PathBuf>,
+    module_export_stack: Vec<HashMap<String, Value>>,
     started_at: Instant,
     coverage: Coverage,
     coverage_output: Option<PathBuf>,
@@ -5393,6 +5400,9 @@ impl Vm {
             source_stack: Vec::new(),
             source_ids: Vec::new(),
             module_cache: HashMap::new(),
+            module_exports_cache: HashMap::new(),
+            module_evaluating: HashSet::new(),
+            module_export_stack: Vec::new(),
             started_at: Instant::now(),
             coverage: if env::var_os("QUENCH_STENCIL_COVERAGE").is_some() {
                 Coverage::enabled()
@@ -10059,8 +10069,109 @@ impl Vm {
         self.run_source_text(p, &source)
     }
 
+    fn load_module_exports(&mut self, path: &Path) -> JsResult<HashMap<String, Value>> {
+        let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if let Some(exports) = self.module_exports_cache.get(&key) {
+            return Ok(exports.clone());
+        }
+        if self.module_evaluating.contains(&key) {
+            return Ok(HashMap::new());
+        }
+        self.module_evaluating.insert(key.clone());
+        let source =
+            fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
+        if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            self.module_evaluating.remove(&key);
+            return Err(JsError::Message(
+                "JSON module loading is not available in the core loader".into(),
+            ));
+        }
+        // Test262 and Node commonly use `.js` for module sources.  Feed a
+        // synthetic `.mjs` identity to the parser while retaining the actual
+        // path for file I/O and diagnostics.
+        let module_path = key.with_extension("mjs");
+        let environment = Environment::new(Some(self.global.clone()));
+        let _ = self.run_source_text_in_environment(&module_path, &source, environment)?;
+        let exports = self
+            .module_exports_cache
+            .get(&module_path)
+            .cloned()
+            .unwrap_or_default();
+        self.module_evaluating.remove(&key);
+        self.module_exports_cache.insert(key, exports.clone());
+        Ok(exports)
+    }
+
+    fn bind_module_imports(
+        &mut self,
+        path: &Path,
+        program: &Program<'_>,
+        environment: &Env,
+    ) -> JsResult<()> {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        for statement in &program.body {
+            let Statement::ImportDeclaration(import) = statement else {
+                continue;
+            };
+            let requested = PathBuf::from(import.source.value.as_str());
+            let target = if requested.is_absolute() {
+                requested
+            } else {
+                parent.join(requested)
+            };
+            let exports = self.load_module_exports(&target)?;
+            let namespace = || {
+                let object = self.ordinary_object();
+                for (name, value) in &exports {
+                    self.set_prop(&object, name, value.clone());
+                }
+                object
+            };
+            if let Some(specifiers) = &import.specifiers {
+                for specifier in specifiers {
+                    let (local, imported) = match specifier {
+                        ImportDeclarationSpecifier::ImportSpecifier(specifier) => (
+                            specifier.local.name.as_str(),
+                            module_export_name_for_early_error(&specifier.imported),
+                        ),
+                        ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                            (specifier.local.name.as_str(), String::from("default"))
+                        }
+                        ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                            (specifier.local.name.as_str(), String::from("*"))
+                        }
+                    };
+                    let value = if imported == "*" {
+                        namespace()
+                    } else {
+                        exports.get(&imported).cloned().unwrap_or(Value::Undefined)
+                    };
+                    environment.borrow_mut().declare(local, value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn record_module_export(&mut self, name: impl Into<String>, value: Value) {
+        if let Some(exports) = self.module_export_stack.last_mut() {
+            let name = name.into();
+            exports.insert(name, value);
+        }
+    }
+
     fn run_source_text(&mut self, p: &Path, source: &str) -> JsResult<Value> {
-        self.run_source_text_in_environment(p, source, self.global.clone())
+        if SourceType::from_path(p).is_ok_and(|source_type| source_type.is_module()) {
+            // Modules execute in a fresh module environment whose parent is
+            // the realm global.  This keeps module bindings out of the global
+            // object while still using the same VM and stencil machinery.
+            let environment = Environment::new(Some(self.global.clone()));
+            self.run_source_text_in_environment(p, source, environment)
+        } else {
+            self.run_source_text_in_environment(p, source, self.global.clone())
+        }
     }
 
     fn run_source_text_in_environment(
@@ -10293,6 +10404,16 @@ impl Vm {
                 }
             }
         }
+        let module_source = st.is_module();
+        let module_key =
+            module_source.then(|| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()));
+        let module_owner = module_key
+            .as_ref()
+            .is_some_and(|key| self.module_evaluating.insert(key.clone()));
+        if module_source {
+            self.bind_module_imports(p, &r.program, &environment)?;
+            self.module_export_stack.push(HashMap::new());
+        }
         // Script declaration instantiation happens before any statement (and
         // before a stencil image is entered). Reserve lexical slots and
         // materialize the observable global `var`/Annex-B function projection
@@ -10440,6 +10561,20 @@ impl Vm {
             self.exec_stmts(&r.program.body, execution_environment.clone())
                 .and_then(|signal| self.complete_script_signal(signal))
         };
+        if module_source {
+            if let Some(exports) = self.module_export_stack.pop() {
+                if let Some(key) = module_key.as_ref() {
+                    self.module_exports_cache
+                        .insert(key.clone(), exports.clone());
+                }
+                self.module_exports_cache.insert(p.to_path_buf(), exports);
+            }
+            if module_owner {
+                if let Some(key) = module_key {
+                    self.module_evaluating.remove(&key);
+                }
+            }
+        }
         self.source_stack.pop();
         self.source_ids.pop();
         if !eval_tdz_names.is_empty() {
@@ -10532,12 +10667,24 @@ impl Vm {
                                 specifier,
                             ) => (specifier.local.name.as_str(), Value::Undefined),
                         };
-                        e.borrow_mut().declare(name, value);
+                        if !e.borrow().contains_local(name) {
+                            e.borrow_mut().declare(name, value);
+                        }
                     }
                 }
                 Ok(Signal::Normal(Value::Undefined))
             }
-            ExportDeclaration(export) => self.exec_decl(&export.declaration, e),
+            ExportDeclaration(export) => {
+                let result = self.exec_decl(&export.declaration, e.clone())?;
+                let mut names = Vec::new();
+                declaration_names_for_early_error(&export.declaration, &mut names);
+                for name in names {
+                    if let Some(value) = Environment::get(&e, &name) {
+                        self.record_module_export(name, value);
+                    }
+                }
+                Ok(result)
+            }
             ExportDefaultDeclaration(export) => match &export.declaration {
                 ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
                     // Named default functions are ordinary declarations; an
@@ -10546,16 +10693,19 @@ impl Vm {
                     // checks before the module completes.
                     if function.id.is_some() {
                         if let Some(id) = &function.id {
+                            let value = self.make_user(function, e.clone());
                             self.declare_function_binding(
                                 function,
                                 e.clone(),
                                 id.name.as_str(),
                                 true,
                             );
+                            self.record_module_export("default", value);
                         }
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
-                        let _ = self.make_user(function, e);
+                        let value = self.make_user(function, e);
+                        self.record_module_export("default", value);
                         Ok(Signal::Normal(Value::Undefined))
                     }
                 }
@@ -10565,10 +10715,12 @@ impl Vm {
                             e.borrow_mut().lexical_names.insert(id.name.to_string());
                             let value = self.make_class(class, e.clone())?;
                             e.borrow_mut().declare(id.name.as_str(), value.clone());
+                            self.record_module_export("default", value);
                         }
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
-                        let _ = self.make_class(class, e)?;
+                        let value = self.make_class(class, e)?;
+                        self.record_module_export("default", value);
                         Ok(Signal::Normal(Value::Undefined))
                     }
                 }
@@ -10578,10 +10730,50 @@ impl Vm {
                 _ => export
                     .declaration
                     .as_expression()
-                    .map(|expression| self.eval_expr(expression, e).map(Signal::Normal))
+                    .map(|expression| {
+                        self.eval_expr(expression, e).map(|value| {
+                            self.record_module_export("default", value.clone());
+                            Signal::Normal(value)
+                        })
+                    })
                     .unwrap_or_else(|| Ok(Signal::Normal(Value::Undefined))),
             },
-            ExportNamedDeclaration(_) | ExportFromDeclaration(_) | ExportAllDeclaration(_) => {
+            ExportNamedDeclaration(export) => {
+                for specifier in &export.specifiers {
+                    let local = module_export_name_for_early_error(&specifier.local);
+                    if let Some(value) = Environment::get(&e, &local) {
+                        self.record_module_export(
+                            module_export_name_for_early_error(&specifier.exported),
+                            value,
+                        );
+                    }
+                }
+                Ok(Signal::Normal(Value::Undefined))
+            }
+            ExportFromDeclaration(export) => {
+                let source = PathBuf::from(export.source.value.as_str());
+                if let Some(parent) = self.source_stack.last().and_then(|path| path.parent()) {
+                    let exports = self.load_module_exports(&parent.join(source))?;
+                    for specifier in &export.specifiers {
+                        let imported = module_export_name_for_early_error(&specifier.local);
+                        let exported = module_export_name_for_early_error(&specifier.exported);
+                        if let Some(value) = exports.get(&imported) {
+                            self.record_module_export(exported, value.clone());
+                        }
+                    }
+                }
+                Ok(Signal::Normal(Value::Undefined))
+            }
+            ExportAllDeclaration(export) => {
+                let source = PathBuf::from(export.source.value.as_str());
+                if let Some(parent) = self.source_stack.last().and_then(|path| path.parent()) {
+                    let exports = self.load_module_exports(&parent.join(source))?;
+                    for (name, value) in exports {
+                        if name != "default" {
+                            self.record_module_export(name, value);
+                        }
+                    }
+                }
                 Ok(Signal::Normal(Value::Undefined))
             }
             ExpressionStatement(x) => Ok(Signal::Normal(self.eval_expr(&x.expression, e)?)),
