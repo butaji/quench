@@ -586,6 +586,18 @@ impl Compiler {
                 reason: "catch environments deferred to shared semantics",
             });
         }
+        if contains_with_statement(statements) {
+            return Err(CompileGap {
+                span,
+                reason: "with environments deferred to shared semantics",
+            });
+        }
+        if contains_destructuring_binding(statements) {
+            return Err(CompileGap {
+                span,
+                reason: "destructuring bindings deferred to shared semantics",
+            });
+        }
         if contains_nested_var_declaration(statements, false) {
             return Err(CompileGap {
                 span,
@@ -652,6 +664,18 @@ impl Compiler {
                 reason: "catch environments deferred to shared semantics",
             });
         }
+        if contains_with_statement(&body.statements) {
+            return Err(CompileGap {
+                span: function.span,
+                reason: "with environments deferred to shared semantics",
+            });
+        }
+        if contains_destructuring_binding(&body.statements) {
+            return Err(CompileGap {
+                span: function.span,
+                reason: "destructuring bindings deferred to shared semantics",
+            });
+        }
         if contains_nested_var_declaration(&body.statements, false) {
             return Err(CompileGap {
                 span: function.span,
@@ -703,6 +727,14 @@ impl Compiler {
         source_id: Option<usize>,
         strict: bool,
     ) -> Result<DynCode, CompileGap> {
+        if let ArrowFunctionBody::FunctionBody(body) = &function.body {
+            if contains_destructuring_binding(&body.statements) {
+                return Err(CompileGap {
+                    span: function.span,
+                    reason: "destructuring bindings deferred to shared semantics",
+                });
+            }
+        }
         let params = function
             .params
             .items
@@ -2591,6 +2623,118 @@ fn contains_catch_binding(statements: &[Statement<'static>]) -> bool {
             .any(|case| contains_catch_binding(&case.consequent)),
         Statement::WithStatement(statement) => {
             contains_catch_binding(std::slice::from_ref(&statement.body))
+        }
+        _ => false,
+    })
+}
+
+fn contains_with_statement(statements: &[Statement<'static>]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::WithStatement(_) => true,
+        Statement::BlockStatement(block) => contains_with_statement(&block.body),
+        Statement::IfStatement(statement) => {
+            contains_with_statement(std::slice::from_ref(&statement.consequent))
+                || statement.alternate.as_ref().is_some_and(|alternate| {
+                    contains_with_statement(std::slice::from_ref(alternate))
+                })
+        }
+        Statement::LabeledStatement(statement) => {
+            contains_with_statement(std::slice::from_ref(&statement.body))
+        }
+        Statement::WhileStatement(statement) => {
+            contains_with_statement(std::slice::from_ref(&statement.body))
+        }
+        Statement::DoWhileStatement(statement) => {
+            contains_with_statement(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForStatement(statement) => {
+            contains_with_statement(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForInStatement(statement) => {
+            contains_with_statement(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForOfStatement(statement) => {
+            contains_with_statement(std::slice::from_ref(&statement.body))
+        }
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .any(|case| contains_with_statement(&case.consequent)),
+        Statement::TryStatement(statement) => {
+            contains_with_statement(&statement.block.body)
+                || statement
+                    .handler
+                    .as_ref()
+                    .is_some_and(|handler| contains_with_statement(&handler.body.body))
+                || statement
+                    .finalizer
+                    .as_ref()
+                    .is_some_and(|finalizer| contains_with_statement(&finalizer.body))
+        }
+        _ => false,
+    })
+}
+
+fn contains_destructuring_binding(statements: &[Statement<'static>]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::VariableDeclaration(declaration) => declaration
+            .declarations
+            .iter()
+            .any(|declarator| !matches!(declarator.id, BindingPattern::BindingIdentifier(_))),
+        Statement::BlockStatement(block) => contains_destructuring_binding(&block.body),
+        Statement::IfStatement(statement) => {
+            contains_destructuring_binding(std::slice::from_ref(&statement.consequent))
+                || statement.alternate.as_ref().is_some_and(|alternate| {
+                    contains_destructuring_binding(std::slice::from_ref(alternate))
+                })
+        }
+        Statement::LabeledStatement(statement) => {
+            contains_destructuring_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::WhileStatement(statement) => {
+            contains_destructuring_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::DoWhileStatement(statement) => {
+            contains_destructuring_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForStatement(statement) => {
+            statement.init.as_ref().is_some_and(|init| {
+                matches!(init, ForStatementInit::VariableDeclaration(declaration) if declaration
+                    .declarations
+                    .iter()
+                    .any(|declarator| !matches!(declarator.id, BindingPattern::BindingIdentifier(_))))
+            }) || contains_destructuring_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForInStatement(statement) => {
+            matches!(&statement.left, ForStatementLeft::VariableDeclaration(declaration) if declaration
+                .declarations
+                .iter()
+                .any(|declarator| !matches!(declarator.id, BindingPattern::BindingIdentifier(_))))
+                || contains_destructuring_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForOfStatement(statement) => {
+            matches!(&statement.left, ForStatementLeft::VariableDeclaration(declaration) if declaration
+                .declarations
+                .iter()
+                .any(|declarator| !matches!(declarator.id, BindingPattern::BindingIdentifier(_))))
+                || contains_destructuring_binding(std::slice::from_ref(&statement.body))
+        }
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .any(|case| contains_destructuring_binding(&case.consequent)),
+        Statement::TryStatement(statement) => {
+            contains_destructuring_binding(&statement.block.body)
+                || statement.handler.as_ref().is_some_and(|handler| {
+                    contains_destructuring_binding(&handler.body.body)
+                })
+                || statement
+                    .finalizer
+                    .as_ref()
+                    .is_some_and(|finalizer| contains_destructuring_binding(&finalizer.body))
+        }
+        Statement::WithStatement(statement) => {
+            contains_destructuring_binding(std::slice::from_ref(&statement.body))
         }
         _ => false,
     })
