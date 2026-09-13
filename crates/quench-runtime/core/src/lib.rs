@@ -11107,6 +11107,18 @@ impl Vm {
                     (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
                 };
                 let args = self.eval_args(&v.arguments, e.clone())?;
+                if c.as_function_ref().is_some_and(|function| {
+                    matches!(
+                        function.kind,
+                        FunctionKind::Native(native)
+                            if native as *const () == native_proxy_constructor as *const ()
+                    )
+                }) {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "Proxy constructor must be called with new",
+                    )));
+                }
                 if matches!(&v.callee, Expression::Identifier(identifier) if identifier.name == "eval")
                     && matches!(
                         c.as_function_ref().map(|function| &function.kind),
@@ -18934,6 +18946,9 @@ fn native_reflect_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
         let trap = vm.get_prop_with_accessors(&handler, "setPrototypeOf")?;
         if trap.is_function() {
             let result = vm.call(trap, handler, vec![proxy_target_value.clone(), prototype.clone()])?;
+            if result.truthy() {
+                validate_proxy_set_prototype_invariant(vm, &proxy_target_value, &prototype)?;
+            }
             return Ok(Value::Bool(result.truthy()));
         }
         if vm.has_property(&handler, "setPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
@@ -24319,6 +24334,7 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             if !result.truthy() {
                 return Err(JsError::Throw(type_error(vm, "Proxy setPrototypeOf trap returned false")));
             }
+            validate_proxy_set_prototype_invariant(vm, &proxy_target_value, &prototype)?;
             return Ok(target.clone());
         }
         if vm.has_property(&handler, "setPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
@@ -24374,6 +24390,25 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
     object.borrow_mut().prototype = handle;
     vm.invalidate_prototype_membership();
     Ok(target.clone())
+}
+
+fn validate_proxy_set_prototype_invariant(
+    vm: &mut Vm,
+    target: &Value,
+    requested: &Value,
+) -> JsResult<()> {
+    let extensible = native_object_is_extensible(vm, Value::Undefined, &[target.clone()])?.truthy();
+    if extensible {
+        return Ok(());
+    }
+    let current = native_object_get_prototype_of(vm, Value::Undefined, &[target.clone()])?;
+    if !current.same_bits(requested) {
+        return Err(proxy_invariant_error(
+            vm,
+            "Proxy setPrototypeOf trap changed a non-extensible target prototype",
+        ));
+    }
+    Ok(())
 }
 fn set_integrity_level(target: &Value, freeze: bool) {
     if let Some(regexp) = target.as_regexp_ref() {
