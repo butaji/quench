@@ -278,6 +278,7 @@ const ASYNC_GENERATOR_EXECUTING_PROP: &str = "\0quench:async-generator-executing
 const ASYNC_GENERATOR_QUEUE_PROP: &str = "\0quench:async-generator-queue";
 const ARGUMENTS_LENGTH_DELETED_PROP: &str = "\0quench:arguments-length-deleted";
 const MODULE_NAMESPACE_PROP: &str = "\0quench:module-namespace";
+const DEFERRED_NAMESPACE_PATH_PROP: &str = "\0quench:deferred-module-path";
 const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
 const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
@@ -8034,6 +8035,16 @@ impl Vm {
         key: &str,
         receiver: &Value,
     ) -> JsResult<Value> {
+        if key != DEFERRED_NAMESPACE_PATH_PROP
+            && object.as_object_ref().is_some_and(|object| {
+                object
+                    .borrow()
+                    .props
+                    .contains_key(DEFERRED_NAMESPACE_PATH_PROP)
+            })
+        {
+            self.materialize_deferred_namespace(object)?;
+        }
         if !object.is_object_like() || is_symbol_carrier(object) {
             let own = self.get_prop(object, key);
             if !own.is_undefined() {
@@ -10127,6 +10138,73 @@ impl Vm {
         Ok(exports)
     }
 
+    fn module_export_names(&mut self, path: &Path) -> JsResult<Vec<String>> {
+        let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if key.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            return Ok(vec![String::from("default")]);
+        }
+        let source =
+            fs::read_to_string(&key).map_err(|error| JsError::Message(error.to_string()))?;
+        let parsed_source: &'static str = Box::leak(source.into_boxed_str());
+        let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+        let parsed = Parser::new(allocator, parsed_source, SourceType::mjs())
+            .with_options(ParseOptions {
+                parse_regular_expression: true,
+                ..Default::default()
+            })
+            .parse();
+        if let Some(error) = parsed.diagnostics.first() {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                &format!("parse error: {error:?}"),
+            )));
+        }
+        let mut names = HashSet::new();
+        for statement in &parsed.program.body {
+            match statement {
+                Statement::ExportDeclaration(export) => {
+                    let mut declared = Vec::new();
+                    declaration_names_for_early_error(&export.declaration, &mut declared);
+                    names.extend(declared);
+                }
+                Statement::ExportDefaultDeclaration(_) => {
+                    names.insert(String::from("default"));
+                }
+                Statement::ExportNamedDeclaration(export) => {
+                    names.extend(
+                        export.specifiers.iter().map(|specifier| {
+                            module_export_name_for_early_error(&specifier.exported)
+                        }),
+                    );
+                }
+                Statement::ExportFromDeclaration(export) => {
+                    names.extend(
+                        export.specifiers.iter().map(|specifier| {
+                            module_export_name_for_early_error(&specifier.exported)
+                        }),
+                    );
+                }
+                Statement::ExportAllDeclaration(export) => {
+                    if let Some(exported) = &export.exported {
+                        names.insert(module_export_name_for_early_error(exported));
+                    } else if let Some(parent) = key.parent() {
+                        let source =
+                            self.resolve_module_request(parent, export.source.value.as_str());
+                        names.extend(
+                            self.module_export_names(&source)?
+                                .into_iter()
+                                .filter(|name| name != "default"),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut names = names.into_iter().collect::<Vec<_>>();
+        names.sort_unstable();
+        Ok(names)
+    }
+
     fn json_module_value(&mut self, value: &serde_json::Value) -> Value {
         match value {
             serde_json::Value::Null => Value::Null,
@@ -10203,6 +10281,13 @@ impl Vm {
             },
         );
         self.set_prop(&object, MODULE_NAMESPACE_PROP, Value::Bool(true));
+        if deferred {
+            self.set_prop(
+                &object,
+                DEFERRED_NAMESPACE_PATH_PROP,
+                Value::string_value(key.0.to_string_lossy()),
+            );
+        }
         if let Some(object_data) = object.as_object_ref() {
             let mut object_data = object_data.borrow_mut();
             object_data.prototype = None;
@@ -10210,6 +10295,36 @@ impl Vm {
         }
         self.module_namespace_cache.insert(key, object.clone());
         object
+    }
+
+    fn materialize_deferred_namespace(&mut self, object: &Value) -> JsResult<()> {
+        let Some(path) = self
+            .get_prop(object, DEFERRED_NAMESPACE_PATH_PROP)
+            .as_string()
+            .map(|path| PathBuf::from(path.as_str()))
+        else {
+            return Ok(());
+        };
+        let exports = self.load_module_exports(&path)?;
+        for (name, value) in exports {
+            self.set_prop(object, &name, value);
+            set_property_attributes(
+                object,
+                &name,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                },
+            );
+        }
+        if let Some(object) = object.as_object_ref() {
+            object
+                .borrow_mut()
+                .props
+                .shift_remove(DEFERRED_NAMESPACE_PATH_PROP);
+        }
+        Ok(())
     }
 
     fn bind_module_imports(
@@ -10235,50 +10350,60 @@ impl Vm {
                     (key == "type").then(|| entry.value.value.to_string())
                 })
             });
-            let exports = match import_type.as_deref() {
-                Some("text") => {
-                    let text = fs::read_to_string(&target)
-                        .map_err(|error| JsError::Message(error.to_string()))?;
-                    HashMap::from([(String::from("default"), Value::string_value(text))])
-                }
-                Some("bytes") => {
-                    let bytes =
-                        fs::read(&target).map_err(|error| JsError::Message(error.to_string()))?;
-                    let values = self.array_from_values(
-                        bytes
-                            .iter()
-                            .map(|byte| Value::Number(f64::from(*byte)))
-                            .collect(),
-                    );
-                    let constructor = Environment::get(&self.global, "Uint8Array")
-                        .ok_or_else(|| JsError::Message("Uint8Array is unavailable".into()))?;
-                    let prototype = constructor
-                        .as_function_ref()
-                        .map(|function| function.prototype.clone());
-                    let receiver = self.object(prototype);
-                    self.construct_depth = self.construct_depth.saturating_add(1);
-                    let typed = native_typed_array_constructor(self, receiver, &[values])?;
-                    self.construct_depth = self.construct_depth.saturating_sub(1);
-                    // Bytes modules expose an immutable ArrayBuffer-backed
-                    // Uint8Array.  Stamp the ordinary backing object with the
-                    // canonical ArrayBuffer prototype and immutable fact so
-                    // `instanceof`, `.immutable`, and mutating methods all
-                    // observe the same representation.
-                    let buffer = self.get_prop(&typed, "buffer");
-                    if let Some(buffer_object) = buffer.as_object_ref() {
-                        if let Some(array_buffer) = Environment::get(&self.global, "ArrayBuffer") {
-                            if let Some(prototype) = array_buffer
-                                .as_function_ref()
-                                .map(|function| function.prototype.clone())
-                            {
-                                buffer_object.borrow_mut().prototype = Some(prototype);
-                            }
-                        }
-                        self.set_prop(&buffer, "immutable", Value::Bool(true));
+            let deferred = import.phase == Some(ImportPhase::Defer);
+            let exports = if deferred {
+                self.module_export_names(&target)?
+                    .into_iter()
+                    .map(|name| (name, Value::Undefined))
+                    .collect()
+            } else {
+                match import_type.as_deref() {
+                    Some("text") => {
+                        let text = fs::read_to_string(&target)
+                            .map_err(|error| JsError::Message(error.to_string()))?;
+                        HashMap::from([(String::from("default"), Value::string_value(text))])
                     }
-                    HashMap::from([(String::from("default"), typed)])
+                    Some("bytes") => {
+                        let bytes = fs::read(&target)
+                            .map_err(|error| JsError::Message(error.to_string()))?;
+                        let values = self.array_from_values(
+                            bytes
+                                .iter()
+                                .map(|byte| Value::Number(f64::from(*byte)))
+                                .collect(),
+                        );
+                        let constructor = Environment::get(&self.global, "Uint8Array")
+                            .ok_or_else(|| JsError::Message("Uint8Array is unavailable".into()))?;
+                        let prototype = constructor
+                            .as_function_ref()
+                            .map(|function| function.prototype.clone());
+                        let receiver = self.object(prototype);
+                        self.construct_depth = self.construct_depth.saturating_add(1);
+                        let typed = native_typed_array_constructor(self, receiver, &[values])?;
+                        self.construct_depth = self.construct_depth.saturating_sub(1);
+                        // Bytes modules expose an immutable ArrayBuffer-backed
+                        // Uint8Array.  Stamp the ordinary backing object with the
+                        // canonical ArrayBuffer prototype and immutable fact so
+                        // `instanceof`, `.immutable`, and mutating methods all
+                        // observe the same representation.
+                        let buffer = self.get_prop(&typed, "buffer");
+                        if let Some(buffer_object) = buffer.as_object_ref() {
+                            if let Some(array_buffer) =
+                                Environment::get(&self.global, "ArrayBuffer")
+                            {
+                                if let Some(prototype) = array_buffer
+                                    .as_function_ref()
+                                    .map(|function| function.prototype.clone())
+                                {
+                                    buffer_object.borrow_mut().prototype = Some(prototype);
+                                }
+                            }
+                            self.set_prop(&buffer, "immutable", Value::Bool(true));
+                        }
+                        HashMap::from([(String::from("default"), typed)])
+                    }
+                    _ => self.load_module_exports(&target)?,
                 }
-                _ => self.load_module_exports(&target)?,
             };
             if let Some(specifiers) = &import.specifiers {
                 for specifier in specifiers {
@@ -10295,11 +10420,7 @@ impl Vm {
                         }
                     };
                     let value = if imported == "*" {
-                        self.module_namespace(
-                            &target,
-                            &exports,
-                            import.phase == Some(ImportPhase::Defer),
-                        )
+                        self.module_namespace(&target, &exports, deferred)
                     } else {
                         let Some(value) = exports.get(&imported).cloned() else {
                             return Err(JsError::Throw(syntax_error(
@@ -25608,6 +25729,14 @@ fn native_object_get_own_property_descriptor(
         )));
     };
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    if target.as_object_ref().is_some_and(|object| {
+        object
+            .borrow()
+            .props
+            .contains_key(DEFERRED_NAMESPACE_PATH_PROP)
+    }) {
+        vm.materialize_deferred_namespace(target)?;
+    }
     if let Some(proxy_target_value) = proxy_target(target) {
         if proxy_revoked(target) {
             return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
