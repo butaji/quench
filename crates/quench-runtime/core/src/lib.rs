@@ -106,6 +106,8 @@ const CLASS_SUPER_PROTOTYPE_ENV_NAME: &str = "\0quench:class-super-prototype";
 const EVAL_CODE_ENV_NAME: &str = "\0quench:eval-code";
 const STRICT_EVAL_ENV_NAME: &str = "\0quench:strict-eval";
 const FUNCTION_ENV_NAME: &str = "\0quench:function";
+const NEW_TARGET_VALUE_NAME: &str = "\0quench:new-target";
+const NEW_TARGET_ALLOWED_NAME: &str = "\0quench:new-target-allowed";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5007,6 +5009,7 @@ struct Vm {
     next_symbol_id: u64,
     throw_type_error: RefCell<Option<Value>>,
     pending_loop_label: Option<String>,
+    current_new_target: Option<Value>,
 }
 impl Vm {
     fn new() -> Self {
@@ -5054,6 +5057,7 @@ impl Vm {
             next_symbol_id: 1,
             throw_type_error: RefCell::new(None),
             pending_loop_label: None,
+            current_new_target: None,
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -7470,6 +7474,18 @@ impl Vm {
                     return Ok(());
                 }
             };
+        // Direct eval observes the caller's environment and new.target. Keep
+        // such functions on the shared interpreter path until the compiled
+        // activation can carry those dynamic bindings explicitly.
+        if bytecode.ops.iter().any(|instruction| {
+            matches!(
+                &instruction.op,
+                dynbytecode::DynOp::LoadName { name, .. } if name == "eval"
+            )
+        }) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         #[cfg(feature = "inline-census")]
         if let FunctionKind::User { env: outer, .. } = &function.kind {
             static_call_census::record(&bytecode, outer);
@@ -7651,6 +7667,12 @@ impl Vm {
         set_property_attributes(&av, "toString", PropertyAttributes::BUILTIN_METHOD);
         e.borrow_mut().declare("arguments", av);
         e.borrow_mut().declare(FUNCTION_ENV_NAME, Value::Bool(true));
+        e.borrow_mut().declare(
+            NEW_TARGET_VALUE_NAME,
+            self.current_new_target.clone().unwrap_or(Value::Undefined),
+        );
+        e.borrow_mut()
+            .declare(NEW_TARGET_ALLOWED_NAME, Value::Bool(true));
         e.borrow_mut().implicit_arguments = true;
         {
             let mut parameter_names = e.borrow_mut();
@@ -7769,6 +7791,8 @@ impl Vm {
         // captured scope.
         let e = Environment::new(Some(outer));
         e.borrow_mut().declare(FUNCTION_ENV_NAME, Value::Bool(true));
+        e.borrow_mut()
+            .declare(NEW_TARGET_ALLOWED_NAME, Value::Bool(false));
         let non_simple_parameters = n.params.items.iter().any(|parameter| {
             parameter.initializer.is_some()
                 || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
@@ -8038,7 +8062,8 @@ impl Vm {
         } else {
             HashSet::new()
         };
-        let out = if self.jit_mode == JitMode::Stencil && !eval_code {
+        let out = if self.jit_mode == JitMode::Stencil && !eval_code && !contains_eval_call(source)
+        {
             (|| {
                 let statements: &'static [Statement<'static>] =
                     unsafe { std::mem::transmute(r.program.body.as_slice()) };
@@ -9256,6 +9281,9 @@ impl Vm {
                 value.ok_or_else(|| JsError::Throw(reference_error(self, v.name.as_str())))
             }
             ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
+            NewTarget(_) => {
+                Ok(Environment::get(&e, NEW_TARGET_VALUE_NAME).unwrap_or(Value::Undefined))
+            }
             Super(_) => Ok(
                 Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME).unwrap_or(Value::Undefined)
             ),
@@ -9629,7 +9657,10 @@ impl Vm {
                         "Cannot convert a Symbol value to a string",
                     )));
                 }
-                let r = self.call(c.clone(), o.clone(), args)?;
+                let previous_new_target = self.current_new_target.replace(c.clone());
+                let call_result = self.call(c.clone(), o.clone(), args);
+                self.current_new_target = previous_new_target;
+                let r = call_result?;
                 let native = c.as_function().is_some_and(|function| {
                     matches!(
                         function.kind,
@@ -10104,6 +10135,18 @@ fn is_variable_environment(environment: &Env) -> bool {
         || candidate.contains_local(FUNCTION_ENV_NAME)
         || candidate.contains_local(STRICT_EVAL_ENV_NAME)
         || candidate.parent.is_none()
+}
+
+fn nearest_local_binding(environment: &Env, name: &str) -> Option<Value> {
+    let mut current = Some(environment.clone());
+    while let Some(candidate) = current {
+        let borrowed = candidate.borrow();
+        if let Some(slot) = borrowed.names.get(name) {
+            return borrowed.values.get(*slot).cloned();
+        }
+        current = borrowed.parent.clone();
+    }
+    None
 }
 
 fn variable_environment(environment: &Env) -> Env {
@@ -11035,6 +11078,15 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
             "invalid private identifier in eval",
         )));
     }
+    if source.contains("new.target")
+        && !nearest_local_binding(&environment, NEW_TARGET_ALLOWED_NAME)
+            .is_some_and(|value| value.truthy())
+    {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "new.target is not permitted in this eval context",
+        )));
+    }
     let path = vm
         .source_stack
         .last()
@@ -11058,6 +11110,14 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
         }
         result => result,
     }
+}
+
+fn contains_eval_call(source: &str) -> bool {
+    source.match_indices("eval").any(|(index, _)| {
+        let suffix = &source[index + "eval".len()..];
+        let suffix = suffix.trim_start();
+        suffix.starts_with('(') || suffix.starts_with(')')
+    })
 }
 
 macro_rules! with_strict_mode {
