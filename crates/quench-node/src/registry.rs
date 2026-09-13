@@ -35,6 +35,18 @@ macro_rules! node_api {
     };
 }
 
+/// Lower a declarative host-surface row into the `(name, capability)` pair
+/// consumed by the realm installer. Keeping this tiny reducer next to the
+/// `NodeSpec` table prevents hand-written registration branches from drifting
+/// away from the canonical capability ids.
+macro_rules! push_capability_bindings {
+    ($out:expr, $( $name:literal => $spec:expr ),+ $(,)?) => {{
+        $(
+            $out.push(($name.to_string(), crate::host::capability($spec)));
+        )+
+    }};
+}
+
 impl NodeSpec {
     pub const fn new(name: &'static str, cap: CapId) -> Self {
         Self { name, cap }
@@ -2349,42 +2361,18 @@ pub fn namespace_bindings_with_exec_argv(
 ) -> Vec<(String, quench_runtime::value::Value)> {
     let mut out = Vec::new();
     push_bindings_with_exec_argv(&mut out, argv, exec_path, title, exec_argv);
-    out.push(timers_binding(
-        "setTimeout",
-        crate::registry::SPEC_TIMERS_SETTIMEOUT,
-    ));
-    out.push(timers_binding(
-        "clearTimeout",
-        crate::registry::SPEC_TIMERS_CLEARTIMEOUT,
-    ));
-    out.push(timers_binding(
-        "setInterval",
-        crate::registry::SPEC_TIMERS_SETINTERVAL,
-    ));
-    out.push(timers_binding(
-        "clearInterval",
-        crate::registry::SPEC_TIMERS_CLEARINTERVAL,
-    ));
-    out.push(timers_binding(
-        "setImmediate",
-        crate::registry::SPEC_TIMERS_SETIMMEDIATE,
-    ));
-    out.push(timers_binding(
-        "clearImmediate",
-        crate::registry::SPEC_TIMERS_CLEARIMMEDIATE,
-    ));
-    out.push((
-        "__quench_sleep_ms".to_string(),
-        crate::host::capability(SPEC_INTERNAL_UTIL_SLEEP),
-    ));
-    out.push((
-        "queueMicrotask".to_string(),
-        crate::host::capability(SPEC_QUEUE_MICROTASK),
-    ));
-    out.push((
-        "__quench_events_set_max".to_string(),
-        crate::host::capability(SPEC_EVENTS_SET_MAX_STATIC),
-    ));
+    push_capability_bindings! {
+        out,
+        "setTimeout" => SPEC_TIMERS_SETTIMEOUT,
+        "clearTimeout" => SPEC_TIMERS_CLEARTIMEOUT,
+        "setInterval" => SPEC_TIMERS_SETINTERVAL,
+        "clearInterval" => SPEC_TIMERS_CLEARINTERVAL,
+        "setImmediate" => SPEC_TIMERS_SETIMMEDIATE,
+        "clearImmediate" => SPEC_TIMERS_CLEARIMMEDIATE,
+        "__quench_sleep_ms" => SPEC_INTERNAL_UTIL_SLEEP,
+        "queueMicrotask" => SPEC_QUEUE_MICROTASK,
+        "__quench_events_set_max" => SPEC_EVENTS_SET_MAX_STATIC,
+    }
     // QuickJS exposes the Float16 view storage but not its constructor.  The
     // Node facade still needs the two-byte view in common buffer-source paths;
     // use the engine's canonical Uint16 constructor until native Float16
@@ -2813,11 +2801,4 @@ fn install_custom_event_prototype(
         ]),
     )
     .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()))
-}
-
-fn timers_binding(
-    name: &'static str,
-    spec: crate::registry::NodeSpec,
-) -> (String, quench_runtime::value::Value) {
-    (name.to_string(), crate::host::capability(spec))
 }
