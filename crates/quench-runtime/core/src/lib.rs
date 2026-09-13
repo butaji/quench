@@ -7609,15 +7609,7 @@ impl Vm {
             self.source_ids.push(source_id);
         }
         let e = Environment::new(Some(outer));
-        let non_simple_parameters = n.params.items.iter().any(|parameter| {
-            parameter.initializer.is_some()
-                || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
-        }) || n.params.rest.is_some();
-        let body_environment = if non_simple_parameters {
-            Environment::new(Some(e.clone()))
-        } else {
-            e.clone()
-        };
+        let body_environment = e.clone();
         if let Some(body) = &n.body {
             reserve_script_bindings(&body_environment, &body.statements);
         }
