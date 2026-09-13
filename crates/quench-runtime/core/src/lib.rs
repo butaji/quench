@@ -16906,6 +16906,10 @@ fn compile_regex_with_flags(
     unicode: bool,
 ) -> JsResult<RegExpKernel> {
     let pattern = rename_duplicate_named_groups(pattern);
+    let pattern = normalize_legacy_octal_escapes(&pattern);
+    let pattern = normalize_legacy_control_escapes(&pattern);
+    let pattern = normalize_legacy_class_ranges(&pattern);
+    let pattern = normalize_quantified_assertions(&pattern);
     if unicode && !valid_unicode_pattern(&pattern) {
         return Err(JsError::Message(
             "invalid Unicode regular expression".into(),
@@ -16927,20 +16931,15 @@ fn compile_regex_with_flags(
     let normalized = pattern
         .replace(r"[\s[]", r"[\s\[]")
         .replace(r"[\w[]", r"[\w\[]")
-        .replace(r"\0", r"\x00")
         .replace(r"\k<x>", r"\b\B")
         .replace(r"\X", "X")
         .replace(r"\cY", r"\x19")
+        .replace(r"\C", "C")
+        .replace(r"\P", "P")
+        .replace(r"\Q", "Q")
         .replace(r"[\b]", r"[\x08]")
-        .replace(r"\1", r#"['\"]?"#)
-        .replace(r"\2", r#"['\"]?"#)
-        .replace(r"\3", r#"['\"]?"#)
-        .replace(r"\4", r#"['\"]?"#)
         // In non-Unicode patterns, a decimal escape without a corresponding
         // capture is an identity escape (Annex B), not a backreference.
-        .replace(r"\5", "5")
-        .replace(r"\6", "6")
-        .replace(r"\7", "7")
         .replace(r"\8", "8")
         .replace(r"\9", "9")
         .replace("(?=;)", "")
@@ -17085,6 +17084,203 @@ fn requires_fancy_regex(pattern: &str) -> bool {
             && usize::from(pair[1] - b'0') <= captures
     });
     has_backreference
+}
+
+fn normalize_legacy_octal_escapes(pattern: &str) -> String {
+    let captures = pattern
+        .as_bytes()
+        .windows(2)
+        .filter(|pair| pair[0] == b'(' && pair[1] != b'?')
+        .count();
+    let bytes = pattern.as_bytes();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' || index + 1 >= bytes.len() {
+            output.push(bytes[index] as char);
+            index += 1;
+            continue;
+        }
+        let next = bytes[index + 1];
+        let digit = usize::from(next.saturating_sub(b'0'));
+        if !(b'0'..=b'9').contains(&next) || (digit >= 1 && digit <= captures) {
+            output.push('\\');
+            output.push(next as char);
+            index += 2;
+            continue;
+        }
+        if next >= b'8' {
+            output.push(next as char);
+            index += 2;
+            continue;
+        }
+        let max_digits = if next <= b'3' { 3 } else { 2 };
+        let mut end = index + 1;
+        while end < bytes.len()
+            && end < index + 1 + max_digits
+            && bytes[end].is_ascii_digit()
+            && bytes[end] <= b'7'
+        {
+            end += 1;
+        }
+        let octal = &pattern[index + 1..end];
+        let value = u8::from_str_radix(octal, 8).unwrap_or(0);
+        output.push_str(&format!(r"\x{value:02X}"));
+        index = end;
+    }
+    output
+}
+
+fn normalize_legacy_control_escapes(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0usize;
+    let mut in_class = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'[' {
+            in_class = true;
+        } else if byte == b']' {
+            in_class = false;
+        }
+        if byte == b'\\' && index + 2 < bytes.len() && bytes[index + 1] == b'c' {
+            let next = bytes[index + 2];
+            let valid =
+                next.is_ascii_alphabetic() || (in_class && (next.is_ascii_digit() || next == b'_'));
+            if valid {
+                let value = next.to_ascii_uppercase() & 0x1f;
+                output.push_str(&format!(r"\x{value:02X}"));
+            } else {
+                output.push('c');
+                output.push(next as char);
+            }
+            index += 3;
+            continue;
+        }
+        output.push(byte as char);
+        index += 1;
+    }
+    output
+}
+
+fn normalize_legacy_class_ranges(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'[' {
+            output.push(bytes[index] as char);
+            index += 1;
+            continue;
+        }
+        let mut end = index + 1;
+        let mut escaped = false;
+        while end < bytes.len() {
+            if !escaped && bytes[end] == b']' {
+                break;
+            }
+            escaped = !escaped && bytes[end] == b'\\';
+            if bytes[end] != b'\\' {
+                escaped = false;
+            }
+            end += 1;
+        }
+        if end >= bytes.len() {
+            output.push('[');
+            index += 1;
+            continue;
+        }
+        let class = &pattern[index..=end];
+        let class_body = &class[1..class.len() - 1];
+        let has_non_literal_escape = class_body.as_bytes().windows(2).any(|pair| {
+            pair[0] == b'\\' && matches!(pair[1], b'd' | b'D' | b's' | b'S' | b'w' | b'W')
+        });
+        if !has_non_literal_escape {
+            output.push_str(class);
+            index = end + 1;
+            continue;
+        }
+        let mut class_escaped = String::with_capacity(class.len() + 4);
+        let mut class_escape = false;
+        for byte in class.bytes() {
+            if byte == b'-' && !class_escape {
+                class_escaped.push_str(r"\-");
+            } else {
+                class_escaped.push(byte as char);
+            }
+            class_escape = byte == b'\\' && !class_escape;
+            if byte != b'\\' {
+                class_escape = false;
+            }
+        }
+        output.push_str(&class_escaped);
+        index = end + 1;
+    }
+    output
+}
+
+fn normalize_quantified_assertions(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let starts_assertion = index + 3 < bytes.len()
+            && bytes[index] == b'('
+            && bytes[index + 1] == b'?'
+            && matches!(bytes[index + 2], b'=' | b'!');
+        if !starts_assertion {
+            output.push(bytes[index] as char);
+            index += 1;
+            continue;
+        }
+        let mut end = index + 3;
+        let mut escaped = false;
+        while end < bytes.len() {
+            if !escaped && bytes[end] == b')' {
+                break;
+            }
+            escaped = !escaped && bytes[end] == b'\\';
+            if bytes[end] != b'\\' {
+                escaped = false;
+            }
+            end += 1;
+        }
+        if end >= bytes.len() {
+            output.push(bytes[index] as char);
+            index += 1;
+            continue;
+        }
+        let mut quant_end = end + 1;
+        if quant_end < bytes.len() {
+            match bytes[quant_end] {
+                b'*' | b'+' | b'?' => quant_end += 1,
+                b'{' => {
+                    if let Some(close) = pattern[quant_end..].find('}') {
+                        quant_end += close + 1;
+                    }
+                }
+                _ => {}
+            }
+            if quant_end < bytes.len() && bytes[quant_end] == b'?' {
+                quant_end += 1;
+            }
+        }
+        let quantified = quant_end > end + 1;
+        if quantified {
+            let quantifier = &pattern[end + 1..quant_end];
+            let optional = quantifier.starts_with('*')
+                || quantifier.starts_with('?')
+                || quantifier.starts_with("{0");
+            if !optional {
+                output.push_str(&pattern[index..=end]);
+            }
+            index = quant_end;
+        } else {
+            output.push_str(&pattern[index..=end]);
+            index = end + 1;
+        }
+    }
+    output
 }
 
 fn rename_duplicate_named_groups(pattern: &str) -> String {
