@@ -7935,6 +7935,34 @@ impl Vm {
                     handler,
                     vec![target.clone(), Value::string_value(k)],
                 )?;
+                if result.truthy() {
+                    let descriptor = native_object_get_own_property_descriptor(
+                        self,
+                        Value::Undefined,
+                        &[target.clone(), Value::string_value(k.to_owned())],
+                    )?;
+                    if descriptor.is_object_like()
+                        && !self.get_prop(&descriptor, "configurable").truthy()
+                    {
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "Proxy deleteProperty trap violated target invariant",
+                        )));
+                    }
+                    if descriptor.is_object_like()
+                        && !native_object_is_extensible(
+                            self,
+                            Value::Undefined,
+                            &[target.clone()],
+                        )?
+                        .truthy()
+                    {
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "Proxy deleteProperty trap changed a non-extensible target",
+                        )));
+                    }
+                }
                 return Ok(result.truthy());
             }
             if self.has_property(&handler, "deleteProperty")
