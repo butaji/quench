@@ -3081,14 +3081,10 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
                         "'caller' and 'arguments' are unavailable on this function",
                     )));
                 }
-                let cache = property_ic();
-                let cached = (vm
-                    .find_accessor(&object, &key_string)
-                    .is_none()
-                    && super::proxy_target(&object).is_none())
-                    .then(|| cache.and_then(|cache| get_static_cached(&object, &key_string, cache)))
-                    .flatten();
-                cached.unwrap_or(vm.get_prop_with_accessors(&object, &key_string)?)
+                // Computed keys are not stable at a property IC site. Using
+                // the static slot cache here would return the first key's
+                // value for subsequent keys with the same receiver shape.
+                vm.get_prop_with_accessors(&object, &key_string)?
             };
             put(frame, dst, value);
         }
