@@ -7389,6 +7389,9 @@ impl Vm {
         value: &Value,
         key: &str,
     ) -> Option<(Option<Value>, Option<Value>)> {
+        if let Some(target) = proxy_target(value) {
+            return self.find_accessor(&target, key);
+        }
         if let Some(function) = value.as_function_ref() {
             let props = function.props.borrow();
             let getter = props.get(&accessor_slot("get", key)).cloned();
@@ -7399,6 +7402,10 @@ impl Vm {
         }
         let mut current = value.as_object();
         while let Some(object) = current {
+            let candidate = Value::Object(object.clone());
+            if let Some(target) = proxy_target(&candidate) {
+                return self.find_accessor(&target, key);
+            }
             let borrowed = object.borrow();
             let getter = borrowed.props.get(&accessor_slot("get", key)).cloned();
             let setter = borrowed.props.get(&accessor_slot("set", key)).cloned();
@@ -7488,7 +7495,7 @@ impl Vm {
                 return Err(JsError::Throw(type_error(self, "Proxy get trap is not callable")));
             }
             if trap.is_function() {
-                return self.call(
+                let result = self.call(
                     trap,
                     handler,
                     vec![
@@ -7496,7 +7503,37 @@ impl Vm {
                         Value::string_value(key),
                         object.clone(),
                     ],
-                );
+                )?;
+                // Enforce the two observable [[Get]] invariants for frozen
+                // data/accessor properties on the target.
+                if let Ok(descriptor) = native_object_get_own_property_descriptor(
+                    self,
+                    Value::Undefined,
+                    &[proxy_target(object).unwrap_or(Value::Undefined), Value::string_value(key)],
+                ) {
+                    if !descriptor.is_undefined()
+                        && !self.get_prop(&descriptor, "configurable").truthy()
+                    {
+                        let getter = self.get_prop(&descriptor, "get");
+                        if self.has_property(&descriptor, "value") {
+                            let writable = self.get_prop(&descriptor, "writable");
+                            let value = self.get_prop(&descriptor, "value");
+                            if !writable.truthy() && !result.same_bits(&value)
+                            {
+                                return Err(JsError::Throw(type_error(
+                                    self,
+                                    "Proxy get trap violated target invariant",
+                                )));
+                            }
+                        } else if getter.is_undefined() && !result.is_undefined() {
+                            return Err(JsError::Throw(type_error(
+                                self,
+                                "Proxy get trap violated target invariant",
+                            )));
+                        }
+                    }
+                }
+                return Ok(result);
             }
             return self.get_prop_with_accessors(&target, key);
         }
@@ -7515,6 +7552,34 @@ impl Vm {
         key: &str,
         value: Value,
     ) -> JsResult<()> {
+        if let Some(target) = proxy_target(object) {
+            if proxy_revoked(object) {
+                return Err(JsError::Throw(type_error(self, "revoked Proxy")));
+            }
+            let handler = proxy_handler(object).unwrap_or(Value::Undefined);
+            let trap = self.get_prop_with_accessors(&handler, "set")?;
+            if trap.is_function() {
+                let result = self.call(
+                    trap,
+                    handler,
+                    vec![target, Value::string_value(key), value, object.clone()],
+                )?;
+                if !result.truthy() {
+                    if !self.strict_mode {
+                        return Ok(());
+                    }
+                    return Err(JsError::Throw(type_error(self, "Proxy set trap returned false")));
+                }
+                return Ok(());
+            }
+            if self.has_property(&handler, "set")
+                && !trap.is_null()
+                && !trap.is_undefined()
+            {
+                return Err(JsError::Throw(type_error(self, "Proxy set trap is not callable")));
+            }
+            return self.set_prop_with_accessors(&target, key, value);
+        }
         // Primitive Symbols are represented by an internal object carrier.
         // ToObject auto-boxing must not persist user properties on that
         // carrier; an explicit Symbol wrapper (Object(Symbol())) is distinct.
@@ -7818,6 +7883,35 @@ impl Vm {
             }
         }
     }
+    fn delete_prop_with_vm(&mut self, o: &Value, k: &str) -> JsResult<bool> {
+        if let Some(target) = proxy_target(o) {
+            if proxy_revoked(o) {
+                return Err(JsError::Throw(type_error(self, "revoked Proxy")));
+            }
+            let handler = proxy_handler(o).unwrap_or(Value::Undefined);
+            let trap = self.get_prop_with_accessors(&handler, "deleteProperty")?;
+            if trap.is_function() {
+                let result = self.call(
+                    trap,
+                    handler,
+                    vec![target.clone(), Value::string_value(k)],
+                )?;
+                return Ok(result.truthy());
+            }
+            if self.has_property(&handler, "deleteProperty")
+                && !trap.is_null()
+                && !trap.is_undefined()
+            {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "Proxy deleteProperty trap is not callable",
+                )));
+            }
+            return self.delete_prop_with_vm(&target, k);
+        }
+        Ok(self.delete_prop(o, k))
+    }
+
     fn delete_prop(&self, o: &Value, k: &str) -> bool {
         if let Some(regexp) = o.as_regexp_ref() {
             let mut regexp = regexp.borrow_mut();
@@ -7919,14 +8013,14 @@ impl Vm {
             Expression::StaticMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e)?;
                 Ok(Value::Bool(
-                    self.delete_prop(&object, member.property.name.as_str()),
+                    self.delete_prop_with_vm(&object, member.property.name.as_str())?,
                 ))
             }
             Expression::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 let key_value = self.eval_expr(&member.expression, e)?;
                 let key = self.to_property_key(key_value)?;
-                Ok(Value::Bool(self.delete_prop(&object, &key)))
+                Ok(Value::Bool(self.delete_prop_with_vm(&object, &key)?))
             }
             Expression::Identifier(identifier) => {
                 let name = identifier.name.as_str();
@@ -9476,16 +9570,15 @@ impl Vm {
                     }
                     _ => e.clone(),
                 };
-                let mut ks = Vec::new();
-                if let Some(o) = o.as_object() {
-                    let b = o.borrow();
-                    if let Some(a) = &b.array {
-                        for i in 0..a.len() {
-                            ks.push(i.to_string())
-                        }
-                    }
-                    ks.extend(b.props.keys().cloned());
-                }
+                // `for-in` is an ordinary [[OwnPropertyKeys]] projection.
+                // Keep it on the same core path as Object.keys so proxy
+                // targets, traps, and hidden implementation slots cannot
+                // leak into enumeration.
+                let ks = if proxy_target(&o).is_some() {
+                    proxy_own_enumerable_keys(self, &o)?
+                } else {
+                    object_own_enumerable_keys(&o)
+                };
                 for k in ks {
                     self.assign_for_left(
                         &x.left,
@@ -11070,7 +11163,7 @@ impl Vm {
                 Environment::set(&e, &name, v);
             }
             LValue::Prop(o, k) => {
-                if self.strict_mode {
+                if self.strict_mode || proxy_target(&o).is_some() {
                     self.set_prop_with_accessors(&o, &k, v)?;
                 } else {
                     self.set_prop(&o, &k, v);
@@ -11220,7 +11313,7 @@ impl Vm {
             SimpleAssignmentTarget::StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
                 let k = m.property.name.to_string();
-                if self.strict_mode {
+                if self.strict_mode || proxy_target(&o).is_some() {
                     self.set_prop_with_accessors(&o, &k, v)
                 } else {
                     self.set_prop(&o, &k, v);
@@ -11231,7 +11324,7 @@ impl Vm {
                 let o = self.eval_expr(&m.object, e.clone())?;
                 let key_value = self.eval_expr(&m.expression, e)?;
                 let k = self.to_property_key(key_value)?;
-                if self.strict_mode {
+                if self.strict_mode || proxy_target(&o).is_some() {
                     self.set_prop_with_accessors(&o, &k, v)
                 } else {
                     self.set_prop(&o, &k, v);
@@ -14004,6 +14097,7 @@ fn native_proxy_revoke(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value>
 fn native_proxy_revocable(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let proxy = native_proxy_constructor(vm, Value::Undefined, args)?;
     let revoke = vm.native_named(native_proxy_revoke, "", 0);
+    vm.mark_nonconstructable(&revoke);
     let revoke = native_function_bind(vm, revoke, std::slice::from_ref(&proxy))?;
     let result = vm.object(None);
     vm.set_prop(&result, "proxy", proxy);
@@ -18221,7 +18315,7 @@ fn native_reflect_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
 fn native_reflect_delete_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "deleteProperty")?;
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
-    Ok(Value::Bool(vm.delete_prop(&target, &key)))
+    Ok(Value::Bool(vm.delete_prop_with_vm(&target, &key)?))
 }
 
 fn native_reflect_get(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
@@ -18278,8 +18372,9 @@ fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResu
 
 fn native_reflect_own_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "ownKeys")?;
+    let keys = proxy_own_property_keys_with_vm(vm, &target)?;
     Ok(vm.array_from_values(
-        object_own_property_keys(&target)
+        keys
             .into_iter()
             .map(|key| {
                 vm.symbol_keys
@@ -18304,6 +18399,28 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
     let receiver = args.get(3).cloned().unwrap_or_else(|| target.clone());
     if !receiver.is_object_like() {
         return Ok(Value::Bool(false));
+    }
+    // Reflect.set observes the proxy trap's boolean result directly; the
+    // assignment path intentionally suppresses `false` in sloppy mode, so do
+    // not route this operation through that mode-sensitive helper.
+    if let Some(proxy_target_value) = proxy_target(&target) {
+        if proxy_revoked(&target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(&target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "set")?;
+        if trap.is_function() {
+            let result = vm.call(
+                trap,
+                handler,
+                vec![proxy_target_value, Value::string_value(key), value, receiver],
+            )?;
+            return Ok(Value::Bool(result.truthy()));
+        }
+        if vm.has_property(&handler, "set") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy set trap is not callable")));
+        }
+        return native_reflect_set(vm, Value::Undefined, &[proxy_target_value, Value::string_value(key), value, receiver]);
     }
     if let Some((_, setter)) = vm.find_accessor(&target, &key) {
         let Some(setter) = setter else {
@@ -21648,6 +21765,40 @@ fn native_object_get_own_property_descriptor(
         )));
     };
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    if let Some(proxy_target_value) = proxy_target(target) {
+        if proxy_revoked(target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "getOwnPropertyDescriptor")?;
+        if trap.is_function() {
+            return vm.call(
+                trap,
+                handler,
+                vec![
+                    proxy_target_value,
+                    vm.symbol_keys
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_else(|| Value::string_value(key)),
+                ],
+            );
+        }
+        if vm.has_property(&handler, "getOwnPropertyDescriptor")
+            && !trap.is_null()
+            && !trap.is_undefined()
+        {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Proxy getOwnPropertyDescriptor trap is not callable",
+            )));
+        }
+        return native_object_get_own_property_descriptor(
+            vm,
+            Value::Undefined,
+            &[proxy_target_value, Value::string_value(key)],
+        );
+    }
     let error_prototype = vm
         .builtin(BuiltinId::ErrorConstructor)
         .as_function_ref()
@@ -21876,6 +22027,35 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             vm,
             "property descriptor is not an object",
         )));
+    }
+    if let Some(proxy_target_value) = proxy_target(target) {
+        if proxy_revoked(target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "defineProperty")?;
+        if trap.is_function() {
+            let result = vm.call(
+                trap,
+                handler,
+                vec![proxy_target_value, Value::string_value(key.clone()), descriptor.clone()],
+            )?;
+            if !result.truthy() {
+                return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap returned false")));
+            }
+            return Ok(target.clone());
+        }
+        if vm.has_property(&handler, "defineProperty")
+            && !trap.is_null()
+            && !trap.is_undefined()
+        {
+            return Err(JsError::Throw(type_error(vm, "Proxy defineProperty trap is not callable")));
+        }
+        return native_object_define_property(
+            vm,
+            Value::Undefined,
+            &[proxy_target_value, Value::string_value(key), descriptor],
+        );
     }
     if target.as_function_ref().is_some() {
         return define_function_property(vm, target, &key, &descriptor);
@@ -22493,8 +22673,9 @@ fn native_object_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             "TypeError: keys target is undefined".into(),
         ));
     };
-    let keys = object_own_enumerable_keys(target)
+    let keys = proxy_own_enumerable_keys(vm, target)?
         .into_iter()
+        .filter(|key| !is_symbol_key(key))
         .map(Value::string_value)
         .collect();
     Ok(vm.array_from_values(keys))
@@ -22506,6 +22687,14 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             "Object.getOwnPropertyNames target is undefined",
         )));
     };
+    if proxy_target(target).is_some() {
+        let keys = proxy_own_property_keys_with_vm(vm, target)?
+            .into_iter()
+            .filter(|key| !is_symbol_key(key))
+            .map(Value::string_value)
+            .collect();
+        return Ok(vm.array_from_values(keys));
+    }
     let mut keys = Vec::new();
     let error_stack = target
         .as_object()
@@ -22601,6 +22790,14 @@ fn native_object_get_own_property_symbols(
             "Object.getOwnPropertySymbols target is undefined",
         )));
     };
+    if proxy_target(target).is_some() {
+        let keys = proxy_own_property_keys_with_vm(vm, target)?
+            .into_iter()
+            .filter(|key| is_symbol_key(key))
+            .filter_map(|key| vm.symbol_keys.get(&key).cloned())
+            .collect();
+        return Ok(vm.array_from_values(keys));
+    }
     let keys = target
         .as_object_ref()
         .map(|object| {
@@ -22818,6 +23015,13 @@ fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String
     };
     let handler = proxy_handler(target).unwrap_or(Value::Undefined);
     let own_keys = vm.get_prop_with_accessors(&handler, "ownKeys")?;
+    if vm.has_property(&handler, "ownKeys")
+        && !own_keys.is_function()
+        && !own_keys.is_null()
+        && !own_keys.is_undefined()
+    {
+        return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap is not callable")));
+    }
     let keys = if own_keys.is_function() {
         let returned = vm.call(own_keys, handler.clone(), vec![proxy_target_value.clone()])?;
         if !returned.is_object_like() {
@@ -22857,6 +23061,33 @@ fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String
         }
     }
     Ok(partition_symbol_keys(enumerable))
+}
+
+fn proxy_own_property_keys_with_vm(vm: &mut Vm, target: &Value) -> JsResult<Vec<String>> {
+    let Some(proxy_target_value) = proxy_target(target) else {
+        return Ok(object_own_property_keys(target));
+    };
+    if proxy_revoked(target) {
+        return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+    }
+    let handler = proxy_handler(target).unwrap_or(Value::Undefined);
+    let trap = vm.get_prop_with_accessors(&handler, "ownKeys")?;
+    if trap.is_function() {
+        let returned = vm.call(trap, handler.clone(), vec![proxy_target_value])?;
+        if !returned.is_object_like() {
+            return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap must return an object")));
+        }
+        let length = array_from_length(vm, &returned).unwrap_or(0);
+        let mut keys = Vec::with_capacity(length);
+        for index in 0..length {
+            keys.push(vm.to_property_key(vm.get_prop(&returned, &index.to_string()))?);
+        }
+        return Ok(partition_symbol_keys(keys));
+    }
+    if vm.has_property(&handler, "ownKeys") && !trap.is_null() && !trap.is_undefined() {
+        return Err(JsError::Throw(type_error(vm, "Proxy ownKeys trap is not callable")));
+    }
+    Ok(object_own_property_keys(&proxy_target_value))
 }
 
 fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec<String> {
@@ -23552,6 +23783,17 @@ fn object_receiver(vm: &mut Vm, value: &Value) -> JsResult<Value> {
 fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    // Proxy [[HasOwnProperty]] is defined in terms of its getOwnProperty
+    // internal method.  Re-enter the canonical descriptor pipeline so nested
+    // proxies and missing traps forward to their targets.
+    if proxy_target(&target).is_some() {
+        let descriptor = native_object_get_own_property_descriptor(
+            vm,
+            Value::Undefined,
+            &[target, Value::string_value(key)],
+        )?;
+        return Ok(Value::Bool(descriptor.is_object_like()));
+    }
     let error_stack = key == "stack"
         && target
             .as_object()
@@ -23605,6 +23847,18 @@ fn native_object_property_is_enumerable(
     // non-enumerable because it is held on function metadata, not props.
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    if proxy_target(&target).is_some() {
+        let descriptor = native_object_get_own_property_descriptor(
+            vm,
+            Value::Undefined,
+            &[target, Value::string_value(key)],
+        )?;
+        return Ok(if descriptor.is_object_like() {
+            vm.get_prop_with_accessors(&descriptor, "enumerable")?
+        } else {
+            Value::Bool(false)
+        });
+    }
     let enumerable = if let Some(function) = target.as_function_ref() {
         function.attributes.borrow().get(&key).map_or_else(
             || {
