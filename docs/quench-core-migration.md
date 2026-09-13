@@ -171,7 +171,7 @@ Verification completed:
   RegExp flags and identity escapes through one compiled kernel, preserving
   UTF-8 astral literals and surrogate-pair escapes, and enforcing strict
   legacy-literal early errors across direct and eval code
-- the stencil eval-code stage now reaches 267/347 after modeling parameter
+- the stencil eval-code stage now reaches 269/347 after modeling parameter
   binding conflicts, implicit `arguments`, lexical TDZ state, strict reserved
   bindings, strict caller propagation, isolated strict-eval environments, and
   top-level eval control-flow completion; remaining failures are primarily
