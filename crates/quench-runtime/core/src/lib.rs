@@ -7764,6 +7764,35 @@ impl Vm {
             .directives
             .iter()
             .any(|directive| directive.directive.as_str() == "use strict");
+        if self.strict_mode && has_strict_template_octal_escape(source) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "legacy octal escape is not permitted in strict template literals",
+            )));
+        }
+        if Rc::ptr_eq(&environment, &self.global)
+            && Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
+        {
+            let mut lexical_names = HashSet::new();
+            collect_lexical_binding_names(&r.program.body, &mut lexical_names);
+            let restricted = Environment::get(&self.global, "globalThis")
+                .and_then(|global| global.as_object())
+                .is_some_and(|object| {
+                    let object = object.borrow();
+                    lexical_names.iter().any(|name| {
+                        object
+                            .attributes
+                            .get(name)
+                            .is_some_and(|attributes| !attributes.configurable)
+                    })
+                });
+            if restricted {
+                return Err(JsError::Throw(syntax_error(
+                    self,
+                    "lexical declaration conflicts with restricted global binding",
+                )));
+            }
+        }
         // Script declaration instantiation happens before any statement (and
         // before a stencil image is entered). Reserve lexical slots and
         // materialize the observable global `var`/Annex-B function projection
@@ -10168,6 +10197,43 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
         .body
         .iter()
         .any(|statement| for_in_error_in_statement(statement, strict))
+}
+
+/// Detect legacy octal escapes in template literal raw text.
+///
+/// OXC currently accepts this syntax and leaves the strict-mode early error
+/// to the host. Keeping the check at the source boundary makes the parser
+/// limitation explicit without duplicating template evaluation semantics.
+fn has_strict_template_octal_escape(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut in_template = false;
+    let mut escaped = false;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if !in_template {
+            if byte == b'`' {
+                in_template = true;
+            }
+            continue;
+        }
+        if escaped {
+            let legacy_octal = (b'1'..=b'7').contains(&byte)
+                || (byte == b'0'
+                    && bytes
+                        .get(index + 1)
+                        .is_some_and(|next| (b'0'..=b'7').contains(next)));
+            if legacy_octal {
+                return true;
+            }
+            escaped = false;
+            continue;
+        }
+        match byte {
+            b'\\' => escaped = true,
+            b'`' => in_template = false,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn for_in_error_in_statement(statement: &Statement<'_>, strict: bool) -> bool {
