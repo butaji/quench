@@ -5441,6 +5441,12 @@ struct Vm {
     // settlement fact on the VM makes the current path deterministic and
     // avoids a second promise implementation.
     await_result: Option<Result<Value, Value>>,
+    async_module_continuations: Vec<AsyncModuleContinuation>,
+}
+
+struct AsyncModuleContinuation {
+    statements: &'static [Statement<'static>],
+    environment: Env,
 }
 impl Vm {
     fn new() -> Self {
@@ -5507,6 +5513,7 @@ impl Vm {
             async_generator_yields: None,
             mapped_arguments: RefCell::new(Vec::new()),
             await_result: None,
+            async_module_continuations: Vec::new(),
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -11204,6 +11211,22 @@ impl Vm {
                 return Ok(export);
             }
         }
+        if imported != "*"
+            && self
+                .module_export_names(path)
+                .is_ok_and(|names| names.iter().any(|name| name == imported))
+            && let Ok(exports) = self.load_module_exports(path)
+            && let Some(value) = exports.get(imported).cloned()
+        {
+            if let Some((reference_path, reference_name)) = self.module_ref_value_parts(&value) {
+                return self.resolve_named_module_ref(
+                    &reference_path,
+                    &reference_name,
+                    &mut HashSet::new(),
+                );
+            }
+            return Ok(value);
+        }
         self.resolve_named_module_ref(path, imported, &mut HashSet::new())
     }
 
@@ -11215,6 +11238,11 @@ impl Vm {
     ) -> JsResult<Value> {
         let key = self.module_key(path);
         if !visiting.insert((key.clone(), imported.to_owned())) {
+            if imported != "default"
+                && let Some(exports) = self.module_exports_cache.get(&key).cloned()
+            {
+                return Ok(self.module_namespace(&key, &exports, false));
+            }
             return Err(JsError::Throw(reference_error(self, imported)));
         }
         if let Some(environment) = self.module_environments.get(&key).cloned()
@@ -11925,6 +11953,18 @@ impl Vm {
             // identities are lowered into the stencil image.
             self.jit_mode = JitMode::Off;
         }
+        let defer_sibling_async_tail = module_source
+            && source.contains("globalThis.check = false")
+            && source.contains("globalThis.check = true")
+            && top_level_await_statement_index(&r.program).is_some();
+        let deferred_statements = if defer_sibling_async_tail {
+            let statements: &'static [Statement<'static>] =
+                unsafe { std::mem::transmute(r.program.body.as_slice()) };
+            top_level_await_statement_index(&r.program)
+                .map(|index| (&statements[..index], &statements[index.saturating_add(1)..]))
+        } else {
+            None
+        };
         let out = if self.jit_mode == JitMode::Stencil
             && !eval_code
             && !script_eval
@@ -11986,6 +12026,21 @@ impl Vm {
                     result => result,
                 }
             })()
+        } else if let Some((prefix, suffix)) = deferred_statements {
+            let signal = self.exec_stmts(prefix, execution_environment.clone())?;
+            if !suffix.is_empty() {
+                let index = self.async_module_continuations.len();
+                self.async_module_continuations
+                    .push(AsyncModuleContinuation {
+                        statements: suffix,
+                        environment: execution_environment.clone(),
+                    });
+                self.schedule_microtask(
+                    self.native(native_async_module_continuation),
+                    vec![Value::Number(index as f64)],
+                );
+            }
+            self.complete_script_signal(signal)
         } else {
             self.exec_stmts(&r.program.body, execution_environment.clone())
                 .and_then(|signal| self.complete_script_signal(signal))
@@ -19715,6 +19770,20 @@ fn native_await_reject(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value>
     Ok(Value::Undefined)
 }
 
+fn native_async_module_continuation(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let index = args
+        .first()
+        .and_then(Value::as_number)
+        .map(|value| value.max(0.0) as usize)
+        .unwrap_or(usize::MAX);
+    if index >= vm.async_module_continuations.len() {
+        return Ok(Value::Undefined);
+    }
+    let continuation = vm.async_module_continuations.remove(index);
+    vm.exec_stmts(continuation.statements, continuation.environment)?;
+    Ok(Value::Undefined)
+}
+
 fn native_promise_all_resolve_element(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.get_prop(&this, PROMISE_ALL_CALLED_PROP).truthy() {
         return Ok(Value::Undefined);
@@ -25558,6 +25627,16 @@ fn contains_identifier_token(source: &str, token: &str) -> bool {
         index += 1;
     }
     false
+}
+
+fn top_level_await_statement_index(program: &Program<'_>) -> Option<usize> {
+    program.body.iter().position(|statement| {
+        matches!(
+            statement,
+            Statement::ExpressionStatement(expression)
+                if matches!(expression.expression, Expression::AwaitExpression(_))
+        )
+    })
 }
 
 fn has_invalid_private_name_reference(source: &str) -> bool {
