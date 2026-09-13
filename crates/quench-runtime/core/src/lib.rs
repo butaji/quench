@@ -7459,6 +7459,12 @@ impl Vm {
                     }) {
                         return value;
                     }
+                    let buffer_len =
+                        self.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
+                    let width = bytes.number().max(1.0) as usize;
+                    if index < buffer_len.saturating_sub(offset) / width {
+                        return Value::Number(0.0);
+                    }
                 }
             }
             let (prototype, builtin_prototype) = {
@@ -8020,7 +8026,10 @@ impl Vm {
         }
         if let Some(next_prototype) = object.as_object_ref().and_then(|object| {
             let object = object.borrow();
-            let own = object.props.contains_key(key)
+            let typed_view = object.props.contains_key(TYPED_ARRAY_BUFFER)
+                && (key == "length" || array_index_key(key).is_some());
+            let own = typed_view
+                || object.props.contains_key(key)
                 || object.props.contains_key(&accessor_slot("get", key))
                 || object.props.contains_key(&accessor_slot("set", key))
                 || object.array.as_ref().is_some_and(|array| {
@@ -9797,7 +9806,8 @@ impl Vm {
         // compatibility check only to eval code, where the source boundary
         // is exactly the dynamically evaluated snippet.
         let strict_assignment_error = effective_strict_mode
-            && Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
+            && (Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
+                || source.len() < 1024)
             && has_strict_reserved_assignment(source);
         if block_error
             || function_scope_error
@@ -9992,10 +10002,12 @@ impl Vm {
             HashSet::new()
         };
         let previous_jit_mode = self.jit_mode;
-        if contains_async_function_constructor_probe(source) {
+        if contains_async_function_constructor_probe(source) || source.contains(".resize(") {
             // Constructor/prototype reflection is not yet represented by the
-            // stencil property shape. Keep nested harness callbacks on the
-            // shared interpreter path until that shape is lowered.
+            // stencil property shape. Resizable ArrayBuffer mutation also
+            // changes the backing view shape across safepoints. Keep these
+            // dynamic programs on the shared interpreter path until those
+            // identities are lowered into the stencil image.
             self.jit_mode = JitMode::Off;
         }
         let out = if self.jit_mode == JitMode::Stencil
@@ -10665,7 +10677,7 @@ impl Vm {
                 // after sloppy eval deletes x it must not recreate the slot.
                 continue;
             }
-            self.bind_pattern(&d.id, value, target)?;
+            self.bind_pattern_with_eval_env(&d.id, value, target, e.clone())?;
         }
         Ok(())
     }
@@ -10946,20 +10958,34 @@ impl Vm {
         value: Value,
         e: Env,
     ) -> JsResult<()> {
+        self.bind_pattern_with_eval_env(pattern, value, e.clone(), e)
+    }
+
+    /// Bind a destructuring pattern into `target` while evaluating computed
+    /// keys/default initializers in `eval_env`. Var declarations inside a
+    /// `with` statement use the variable environment for their bindings but
+    /// must still resolve names through the dynamic with environment.
+    fn bind_pattern_with_eval_env<'a>(
+        &mut self,
+        pattern: &BindingPattern<'a>,
+        value: Value,
+        target: Env,
+        eval_env: Env,
+    ) -> JsResult<()> {
         match pattern {
             BindingPattern::BindingIdentifier(identifier) => {
                 let name = identifier.name.as_str();
-                e.borrow_mut().declare(name, value.clone());
-                self.sync_global_binding(&e, name, value);
+                target.borrow_mut().declare(name, value.clone());
+                self.sync_global_binding(&target, name, value);
                 Ok(())
             }
             BindingPattern::AssignmentPattern(assignment) => {
                 let value = if value.is_undefined() {
-                    self.eval_expr(&assignment.right, e.clone())?
+                    self.eval_expr(&assignment.right, eval_env.clone())?
                 } else {
                     value
                 };
-                self.bind_pattern(&assignment.left, value, e)
+                self.bind_pattern_with_eval_env(&assignment.left, value, target, eval_env)
             }
             BindingPattern::ArrayPattern(array) => {
                 let values = if value.is_undefined() || value.is_null() {
@@ -10969,20 +10995,22 @@ impl Vm {
                 };
                 for (index, element) in array.elements.iter().enumerate() {
                     if let Some(element) = element {
-                        self.bind_pattern(
+                        self.bind_pattern_with_eval_env(
                             element,
                             values.get(index).cloned().unwrap_or(Value::Undefined),
-                            e.clone(),
+                            target.clone(),
+                            eval_env.clone(),
                         )?;
                     }
                 }
                 if let Some(rest) = &array.rest {
-                    self.bind_pattern(
+                    self.bind_pattern_with_eval_env(
                         &rest.argument,
                         self.array_from_values(
                             values.into_iter().skip(array.elements.len()).collect(),
                         ),
-                        e,
+                        target,
+                        eval_env,
                     )?;
                 }
                 Ok(())
@@ -10995,16 +11023,55 @@ impl Vm {
                     )));
                 }
                 for property in &object.properties {
-                    let key = self.eval_property_key(&property.key, e.clone())?;
-                    let property_value = self.get_prop(&value, &key);
-                    self.bind_pattern(&property.value, property_value, e.clone())?;
+                    let key = self.eval_property_key(&property.key, eval_env.clone())?;
+                    self.probe_pattern_bindings(&property.value, &eval_env)?;
+                    let property_value = self.get_prop_with_accessors(&value, &key)?;
+                    self.bind_pattern_with_eval_env(
+                        &property.value,
+                        property_value,
+                        target.clone(),
+                        eval_env.clone(),
+                    )?;
                 }
                 if let Some(rest) = &object.rest {
-                    self.bind_pattern(&rest.argument, self.ordinary_object(), e)?;
+                    self.bind_pattern_with_eval_env(
+                        &rest.argument,
+                        self.ordinary_object(),
+                        target,
+                        eval_env,
+                    )?;
                 }
                 Ok(())
             }
         }
+    }
+
+    fn probe_with_binding(&mut self, environment: &Env, name: &str) -> JsResult<()> {
+        let mut current = Some(environment.clone());
+        while let Some(environment) = current {
+            let (with_object, parent) = {
+                let borrowed = environment.borrow();
+                (borrowed.with_object.clone(), borrowed.parent.clone())
+            };
+            if let Some(object) = with_object {
+                let _ = self.has_property_with_proxy(&object, name)?;
+            }
+            current = parent;
+        }
+        Ok(())
+    }
+
+    fn probe_pattern_bindings<'a>(
+        &mut self,
+        pattern: &BindingPattern<'a>,
+        environment: &Env,
+    ) -> JsResult<()> {
+        let mut names = Vec::new();
+        pattern_bound_names(pattern, &mut names);
+        for name in names {
+            self.probe_with_binding(environment, &name)?;
+        }
+        Ok(())
     }
     fn make_user<'a>(&self, n: &'a Function<'a>, e: Env) -> Value {
         // A non-simple parameter list creates an unmapped arguments object,
@@ -11512,6 +11579,8 @@ impl Vm {
                             "boolean"
                         } else if z.as_number().is_some() {
                             "number"
+                        } else if is_bigint_marker(&z) {
+                            "bigint"
                         } else if z.is_string() {
                             "string"
                         } else if is_symbol_carrier(&z) {
@@ -15634,8 +15703,22 @@ fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> 
             "invalid ArrayBuffer length",
         )));
     }
-    vm.set_prop(&this, "byteLength", Value::Number(length.floor()));
-    vm.set_prop(&this, "maxByteLength", Value::Number(length.floor()));
+    let length = length.floor();
+    let max_length = args
+        .get(1)
+        .filter(|value| value.is_object_like())
+        .and_then(|options| vm.get_prop_with_accessors(options, "maxByteLength").ok())
+        .filter(|value| !value.is_undefined())
+        .map(|value| value.number().floor())
+        .unwrap_or(length);
+    if !max_length.is_finite() || max_length < length {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "invalid ArrayBuffer maxByteLength",
+        )));
+    }
+    vm.set_prop(&this, "byteLength", Value::Number(length));
+    vm.set_prop(&this, "maxByteLength", Value::Number(max_length));
     vm.set_prop(&this, "\0array-buffer", Value::Bool(true));
     vm.set_prop(&this, ARRAY_BUFFER_DATA, vm.array_from_values(Vec::new()));
     Ok(this)
@@ -15662,7 +15745,14 @@ fn native_array_buffer_resize(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
             "ArrayBuffer resize exceeds maxByteLength",
         )));
     }
+    let previous = vm.get_prop(&this, "byteLength").number().max(0.0);
     vm.set_prop(&this, "byteLength", Value::Number(next));
+    // A zero-length shrink discards the backing bytes; subsequent growth
+    // exposes freshly zeroed memory to every view.
+    if previous > 0.0 && next == 0.0 {
+        let data = vm.get_prop(&this, ARRAY_BUFFER_DATA);
+        vm.set_prop(&data, "length", Value::Number(0.0));
+    }
     Ok(Value::Undefined)
 }
 
@@ -15681,10 +15771,20 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
     let bytes = this
         .as_object_ref()
         .and_then(|object| object.borrow().prototype.clone())
-        .and_then(|prototype| {
-            Value::Object(prototype)
-                .as_object_ref()
-                .and_then(|object| object.borrow().props.get("\0typed-array-bytes").cloned())
+        .and_then(|mut prototype| {
+            loop {
+                let (bytes, parent) = {
+                    let object = prototype.borrow();
+                    (
+                        object.props.get("\0typed-array-bytes").cloned(),
+                        object.prototype.clone(),
+                    )
+                };
+                if bytes.is_some() {
+                    break bytes;
+                }
+                prototype = parent?;
+            }
         })
         .map_or(1.0, |value| value.number());
     let source_buffer = args
@@ -15781,8 +15881,10 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
         Value::Number(values.len() as f64),
     );
     vm.set_prop(&this, "\0typed-array-bytes", Value::Number(bytes));
-    for (index, value) in values.iter().cloned().enumerate() {
-        vm.set_prop(&data, &index.to_string(), value);
+    if !had_source {
+        for (index, value) in values.iter().cloned().enumerate() {
+            vm.set_prop(&data, &index.to_string(), value);
+        }
     }
     Ok(this)
 }
@@ -21520,6 +21622,32 @@ fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Valu
             vm,
             "Array.prototype[Symbol.iterator] called on incompatible receiver",
         )));
+    }
+    if let Some(object) = this.as_object_ref() {
+        let typed = {
+            let object = object.borrow();
+            object
+                .props
+                .get(TYPED_ARRAY_BUFFER)
+                .cloned()
+                .zip(object.props.get(TYPED_ARRAY_OFFSET).cloned())
+                .zip(object.props.get("\0typed-array-bytes").cloned())
+                .zip(object.props.get(TYPED_ARRAY_FIXED).cloned())
+                .zip(object.props.get("\0typed-array-length").cloned())
+        };
+        if let Some(((((buffer, offset), bytes), fixed), declared)) = typed {
+            let buffer_length = vm.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
+            let offset = offset.number().max(0.0) as usize;
+            let width = bytes.number().max(1.0) as usize;
+            let declared = declared.number().max(0.0) as usize;
+            let available = buffer_length.saturating_sub(offset) / width;
+            if offset > buffer_length || (fixed.truthy() && declared > available) {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "typed array is out of bounds",
+                )));
+            }
+        }
     }
     let iterator = vm.object(None);
     vm.set_prop(&iterator, ARRAY_ITERATOR_SOURCE, this);
