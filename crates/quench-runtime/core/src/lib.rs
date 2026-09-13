@@ -21301,6 +21301,17 @@ mod tests {
     }
 
     #[test]
+    fn indirect_eval_uses_child_realm_global_environment() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        vm.run_source_text(
+            Path::new("<eval-realm>"),
+            "var other = $262.createRealm().global; var otherEval = other.eval; otherEval('var x = 23;'); if (typeof x !== 'undefined' || other.x !== 23) { throw new Error('realm eval leaked'); }",
+        )
+        .expect("indirect eval should stay in its child realm");
+    }
+
+    #[test]
     fn symbol_static_and_prototype_surface_is_available() {
         let mut vm = Vm::new();
         vm.install_process(Vec::new(), Vec::new());
