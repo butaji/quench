@@ -5447,6 +5447,7 @@ struct Vm {
 
 struct AsyncModuleContinuation {
     path: PathBuf,
+    wait_for: Option<PathBuf>,
     statements: &'static [Statement<'static>],
     environment: Env,
 }
@@ -10467,6 +10468,79 @@ impl Vm {
         })
     }
 
+    fn module_pending_async_dependency_path(
+        &self,
+        path: &Path,
+        program: &Program<'_>,
+    ) -> Option<PathBuf> {
+        let parent = path.parent()?;
+        program.body.iter().find_map(|statement| {
+            let request = match statement {
+                Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
+                Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
+                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
+                _ => None,
+            }?;
+            let dependency = self.resolve_module_request(parent, request);
+            let key = self.module_key(&dependency);
+            let synthetic = key.with_extension("mjs");
+            (self.pending_async_modules.contains(&key)
+                || self.pending_async_modules.contains(&synthetic))
+            .then_some(dependency)
+        })
+    }
+
+    fn module_evaluating_dependency_path(
+        &self,
+        path: &Path,
+        program: &Program<'_>,
+    ) -> Option<PathBuf> {
+        let parent = path.parent()?;
+        let current = self.module_key(path);
+        program.body.iter().find_map(|statement| {
+            let request = match statement {
+                Statement::ImportDeclaration(import) => Some(import.source.value.as_str()),
+                Statement::ExportFromDeclaration(export) => Some(export.source.value.as_str()),
+                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
+                _ => None,
+            }?;
+            let dependency = self.resolve_module_request(parent, request);
+            let dependency_key = self.module_key(&dependency);
+            (dependency_key != current && self.module_is_evaluating(&dependency))
+                .then_some(dependency)
+        })
+    }
+
+    fn release_async_continuations(&mut self, completed: &Path) {
+        let completed_key = self.module_key(completed);
+        let released: Vec<_> = self
+            .async_module_continuations
+            .iter()
+            .enumerate()
+            .filter_map(|(index, continuation)| {
+                continuation.as_ref().and_then(|continuation| {
+                    continuation
+                        .wait_for
+                        .as_ref()
+                        .filter(|path| {
+                            let key = self.module_key(path);
+                            key == completed_key || key.with_extension("mjs") == completed_key
+                        })
+                        .map(|_| index)
+                })
+            })
+            .collect();
+        for index in released {
+            if let Some(Some(continuation)) = self.async_module_continuations.get_mut(index) {
+                continuation.wait_for = None;
+            }
+            self.schedule_microtask(
+                self.native(native_async_module_continuation),
+                vec![Value::Number(index as f64)],
+            );
+        }
+    }
+
     fn module_export_names(&mut self, path: &Path) -> JsResult<Vec<String>> {
         let mut visiting = HashSet::new();
         self.module_export_names_inner(path, &mut visiting)
@@ -12038,19 +12112,25 @@ impl Vm {
         // An unexported async module can suspend after its first top-level
         // await while sibling modules continue evaluation.  The module graph
         // owns the ordering; no source/fixture identity participates here.
+        let wait_for = self
+            .module_evaluating_dependency_path(p, &r.program)
+            .or_else(|| self.module_pending_async_dependency_path(p, &r.program));
         let defer_async_tail = module_source
             && self
                 .module_export_names(p)
                 .is_ok_and(|names| names.is_empty())
             && !top_level_await_is_dynamic_import(&r.program)
-            && (top_level_await_statement_index(&r.program).is_some()
-                || self.module_has_pending_async_dependency(p, &r.program));
+            && (top_level_await_statement_index(&r.program).is_some() || wait_for.is_some());
         let deferred_statements = if defer_async_tail {
             let statements: &'static [Statement<'static>] =
                 unsafe { std::mem::transmute(r.program.body.as_slice()) };
-            Some(match top_level_await_statement_index(&r.program) {
-                Some(index) => (&statements[..index], &statements[index.saturating_add(1)..]),
-                None => (&statements[..0], statements),
+            Some(if wait_for.is_some() {
+                (&statements[..0], statements)
+            } else {
+                match top_level_await_statement_index(&r.program) {
+                    Some(index) => (&statements[..index], &statements[index.saturating_add(1)..]),
+                    None => (&statements[..0], statements),
+                }
             })
         } else {
             None
@@ -12123,13 +12203,20 @@ impl Vm {
                 self.async_module_continuations
                     .push(Some(AsyncModuleContinuation {
                         path: p.to_path_buf(),
+                        wait_for: wait_for.clone(),
                         statements: suffix,
                         environment: execution_environment.clone(),
                     }));
-                self.schedule_microtask(
-                    self.native(native_async_module_continuation),
-                    vec![Value::Number(index as f64)],
-                );
+                let module_key = self.module_key(p);
+                self.pending_async_modules.insert(module_key.clone());
+                self.pending_async_modules
+                    .insert(module_key.with_extension("mjs"));
+                if wait_for.is_none() {
+                    self.schedule_microtask(
+                        self.native(native_async_module_continuation),
+                        vec![Value::Number(index as f64)],
+                    );
+                }
             }
             self.complete_script_signal(signal)
         } else {
@@ -19901,6 +19988,7 @@ fn native_async_module_continuation(vm: &mut Vm, _: Value, args: &[Value]) -> Js
     vm.pending_async_modules.remove(&continuation_key);
     vm.pending_async_modules
         .remove(&continuation_key.with_extension("mjs"));
+    vm.release_async_continuations(&continuation_key);
     Ok(Value::Undefined)
 }
 
