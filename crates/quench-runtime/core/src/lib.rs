@@ -4756,6 +4756,17 @@ fn is_html_dda_value(value: &Value) -> bool {
             .is_some_and(|function| function.props.borrow().contains_key("\0html-dda"))
 }
 fn instance_of(value: &Value, ctor: &Value) -> bool {
+    if value.as_function_ref().is_some_and(|function| {
+        matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async && node.generator)
+    }) && ctor.as_function_ref().is_some_and(|function| {
+        function
+            .props
+            .borrow()
+            .get("\0async-generator-constructor")
+            .is_some_and(Value::truthy)
+    }) {
+        return true;
+    }
     if value.is_function()
         && ctor.as_function_ref().is_some_and(|function| {
             matches!(
@@ -5071,6 +5082,7 @@ struct Vm {
     symbol_registry: HashMap<String, Value>,
     next_symbol_id: u64,
     async_function_constructor: RefCell<Option<Value>>,
+    async_generator_constructor: RefCell<Option<Value>>,
     throw_type_error: RefCell<Option<Value>>,
     pending_loop_label: Option<String>,
     current_new_target: Option<Value>,
@@ -5121,6 +5133,7 @@ impl Vm {
             symbol_registry: HashMap::new(),
             next_symbol_id: 1,
             async_function_constructor: RefCell::new(None),
+            async_generator_constructor: RefCell::new(None),
             throw_type_error: RefCell::new(None),
             pending_loop_label: None,
             current_new_target: None,
@@ -5372,16 +5385,35 @@ impl Vm {
         }
         value
     }
-    fn async_function_constructor(&self) -> Value {
-        if let Some(value) = self.async_function_constructor.borrow().clone() {
+    fn async_constructor(&self, generator: bool) -> Value {
+        let cache = if generator {
+            &self.async_generator_constructor
+        } else {
+            &self.async_function_constructor
+        };
+        if let Some(value) = cache.borrow().clone() {
             return value;
         }
-        let constructor = self.native_named(native_async_function_constructor, "AsyncFunction", 1);
-        self.set_prop(
-            &constructor,
-            "\0async-function-constructor",
-            Value::Bool(true),
-        );
+        let native: fn(&mut Vm, Value, &[Value]) -> JsResult<Value> = if generator {
+            native_async_generator_constructor
+        } else {
+            native_async_function_constructor
+        };
+        let (name, tag, marker) = if generator {
+            (
+                "AsyncGeneratorFunction",
+                "AsyncGeneratorFunction",
+                "\0async-generator-constructor",
+            )
+        } else {
+            (
+                "AsyncFunction",
+                "AsyncFunction",
+                "\0async-function-constructor",
+            )
+        };
+        let constructor = self.native_named(native, name, 1);
+        self.set_prop(&constructor, marker, Value::Bool(true));
         let function_prototype = self
             .builtin(BuiltinId::FunctionConstructor)
             .as_function_ref()
@@ -5397,7 +5429,7 @@ impl Vm {
             self.set_prop(
                 &Value::Object(async_prototype.clone()),
                 &to_string_tag,
-                Value::string_value("AsyncFunction"),
+                Value::string_value(tag),
             );
             set_property_attributes(
                 &Value::Object(async_prototype.clone()),
@@ -5408,14 +5440,46 @@ impl Vm {
                     configurable: true,
                 },
             );
-            self.set_prop(
-                &Value::Object(async_prototype),
+            let async_prototype = Value::Object(async_prototype);
+            self.set_prop(&async_prototype, "constructor", constructor.clone());
+            set_property_attributes(
+                &async_prototype,
                 "constructor",
-                constructor.clone(),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
             );
+            if generator {
+                let generator_prototype = self.object(None);
+                let async_function_prototype = Value::Object(
+                    constructor
+                        .as_function_ref()
+                        .expect("AsyncGeneratorFunction constructor")
+                        .prototype
+                        .clone(),
+                );
+                self.set_prop(&async_function_prototype, "prototype", generator_prototype);
+                set_property_attributes(
+                    &async_function_prototype,
+                    "prototype",
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
         }
-        *self.async_function_constructor.borrow_mut() = Some(constructor.clone());
+        *cache.borrow_mut() = Some(constructor.clone());
         constructor
+    }
+    fn async_function_constructor(&self) -> Value {
+        self.async_constructor(false)
+    }
+    fn async_generator_constructor(&self) -> Value {
+        self.async_constructor(true)
     }
     fn promise_from_result(&mut self, result: JsResult<Value>) -> Value {
         let (state, value) = match result {
@@ -6640,8 +6704,12 @@ impl Vm {
         }
         if let Some(f) = o.as_function_ref() {
             return if k == "prototype" {
-                let constructable = match &f.kind {
-                    FunctionKind::User { node, .. } => !node.generator && !node.r#async,
+                let override_value = f.props.borrow().get("\0prototype_override").cloned();
+                if let Some(override_value) = override_value {
+                    return override_value;
+                }
+                let has_prototype = match &f.kind {
+                    FunctionKind::User { node, .. } => !node.r#async || node.generator,
                     FunctionKind::Builtin(id) => id.is_constructable(),
                     FunctionKind::Native(native)
                         if *native as *const () == native_bigint as *const () =>
@@ -6659,12 +6727,18 @@ impl Vm {
                     {
                         true
                     }
+                    FunctionKind::Native(native)
+                        if *native as *const ()
+                            == native_async_generator_constructor as *const () =>
+                    {
+                        true
+                    }
                     FunctionKind::Class { .. } => true,
                     FunctionKind::Native(_)
                     | FunctionKind::Arrow { .. }
                     | FunctionKind::Bound { .. } => false,
                 };
-                if constructable {
+                if has_prototype {
                     Value::Object(f.prototype.clone())
                 } else {
                     Value::Undefined
@@ -7189,8 +7263,16 @@ impl Vm {
                 return;
             }
             if k == "prototype" {
+                if !matches!(&function.kind, FunctionKind::User { .. }) {
+                    return;
+                }
                 if let Some(source) = v.as_object() {
-                    *function.prototype.borrow_mut() = source.borrow().clone();
+                    let source_data = source.borrow().clone();
+                    *function.prototype.borrow_mut() = source_data;
+                    function
+                        .props
+                        .borrow_mut()
+                        .shift_remove("\0prototype_override");
                     let prototype = Value::Object(function.prototype.clone());
                     self.set_prop(&prototype, "\0prototype_alias", Value::Object(source));
                     self.invalidate_prototype_membership();
@@ -7279,7 +7361,10 @@ impl Vm {
             // Every constructable function exposes an own, non-configurable
             // `prototype` property. Its value may be replaced when writable,
             // but the property itself must survive `delete`.
-            if k == "prototype" && constructable(o) {
+            if k == "prototype"
+                && (constructable(o)
+                    || matches!(&function.kind, FunctionKind::User { node, .. } if node.generator))
+            {
                 return false;
             }
             if function
@@ -9340,6 +9425,16 @@ impl Vm {
             e
         };
         let p = self.allocate_object(Object::ordinary(self.default_object_prototype()));
+        if n.r#async && n.generator {
+            let constructor = self.async_generator_constructor();
+            let prototype = constructor
+                .as_function_ref()
+                .and_then(|function| function.prototype.borrow().props.get("prototype").cloned())
+                .and_then(|value| value.as_object());
+            if let Some(prototype) = prototype {
+                p.borrow_mut().prototype = Some(prototype);
+            }
+        }
         let length = n
             .params
             .items
@@ -9371,12 +9466,16 @@ impl Vm {
         };
         let v = Value::Function(Rc::new(f));
         p.borrow_mut().props.insert("constructor", v.clone());
-        if n.r#async && !n.generator {
+        if n.r#async {
             if let Some(function) = v.as_function_ref() {
-                function
-                    .props
-                    .borrow_mut()
-                    .insert("constructor".into(), self.async_function_constructor());
+                function.props.borrow_mut().insert(
+                    "constructor".into(),
+                    if n.generator {
+                        self.async_generator_constructor()
+                    } else {
+                        self.async_function_constructor()
+                    },
+                );
             }
         }
         v
@@ -11588,7 +11687,7 @@ fn contains_eval_call(source: &str) -> bool {
 }
 
 fn contains_async_function_constructor_probe(source: &str) -> bool {
-    source.contains("AsyncFunction")
+    (source.contains("AsyncFunction") || source.contains("AsyncGeneratorFunction"))
         && (source.contains(".constructor") || source.contains("getPrototypeOf"))
 }
 
@@ -17525,6 +17624,14 @@ fn native_async_function_constructor(
     dynamic_function_constructor(vm, receiver, args, "async function")
 }
 
+fn native_async_generator_constructor(
+    vm: &mut Vm,
+    receiver: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    dynamic_function_constructor(vm, receiver, args, "async function*")
+}
+
 fn dynamic_function_constructor(
     vm: &mut Vm,
     receiver: Value,
@@ -19524,6 +19631,9 @@ fn native_object_get_own_property_descriptor(
     let function_metadata =
         target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
     let prototype_metadata = target.as_function().is_some() && key == "prototype";
+    let user_prototype = target
+        .as_function_ref()
+        .is_some_and(|function| matches!(function.kind, FunctionKind::User { .. }));
     let builtin_function = target.as_function_ref().is_some_and(|function| {
         matches!(
             function.kind,
@@ -19566,7 +19676,11 @@ fn native_object_get_own_property_descriptor(
                 .and_then(|regexp| regexp.borrow().attributes.get(&key).copied())
         })
         .unwrap_or(PropertyAttributes {
-            writable: !function_metadata && !prototype_metadata && !is_number_constant,
+            writable: if prototype_metadata {
+                user_prototype
+            } else {
+                !function_metadata && !is_number_constant
+            },
             enumerable: !target
                 .as_object_ref()
                 .is_some_and(|object| object.borrow().array.is_some() && key == "length")
@@ -20059,13 +20173,19 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             .unwrap_or(Value::Null));
     }
     if target.as_function().is_some() {
-        if target.as_function_ref().is_some_and(|function| {
-            matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async && !node.generator)
-        }) {
-            let prototype = vm
-                .async_function_constructor()
-                .as_function_ref()
-                .map(|function| function.prototype.clone());
+        if target.as_function_ref().is_some_and(
+            |function| matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async),
+        ) {
+            let generator = target.as_function_ref().is_some_and(|function| {
+                matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)
+            });
+            let prototype = if generator {
+                vm.async_generator_constructor()
+            } else {
+                vm.async_function_constructor()
+            }
+            .as_function_ref()
+            .map(|function| function.prototype.clone());
             return Ok(prototype.map(Value::Object).unwrap_or(Value::Null));
         }
         if target.as_function_ref().is_some_and(|function| {
@@ -20073,6 +20193,15 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
                 .props
                 .borrow()
                 .get("\0async-function-constructor")
+                .is_some_and(Value::truthy)
+        }) {
+            return Ok(vm.builtin(BuiltinId::FunctionConstructor));
+        }
+        if target.as_function_ref().is_some_and(|function| {
+            function
+                .props
+                .borrow()
+                .get("\0async-generator-constructor")
                 .is_some_and(Value::truthy)
         }) {
             return Ok(vm.builtin(BuiltinId::FunctionConstructor));
@@ -21096,7 +21225,9 @@ fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> J
         props.contains_key(&key)
             || props.contains_key(&accessor_slot("get", &key))
             || props.contains_key(&accessor_slot("set", &key))
-            || (key == "prototype" && constructable(&target))
+            || (key == "prototype"
+                && (constructable(&target)
+                    || matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)))
     } else {
         target.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
