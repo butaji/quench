@@ -5429,6 +5429,11 @@ struct Vm {
     current_constructor: Option<Value>,
     async_generator_yields: Option<Vec<Value>>,
     mapped_arguments: RefCell<Vec<(ObjectHandle, Env, Vec<String>)>>,
+    // Synchronous bridge for thenable assimilation at an await expression.
+    // The full async-module scheduler can suspend stencils later; keeping the
+    // settlement fact on the VM makes the current path deterministic and
+    // avoids a second promise implementation.
+    await_result: Option<Result<Value, Value>>,
 }
 impl Vm {
     fn new() -> Self {
@@ -5494,6 +5499,7 @@ impl Vm {
             current_constructor: None,
             async_generator_yields: None,
             mapped_arguments: RefCell::new(Vec::new()),
+            await_result: None,
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -7135,6 +7141,9 @@ impl Vm {
         self.mark_nonconstructable(&html_dda);
         self.set_prop(&html_dda, "\0html-dda", Value::Bool(true));
         self.set_prop(&test262, "IsHTMLDDA", html_dda);
+        let abstract_module_source =
+            self.native_named(native_abstract_module_source, "AbstractModuleSource", 0);
+        self.set_prop(&test262, "AbstractModuleSource", abstract_module_source);
         Environment::set(&g, "$262", test262);
         if let (Some(global_this), Some(test262)) = (
             Environment::get(&g, "globalThis"),
@@ -10439,11 +10448,17 @@ impl Vm {
                 if resolutions.get(name).is_some_and(|count| *count != 1) {
                     continue;
                 }
-                let value = self
+                let live_name = self
                     .module_environments
                     .get(&key)
                     .filter(|environment| environment.borrow().contains_local(name))
-                    .map(|_| self.module_import_ref(&key, name))
+                    .map(|_| name.to_owned())
+                    .or_else(|| {
+                        self.module_export_local_binding(&key, name)
+                            .filter(|local| self.module_binding_is_var(&key, local))
+                    });
+                let value = live_name
+                    .map(|live_name| self.module_import_ref(&key, &live_name))
                     .unwrap_or_else(|| value.clone());
                 self.set_prop(&namespace, name, value);
                 set_property_attributes(
@@ -10543,7 +10558,9 @@ impl Vm {
                         key == "type" && matches!(entry.value.value.as_str(), "text" | "bytes")
                     })
                 });
-                if import.phase == Some(ImportPhase::Defer) || resource_import {
+                if matches!(import.phase, Some(ImportPhase::Defer | ImportPhase::Source))
+                    || resource_import
+                {
                     continue;
                 }
             }
@@ -10768,16 +10785,23 @@ impl Vm {
                         let (local, imported) = match specifier {
                             ImportDeclarationSpecifier::ImportSpecifier(specifier) => (
                                 specifier.local.name.to_string(),
-                                module_export_name_for_early_error(&specifier.imported),
+                                if import.phase == Some(ImportPhase::Source) {
+                                    String::from("source")
+                                } else {
+                                    module_export_name_for_early_error(&specifier.imported)
+                                },
                             ),
                             ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => (
                                 specifier.local.name.to_string(),
-                                String::from("default"),
+                                if import.phase == Some(ImportPhase::Source) {
+                                    String::from("source")
+                                } else {
+                                    String::from("default")
+                                },
                             ),
-                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => (
-                                specifier.local.name.to_string(),
-                                phase_name.to_owned(),
-                            ),
+                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                                (specifier.local.name.to_string(), phase_name.to_owned())
+                            }
                         };
                         imported_bindings.insert(local, (dependency.clone(), imported));
                     }
@@ -10914,13 +10938,33 @@ impl Vm {
         }
         names.sort_unstable();
         for name in names {
-            let value = exports.get(&name).cloned().unwrap_or_else(|| {
-                if resolutions.get(&name).copied() == Some(1) {
-                    self.module_import_ref(path, &name)
-                } else {
-                    Value::Undefined
-                }
-            });
+            // Direct module bindings are live by definition.  Store a stable
+            // reference even when the declaration already has an initial
+            // value; namespace reads then resolve through the environment
+            // after subsequent assignments.  Re-exported values retain their
+            // materialized identity/reference from the export record.
+            let live_name = if self
+                .module_environments
+                .get(&self.module_key(path))
+                .is_some_and(|environment| environment.borrow().contains_local(&name))
+                || self.module_binding_is_var(path, &name)
+            {
+                Some(name.clone())
+            } else {
+                self.module_export_local_binding(path, &name)
+                    .filter(|local| self.module_binding_is_var(path, local))
+            };
+            let value = if let Some(live_name) = live_name {
+                self.module_import_ref(path, &live_name)
+            } else {
+                exports.get(&name).cloned().unwrap_or_else(|| {
+                    if resolutions.get(&name).copied() == Some(1) {
+                        self.module_import_ref(path, &name)
+                    } else {
+                        Value::Undefined
+                    }
+                })
+            };
             self.set_prop(&object, &name, value);
             set_property_attributes(
                 &object,
@@ -11040,6 +11084,15 @@ impl Vm {
         reference
     }
 
+    fn abstract_module_source(&mut self) -> Value {
+        let test262 = Environment::get(&self.global, "$262").unwrap_or(Value::Undefined);
+        let constructor = self.get_prop(&test262, "AbstractModuleSource");
+        let prototype = constructor
+            .as_function_ref()
+            .map(|function| function.prototype.clone());
+        self.object(prototype)
+    }
+
     fn module_ref_parts(&self, object: &Value, key: &str) -> Option<(PathBuf, String)> {
         let object = object.as_object_ref()?;
         let borrowed = object.borrow();
@@ -11065,6 +11118,13 @@ impl Vm {
 
     fn resolve_module_ref(&mut self, path: &Path, imported: &str) -> JsResult<Value> {
         let key = self.module_key(path);
+        if imported != "*"
+            && let Some(environment) = self.module_environments.get(&key)
+            && environment.borrow().contains_local(imported)
+        {
+            return Environment::get(environment, imported)
+                .ok_or_else(|| JsError::Throw(reference_error(self, imported)));
+        }
         if imported == "*" {
             if let Some(exports) = self.module_exports_cache.get(&key).cloned() {
                 return Ok(self.module_namespace(&key, &exports, false));
@@ -11164,14 +11224,17 @@ impl Vm {
                     }
                 }
                 Statement::ExportAllDeclaration(export) if imported != "default" => {
-                    if export.exported.is_none() {
-                        let dependency =
-                            self.resolve_module_request(parent, export.source.value.as_str());
-                        if let Ok(value) =
-                            self.resolve_named_module_ref(&dependency, imported, visiting)
-                        {
-                            return Ok(value);
+                    let dependency =
+                        self.resolve_module_request(parent, export.source.value.as_str());
+                    if let Some(exported) = &export.exported {
+                        if module_export_name_for_early_error(exported) == imported {
+                            let exports = self.load_module_exports(&dependency)?;
+                            return Ok(self.module_namespace(&dependency, &exports, false));
                         }
+                    } else if let Ok(value) =
+                        self.resolve_named_module_ref(&dependency, imported, visiting)
+                    {
+                        return Ok(value);
                     }
                 }
                 _ => {}
@@ -11204,13 +11267,16 @@ impl Vm {
                 })
             });
             let deferred = import.phase == Some(ImportPhase::Defer);
+            let source_phase = import.phase == Some(ImportPhase::Source);
             let target_evaluating = self.module_is_evaluating(&target);
             if deferred {
                 for dependency in self.deferred_async_dependencies(&target)? {
                     self.load_module_exports(&dependency)?;
                 }
             }
-            let exports = if deferred {
+            let exports = if source_phase {
+                HashMap::new()
+            } else if deferred {
                 self.module_export_names(&target)?
                     .into_iter()
                     .map(|name| (name, Value::Undefined))
@@ -11278,7 +11344,9 @@ impl Vm {
                             (specifier.local.name.as_str(), String::from("*"))
                         }
                     };
-                    let value = if target_evaluating && import_type.is_none() && deferred {
+                    let value = if source_phase {
+                        self.abstract_module_source()
+                    } else if target_evaluating && import_type.is_none() && deferred {
                         // A deferred namespace created for an evaluating
                         // module must retain its MOP so property access throws
                         // the specified TypeError instead of exposing an
@@ -11295,7 +11363,19 @@ impl Vm {
                         self.module_namespace(&target, &exports, deferred)
                     } else {
                         match exports.get(&imported).cloned() {
-                            Some(value) => value,
+                            Some(value) => {
+                                if let Some((reference_path, reference_name)) =
+                                    self.module_ref_value_parts(&value)
+                                {
+                                    self.resolve_named_module_ref(
+                                        &reference_path,
+                                        &reference_name,
+                                        &mut HashSet::new(),
+                                    )?
+                                } else {
+                                    value
+                                }
+                            }
                             None if self
                                 .module_export_bindings(&target)?
                                 .get(&imported)
@@ -11499,6 +11579,22 @@ impl Vm {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "yield is reserved as an identifier in strict mode",
+            )));
+        }
+        if st.is_module() && has_invalid_private_name_reference(source) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "private name is not declared in the enclosing class",
+            )));
+        }
+        if st.is_module()
+            && source
+                .lines()
+                .any(|line| matches!(line.trim(), "yield" | "yield;"))
+        {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "yield is reserved in modules",
             )));
         }
         if self.strict_mode && has_strict_reserved_binding(&r.program) {
@@ -13480,13 +13576,45 @@ impl Vm {
             };
             declaration.is_some_and(|declaration| {
                 declaration.kind == VariableDeclarationKind::Var
-                    && declaration
-                        .declarations
-                        .iter()
-                        .filter_map(|declarator| pattern_name(&declarator.id))
-                        .any(|candidate| candidate == name)
+                    && declaration.declarations.iter().any(|declarator| {
+                        let mut names = Vec::new();
+                        pattern_bound_names(&declarator.id, &mut names);
+                        names.iter().any(|candidate| candidate == name)
+                    })
             })
         })
+    }
+
+    fn module_export_local_binding(&mut self, path: &Path, exported_name: &str) -> Option<String> {
+        let key = self.module_key(path);
+        let source = fs::read_to_string(&key).ok()?;
+        let parsed_source: &'static str = Box::leak(source.into_boxed_str());
+        let allocator: &'static Allocator = Box::leak(Box::new(Allocator::default()));
+        let parsed = Parser::new(allocator, parsed_source, SourceType::mjs()).parse();
+        if parsed.diagnostics.first().is_some() {
+            return None;
+        }
+        for statement in &parsed.program.body {
+            match statement {
+                Statement::ExportDeclaration(export) => {
+                    let mut names = Vec::new();
+                    declaration_names_for_early_error(&export.declaration, &mut names);
+                    if names.iter().any(|name| name == exported_name) {
+                        return Some(exported_name.to_owned());
+                    }
+                }
+                Statement::ExportNamedDeclaration(export) => {
+                    for specifier in &export.specifiers {
+                        if module_export_name_for_early_error(&specifier.exported) == exported_name
+                        {
+                            return Some(module_export_name_for_early_error(&specifier.local));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn eval_expr<'a>(&mut self, x: &Expression<'a>, e: Env) -> JsResult<Value> {
@@ -13569,6 +13697,27 @@ impl Vm {
                         .is_some_and(|state| state.as_str() == "fulfilled")
                     {
                         return Ok(self.get_prop(&value, PROMISE_RESULT_PROP));
+                    }
+                }
+                // Await assimilates ordinary thenables as well as native
+                // Promise instances.  Module fixtures use synchronously
+                // settling thenables, so route both callbacks through the
+                // same VM and consume the first settlement here.
+                if value.is_object_like() {
+                    let then = self.get_prop(&value, "then");
+                    if then.as_function_ref().is_some() || proxy_target(&then).is_some() {
+                        let previous = self.await_result.take();
+                        self.await_result = None;
+                        let resolve = self.native_named(native_await_resolve, "", 1);
+                        let reject = self.native_named(native_await_reject, "", 1);
+                        let call_result =
+                            self.call_arguments(&then, value.clone(), &[resolve, reject][..]);
+                        let settled = self.await_result.take();
+                        self.await_result = previous;
+                        call_result?;
+                        if let Some(result) = settled {
+                            return result.map_err(JsError::Throw);
+                        }
                     }
                 }
                 Ok(value)
@@ -13904,6 +14053,10 @@ impl Vm {
             StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
                 self.get_prop_with_accessors(&o, m.property.name.as_str())
+            }
+            PrivateFieldExpression(m) => {
+                let o = self.eval_expr(&m.object, e)?;
+                self.get_prop_with_accessors(&o, m.field.name.as_str())
             }
             ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
@@ -14848,13 +15001,14 @@ fn collect_module_bindings(
         match statement {
             Statement::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
-                    let Some(name) = pattern_name(&declarator.id) else {
-                        continue;
-                    };
-                    if declaration.kind == VariableDeclarationKind::Var {
-                        variables.push(name);
-                    } else {
-                        lexicals.insert(name);
+                    let mut names = Vec::new();
+                    pattern_bound_names(&declarator.id, &mut names);
+                    for name in names {
+                        if declaration.kind == VariableDeclarationKind::Var {
+                            variables.push(name);
+                        } else {
+                            lexicals.insert(name);
+                        }
                     }
                 }
             }
@@ -14871,13 +15025,14 @@ fn collect_module_bindings(
             Statement::ExportDeclaration(export) => match &export.declaration {
                 Declaration::VariableDeclaration(declaration) => {
                     for declarator in &declaration.declarations {
-                        let Some(name) = pattern_name(&declarator.id) else {
-                            continue;
-                        };
-                        if declaration.kind == VariableDeclarationKind::Var {
-                            variables.push(name);
-                        } else {
-                            lexicals.insert(name);
+                        let mut names = Vec::new();
+                        pattern_bound_names(&declarator.id, &mut names);
+                        for name in names {
+                            if declaration.kind == VariableDeclarationKind::Var {
+                                variables.push(name);
+                            } else {
+                                lexicals.insert(name);
+                            }
                         }
                     }
                 }
@@ -15904,9 +16059,7 @@ fn declaration_names_for_early_error(declaration: &Declaration<'_>, names: &mut 
     match declaration {
         Declaration::VariableDeclaration(declaration) => {
             for declarator in &declaration.declarations {
-                if let Some(name) = pattern_name(&declarator.id) {
-                    names.push(name);
-                }
+                pattern_bound_names(&declarator.id, names);
             }
         }
         Declaration::FunctionDeclaration(function) => {
@@ -16450,6 +16603,10 @@ fn has_strict_legacy_literal_escape(source: &str) -> bool {
                 Some(b'x' | b'X' | b'b' | b'B' | b'o' | b'O')
             )
             && bytes.get(index + 1) != Some(&b'.')
+            && !index
+                .checked_sub(1)
+                .and_then(|previous| bytes.get(previous))
+                .is_some_and(|previous| *previous == b'u')
         {
             return true;
         }
@@ -19338,6 +19495,21 @@ fn native_promise_reject(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsR
     )?;
     Ok(promise)
 }
+
+fn native_await_resolve(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.await_result.is_none() {
+        vm.await_result = Some(Ok(args.first().cloned().unwrap_or(Value::Undefined)));
+    }
+    Ok(Value::Undefined)
+}
+
+fn native_await_reject(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.await_result.is_none() {
+        vm.await_result = Some(Err(args.first().cloned().unwrap_or(Value::Undefined)));
+    }
+    Ok(Value::Undefined)
+}
+
 fn native_promise_all_resolve_element(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.get_prop(&this, PROMISE_ALL_CALLED_PROP).truthy() {
         return Ok(Value::Undefined);
@@ -20136,6 +20308,12 @@ fn native_promise_try(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResu
 }
 fn native_html_dda(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Null)
+}
+fn native_abstract_module_source(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    Err(JsError::Throw(type_error(
+        vm,
+        "AbstractModuleSource is not constructable",
+    )))
 }
 fn native_throw_type_error(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Err(JsError::Throw(type_error(
@@ -25151,6 +25329,33 @@ fn contains_identifier_token(source: &str, token: &str) -> bool {
             return true;
         }
         index += 1;
+    }
+    false
+}
+
+fn has_invalid_private_name_reference(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        if bytes[index] == b'.' && bytes[index + 1] == b'#' {
+            let start = index + 2;
+            let mut end = start;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'$')
+            {
+                end += 1;
+            }
+            if end > start {
+                let name = &source[start..end];
+                let occurrences = source.match_indices(&format!("#{name}")).count();
+                if occurrences < 2 {
+                    return true;
+                }
+            }
+            index = end;
+        } else {
+            index += 1;
+        }
     }
     false
 }
