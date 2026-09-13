@@ -22074,6 +22074,11 @@ fn native_object_get_own_property_descriptor(
                             )));
                         }
                     }
+                } else if !result_configurable {
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "Proxy descriptor is non-configurable for a missing target property",
+                    )));
                 }
             }
             return Ok(result);
