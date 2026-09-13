@@ -174,6 +174,9 @@ Verification completed:
 - descriptor attachment now has one shared lowering helper for object and
   function storage, keeping that representation detail at the edge instead of
   repeating it at each intrinsic declaration site
+- builtin wrapper names, Error-family membership, and constructability now
+  derive from `BuiltinId` projections, so interpreter, `Reflect.construct`,
+  and stencil-JIT paths share those semantic facts
 - historical commits advertising “100% Test262” used `test262/skip.rs` to skip
   entire built-in families (including Object, Array, String, TypedArray, and
   Promise); those results are not equivalent to executing the full corpus
