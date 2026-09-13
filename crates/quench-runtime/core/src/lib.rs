@@ -7989,11 +7989,16 @@ impl Vm {
         // once so both execution tiers see the same pre-evaluation state.
         let eval_code = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
         let strict_eval = eval_code && self.strict_mode;
-        let execution_environment = if strict_eval {
+        let execution_environment = if eval_code {
             let eval_environment = Environment::new(Some(environment.clone()));
             eval_environment
                 .borrow_mut()
-                .declare(STRICT_EVAL_ENV_NAME, Value::Bool(true));
+                .declare(EVAL_CODE_ENV_NAME, Value::Bool(true));
+            if strict_eval {
+                eval_environment
+                    .borrow_mut()
+                    .declare(STRICT_EVAL_ENV_NAME, Value::Bool(true));
+            }
             eval_environment
         } else {
             environment.clone()
@@ -8006,14 +8011,15 @@ impl Vm {
                 .lexical_names
                 .extend(lexical_names);
         }
+        let variable_environment = variable_environment(&execution_environment);
         if strict_eval {
-            reserve_strict_eval_bindings(&execution_environment, &r.program.body);
+            reserve_strict_eval_bindings(&variable_environment, &r.program.body);
         } else {
-            reserve_script_bindings(&execution_environment, &r.program.body);
+            reserve_script_bindings(&variable_environment, &r.program.body);
         }
         if !strict_eval {
-            self.materialize_script_bindings(&execution_environment, &r.program.body);
-            self.hydrate_global_bindings(&execution_environment, &r.program.body);
+            self.materialize_script_bindings(&variable_environment, &r.program.body);
+            self.hydrate_global_bindings(&variable_environment, &r.program.body);
         }
         self.source_stack.push(p.to_path_buf());
         self.source_ids.push(source_id);
@@ -8128,7 +8134,17 @@ impl Vm {
         for stmt in b {
             if let Statement::FunctionDeclaration(f) = stmt {
                 if let Some(id) = &f.id {
-                    self.declare_function_binding(f, e.clone(), id.name.as_str(), annex_b_allowed);
+                    let function_environment = if e.borrow().contains_local(EVAL_CODE_ENV_NAME) {
+                        variable_environment(&e)
+                    } else {
+                        e.clone()
+                    };
+                    self.declare_function_binding(
+                        f,
+                        function_environment,
+                        id.name.as_str(),
+                        annex_b_allowed,
+                    );
                 }
             }
         }
