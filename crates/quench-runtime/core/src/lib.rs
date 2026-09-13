@@ -11137,7 +11137,7 @@ impl Vm {
             }
             return Ok(export.clone());
         }
-        let active_index = self.module_export_stack_paths.iter().position(|active| {
+        let active_index = self.module_export_stack_paths.iter().rposition(|active| {
             active == &key
                 || self.module_key(active) == key
                 || active.with_extension("mjs") == key
@@ -11189,7 +11189,7 @@ impl Vm {
             }
             return Ok(export.clone());
         }
-        if let Some(index) = self.module_export_stack_paths.iter().position(|active| {
+        if let Some(index) = self.module_export_stack_paths.iter().rposition(|active| {
             active == &key
                 || active.with_extension("mjs") == key
                 || key.with_extension("mjs") == *active
