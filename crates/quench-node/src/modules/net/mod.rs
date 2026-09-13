@@ -254,15 +254,15 @@ fn new_net_object(
         .into_iter()
         .map(|(key, value)| (key.to_string(), value))
         .collect();
-    object = install_methods(object, props)?;
-    object = install_methods(
+    object = crate::host::install_methods(object, props)?;
+    object = crate::host::install_methods(
         object,
         vec![(NET_ID_PROP.to_string(), Value::Number(id as f64))],
     )?;
     // `internal/async_hooks.symbols` exposes these private keys to Node's
     // HTTP Agent tests; the socket's async identity is the same resource id
     // used by the host lifecycle callbacks.
-    object = install_methods(
+    object = crate::host::install_methods(
         object,
         vec![
             (
@@ -289,21 +289,8 @@ fn new_net_object(
     Ok((object, id))
 }
 
-fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
-    for (key, value) in props {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, &key, descriptor)?;
-    }
-    Ok(object)
-}
-
 pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
-    install_methods(
+    crate::host::install_methods(
         object,
         vec![
             ("bytesRead".to_string(), Value::Number(0.0)),
@@ -715,7 +702,7 @@ pub fn async_iterator(
             cap(crate::registry::SPEC_NET_ASYNC_ITERATOR),
         ),
     ]);
-    install_methods(
+    crate::host::install_methods(
         iterator,
         vec![(ASYNC_ITER_TARGET_PROP.to_string(), Value::Number(id as f64))],
     )

@@ -291,7 +291,7 @@ pub fn agent_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result
         },
     );
     object = execute::set_property(object, "totalSocketCount", Value::Number(0.0));
-    object = install_methods(
+    object = crate::host::install_methods(
         object,
         vec![
             (
@@ -4483,7 +4483,7 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         guard.http.next_client += 1;
         id
     };
-    object = install_methods(
+    object = crate::host::install_methods(
         object,
         vec![
             (
@@ -4647,19 +4647,6 @@ fn retire_socket_async_id(state: &Rc<RefCell<HostState>>, socket: &Value) {
         }
     }
     set_socket_async_id(socket, -1.0);
-}
-
-fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
-    for (key, value) in props {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, &key, descriptor)?;
-    }
-    Ok(object)
 }
 
 fn client_id(receiver: Option<&Value>) -> Option<u64> {
@@ -4926,7 +4913,7 @@ fn build_incoming(
             Value::Boolean(false),
         ),
     ];
-    install_methods(res, props)
+    crate::host::install_methods(res, props)
 }
 
 fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {

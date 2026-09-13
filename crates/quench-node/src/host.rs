@@ -24,6 +24,44 @@ pub fn scheduler_capability(kind: u16) -> Value {
     })
 }
 
+/// Install ordinary host properties with one canonical Node descriptor policy.
+///
+/// Host modules frequently publish Rust-owned values. Keeping the descriptor
+/// construction here makes those modules data-first: each call site supplies
+/// only the property table, while writability/configurability stay aligned.
+pub(crate) fn install_methods(
+    mut object: Value,
+    props: Vec<(String, Value)>,
+) -> Result<Value, VmError> {
+    install_properties(&mut object, props, false)?;
+    Ok(object)
+}
+
+pub(crate) fn install_enumerable_properties(
+    mut object: Value,
+    props: Vec<(String, Value)>,
+) -> Result<Value, VmError> {
+    install_properties(&mut object, props, true)?;
+    Ok(object)
+}
+
+fn install_properties(
+    object: &mut Value,
+    props: Vec<(String, Value)>,
+    enumerable: bool,
+) -> Result<(), VmError> {
+    for (key, value) in props {
+        let descriptor = host_api::object(vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(enumerable)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]);
+        *object = quench_runtime::execute::define_property(object.clone(), &key, descriptor)?;
+    }
+    Ok(())
+}
+
 /// Canonical process.cpuUsage host capability used by the Rust process module.
 pub fn process_cpu_usage_capability() -> Value {
     capability(crate::registry::SPEC_PROCESS_CPU_USAGE)
