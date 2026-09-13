@@ -14750,7 +14750,15 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     }
     vm.set_prop(&global, "Symbol", symbol);
     for (name, builtin) in [
+        ("Error", BuiltinId::ErrorConstructor),
+        ("EvalError", BuiltinId::EvalErrorConstructor),
+        ("RangeError", BuiltinId::RangeErrorConstructor),
+        ("ReferenceError", BuiltinId::ReferenceErrorConstructor),
+        ("SyntaxError", BuiltinId::SyntaxErrorConstructor),
         ("TypeError", BuiltinId::TypeErrorConstructor),
+        ("URIError", BuiltinId::URIErrorConstructor),
+        ("AggregateError", BuiltinId::AggregateErrorConstructor),
+        ("SuppressedError", BuiltinId::SuppressedErrorConstructor),
         ("Object", BuiltinId::ObjectConstructor),
         ("Boolean", BuiltinId::BooleanConstructor),
         ("Number", BuiltinId::NumberConstructor),
