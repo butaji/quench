@@ -236,9 +236,31 @@ environment_keys! {
     NEW_TARGET_VALUE_NAME => "new-target",
     NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
 }
+// Internal object markers are semantic facts, not ad-hoc property probes.
+// Declare each marker once and derive the predicate used by every execution
+// tier.  This keeps marker spelling and object classification in one place.
+macro_rules! internal_object_markers {
+    ($( $const_name:ident, $predicate:ident => $value:literal ),+ $(,)?) => {
+        $(
+            const $const_name: &str = $value;
+
+            #[inline]
+            fn $predicate(value: &Value) -> bool {
+                value
+                    .as_object_ref()
+                    .is_some_and(|object| object.borrow().props.contains_key($const_name))
+            }
+        )+
+    };
+}
+
+internal_object_markers! {
+    MODULE_NAMESPACE_PROP, is_module_namespace => "\0quench:module-namespace",
+    PROMISE_MARKER_PROP, is_promise_object => "\0quench:promise",
+}
+
 const PROMISE_STATE_PROP: &str = "\0quench:promise-state";
 const PROMISE_RESULT_PROP: &str = "\0quench:promise-result";
-const PROMISE_MARKER_PROP: &str = "\0quench:promise";
 const PROMISE_QUEUE_PROP: &str = "\0quench:promise-queue";
 const PROMISE_RESOLUTION_STARTED_PROP: &str = "\0quench:promise-resolution-started";
 const PROMISE_CAPABILITY_RESOLVE_PROP: &str = "\0quench:promise-capability-resolve";
@@ -280,7 +302,6 @@ const ASYNC_GENERATOR_STARTED_PROP: &str = "\0quench:async-generator-started";
 const ASYNC_GENERATOR_EXECUTING_PROP: &str = "\0quench:async-generator-executing";
 const ASYNC_GENERATOR_QUEUE_PROP: &str = "\0quench:async-generator-queue";
 const ARGUMENTS_LENGTH_DELETED_PROP: &str = "\0quench:arguments-length-deleted";
-const MODULE_NAMESPACE_PROP: &str = "\0quench:module-namespace";
 const DEFERRED_NAMESPACE_PATH_PROP: &str = "\0quench:deferred-module-path";
 const MODULE_IMPORT_REF_PATH_PROP: &str = "\0quench:module-import-path";
 const MODULE_IMPORT_REF_NAME_PROP: &str = "\0quench:module-import-name";
@@ -5008,9 +5029,7 @@ fn is_html_dda_value(value: &Value) -> bool {
             .is_some_and(|function| function.props.borrow().contains_key("\0html-dda"))
 }
 fn instance_of(value: &Value, ctor: &Value) -> bool {
-    if value
-        .as_object_ref()
-        .is_some_and(|object| object.borrow().props.contains_key(PROMISE_MARKER_PROP))
+    if is_promise_object(value)
         && ctor.as_function_ref().is_some_and(|function| {
             matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(
                 native,
@@ -5366,6 +5385,7 @@ struct Vm {
     module_namespace_cache: HashMap<(PathBuf, bool), Value>,
     module_errors: HashMap<PathBuf, Value>,
     module_evaluating: HashSet<PathBuf>,
+    module_environments: HashMap<PathBuf, Env>,
     deferred_namespace_loading: bool,
     module_export_stack: Vec<HashMap<String, Value>>,
     module_export_stack_paths: Vec<PathBuf>,
@@ -5424,6 +5444,7 @@ impl Vm {
             module_namespace_cache: HashMap::new(),
             module_errors: HashMap::new(),
             module_evaluating: HashSet::new(),
+            module_environments: HashMap::new(),
             deferred_namespace_loading: false,
             module_export_stack: Vec::new(),
             module_export_stack_paths: Vec::new(),
@@ -8267,10 +8288,7 @@ impl Vm {
         value: Value,
         receiver: &Value,
     ) -> JsResult<()> {
-        if object
-            .as_object_ref()
-            .is_some_and(|object| object.borrow().props.contains_key(MODULE_NAMESPACE_PROP))
-        {
+        if is_module_namespace(object) {
             return Err(JsError::Throw(type_error(
                 self,
                 "cannot assign to a module namespace object",
@@ -9259,6 +9277,7 @@ impl Vm {
                     f.kind,
                     FunctionKind::User { .. } | FunctionKind::Arrow { .. }
                 )
+                && !matches!(&f.kind, FunctionKind::User { env, .. } | FunctionKind::Arrow { env, .. } if Environment::get(env, MODULE_ENVIRONMENT_NAME).is_some())
                 && f.dyn_jit.borrow().is_none()
                 && !has_rest_parameter
             {
@@ -10397,7 +10416,13 @@ impl Vm {
                 if resolutions.get(name).is_some_and(|count| *count != 1) {
                     continue;
                 }
-                self.set_prop(&namespace, name, value.clone());
+                let value = self
+                    .module_environments
+                    .get(&key)
+                    .filter(|environment| environment.borrow().contains_local(name))
+                    .map(|_| self.module_import_ref(&key, name))
+                    .unwrap_or_else(|| value.clone());
+                self.set_prop(&namespace, name, value);
                 set_property_attributes(
                     &namespace,
                     name,
@@ -11011,6 +11036,19 @@ impl Vm {
         if !visiting.insert((key.clone(), imported.to_owned())) {
             return Err(JsError::Throw(reference_error(self, imported)));
         }
+        if let Some(environment) = self.module_environments.get(&key).cloned()
+            && environment.borrow().contains_local(imported)
+        {
+            if Environment::is_tdz(&environment, imported) {
+                return Err(JsError::Throw(reference_error(self, imported)));
+            }
+            if let Some(value) = Environment::get(&environment, imported) {
+                if let Some((path, name)) = self.module_ref_value_parts(&value) {
+                    return self.resolve_named_module_ref(&path, &name, visiting);
+                }
+                return Ok(value);
+            }
+        }
         if let Some(exports) = self.module_exports_cache.get(&key).cloned()
             && let Some(export) = exports.get(imported)
         {
@@ -11476,6 +11514,12 @@ impl Vm {
             .as_ref()
             .is_some_and(|key| self.module_evaluating.insert(key.clone()));
         if module_source {
+            self.module_environments
+                .insert(self.module_key(p), environment.clone());
+            if let Some(key) = module_key.as_ref() {
+                self.module_environments
+                    .insert(key.with_extension("js"), environment.clone());
+            }
             self.bind_module_imports(p, &r.program, &environment)?;
             self.module_export_stack.push(HashMap::new());
             self.module_export_stack_paths.push(self.module_key(p));
@@ -11584,6 +11628,11 @@ impl Vm {
             && !eval_code
             && !script_eval
             && !contains_eval_call(source)
+            // Namespace bindings currently carry live-cell references through
+            // the interpreter property protocol; keep those module images on
+            // the same VM's correct fallback until the stencil property ABI
+            // carries the module-cell identity explicitly.
+            && !module_source
             // Accessor bodies can mutate an outer binding through a call
             // boundary.  Until the stencil image carries environment-cell
             // invalidation for those writes, keep this shape on the shared
@@ -12187,6 +12236,9 @@ impl Vm {
                     object_own_enumerable_keys(&o)
                 };
                 for k in ks {
+                    if is_module_namespace(&o) {
+                        let _ = self.get_prop_with_accessors(&o, &k)?;
+                    }
                     let iteration_environment = if lexical_iteration {
                         let environment = Environment::new(Some(e.clone()));
                         if let ForStatementLeft::VariableDeclaration(declaration) = &x.left
@@ -13407,10 +13459,7 @@ impl Vm {
             }
             AwaitExpression(await_expression) => {
                 let value = self.eval_expr(&await_expression.argument, e)?;
-                if value
-                    .as_object_ref()
-                    .is_some_and(|object| object.borrow().props.contains_key(PROMISE_MARKER_PROP))
-                {
+                if is_promise_object(&value) {
                     let state = self.get_prop(&value, PROMISE_STATE_PROP);
                     if state
                         .as_string()
@@ -13437,10 +13486,7 @@ impl Vm {
                 // private fields under their identifier, which is sufficient
                 // for class-brand checks while keeping the namespace fast
                 // path side-effect free.
-                if object
-                    .as_object_ref()
-                    .is_some_and(|object| object.borrow().props.contains_key(MODULE_NAMESPACE_PROP))
-                {
+                if is_module_namespace(&object) {
                     return Ok(Value::Bool(false));
                 }
                 Ok(Value::Bool(self.has_property_with_proxy(
@@ -14239,6 +14285,12 @@ impl Vm {
     fn has_property_with_proxy(&mut self, value: &Value, key: &str) -> JsResult<bool> {
         let Some(target) = proxy_target(value) else {
             if value.is_object_like() {
+                if is_module_namespace(value) {
+                    // Module namespace [[HasProperty]] consults only its
+                    // exported-name table; unlike [[GetOwnProperty]], it does
+                    // not read the live binding.
+                    return Ok(self.has_own_property_key(value, key));
+                }
                 let own = native_object_get_own_property_descriptor(
                     self,
                     Value::Undefined,
@@ -27012,9 +27064,7 @@ fn native_object_get_own_property_descriptor(
             &[proxy_target_value, Value::string_value(key)],
         );
     }
-    if target
-        .as_object_ref()
-        .is_some_and(|object| object.borrow().props.contains_key(MODULE_NAMESPACE_PROP))
+    if is_module_namespace(target)
         && let Some((path, imported)) = vm.module_ref_parts(target, &key)
     {
         let value = vm.resolve_module_ref(&path, &imported)?;
@@ -27282,6 +27332,43 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
             vm,
             "property descriptor is not an object",
         )));
+    }
+    if is_module_namespace(target) {
+        if !vm.has_own_property_key(target, &key) {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot define a property on a module namespace object",
+            )));
+        }
+        let incompatible = vm.has_property(&descriptor, "configurable")
+            && vm
+                .get_prop_with_accessors(&descriptor, "configurable")?
+                .truthy()
+            || vm.has_property(&descriptor, "enumerable")
+                && !vm
+                    .get_prop_with_accessors(&descriptor, "enumerable")?
+                    .truthy()
+                && key != vm.well_known_symbol_key("toStringTag")
+            || vm.has_property(&descriptor, "writable")
+                && !vm
+                    .get_prop_with_accessors(&descriptor, "writable")?
+                    .truthy()
+                && key != vm.well_known_symbol_key("toStringTag");
+        let value_incompatible = if vm.has_property(&descriptor, "value") {
+            let requested = vm.get_prop_with_accessors(&descriptor, "value")?;
+            let current = vm.get_prop(target, &key);
+            !eq_strict(&current, &requested)
+                && !(vm.module_ref_parts(target, &key).is_some() && requested.is_undefined())
+        } else {
+            false
+        };
+        if incompatible || value_incompatible {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "cannot redefine a module namespace property",
+            )));
+        }
+        return Ok(target.clone());
     }
     if let Some(proxy_target_value) = proxy_target(target) {
         if proxy_revoked(target) {
@@ -29424,10 +29511,16 @@ macro_rules! define_integrity_builtins {
             Ok(target.clone())
         }
 
-        fn $freeze(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+        fn $freeze(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
             let Some(target) = args.first() else {
                 return Ok(Value::Undefined);
             };
+            if is_module_namespace(target) {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "cannot freeze a module namespace object",
+                )));
+            }
             set_integrity_level(target, true);
             Ok(target.clone())
         }
@@ -29634,6 +29727,14 @@ fn object_receiver(vm: &mut Vm, value: &Value) -> JsResult<Value> {
 fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    if is_module_namespace(&target) {
+        let descriptor = native_object_get_own_property_descriptor(
+            vm,
+            Value::Undefined,
+            &[target, Value::string_value(key)],
+        )?;
+        return Ok(Value::Bool(descriptor.is_object_like()));
+    }
     // Proxy [[HasOwnProperty]] is defined in terms of its getOwnProperty
     // internal method.  Re-enter the canonical descriptor pipeline so nested
     // proxies and missing traps forward to their targets.
@@ -29698,6 +29799,18 @@ fn native_object_property_is_enumerable(
     // non-enumerable because it is held on function metadata, not props.
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
+    if is_module_namespace(&target) {
+        let descriptor = native_object_get_own_property_descriptor(
+            vm,
+            Value::Undefined,
+            &[target, Value::string_value(key)],
+        )?;
+        return Ok(if descriptor.is_object_like() {
+            vm.get_prop_with_accessors(&descriptor, "enumerable")?
+        } else {
+            Value::Bool(false)
+        });
+    }
     if proxy_target(&target).is_some() {
         let descriptor = native_object_get_own_property_descriptor(
             vm,
