@@ -11121,9 +11121,10 @@ impl Vm {
         if imported != "*"
             && let Some(environment) = self.module_environments.get(&key)
             && environment.borrow().contains_local(imported)
+            && let Some(value) = Environment::get(environment, imported)
+            && self.module_ref_value_parts(&value).is_none()
         {
-            return Environment::get(environment, imported)
-                .ok_or_else(|| JsError::Throw(reference_error(self, imported)));
+            return Ok(value);
         }
         if imported == "*" {
             if let Some(exports) = self.module_exports_cache.get(&key).cloned() {
