@@ -722,7 +722,15 @@ fn finish_set_property(
     };
     let setter = {
         let _scope = crate::execution_trace::attribution_scope("SetN:accessor");
-        if own_data_property(target, key) {
+        // Accessor metadata is authoritative even when the hot property
+        // slot still carries the observable `undefined` placeholder used by
+        // object-literal lowering.  Do not let that placeholder masquerade
+        // as a writable data property and bypass the setter.
+        let own_accessor = crate::property_define::accessor(target, key, "set");
+        let own_getter = crate::property_define::accessor(target, key, "get");
+        if own_accessor.is_some() || own_getter.is_some() {
+            own_accessor
+        } else if own_data_property(target, key) {
             None
         } else {
             crate::property_define::accessor(target, key, "set")
