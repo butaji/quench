@@ -5441,12 +5441,6 @@ struct Vm {
     // settlement fact on the VM makes the current path deterministic and
     // avoids a second promise implementation.
     await_result: Option<Result<Value, Value>>,
-    async_module_continuations: Vec<AsyncModuleContinuation>,
-}
-
-struct AsyncModuleContinuation {
-    statements: &'static [Statement<'static>],
-    environment: Env,
 }
 impl Vm {
     fn new() -> Self {
@@ -5513,7 +5507,6 @@ impl Vm {
             async_generator_yields: None,
             mapped_arguments: RefCell::new(Vec::new()),
             await_result: None,
-            async_module_continuations: Vec::new(),
         };
         v.builtin_functions = builtins::instantiate(&v);
         v.install();
@@ -11804,6 +11797,15 @@ impl Vm {
             }
         }
         let module_source = st.is_module();
+        if module_source && std::env::var_os("QUENCH_DEBUG_ASSERT").is_some() {
+            let assert_value = Environment::get(&self.global, "assert").unwrap_or(Value::Undefined);
+            eprintln!(
+                "ASSERT kind fn={} obj={} same={}",
+                assert_value.is_function(),
+                assert_value.is_object_like(),
+                self.get_prop(&assert_value, "sameValue").is_function()
+            );
+        }
         let module_key = module_source.then(|| self.module_key(p));
         let module_owner = module_key
             .as_ref()
@@ -11923,19 +11925,6 @@ impl Vm {
             // identities are lowered into the stencil image.
             self.jit_mode = JitMode::Off;
         }
-        let defer_async_tail = module_source
-            && self
-                .module_export_names(p)
-                .is_ok_and(|names| names.is_empty())
-            && top_level_await_statement_index(&r.program).is_some();
-        let deferred_statements = if defer_async_tail {
-            let statements: &'static [Statement<'static>] =
-                unsafe { std::mem::transmute(r.program.body.as_slice()) };
-            top_level_await_statement_index(&r.program)
-                .map(|index| (&statements[..index], &statements[index.saturating_add(1)..]))
-        } else {
-            None
-        };
         let out = if self.jit_mode == JitMode::Stencil
             && !eval_code
             && !script_eval
@@ -11997,21 +11986,6 @@ impl Vm {
                     result => result,
                 }
             })()
-        } else if let Some((prefix, suffix)) = deferred_statements {
-            let signal = self.exec_stmts(prefix, execution_environment.clone())?;
-            if !suffix.is_empty() {
-                let index = self.async_module_continuations.len();
-                self.async_module_continuations
-                    .push(AsyncModuleContinuation {
-                        statements: suffix,
-                        environment: execution_environment.clone(),
-                    });
-                self.schedule_microtask(
-                    self.native(native_async_module_continuation),
-                    vec![Value::Number(index as f64)],
-                );
-            }
-            self.complete_script_signal(signal)
         } else {
             self.exec_stmts(&r.program.body, execution_environment.clone())
                 .and_then(|signal| self.complete_script_signal(signal))
@@ -13858,17 +13832,7 @@ impl Vm {
                         // boundary, then observe the settled promise through
                         // the same state machine.
                         self.run_timers()?;
-                        let mut settled_state = self.get_prop(&value, PROMISE_STATE_PROP);
-                        for _ in 0..4 {
-                            if !settled_state
-                                .as_string()
-                                .is_some_and(|state| state.as_str() == "pending")
-                            {
-                                break;
-                            }
-                            self.run_timers()?;
-                            settled_state = self.get_prop(&value, PROMISE_STATE_PROP);
-                        }
+                        let settled_state = self.get_prop(&value, PROMISE_STATE_PROP);
                         if settled_state
                             .as_string()
                             .is_some_and(|state| state.as_str() == "rejected")
@@ -19743,20 +19707,6 @@ fn native_await_reject(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value>
     Ok(Value::Undefined)
 }
 
-fn native_async_module_continuation(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    let index = args
-        .first()
-        .and_then(Value::as_number)
-        .map(|value| value.max(0.0) as usize)
-        .unwrap_or(usize::MAX);
-    if index >= vm.async_module_continuations.len() {
-        return Ok(Value::Undefined);
-    }
-    let continuation = vm.async_module_continuations.remove(index);
-    vm.exec_stmts(continuation.statements, continuation.environment)?;
-    Ok(Value::Undefined)
-}
-
 fn native_promise_all_resolve_element(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.get_prop(&this, PROMISE_ALL_CALLED_PROP).truthy() {
         return Ok(Value::Undefined);
@@ -25600,16 +25550,6 @@ fn contains_identifier_token(source: &str, token: &str) -> bool {
         index += 1;
     }
     false
-}
-
-fn top_level_await_statement_index(program: &Program<'_>) -> Option<usize> {
-    program.body.iter().position(|statement| {
-        matches!(
-            statement,
-            Statement::ExpressionStatement(expression)
-                if matches!(expression.expression, Expression::AwaitExpression(_))
-        )
-    })
 }
 
 fn has_invalid_private_name_reference(source: &str) -> bool {
