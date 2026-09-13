@@ -3721,7 +3721,7 @@ fn construct(
     if callee.as_function_ref().is_some_and(|function| {
         matches!(
             function.kind,
-            FunctionKind::Native(native) if native as *const () == super::native_symbol as *const ()
+            FunctionKind::Native(native) if native_fn_matches!(native, super::native_symbol)
         )
     }) {
         return Err(JsError::Throw(super::type_error(
@@ -3764,12 +3764,13 @@ fn construct(
         let native_prototype = callee.as_function_ref().and_then(|function| {
             let is_native_constructor = match function.kind {
                 FunctionKind::Builtin(BuiltinId::DateConstructor) => true,
-                FunctionKind::Native(native) => {
-                    native as *const () == super::native_array_buffer_constructor as *const ()
-                        || native as *const () == super::native_typed_array_constructor as *const ()
-                        || native as *const () == super::native_map_constructor as *const ()
-                        || native as *const () == super::native_set_constructor as *const ()
-                }
+                FunctionKind::Native(native) => native_fn_matches!(
+                    native,
+                    super::native_array_buffer_constructor,
+                    super::native_typed_array_constructor,
+                    super::native_map_constructor,
+                    super::native_set_constructor,
+                ),
                 _ => false,
             };
             is_native_constructor.then(|| function.prototype.clone())
