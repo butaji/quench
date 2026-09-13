@@ -151,6 +151,24 @@ macro_rules! builtin_catalog {
                     _ => None,
                 }
             }
+
+            /// Whether this builtin is one of the standard Error constructors.
+            /// Error construction has a shared receiver/identity path in both
+            /// execution tiers, so the constructor family is declared once.
+            pub(crate) const fn is_error_constructor(self) -> bool {
+                matches!(
+                    self,
+                    Self::ErrorConstructor
+                        | Self::TypeErrorConstructor
+                        | Self::RangeErrorConstructor
+                        | Self::URIErrorConstructor
+                        | Self::SyntaxErrorConstructor
+                        | Self::ReferenceErrorConstructor
+                        | Self::EvalErrorConstructor
+                        | Self::AggregateErrorConstructor
+                        | Self::SuppressedErrorConstructor
+                )
+            }
         }
 
         pub(crate) static BUILTIN_RECIPES: &[BuiltinRecipe] = &[
