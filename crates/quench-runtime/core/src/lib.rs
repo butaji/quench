@@ -7351,6 +7351,19 @@ impl Vm {
         fs::canonicalize(&path).unwrap_or(path)
     }
 
+    fn resolve_module_request(&self, parent: &Path, specifier: &str) -> PathBuf {
+        let requested = PathBuf::from(specifier);
+        let mut path = if requested.is_absolute() {
+            requested
+        } else {
+            parent.join(requested)
+        };
+        if path.extension().is_none() {
+            path.set_extension("js");
+        }
+        path
+    }
+
     fn require_module(&mut self, specifier: &str) -> JsResult<Value> {
         if specifier == "assert" || specifier == "node:assert" {
             return Ok(Environment::get(&self.global, "assert").unwrap_or(Value::Undefined));
@@ -10151,12 +10164,7 @@ impl Vm {
             let Statement::ImportDeclaration(import) = statement else {
                 continue;
             };
-            let requested = PathBuf::from(import.source.value.as_str());
-            let target = if requested.is_absolute() {
-                requested
-            } else {
-                parent.join(requested)
-            };
+            let target = self.resolve_module_request(parent, import.source.value.as_str());
             let import_type = import.with_clause.as_ref().and_then(|clause| {
                 clause.with_entries.iter().find_map(|entry| {
                     let key = match &entry.key {
@@ -10885,9 +10893,9 @@ impl Vm {
                 Ok(Signal::Normal(Value::Undefined))
             }
             ExportFromDeclaration(export) => {
-                let source = PathBuf::from(export.source.value.as_str());
                 if let Some(parent) = self.source_stack.last().and_then(|path| path.parent()) {
-                    let exports = self.load_module_exports(&parent.join(source))?;
+                    let source = self.resolve_module_request(parent, export.source.value.as_str());
+                    let exports = self.load_module_exports(&source)?;
                     for specifier in &export.specifiers {
                         let imported = module_export_name_for_early_error(&specifier.local);
                         let exported = module_export_name_for_early_error(&specifier.exported);
@@ -10899,9 +10907,9 @@ impl Vm {
                 Ok(Signal::Normal(Value::Undefined))
             }
             ExportAllDeclaration(export) => {
-                let source = PathBuf::from(export.source.value.as_str());
                 if let Some(parent) = self.source_stack.last().and_then(|path| path.parent()) {
-                    let exports = self.load_module_exports(&parent.join(source))?;
+                    let source = self.resolve_module_request(parent, export.source.value.as_str());
+                    let exports = self.load_module_exports(&source)?;
                     for (name, value) in exports {
                         if name != "default" {
                             self.record_module_export(name, value);
