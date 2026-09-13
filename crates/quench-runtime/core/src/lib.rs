@@ -16649,9 +16649,12 @@ fn compile_regex(pattern: &str, insensitive: bool) -> JsResult<RegExpKernel> {
     } else {
         normalized
     };
-    LinearRegex::new(&source)
-        .map(RegExpKernel::Linear)
-        .map_err(|e| JsError::Message(format!("regex parse error: {e}")))
+    match LinearRegex::new(&source) {
+        Ok(regex) => Ok(RegExpKernel::Linear(regex)),
+        Err(linear_error) => fancy_regex::Regex::new(&source)
+            .map(RegExpKernel::Fancy)
+            .map_err(|_| JsError::Message(format!("regex parse error: {linear_error}"))),
+    }
 }
 
 fn requires_fancy_regex(pattern: &str) -> bool {
