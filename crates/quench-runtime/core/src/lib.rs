@@ -4989,6 +4989,48 @@ fn instance_of(value: &Value, ctor: &Value) -> bool {
         proto = n;
     }
 }
+
+/// Evaluate `instanceof` through the canonical internal-prototype operation.
+/// Ordinary objects can use the compact prototype walk above, but a Proxy's
+/// `[[GetPrototypeOf]]` is observable and may invoke user code. Keep that
+/// effect at the VM boundary so the stencil and AST paths share one semantic
+/// operation instead of each growing a proxy special case.
+fn instance_of_with_vm(vm: &mut Vm, value: &Value, ctor: &Value) -> JsResult<bool> {
+    if proxy_target(value).is_none() {
+        return Ok(instance_of(value, ctor));
+    }
+    let Some(constructor) = ctor.as_function_ref() else {
+        return Ok(false);
+    };
+    let prototype = vm.get_prop_with_accessors(ctor, "prototype")?;
+    if !prototype.is_object_like() || is_symbol_carrier(&prototype) {
+        return Ok(false);
+    }
+    let mut current = value.clone();
+    loop {
+        let current_prototype = if proxy_target(&current).is_some() {
+            native_object_get_prototype_of(vm, Value::Undefined, &[current.clone()])?
+        } else if let Some(object) = current.as_object_ref() {
+            object
+                .borrow()
+                .prototype
+                .clone()
+                .map(Value::Object)
+                .unwrap_or(Value::Null)
+        } else if let Some(function) = current.as_function_ref() {
+            Value::Object(function.prototype.clone())
+        } else {
+            return Ok(false);
+        };
+        if current_prototype.is_null() {
+            return Ok(false);
+        }
+        if current_prototype.same_bits(&Value::Object(constructor.prototype.clone())) {
+            return Ok(true);
+        }
+        current = current_prototype;
+    }
+}
 fn in_prop(key: &Value, value: &Value) -> bool {
     let Some(obj) = value.as_object_ref() else {
         return false;
@@ -10807,7 +10849,7 @@ impl Vm {
                     BitwiseOR => Op::Or,
                     BitwiseXOR => Op::Xor,
                     BitwiseAnd => Op::And,
-                    Instanceof => return Ok(Value::Bool(instance_of(&a, &b))),
+                    Instanceof => return Ok(Value::Bool(instance_of_with_vm(self, &a, &b)?)),
                     In => {
                         let key = self.to_property_key(a)?;
                         return Ok(Value::Bool(self.has_property_with_proxy(&b, &key)?));
