@@ -11080,8 +11080,12 @@ impl Vm {
         match pattern {
             BindingPattern::BindingIdentifier(identifier) => {
                 let name = identifier.name.as_str();
+                let global_object_binding = self.is_global_environment(&target)
+                    && !target.borrow().lexical_names.contains(name);
                 target.borrow_mut().declare(name, value.clone());
-                self.sync_global_binding(&target, name, value);
+                if global_object_binding {
+                    self.sync_global_binding(&target, name, value);
+                }
                 Ok(())
             }
             BindingPattern::AssignmentPattern(assignment) => {
