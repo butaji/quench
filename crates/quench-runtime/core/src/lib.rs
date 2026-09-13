@@ -22491,9 +22491,6 @@ fn native_object_get_own_property_descriptor(
     let function_metadata =
         target.as_function().is_some() && matches!(key.as_str(), "name" | "length");
     let prototype_metadata = target.as_function().is_some() && key == "prototype";
-    let user_prototype = target
-        .as_function_ref()
-        .is_some_and(|function| matches!(function.kind, FunctionKind::User { .. }));
     let builtin_function = target.as_function_ref().is_some_and(|function| {
         matches!(
             function.kind,
