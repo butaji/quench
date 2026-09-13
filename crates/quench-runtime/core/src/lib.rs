@@ -8129,11 +8129,13 @@ impl Vm {
 
     fn complete_script_signal(&mut self, signal: Signal) -> JsResult<Value> {
         match signal {
-            Signal::Normal(value) | Signal::Return(value) => Ok(value),
-            Signal::Break(_) | Signal::Continue(_) => Err(JsError::Throw(syntax_error(
-                self,
-                "break or continue is not permitted at eval script scope",
-            ))),
+            Signal::Normal(value) => Ok(value),
+            Signal::Return(_) | Signal::Break(_) | Signal::Continue(_) => {
+                Err(JsError::Throw(syntax_error(
+                    self,
+                    "break or continue is not permitted at eval script scope",
+                )))
+            }
         }
     }
 
