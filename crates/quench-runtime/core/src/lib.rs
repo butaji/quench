@@ -22042,19 +22042,37 @@ fn native_object_get_own_property_descriptor(
                 }
             } else {
                 let result_configurable = vm.get_prop(&result, "configurable").truthy();
-                if !result_configurable && target_descriptor.is_undefined() {
-                    return Err(JsError::Throw(type_error(vm, "Proxy descriptor added to non-extensible target")));
+                if target_descriptor.is_undefined() && !target_extensible {
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "Proxy descriptor added to non-extensible target",
+                    )));
                 }
-                if target_descriptor.is_object_like() && !vm.get_prop(&target_descriptor, "configurable").truthy() {
-                    if result_configurable {
-                        return Err(JsError::Throw(type_error(vm, "Proxy descriptor made target property configurable")));
+                if target_descriptor.is_object_like() {
+                    let target_configurable = vm.get_prop(&target_descriptor, "configurable").truthy();
+                    if !result_configurable && target_configurable {
+                        return Err(JsError::Throw(type_error(
+                            vm,
+                            "Proxy descriptor made target property non-configurable",
+                        )));
                     }
-                    if vm.has_property(&target_descriptor, "writable")
-                        && vm.get_prop(&target_descriptor, "writable").truthy()
-                        && vm.has_property(&result, "writable")
-                        && !vm.get_prop(&result, "writable").truthy()
-                    {
-                        return Err(JsError::Throw(type_error(vm, "Proxy descriptor made target property writable")));
+                    if !target_configurable {
+                        if result_configurable {
+                            return Err(JsError::Throw(type_error(
+                                vm,
+                                "Proxy descriptor made target property configurable",
+                            )));
+                        }
+                        if vm.has_property(&target_descriptor, "writable")
+                            && vm.get_prop(&target_descriptor, "writable").truthy()
+                            && vm.has_property(&result, "writable")
+                            && !vm.get_prop(&result, "writable").truthy()
+                        {
+                            return Err(JsError::Throw(type_error(
+                                vm,
+                                "Proxy descriptor made target property writable",
+                            )));
+                        }
                     }
                 }
             }
