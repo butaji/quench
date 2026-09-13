@@ -43,6 +43,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::host::HostState;
 
+/// Declare host-owned slots as data, keeping the mutation edge in one place.
+/// These slots carry identity state for Node objects rather than JavaScript
+/// descriptors, so the table stays explicit while storage remains centralized.
+macro_rules! define_hidden_properties {
+    ($target:expr; $( $key:expr => $value:expr ),+ $(,)?) => {{
+        let target = $target;
+        $( define_hidden(target, $key, $value); )+
+    }};
+}
+
 thread_local! {
     static KEY_PROTOTYPES: RefCell<Option<(Value, Value)>> = const { RefCell::new(None) };
     static CERTIFICATE_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
@@ -964,13 +974,11 @@ pub fn create_secret_key(
     let mut key = host_api::object(Vec::new());
     let (key_proto, _) = key_object_prototypes();
     key = execute::set_prototype_of(&key, &key_proto).unwrap_or(key);
-    define_hidden(&key, KEY_TYPE_PROP, Value::String("secret".into()));
-    define_hidden(&key, KEY_SIZE_PROP, Value::Number(bytes.len() as f64));
-    define_hidden(&key, KEY_MARKER_PROP, Value::Boolean(true));
-    define_hidden(
-        &key,
-        KEY_DATA_PROP,
-        crate::modules::buffer_proto::make_buffer(&bytes),
+    define_hidden_properties!(&key;
+        KEY_TYPE_PROP => Value::String("secret".into()),
+        KEY_SIZE_PROP => Value::Number(bytes.len() as f64),
+        KEY_MARKER_PROP => Value::Boolean(true),
+        KEY_DATA_PROP => crate::modules::buffer_proto::make_buffer(&bytes),
     );
     Ok(key)
 }
@@ -1133,8 +1141,10 @@ pub fn key_object_constructor(
         asym_proto
     };
     key = execute::set_prototype_of(&key, &prototype).unwrap_or(key);
-    define_hidden(&key, KEY_TYPE_PROP, Value::String(kind.clone()));
-    define_hidden(&key, KEY_MARKER_PROP, Value::Boolean(true));
+    define_hidden_properties!(&key;
+        KEY_TYPE_PROP => Value::String(kind.clone()),
+        KEY_MARKER_PROP => Value::Boolean(true),
+    );
     if matches!(kind.as_str(), "public" | "private") {
         define_hidden(&key, KEY_ASYM_TYPE_PROP, Value::Undefined);
     }
@@ -1389,8 +1399,10 @@ pub(crate) fn clone_key_object(value: &Value) -> Option<Value> {
         asym_proto
     };
     let clone = execute::set_prototype_of(&host_api::object(Vec::new()), &prototype).ok()?;
-    define_hidden(&clone, KEY_MARKER_PROP, Value::Boolean(true));
-    define_hidden(&clone, KEY_TYPE_PROP, key_type);
+    define_hidden_properties!(&clone;
+        KEY_MARKER_PROP => Value::Boolean(true),
+        KEY_TYPE_PROP => key_type,
+    );
     for (name, fact) in [
         (KEY_SIZE_PROP, key_hidden(value, KEY_SIZE_PROP)),
         (KEY_ASYM_TYPE_PROP, key_hidden(value, KEY_ASYM_TYPE_PROP)),
@@ -1401,10 +1413,8 @@ pub(crate) fn clone_key_object(value: &Value) -> Option<Value> {
         }
     }
     let data = bytes_from_value(&key_hidden(value, KEY_DATA_PROP))?;
-    define_hidden(
-        &clone,
-        KEY_DATA_PROP,
-        crate::modules::buffer_proto::make_buffer(&data),
+    define_hidden_properties!(&clone;
+        KEY_DATA_PROP => crate::modules::buffer_proto::make_buffer(&data),
     );
     Some(clone)
 }
