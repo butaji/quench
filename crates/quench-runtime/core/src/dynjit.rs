@@ -2360,6 +2360,15 @@ fn arguments_value<A: CallArguments + ?Sized>(
         "toString",
         super::PropertyAttributes::BUILTIN_METHOD,
     );
+    super::set_property_attributes(
+        &value,
+        "length",
+        super::PropertyAttributes {
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
     let restricted = strict
         || environment.is_some_and(|environment| {
             Environment::get(environment, NON_SIMPLE_ARGUMENTS_ENV_NAME)
@@ -2382,6 +2391,21 @@ fn arguments_value<A: CallArguments + ?Sized>(
                 },
             );
         }
+    } else {
+        vm.set_prop(
+            &value,
+            "callee",
+            vm.native(super::native_function_constructor),
+        );
+        super::set_property_attributes(
+            &value,
+            "callee",
+            super::PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
     }
     value
 }

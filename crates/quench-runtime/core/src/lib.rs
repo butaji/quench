@@ -1994,6 +1994,8 @@ struct Environment {
     immutable_names: HashSet<String>,
     catch_names: HashSet<String>,
     catch_simple_names: HashSet<String>,
+    arguments_object: Option<Value>,
+    arguments_map: HashMap<String, usize>,
     // A with-environment is an object environment, not a snapshot of keys.
     // Keep the object as a semantic edge so identifier resolution can invoke
     // Proxy [[HasProperty]] dynamically in the canonical VM.
@@ -2023,6 +2025,8 @@ impl Environment {
             immutable_names: HashSet::new(),
             catch_names: HashSet::new(),
             catch_simple_names: HashSet::new(),
+            arguments_object: None,
+            arguments_map: HashMap::new(),
             with_object: None,
         };
         environment.publish_access();
@@ -9550,7 +9554,7 @@ impl Vm {
         if let Some(source_id) = source_id {
             self.source_ids.push(source_id);
         }
-        let e = Environment::new(Some(outer));
+        let e = Environment::new(Some(outer.clone()));
         let body_environment = e.clone();
         let strict = function_strict
             || n.body.as_ref().is_some_and(|body| {
@@ -9576,8 +9580,38 @@ impl Vm {
         e.borrow_mut().declare("this", this);
         let av = self.object_value(Object::array(self.array_proto, args.clone()));
         self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
+        self.set_prop(&av, "callee", self.make_user(n, outer.clone()));
+        set_property_attributes(
+            &av,
+            "callee",
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: !strict,
+            },
+        );
+        set_property_attributes(
+            &av,
+            "length",
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         self.set_prop(&av, "toString", self.native(native_object_to_string));
         set_property_attributes(&av, "toString", PropertyAttributes::BUILTIN_METHOD);
+        if !strict {
+            let mut environment = e.borrow_mut();
+            environment.arguments_object = Some(av.clone());
+            for (index, parameter) in n.params.items.iter().enumerate() {
+                if let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern {
+                    environment
+                        .arguments_map
+                        .insert(identifier.name.to_string(), index);
+                }
+            }
+        }
         e.borrow_mut().declare("arguments", av);
         e.borrow_mut().declare(FUNCTION_ENV_NAME, Value::Bool(true));
         e.borrow_mut().declare(
@@ -12245,7 +12279,8 @@ impl Vm {
                 if self.strict_mode && Environment::get(&e, &name).is_none() {
                     return Err(JsError::Throw(reference_error(self, &name)));
                 }
-                Environment::set(&e, &name, v);
+                Environment::set(&e, &name, v.clone());
+                self.sync_mapped_argument(&e, &name, v);
             }
             LValue::Prop(o, k) => match self.set_prop_with_accessors(&o, &k, v) {
                 Ok(()) => {}
@@ -12289,6 +12324,25 @@ impl Vm {
             current = candidate.borrow().parent.clone();
         }
         false
+    }
+
+    fn sync_mapped_argument(&self, environment: &Env, name: &str, value: Value) {
+        let mut current = Some(environment.clone());
+        while let Some(candidate) = current {
+            let (index, arguments, parent) = {
+                let candidate = candidate.borrow();
+                (
+                    candidate.arguments_map.get(name).copied(),
+                    candidate.arguments_object.clone(),
+                    candidate.parent.clone(),
+                )
+            };
+            if let (Some(index), Some(arguments)) = (index, arguments) {
+                self.set_prop(&arguments, &index.to_string(), value);
+                return;
+            }
+            current = parent;
+        }
     }
 
     fn has_property_with_proxy(&mut self, value: &Value, key: &str) -> JsResult<bool> {
@@ -24710,6 +24764,15 @@ fn native_object_get_own_property_descriptor(
                 .as_regexp_ref()
                 .and_then(|regexp| regexp.borrow().attributes.get(&key).copied())
         })
+        .or_else(|| {
+            target.as_object_ref().and_then(|object| {
+                (object.borrow().array.is_some() && key == "length").then_some(PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: false,
+                })
+            })
+        })
         .unwrap_or(PropertyAttributes {
             writable: if prototype_metadata {
                 constructable(target)
@@ -24726,12 +24789,7 @@ fn native_object_get_own_property_descriptor(
                 && !target
                     .as_object_ref()
                     .is_some_and(|object| object.borrow().builtin_prototype),
-            configurable: !function_sealed
-                && !target
-                    .as_object_ref()
-                    .is_some_and(|object| object.borrow().array.is_some() && key == "length")
-                && !is_number_constant
-                && !prototype_metadata,
+            configurable: !function_sealed && !is_number_constant && !prototype_metadata,
         });
     let attributes = PropertyAttributes {
         writable: attributes.writable && !function_frozen,
