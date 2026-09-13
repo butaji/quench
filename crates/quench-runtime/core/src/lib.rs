@@ -103,6 +103,7 @@ const OBJECT_HEAP_ID_INCREMENT: u64 = 1;
 const CLASS_METHOD_STRICT_ENV_NAME: &str = "\0quench:class-method-strict";
 const CLASS_SUPER_CONSTRUCTOR_ENV_NAME: &str = "\0quench:class-super-constructor";
 const CLASS_SUPER_PROTOTYPE_ENV_NAME: &str = "\0quench:class-super-prototype";
+const EVAL_CODE_ENV_NAME: &str = "\0quench:eval-code";
 static NEXT_OBJECT_HEAP_ID: AtomicU64 = AtomicU64::new(FIRST_OBJECT_HEAP_ID);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7956,6 +7957,22 @@ impl Vm {
                     self.bind_pattern(&declarator.id, value, e.clone())?;
                 }
                 let o = self.eval_expr(&x.right, e.clone())?;
+                let loop_environment = match &x.left {
+                    ForStatementLeft::VariableDeclaration(declaration)
+                        if declaration.kind != VariableDeclarationKind::Var =>
+                    {
+                        let environment = Environment::new(Some(e.clone()));
+                        if let Some(name) = declaration
+                            .declarations
+                            .first()
+                            .and_then(|declarator| pattern_name(&declarator.id))
+                        {
+                            environment.borrow_mut().lexical_names.insert(name);
+                        }
+                        environment
+                    }
+                    _ => e.clone(),
+                };
                 let mut ks = Vec::new();
                 if let Some(o) = o.as_object() {
                     let b = o.borrow();
@@ -7967,8 +7984,12 @@ impl Vm {
                     ks.extend(b.props.keys().cloned());
                 }
                 for k in ks {
-                    self.assign_for_left(&x.left, Value::String(Rc::new(k.into())), e.clone())?;
-                    match self.exec_stmt(&x.body, e.clone())? {
+                    self.assign_for_left(
+                        &x.left,
+                        Value::String(Rc::new(k.into())),
+                        loop_environment.clone(),
+                    )?;
+                    match self.exec_stmt(&x.body, loop_environment.clone())? {
                         Signal::Break(None) => break,
                         Signal::Break(Some(label))
                             if loop_label.as_deref() == Some(label.as_str()) =>
@@ -7988,6 +8009,22 @@ impl Vm {
             ForOfStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
                 let iterable = self.eval_expr(&x.right, e.clone())?;
+                let loop_environment = match &x.left {
+                    ForStatementLeft::VariableDeclaration(declaration)
+                        if declaration.kind != VariableDeclarationKind::Var =>
+                    {
+                        let environment = Environment::new(Some(e.clone()));
+                        if let Some(name) = declaration
+                            .declarations
+                            .first()
+                            .and_then(|declarator| pattern_name(&declarator.id))
+                        {
+                            environment.borrow_mut().lexical_names.insert(name);
+                        }
+                        environment
+                    }
+                    _ => e.clone(),
+                };
                 let iterator_key = self.well_known_symbol_key("iterator");
                 let iterator_method = self.get_prop_with_accessors(&iterable, &iterator_key)?;
                 let Some(iterator) = iterator_method
@@ -7999,8 +8036,8 @@ impl Vm {
                 else {
                     let values = self.iterable_values(&iterable)?;
                     for value in values {
-                        self.assign_for_left(&x.left, value, e.clone())?;
-                        match self.exec_stmt(&x.body, e.clone())? {
+                        self.assign_for_left(&x.left, value, loop_environment.clone())?;
+                        match self.exec_stmt(&x.body, loop_environment.clone())? {
                             Signal::Break(None) => break,
                             Signal::Break(Some(label))
                                 if loop_label.as_deref() == Some(label.as_str()) =>
@@ -8038,8 +8075,8 @@ impl Vm {
                         break;
                     }
                     let value = self.get_prop_with_accessors(&step, "value")?;
-                    self.assign_for_left(&x.left, value, e.clone())?;
-                    match self.exec_stmt(&x.body, e.clone())? {
+                    self.assign_for_left(&x.left, value, loop_environment.clone())?;
+                    match self.exec_stmt(&x.body, loop_environment.clone())? {
                         Signal::Break(None) => {
                             self.iterator_close(&iterator)?;
                             break;
@@ -8285,7 +8322,7 @@ impl Vm {
         let mut first_environment = true;
         while let Some(candidate) = current {
             let is_global = Rc::ptr_eq(&candidate, &self.global);
-            let (parent, is_variable_environment, has_name, is_parameter, is_lexical) = {
+            let (parent, is_variable_environment, has_name, is_parameter, is_lexical, is_eval) = {
                 let candidate = candidate.borrow();
                 (
                     candidate.parent.clone(),
@@ -8293,6 +8330,7 @@ impl Vm {
                     candidate.contains_local(name),
                     candidate.parameter_names.contains(name),
                     candidate.lexical_names.contains(name),
+                    candidate.contains_local(EVAL_CODE_ENV_NAME),
                 )
             };
             if !first_environment && has_name && is_lexical {
@@ -8300,7 +8338,7 @@ impl Vm {
             }
             first_environment = false;
             if is_variable_environment {
-                if !lexical_conflict && !is_parameter {
+                if !lexical_conflict && (!is_parameter || is_eval) {
                     candidate.borrow_mut().declare(name, closure.clone());
                     self.sync_global_binding(&candidate, name, closure);
                 }
@@ -9518,12 +9556,42 @@ fn collect_script_binding_names(statements: &[Statement<'_>], names: &mut Vec<St
                 collect_script_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForStatement(statement) => {
+                if let Some(ForStatementInit::VariableDeclaration(declaration)) = &statement.init {
+                    if declaration.kind == VariableDeclarationKind::Var {
+                        names.extend(
+                            declaration
+                                .declarations
+                                .iter()
+                                .filter_map(|declarator| pattern_name(&declarator.id)),
+                        );
+                    }
+                }
                 collect_script_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForInStatement(statement) => {
+                if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
                 collect_script_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForOfStatement(statement) => {
+                if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
                 collect_script_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::WithStatement(statement) => {
@@ -9603,12 +9671,42 @@ fn collect_global_object_binding_names(statements: &[Statement<'_>], names: &mut
                 collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForStatement(statement) => {
+                if let Some(ForStatementInit::VariableDeclaration(declaration)) = &statement.init
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
                 collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForInStatement(statement) => {
+                if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
                 collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForOfStatement(statement) => {
+                if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left
+                    && declaration.kind == VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
                 collect_global_object_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::WithStatement(statement) => {
@@ -9668,12 +9766,42 @@ fn collect_lexical_binding_names(statements: &[Statement<'_>], names: &mut HashS
                 collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForStatement(statement) => {
+                if let Some(ForStatementInit::VariableDeclaration(declaration)) = &statement.init
+                    && declaration.kind != VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
                 collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForInStatement(statement) => {
+                if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left
+                    && declaration.kind != VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
                 collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::ForOfStatement(statement) => {
+                if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left
+                    && declaration.kind != VariableDeclarationKind::Var
+                {
+                    names.extend(
+                        declaration
+                            .declarations
+                            .iter()
+                            .filter_map(|declarator| pattern_name(&declarator.id)),
+                    );
+                }
                 collect_lexical_binding_names(std::slice::from_ref(&statement.body), names)
             }
             Statement::WithStatement(statement) => {
@@ -9989,6 +10117,7 @@ fn native_eval_in_environment(vm: &mut Vm, a: &[Value], environment: Env) -> JsR
     } else {
         source.clone()
     };
+    Environment::set(&environment, EVAL_CODE_ENV_NAME, Value::Bool(true));
     match vm.run_source_text_in_environment(&path, &eval_source, environment) {
         Err(JsError::Message(message)) if message.starts_with("parse error:") => {
             Err(JsError::Throw(syntax_error(vm, &message)))
