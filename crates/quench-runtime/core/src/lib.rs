@@ -10126,7 +10126,10 @@ impl Vm {
         // explicitly given a module source type.  Module files are executed
         // by the same stencil core, so keep the validation shared while
         // selecting the grammar's source-level early-error set here.
-        let global_code_error = if st.is_module() {
+        let eval_context = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
+        let eval_function_meta =
+            eval_context && (source.contains("new.target") || source.contains("super"));
+        let global_code_error = if st.is_module() || eval_function_meta {
             false
         } else {
             has_global_code_early_error(&r.program, source, effective_strict_mode)
@@ -10252,11 +10255,10 @@ impl Vm {
                 )));
             }
             if self.is_global_environment(&environment) {
-                let global_lexical_names = environment.borrow().lexical_names.clone();
                 if !self.strict_mode
                     && var_names
                         .iter()
-                        .any(|name| global_lexical_names.contains(name))
+                        .any(|name| environment.borrow().lexical_names.contains(name))
                 {
                     return Err(JsError::Throw(syntax_error(
                         self,
@@ -10265,16 +10267,6 @@ impl Vm {
                 }
                 let mut lexical_names = HashSet::new();
                 collect_lexical_binding_names(&r.program.body, &mut lexical_names);
-                if !self.strict_mode
-                    && lexical_names
-                        .iter()
-                        .any(|name| global_lexical_names.contains(name))
-                {
-                    return Err(JsError::Throw(syntax_error(
-                        self,
-                        "lexical declaration conflicts with global lexical binding",
-                    )));
-                }
                 let restricted = self
                     .global_object_for_environment(&environment)
                     .and_then(|global| global.as_object())
@@ -10546,6 +10538,10 @@ impl Vm {
                     Signal::Break(Some(label)) if label == x.label.name.as_str() => {
                         Ok(Signal::Normal(Value::Undefined))
                     }
+                    // A label is transparent to completion values.  Eval's
+                    // StatementList completion uses the final labelled
+                    // expression (for example `x: 42`), so preserve Normal
+                    // values while still forwarding control signals.
                     signal => Ok(signal),
                 }
             }
