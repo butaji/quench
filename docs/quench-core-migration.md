@@ -72,7 +72,7 @@ interpreter would be a compatibility regression, not a migration.
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (191 tests)
+- `cargo test -p quench-runtime-core --lib` (192 tests)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - production `quench-node` build and a core-backed Node smoke test
@@ -174,8 +174,10 @@ Verification completed:
 - the stencil eval-code stage now reaches 272/347 after modeling parameter
   binding conflicts, implicit `arguments`, lexical TDZ state, strict reserved
   bindings, strict caller propagation, isolated strict-eval environments, and
-  top-level eval control-flow completion; remaining failures are primarily
-  async/generator, realm, super, and global declaration semantics
+  top-level eval control-flow completion; eval-created local bindings now also
+  retain explicit sloppy-`delete` state and become unresolvable in closures;
+  remaining failures are primarily async/generator, realm, super, and global
+  declaration semantics
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
