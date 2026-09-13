@@ -182,6 +182,9 @@ Verification completed:
 - global-object aliases now use the declarative `install_global_aliases!`
   macro, deriving environment lookup and immutable-global descriptor policy
   from one name table
+- Node crypto host-owned identity slots now use the declarative
+  `define_hidden_properties!` macro, keeping each key-object shape in one
+  data table while retaining a single mutation boundary
 - builtin prototype ownership is now declared once on `BuiltinOwner` and
   lowered through one installer path; Node host bootstrap values likewise use
   the `with_host_values!` declaration macro so ordered host wiring has one
