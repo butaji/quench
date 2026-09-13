@@ -552,6 +552,22 @@ impl Compiler {
         span: Span,
         strict: bool,
     ) -> Result<DynCode, CompileGap> {
+        // Block-level function declarations have Annex B dual-binding
+        // semantics that must be resolved by the shared environment layer.
+        // Keep the stencil fast path for ordinary scripts, while routing this
+        // structural edge to the same VM's precise interpreter lowering.
+        if !strict && contains_nested_function_declaration(statements) {
+            return Err(CompileGap {
+                span,
+                reason: "Annex B block function declaration deferred to shared semantics",
+            });
+        }
+        if contains_annex_b_catch_var_redeclaration(statements) {
+            return Err(CompileGap {
+                span,
+                reason: "catch var redeclaration deferred to shared semantics",
+            });
+        }
         let mut compiler = Self {
             ops: Vec::new(),
             next_register: 0,
@@ -2316,6 +2332,158 @@ impl Compiler {
         }
         Ok(())
     }
+}
+
+pub(crate) fn contains_nested_function_declaration(statements: &[Statement<'static>]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::BlockStatement(block) => contains_function_declaration(&block.body),
+        Statement::IfStatement(statement) => {
+            contains_function_declaration(std::slice::from_ref(&statement.consequent))
+                || statement.alternate.as_ref().is_some_and(|alternate| {
+                    contains_function_declaration(std::slice::from_ref(alternate))
+                })
+        }
+        Statement::LabeledStatement(statement) => {
+            contains_function_declaration(std::slice::from_ref(&statement.body))
+        }
+        Statement::DoWhileStatement(statement) => {
+            contains_function_declaration(std::slice::from_ref(&statement.body))
+        }
+        Statement::WhileStatement(statement) => {
+            contains_function_declaration(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForStatement(statement) => {
+            contains_function_declaration(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForInStatement(statement) => {
+            contains_function_declaration(std::slice::from_ref(&statement.body))
+        }
+        Statement::ForOfStatement(statement) => {
+            contains_function_declaration(std::slice::from_ref(&statement.body))
+        }
+        Statement::WithStatement(statement) => {
+            contains_function_declaration(std::slice::from_ref(&statement.body))
+        }
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .any(|case| contains_function_declaration(&case.consequent)),
+        Statement::TryStatement(statement) => {
+            contains_function_declaration(&statement.block.body)
+                || statement
+                    .handler
+                    .as_ref()
+                    .is_some_and(|handler| contains_function_declaration(&handler.body.body))
+                || statement
+                    .finalizer
+                    .as_ref()
+                    .is_some_and(|finalizer| contains_function_declaration(&finalizer.body))
+        }
+        _ => false,
+    })
+}
+
+fn contains_annex_b_catch_var_redeclaration(statements: &[Statement<'static>]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::TryStatement(try_statement) => {
+            let redeclared = try_statement.handler.as_ref().is_some_and(|handler| {
+                let Some(name) = handler
+                    .param
+                    .as_ref()
+                    .and_then(|parameter| binding_pattern_name(&parameter.pattern))
+                else {
+                    return false;
+                };
+                contains_var_named(&handler.body.body, &name)
+            });
+            redeclared
+                || contains_annex_b_catch_var_redeclaration(&try_statement.block.body)
+                || try_statement.handler.as_ref().is_some_and(|handler| {
+                    contains_annex_b_catch_var_redeclaration(&handler.body.body)
+                })
+                || try_statement.finalizer.as_ref().is_some_and(|finalizer| {
+                    contains_annex_b_catch_var_redeclaration(&finalizer.body)
+                })
+        }
+        Statement::BlockStatement(block) => contains_annex_b_catch_var_redeclaration(&block.body),
+        Statement::IfStatement(statement) => {
+            contains_annex_b_catch_var_redeclaration(std::slice::from_ref(&statement.consequent))
+                || statement.alternate.as_ref().is_some_and(|alternate| {
+                    contains_annex_b_catch_var_redeclaration(std::slice::from_ref(alternate))
+                })
+        }
+        _ => false,
+    })
+}
+
+fn binding_pattern_name(pattern: &BindingPattern<'static>) -> Option<String> {
+    match pattern {
+        BindingPattern::BindingIdentifier(identifier) => Some(identifier.name.to_string()),
+        BindingPattern::AssignmentPattern(assignment) => binding_pattern_name(&assignment.left),
+        _ => None,
+    }
+}
+
+fn contains_var_named(statements: &[Statement<'static>], name: &str) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::VariableDeclaration(declaration)
+            if declaration.kind == VariableDeclarationKind::Var => declaration
+                .declarations
+                .iter()
+                .filter_map(|declarator| binding_pattern_name(&declarator.id))
+                .any(|candidate| candidate == name),
+        Statement::BlockStatement(block) => contains_var_named(&block.body, name),
+        Statement::IfStatement(statement) => {
+            contains_var_named(std::slice::from_ref(&statement.consequent), name)
+                || statement
+                    .alternate
+                    .as_ref()
+                    .is_some_and(|alternate| contains_var_named(std::slice::from_ref(alternate), name))
+        }
+        Statement::LabeledStatement(statement) => {
+            contains_var_named(std::slice::from_ref(&statement.body), name)
+        }
+        Statement::DoWhileStatement(statement) => {
+            contains_var_named(std::slice::from_ref(&statement.body), name)
+        }
+        Statement::WhileStatement(statement) => {
+            contains_var_named(std::slice::from_ref(&statement.body), name)
+        }
+        Statement::ForStatement(statement) => {
+            contains_var_named(std::slice::from_ref(&statement.body), name)
+        }
+        Statement::ForInStatement(statement) => {
+            contains_var_named(std::slice::from_ref(&statement.body), name)
+        }
+        Statement::ForOfStatement(statement) => {
+            contains_var_named(std::slice::from_ref(&statement.body), name)
+        }
+        Statement::WithStatement(statement) => {
+            contains_var_named(std::slice::from_ref(&statement.body), name)
+        }
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .any(|case| contains_var_named(&case.consequent, name)),
+        Statement::TryStatement(statement) => {
+            contains_var_named(&statement.block.body, name)
+                || statement.handler.as_ref().is_some_and(|handler| {
+                    contains_var_named(&handler.body.body, name)
+                })
+                || statement
+                    .finalizer
+                    .as_ref()
+                    .is_some_and(|finalizer| contains_var_named(&finalizer.body, name))
+        }
+        _ => false,
+    })
+}
+
+fn contains_function_declaration(statements: &[Statement<'static>]) -> bool {
+    statements.iter().any(|statement| {
+        matches!(statement, Statement::FunctionDeclaration(_))
+            || contains_nested_function_declaration(std::slice::from_ref(statement))
+    })
 }
 
 fn lower_function_bindings(

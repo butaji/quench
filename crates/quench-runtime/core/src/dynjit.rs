@@ -2825,15 +2825,20 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             put(frame, dst, value);
         }
         DynOp::LoadName { dst, name } => {
-            let value = name_ic().and_then(|cache| {
-                Environment::get_cached(
-                    &frame.environment,
-                    &frame.environment_chain[..frame.environment_chain_len],
-                    name,
-                    cache,
-                )
-            });
-            put(frame, dst, value.unwrap_or(Value::Undefined));
+            let value = name_ic()
+                .and_then(|cache| {
+                    Environment::get_cached(
+                        &frame.environment,
+                        &frame.environment_chain[..frame.environment_chain_len],
+                        name,
+                        cache,
+                    )
+                })
+                .or_else(|| Environment::get(&frame.environment, name));
+            let Some(value) = value else {
+                return Err(JsError::Throw(super::reference_error(vm(frame), name)));
+            };
+            put(frame, dst, value);
         }
         DynOp::LoadLocal { dst, slot } => {
             let value = get_local(frame, *slot);
