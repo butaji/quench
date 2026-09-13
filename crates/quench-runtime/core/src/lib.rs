@@ -8266,6 +8266,16 @@ impl Vm {
             matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async)
                 || matches!(&function.kind, FunctionKind::Arrow { node, .. } if node.r#async)
         });
+        // Rest/destructuring parameter environments are already represented
+        // exactly by the shared AST binder. Keep them on that path until the
+        // stencil parameter-lowering recipe is complete; compiling them with
+        // a partial binding map can turn a valid rest name into a spurious
+        // ReferenceError.
+        let has_rest_parameter = c.as_function_ref().is_some_and(|function| match &function.kind {
+            FunctionKind::User { node, .. } => node.params.rest.is_some(),
+            FunctionKind::Arrow { node, .. } => node.params.rest.is_some(),
+            _ => false,
+        });
         if let Some(call_ic) = call_ic
             && call_ic.matches(c)
             && !captures_deleted_binding
@@ -8301,6 +8311,7 @@ impl Vm {
                     FunctionKind::User { .. } | FunctionKind::Arrow { .. }
                 )
                 && f.dyn_jit.borrow().is_none()
+                && !has_rest_parameter
             {
                 match &f.kind {
                     FunctionKind::User { node, .. } => self.compile_user_function(&f, node)?,
@@ -8315,6 +8326,7 @@ impl Vm {
                 && let Some(code) = f.numeric_jit.borrow().clone()
                 && !captures_deleted_binding
                 && !is_async_function
+                && !has_rest_parameter
                 && let Some(contiguous) = a.contiguous()
                 && let Some(result) = code.call(contiguous)
             {
@@ -8335,6 +8347,7 @@ impl Vm {
             if self.jit_mode == JitMode::Stencil
                 && !captures_deleted_binding
                 && !is_async_function
+                && !has_rest_parameter
                 && let Some(code) = f.dyn_jit.borrow().clone()
             {
                 let env = match &f.kind {
@@ -18347,17 +18360,65 @@ fn native_reflect_get_own_property_descriptor(
 
 fn native_reflect_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "getPrototypeOf")?;
+    if let Some(proxy_target_value) = proxy_target(&target) {
+        if proxy_revoked(&target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(&target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "getPrototypeOf")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
+            if result.is_null() || result.is_object_like() {
+                return Ok(result);
+            }
+            return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap must return object or null")));
+        }
+        if vm.has_property(&handler, "getPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy getPrototypeOf trap is not callable")));
+        }
+        return native_reflect_get_prototype_of(vm, Value::Undefined, &[proxy_target_value]);
+    }
     native_object_get_prototype_of(vm, Value::Undefined, &[target])
 }
 
 fn native_reflect_has(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "has")?;
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    if let Some(proxy_target_value) = proxy_target(&target) {
+        if proxy_revoked(&target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(&target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "has")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![proxy_target_value.clone(), Value::string_value(key)])?;
+            return Ok(Value::Bool(result.truthy()));
+        }
+        if vm.has_property(&handler, "has") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy has trap is not callable")));
+        }
+        return native_reflect_has(vm, Value::Undefined, &[proxy_target_value, Value::string_value(key)]);
+    }
     Ok(Value::Bool(vm.has_property(&target, &key)))
 }
 
 fn native_reflect_is_extensible(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "isExtensible")?;
+    if let Some(proxy_target_value) = proxy_target(&target) {
+        if proxy_revoked(&target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(&target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "isExtensible")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
+            return Ok(Value::Bool(result.truthy()));
+        }
+        if vm.has_property(&handler, "isExtensible") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy isExtensible trap is not callable")));
+        }
+        return native_reflect_is_extensible(vm, Value::Undefined, &[proxy_target_value]);
+    }
     Ok(Value::Bool(
         if let Some(function) = target.as_function_ref() {
             !function.props.borrow().contains_key("\0throw-type-error")
@@ -18388,6 +18449,21 @@ fn native_reflect_own_keys(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Va
 
 fn native_reflect_prevent_extensions(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "preventExtensions")?;
+    if let Some(proxy_target_value) = proxy_target(&target) {
+        if proxy_revoked(&target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(&target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "preventExtensions")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![proxy_target_value.clone()])?;
+            return Ok(Value::Bool(result.truthy()));
+        }
+        if vm.has_property(&handler, "preventExtensions") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy preventExtensions trap is not callable")));
+        }
+        return native_reflect_prevent_extensions(vm, Value::Undefined, &[proxy_target_value]);
+    }
     native_object_prevent_extensions(vm, Value::Undefined, &[target])?;
     Ok(Value::Bool(true))
 }
@@ -18467,6 +18543,21 @@ fn native_reflect_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsR
             vm,
             "prototype must be an object or null",
         )));
+    }
+    if let Some(proxy_target_value) = proxy_target(&target) {
+        if proxy_revoked(&target) {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        let handler = proxy_handler(&target).unwrap_or(Value::Undefined);
+        let trap = vm.get_prop_with_accessors(&handler, "setPrototypeOf")?;
+        if trap.is_function() {
+            let result = vm.call(trap, handler, vec![proxy_target_value.clone(), prototype.clone()])?;
+            return Ok(Value::Bool(result.truthy()));
+        }
+        if vm.has_property(&handler, "setPrototypeOf") && !trap.is_null() && !trap.is_undefined() {
+            return Err(JsError::Throw(type_error(vm, "Proxy setPrototypeOf trap is not callable")));
+        }
+        return native_reflect_set_prototype_of(vm, Value::Undefined, &[proxy_target_value, prototype]);
     }
     let target_object = target.as_object().expect("validated Reflect target");
     let prototype_handle = prototype.as_object();
