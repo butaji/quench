@@ -5271,6 +5271,7 @@ struct Vm {
     throw_type_error: RefCell<Option<Value>>,
     pending_loop_label: Option<String>,
     current_new_target: Option<Value>,
+    construct_depth: usize,
     current_constructor: Option<Value>,
     async_generator_yields: Option<Vec<Value>>,
 }
@@ -5326,6 +5327,7 @@ impl Vm {
             throw_type_error: RefCell::new(None),
             pending_loop_label: None,
             current_new_target: None,
+            construct_depth: 0,
             current_constructor: None,
             async_generator_yields: None,
         };
@@ -10812,7 +10814,12 @@ impl Vm {
                         .as_function()
                         .expect("class constructor function remains callable");
                     let object = self.object(Some(function.prototype.clone()));
-                    let result = self.call_class(&function, object.clone(), args)?;
+                    let previous_new_target = self.current_new_target.replace(c.clone());
+                    self.construct_depth = self.construct_depth.saturating_add(1);
+                    let result = self.call_class(&function, object.clone(), args);
+                    self.construct_depth = self.construct_depth.saturating_sub(1);
+                    self.current_new_target = previous_new_target;
+                    let result = result?;
                     return Ok(
                         if result.is_object() || result.is_function() || result.is_regexp() {
                             result
@@ -10851,7 +10858,9 @@ impl Vm {
                     )));
                 }
                 let previous_new_target = self.current_new_target.replace(c.clone());
+                self.construct_depth = self.construct_depth.saturating_add(1);
                 let call_result = self.call(c.clone(), o.clone(), args);
+                self.construct_depth = self.construct_depth.saturating_sub(1);
                 self.current_new_target = previous_new_target;
                 let r = call_result?;
                 let native = c.as_function().is_some_and(|function| {
@@ -14269,6 +14278,7 @@ fn new_promise_capability(
     // them, then restore the enclosing call's value even when construction
     // throws.
     let previous_new_target = vm.current_new_target.replace(constructor.clone());
+    vm.construct_depth = vm.construct_depth.saturating_add(1);
     let result = if let Some(function) = constructor.as_function_ref()
         && matches!(function.kind, FunctionKind::Class { .. })
     {
@@ -14276,6 +14286,7 @@ fn new_promise_capability(
     } else {
         vm.call(constructor, target.clone(), vec![executor])
     };
+    vm.construct_depth = vm.construct_depth.saturating_sub(1);
     vm.current_new_target = previous_new_target;
     let result = result?;
     let promise = if result.is_object_like() { result } else { target };
@@ -14290,6 +14301,12 @@ fn new_promise_capability(
     Ok((promise, resolve, reject))
 }
 fn native_promise_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Promise constructor must be called with new",
+        )));
+    }
     let Some(executor) = args.first().filter(|value| value.is_function()).cloned() else {
         return Err(JsError::Throw(type_error(
             vm,
@@ -18450,7 +18467,9 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
         });
     let object = vm.object(prototype);
     let previous_new_target = vm.current_new_target.replace(new_target.clone());
+    vm.construct_depth = vm.construct_depth.saturating_add(1);
     let call_result = vm.call(target.clone(), object.clone(), arguments);
+    vm.construct_depth = vm.construct_depth.saturating_sub(1);
     vm.current_new_target = previous_new_target;
     let result = call_result?;
     let wrapper = target
