@@ -10316,6 +10316,7 @@ impl Vm {
         }
         let out = if self.jit_mode == JitMode::Stencil
             && !eval_code
+            && !script_eval
             && !contains_eval_call(source)
             && !contains_async_function_constructor_probe(source)
             && !has_direct_lexical_declaration(&r.program.body)
@@ -11024,7 +11025,9 @@ impl Vm {
         }
         let mut lexical = HashSet::new();
         collect_lexical_binding_names(statements, &mut lexical);
-        let eval_binding = Environment::get(environment, EVAL_CODE_ENV_NAME).is_some();
+        let eval_binding = Environment::get(environment, EVAL_CODE_ENV_NAME).is_some()
+            && Environment::get(environment, SCRIPT_EVAL_ENV_NAME)
+                .is_none_or(|value| !value.truthy());
         for name in names {
             if lexical.contains(&name) {
                 continue;
@@ -11136,7 +11139,9 @@ impl Vm {
                         .is_none_or(|attributes| attributes.configurable)
                 });
                 if configurable {
-                    let eval_binding = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
+                    let eval_binding = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some()
+                        && Environment::get(&environment, SCRIPT_EVAL_ENV_NAME)
+                            .is_none_or(|value| !value.truthy());
                     set_property_attributes(
                         &global_this,
                         name,
