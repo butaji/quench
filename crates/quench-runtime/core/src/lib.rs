@@ -7950,6 +7950,11 @@ impl Vm {
         key: &str,
         receiver: &Value,
     ) -> JsResult<Value> {
+        if (!object.is_object_like() || is_symbol_carrier(object))
+            && let Some(prototype) = self.primitive_prototype(object)
+        {
+            return self.get_prop_with_receiver(&Value::Object(prototype), key, receiver);
+        }
         if let Some(target) = proxy_target(object) {
             if proxy_revoked(object) {
                 return Err(JsError::Throw(type_error(self, "revoked Proxy")));
@@ -8049,6 +8054,38 @@ impl Vm {
             return self.call_arguments(&getter, receiver.clone(), &[] as &[Value]);
         }
         Ok(self.get_prop(object, key))
+    }
+
+    fn primitive_prototype(&self, value: &Value) -> Option<ObjectHandle> {
+        if is_symbol_carrier(value) {
+            let global = self
+                .global_object_for_environment(&self.global)
+                .unwrap_or(Value::Undefined);
+            return self
+                .get_prop(&global, "Symbol")
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
+        }
+        let constructor = if is_bigint_marker(value) {
+            let global = self
+                .global_object_for_environment(&self.global)
+                .unwrap_or(Value::Undefined);
+            return self
+                .get_prop(&global, "BigInt")
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
+        } else if value.as_string().is_some() {
+            BuiltinId::StringConstructor
+        } else if value.as_bool().is_some() {
+            BuiltinId::BooleanConstructor
+        } else if value.as_number().is_some() {
+            BuiltinId::NumberConstructor
+        } else {
+            return None;
+        };
+        self.builtin(constructor)
+            .as_function_ref()
+            .map(|function| function.prototype.clone())
     }
 
     pub(crate) fn set_prop_with_accessors(
@@ -8986,6 +9023,14 @@ impl Vm {
                 }
                 _ => t,
             };
+            let t = if !effective_strict
+                && matches!(f.kind, FunctionKind::User { .. })
+                && (!t.is_object_like() || is_symbol_carrier(&t))
+            {
+                self.box_this_value(t)
+            } else {
+                t
+            };
             if self.jit_mode == JitMode::Stencil
                 && !is_async_function
                 && matches!(
@@ -9499,15 +9544,15 @@ impl Vm {
         }
         let e = Environment::new(Some(outer));
         let body_environment = e.clone();
-        if let Some(body) = &n.body {
-            reserve_script_bindings(&body_environment, &body.statements);
-        }
         let strict = function_strict
             || n.body.as_ref().is_some_and(|body| {
                 body.directives
                     .iter()
                     .any(|directive| directive.directive.as_str() == "use strict")
             });
+        if let Some(body) = &n.body {
+            reserve_function_bindings(&body_environment, &body.statements, strict);
+        }
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = strict;
         // Ordinary (non-strict) calls substitute the global object for a
@@ -9515,6 +9560,8 @@ impl Vm {
         // boundary so stencil and interpreter execution agree.
         let this = if !strict && (this.is_null() || this.is_undefined()) {
             Environment::get(&self.global, "globalThis").unwrap_or(Value::Undefined)
+        } else if !strict && (!this.is_object_like() || is_symbol_carrier(&this)) {
+            self.box_this_value(this)
         } else {
             this
         };
@@ -9593,6 +9640,53 @@ impl Vm {
         }
         self.strict_mode = previous_strict_mode;
         result
+    }
+
+    fn box_this_value(&mut self, value: Value) -> Value {
+        let (prototype, wrapper) = if is_symbol_carrier(&value) {
+            let global = self
+                .global_object_for_environment(&self.global)
+                .unwrap_or(Value::Undefined);
+            let prototype = self
+                .get_prop(&global, "Symbol")
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
+            (prototype, "Symbol")
+        } else if is_bigint_marker(&value) {
+            let global = self
+                .global_object_for_environment(&self.global)
+                .unwrap_or(Value::Undefined);
+            let prototype = self
+                .get_prop(&global, "BigInt")
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
+            (prototype, "BigInt")
+        } else if value.as_string().is_some() {
+            let prototype = self
+                .builtin(BuiltinId::StringConstructor)
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
+            (prototype, "String")
+        } else if value.as_bool().is_some() {
+            let prototype = self
+                .builtin(BuiltinId::BooleanConstructor)
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
+            (prototype, "Boolean")
+        } else {
+            let prototype = self
+                .builtin(BuiltinId::NumberConstructor)
+                .as_function_ref()
+                .map(|function| function.prototype.clone());
+            (prototype, "Number")
+        };
+        let object = self.object(prototype);
+        self.set_prop(&object, "\0primitive", value.clone());
+        self.set_prop(&object, "\0wrapper", Value::string_value(wrapper));
+        if value.as_string().is_some() {
+            initialize_string_wrapper(self, &object, &value);
+        }
+        object
     }
 
     fn call_class(
@@ -10676,6 +10770,16 @@ impl Vm {
             {
                 // A `var x;` statement is declaration-instantiation only;
                 // after sloppy eval deletes x it must not recreate the slot.
+                continue;
+            }
+            if v.kind == VariableDeclarationKind::Var
+                && d.init.is_none()
+                && pattern_name(&d.id).is_some_and(|name| target.borrow().names.contains_key(&name))
+            {
+                // `var x;` is declaration-instantiation only when the
+                // variable object already has x (for example a parameter or
+                // hoisted function declaration). Preserve that existing
+                // value instead of writing undefined during statement pass.
                 continue;
             }
             self.bind_pattern_with_eval_env(&d.id, value, target, e.clone())?;
@@ -12600,6 +12704,21 @@ fn reserve_script_bindings(environment: &Env, statements: &[Statement<'_>]) {
     let mut lexical = HashSet::new();
     collect_lexical_binding_names(statements, &mut lexical);
     names.retain(|name| !lexical.contains(name));
+    environment.borrow_mut().reserve(names);
+}
+
+fn reserve_function_bindings(environment: &Env, statements: &[Statement<'_>], strict: bool) {
+    if !strict {
+        reserve_script_bindings(environment, statements);
+        return;
+    }
+    // Strict function code keeps declarations nested in blocks lexical. The
+    // ordinary script collector intentionally includes Annex-B block
+    // functions for sloppy code, so strict functions use the declaration
+    // instantiation walk that only hoists direct function declarations while
+    // still collecting `var` declarations through nested control flow.
+    let mut names = Vec::new();
+    collect_strict_eval_var_names(statements, &mut names, true);
     environment.borrow_mut().reserve(names);
 }
 
