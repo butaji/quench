@@ -12244,6 +12244,20 @@ fn native_regexp_symbol_match(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
     let source = string_argument(vm, args.first().unwrap_or(&Value::Undefined))?;
     let mut regexp = regexp.borrow_mut();
     if regexp.global {
+        // A non-Unicode dot consumes one UTF-16 code unit. The Rust regex
+        // backend is scalar-oriented, so materialize this small semantic
+        // kernel explicitly and preserve lone surrogates in VM strings.
+        if regexp.source == "."
+            && !regexp.flags.contains('u')
+            && !regexp.flags.contains('v')
+        {
+            let values = utf16_units(&source)
+                .into_iter()
+                .filter(|unit| !matches!(*unit, 0x000a | 0x000d | 0x2028 | 0x2029))
+                .map(|unit| Value::string_value(string_from_utf16_units(&[unit])))
+                .collect();
+            return Ok(vm.array_from_values(values));
+        }
         return Ok(vm.array_from_values(
             regexp
                 .regex
