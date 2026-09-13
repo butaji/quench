@@ -8873,16 +8873,27 @@ impl Vm {
         match x {
             Expression::StaticMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e)?;
-                Ok(Value::Bool(self.delete_prop_with_vm(
-                    &object,
-                    member.property.name.as_str(),
-                )?))
+                let deleted = self.delete_prop_with_vm(&object, member.property.name.as_str())?;
+                if !deleted && self.strict_mode {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot delete a property in strict mode",
+                    )));
+                }
+                Ok(Value::Bool(deleted))
             }
             Expression::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 let key_value = self.eval_expr(&member.expression, e)?;
                 let key = self.to_property_key(key_value)?;
-                Ok(Value::Bool(self.delete_prop_with_vm(&object, &key)?))
+                let deleted = self.delete_prop_with_vm(&object, &key)?;
+                if !deleted && self.strict_mode {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot delete a property in strict mode",
+                    )));
+                }
+                Ok(Value::Bool(deleted))
             }
             Expression::Identifier(identifier) => {
                 let name = identifier.name.as_str();
@@ -8890,6 +8901,12 @@ impl Vm {
                     return Ok(Value::Bool(true));
                 };
                 if self.readonly_global_binding(&e, name) {
+                    if self.strict_mode {
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "cannot delete a binding in strict mode",
+                        )));
+                    }
                     return Ok(Value::Bool(false));
                 }
                 let deleted = binding.borrow_mut().delete_local(name);
@@ -8897,6 +8914,12 @@ impl Vm {
                     if let Some(global_this) = self.global_object_for_environment(&binding) {
                         return Ok(Value::Bool(self.delete_prop(&global_this, name)));
                     }
+                }
+                if !deleted && self.strict_mode {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot delete a binding in strict mode",
+                    )));
                 }
                 Ok(Value::Bool(deleted))
             }
