@@ -1663,6 +1663,18 @@ macro_rules! install_data_properties {
     }};
 }
 
+/// Install one data property while keeping its descriptor attached to the
+/// same declaration. The singular form is useful at semantic edges where a
+/// loop or a larger table would obscure the exceptional value.
+macro_rules! install_data_property {
+    ($vm:expr, $target:expr, $key:expr, $value:expr, $attributes:expr) => {{
+        let target = $target;
+        let key = $key;
+        $vm.set_prop(&target, &key, $value);
+        set_property_attributes(&target, &key, $attributes);
+    }};
+}
+
 /// Install aliases from an environment onto an object using the standard
 /// global-property descriptor policy. The alias table is the data; lookup,
 /// installation, and attributes stay one operation so new globals cannot
@@ -6141,8 +6153,13 @@ impl Vm {
             "keyFor" => symbol_key_for, PropertyAttributes::BUILTIN_METHOD
         );
         for ((name, _), value) in well_known.into_iter().zip(well_known_values) {
-            self.set_prop(&symbol, name, value);
-            set_property_attributes(&symbol, name, PropertyAttributes::BUILTIN_CONSTANT);
+            install_data_property!(
+                self,
+                symbol.clone(),
+                name,
+                value,
+                PropertyAttributes::BUILTIN_CONSTANT
+            );
         }
         if let Some(symbol_prototype) = symbol
             .as_function_ref()
@@ -9620,8 +9637,13 @@ impl Vm {
                 configurable: true,
             },
         );
-        self.set_prop(&av, "toString", self.native(native_object_to_string));
-        set_property_attributes(&av, "toString", PropertyAttributes::BUILTIN_METHOD);
+        install_data_property!(
+            self,
+            av.clone(),
+            "toString",
+            self.native(native_object_to_string),
+            PropertyAttributes::BUILTIN_METHOD
+        );
         if !strict {
             let mut environment = e.borrow_mut();
             environment.arguments_object = Some(av.clone());
@@ -11504,8 +11526,13 @@ impl Vm {
                 // The built-in species accessor returns its receiver.  A
                 // class-local data projection preserves that observable
                 // result for computed property reads in this compact core.
-                self.set_prop(&class, &species_key, class.clone());
-                set_property_attributes(&class, &species_key, PropertyAttributes::BUILTIN_CONSTANT);
+                install_data_property!(
+                    self,
+                    class.clone(),
+                    species_key,
+                    class.clone(),
+                    PropertyAttributes::BUILTIN_CONSTANT
+                );
             }
         }
         for element in &n.body.body {
@@ -11523,13 +11550,23 @@ impl Vm {
                 )));
             }
             let method_value = self.make_user(&method.value, class_env.clone());
-            self.set_prop(&method_value, "name", Value::string_value(key.clone()));
-            set_property_attributes(&method_value, "name", PropertyAttributes::BUILTIN_CONSTANT);
+            install_data_property!(
+                self,
+                method_value.clone(),
+                "name",
+                Value::string_value(key.clone()),
+                PropertyAttributes::BUILTIN_CONSTANT
+            );
             let target = if method.r#static { &class } else { &prototype };
             match method.kind {
                 MethodDefinitionKind::Method => {
-                    self.set_prop(target, &key, method_value);
-                    set_property_attributes(target, &key, PropertyAttributes::BUILTIN_METHOD);
+                    install_data_property!(
+                        self,
+                        target.clone(),
+                        key,
+                        method_value,
+                        PropertyAttributes::BUILTIN_METHOD
+                    );
                 }
                 MethodDefinitionKind::Get => self.define_accessor_slot(
                     target,

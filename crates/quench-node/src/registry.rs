@@ -27,14 +27,11 @@ pub struct NodeSpec {
 /// namespace construction, capability dispatch, and future generated
 /// evidence tables; mechanical registrations should not repeat ids inline.
 macro_rules! node_api {
-    ($(($name:ident, $cap_name:ident, $label:literal, $cap:expr)),* $(,)?) => {
+    ($(($name:ident $(, $cap_name:ident)? , $label:literal, $cap:expr)),* $(,)?) => {
         $(
             pub const $name: NodeSpec = NodeSpec::new($label, $cap);
-            pub const $cap_name: CapId = $cap;
+            $(pub const $cap_name: CapId = $cap;)?
         )*
-    };
-    ($(($name:ident, $label:literal, $cap:expr)),* $(,)?) => {
-        $(pub const $name: NodeSpec = NodeSpec::new($label, $cap);)*
     };
 }
 
