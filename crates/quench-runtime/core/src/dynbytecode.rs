@@ -1119,6 +1119,15 @@ impl Compiler {
     }
 
     fn for_in_statement(&mut self, item: &ForInStatement<'static>) -> Result<(), CompileGap> {
+        if let ForStatementLeft::VariableDeclaration(declaration) = &item.left
+            && let Some(declarator) = declaration.declarations.first()
+            && let Some(initializer) = &declarator.init
+        {
+            // Annex B's one permitted sloppy `var` initializer executes once
+            // before the RHS is evaluated, just like the interpreter path.
+            let src = self.expression(initializer)?;
+            self.bind_pattern(&declarator.id, src, declarator.span)?;
+        }
         let object = self.expression(&item.right)?;
         let iterator = self.alloc()?;
         self.emit(DynOp::ForInInit { iterator, object }, item.right.span());
