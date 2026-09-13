@@ -14674,6 +14674,13 @@ fn native_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let value = args.get(1).cloned().unwrap_or(Value::Undefined);
     let entries = vm.get_prop(&this, MAP_ENTRIES_PROP);
+    let entries = if entries.is_undefined() {
+        let entries = vm.array_from_values(Vec::new());
+        vm.set_prop(&this, MAP_ENTRIES_PROP, entries.clone());
+        entries
+    } else {
+        entries
+    };
     for pair in map_entries(vm, &this) {
         if vm.get_prop(&pair, "0").same_bits(&key) {
             vm.set_prop(&pair, "1", value);
@@ -14720,6 +14727,13 @@ fn native_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     if !set_values(vm, &this).into_iter().any(|item| item.same_bits(&value)) {
         let values = vm.get_prop(&this, SET_VALUES_PROP);
+        let values = if values.is_undefined() {
+            let values = vm.array_from_values(Vec::new());
+            vm.set_prop(&this, SET_VALUES_PROP, values.clone());
+            values
+        } else {
+            values
+        };
         let length = values.as_object_ref().and_then(|object| object.borrow().array.as_ref().map(|array| array.len())).unwrap_or(0);
         vm.set_prop(&values, &length.to_string(), value);
     }
@@ -21793,6 +21807,7 @@ fn compile_regex_with_flags(
     let pattern = normalize_legacy_class_ranges(&pattern);
     let pattern = normalize_quantified_assertions(&pattern);
     let pattern = normalize_forward_named_backrefs(&pattern);
+    let pattern = normalize_unicode_hex_escapes(&pattern);
     let pattern = if unicode {
         pattern
     } else {
@@ -21803,6 +21818,7 @@ fn compile_regex_with_flags(
     } else {
         pattern
     };
+    let pattern = normalize_surrogate_escapes(&pattern);
     if unicode && !valid_unicode_pattern(&pattern) {
         return Err(JsError::Message(
             "invalid Unicode regular expression".into(),
@@ -21852,6 +21868,55 @@ fn compile_regex_with_flags(
             .map(RegExpKernel::Fancy)
             .map_err(|_| JsError::Message(format!("regex parse error: {linear_error}"))),
     }
+}
+
+fn normalize_unicode_hex_escapes(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut result = String::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes.get(index) == Some(&b'\\')
+            && bytes.get(index + 1) == Some(&b'x')
+            && index + 3 < bytes.len()
+            && bytes[index + 2].is_ascii_hexdigit()
+            && bytes[index + 3].is_ascii_hexdigit()
+        {
+            let value = u8::from_str_radix(&pattern[index + 2..index + 4], 16).unwrap_or(0);
+            result.push_str(&format!("\\x{{{value:02X}}}"));
+            index += 4;
+        } else {
+            let character = pattern[index..].chars().next().expect("valid UTF-8 pattern");
+            result.push(character);
+            index += character.len_utf8();
+        }
+    }
+    result
+}
+
+fn normalize_surrogate_escapes(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut result = String::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes.get(index) == Some(&b'\\')
+            && bytes.get(index + 1) == Some(&b'u')
+            && index + 5 < bytes.len()
+            && bytes[index + 2..index + 6]
+                .iter()
+                .all(u8::is_ascii_hexdigit)
+        {
+            let value = u16::from_str_radix(&pattern[index + 2..index + 6], 16).unwrap_or(0);
+            if (0xD800..=0xDFFF).contains(&value) {
+                result.push_str(&format!("\\x{{{:X}}}", 0x10000 + u32::from(value - 0xD800)));
+                index += 6;
+                continue;
+            }
+        }
+        let character = pattern[index..].chars().next().expect("valid UTF-8 pattern");
+        result.push(character);
+        index += character.len_utf8();
+    }
+    result
 }
 
 fn regex_mode_group(pattern: &str, insensitive: bool, multiline: bool, unicode: bool) -> String {
@@ -21995,9 +22060,10 @@ fn normalize_legacy_identity_escapes(pattern: &str) -> String {
             } else if matches!(next, b'p' | b'P') {
                 recognized = bytes.get(index + 2) == Some(&b'{');
             } else if next == b'x' {
-                recognized = bytes
-                    .get(index + 2..index + 4)
-                    .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit));
+                recognized = bytes.get(index + 2) == Some(&b'{')
+                    || bytes
+                        .get(index + 2..index + 4)
+                        .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit));
             } else if next == b'u' {
                 recognized = bytes.get(index + 2) == Some(&b'{')
                     || bytes
@@ -22032,12 +22098,19 @@ fn valid_unicode_pattern(pattern: &str) -> bool {
             if byte < 0x20 {
                 return false;
             }
-            if byte == b'x'
-                && (index + 2 >= bytes.len()
-                    || !bytes[index + 1].is_ascii_hexdigit()
-                    || !bytes[index + 2].is_ascii_hexdigit())
-            {
-                return false;
+            if byte == b'x' {
+                let braced = bytes.get(index + 1) == Some(&b'{')
+                    && bytes[index + 2..]
+                        .iter()
+                        .position(|byte| *byte == b'}')
+                        .is_some_and(|end| end > 1);
+                if !braced
+                    && (index + 2 >= bytes.len()
+                        || !bytes[index + 1].is_ascii_hexdigit()
+                        || !bytes[index + 2].is_ascii_hexdigit())
+                {
+                    return false;
+                }
             }
             if byte == b'0' && bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
                 return false;
