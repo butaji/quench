@@ -10013,7 +10013,6 @@ impl Vm {
             self.source_ids.push(source_id);
         }
         let e = Environment::new(Some(outer.clone()));
-        let body_environment = e.clone();
         let non_simple_parameters = n.params.items.iter().any(|parameter| {
             parameter.initializer.is_some()
                 || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
@@ -10024,6 +10023,15 @@ impl Vm {
                 Value::Bool(true),
             );
         }
+        let body_environment = if non_simple_parameters {
+            let body_environment = Environment::new(Some(e.clone()));
+            body_environment
+                .borrow_mut()
+                .declare(FUNCTION_ENV_NAME, Value::Bool(true));
+            body_environment
+        } else {
+            e.clone()
+        };
         let strict = function_strict
             || n.body.as_ref().is_some_and(|body| {
                 body.directives
