@@ -8388,7 +8388,8 @@ impl Vm {
                     candidate.parent.clone(),
                     candidate.contains_local("arguments") || is_global,
                     candidate.parameter_names.contains(name)
-                        || candidate.lexical_names.contains(name),
+                        || (candidate.lexical_names.contains(name)
+                            && !candidate.catch_simple_names.contains(name)),
                 )
             };
             if blocked {
