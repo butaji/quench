@@ -135,12 +135,22 @@ impl fmt::Display for JsError {
         match self {
             Self::Throw(value) if value.as_object().is_some() => {
                 let object = value.as_object().unwrap();
-                let object = object.borrow();
-                if let Some(message) = object.props.get("message") {
-                    write!(f, "uncaught Error: {}", message.display())
+                let (message, properties) = {
+                    let object = object.borrow();
+                    (
+                        object.props.get("message").cloned(),
+                        object
+                            .props
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                if let Some(message) = message {
+                    let name = thrown_object_name(value).unwrap_or_else(|| "Error".to_string());
+                    write!(f, "uncaught {name}: {}", message.display())
                 } else {
-                    let properties = object
-                        .props
+                    let properties = properties
                         .iter()
                         .map(|(key, value)| format!("{key}={}", value.display()))
                         .collect::<Vec<_>>()
@@ -152,6 +162,39 @@ impl fmt::Display for JsError {
             Self::Message(s) => f.write_str(s),
         }
     }
+}
+
+/// Derive the display name of a thrown object without changing guest state.
+/// Native errors carry an own `name`; user-defined error constructors usually
+/// expose it only through their prototype's `constructor.name`. Walking the
+/// existing prototype graph keeps diagnostics faithful to both shapes.
+fn thrown_object_name(value: &Value) -> Option<String> {
+    let mut current = value.as_object();
+    while let Some(object) = current {
+        let (name, constructor, prototype) = {
+            let object = object.borrow();
+            (
+                object.props.get("name").cloned(),
+                object.props.get("constructor").cloned(),
+                object.prototype.clone(),
+            )
+        };
+        if let Some(name) = name.and_then(|value| value.as_string().cloned()) {
+            return Some(name);
+        }
+        if let Some(name) = constructor.and_then(|value| {
+            let function = value.as_function_ref()?;
+            function
+                .props
+                .borrow()
+                .get("name")
+                .and_then(|value| value.as_string().cloned())
+        }) {
+            return Some(name);
+        }
+        current = prototype;
+    }
+    None
 }
 
 #[repr(transparent)]

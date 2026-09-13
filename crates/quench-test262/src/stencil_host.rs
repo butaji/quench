@@ -45,11 +45,11 @@ impl Test262Host for StencilHost {
     }
 
     fn run_script(&mut self, source: &str) -> Result<(), String> {
-        self.run_source_at(source, Path::new("<test262>"))
+        self.run_source_at(source, Path::new("<test262>.cjs"))
     }
 
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
-        self.run_source_at(source, Path::new("<test262-module>"))
+        self.run_source_at(source, Path::new("<test262-module>.mjs"))
     }
 
     fn run_harnessed_script(
@@ -60,14 +60,14 @@ impl Test262Host for StencilHost {
     ) -> Result<(), String> {
         self.run_source_at(
             &Self::compose(harness, source, strict),
-            Path::new("<test262-harnessed>"),
+            Path::new("<test262-harnessed>.cjs"),
         )
     }
 
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
         self.run_source_at(
             &Self::compose(harness, source, false),
-            Path::new("<test262-module-harnessed>"),
+            Path::new("<test262-module-harnessed>.mjs"),
         )
     }
 
