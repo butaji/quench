@@ -10110,7 +10110,7 @@ impl Vm {
             .directives
             .iter()
             .any(|directive| directive.directive.as_str() == "use strict");
-        let effective_strict_mode = previous_strict_mode || source_strict_mode;
+        let effective_strict_mode = previous_strict_mode || source_strict_mode || st.is_module();
         if has_for_in_initializer_early_error(&r.program, effective_strict_mode) {
             return Err(JsError::Throw(syntax_error(
                 self,
@@ -10529,6 +10529,53 @@ impl Vm {
                         e.borrow_mut().declare(name, value);
                     }
                 }
+                Ok(Signal::Normal(Value::Undefined))
+            }
+            ExportDeclaration(export) => self.exec_decl(&export.declaration, e),
+            ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                    // Named default functions are ordinary declarations; an
+                    // anonymous default function has no local binding but its
+                    // body still undergoes the same function construction
+                    // checks before the module completes.
+                    if function.id.is_some() {
+                        if let Some(id) = &function.id {
+                            self.declare_function_binding(
+                                function,
+                                e.clone(),
+                                id.name.as_str(),
+                                true,
+                            );
+                        }
+                        Ok(Signal::Normal(Value::Undefined))
+                    } else {
+                        let _ = self.make_user(function, e);
+                        Ok(Signal::Normal(Value::Undefined))
+                    }
+                }
+                ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                    if class.id.is_some() {
+                        if let Some(id) = &class.id {
+                            e.borrow_mut().lexical_names.insert(id.name.to_string());
+                            let value = self.make_class(class, e.clone())?;
+                            e.borrow_mut().declare(id.name.as_str(), value.clone());
+                        }
+                        Ok(Signal::Normal(Value::Undefined))
+                    } else {
+                        let _ = self.make_class(class, e)?;
+                        Ok(Signal::Normal(Value::Undefined))
+                    }
+                }
+                ExportDefaultDeclarationKind::TSInterfaceDeclaration(_) => {
+                    Ok(Signal::Normal(Value::Undefined))
+                }
+                _ => export
+                    .declaration
+                    .as_expression()
+                    .map(|expression| self.eval_expr(expression, e).map(Signal::Normal))
+                    .unwrap_or_else(|| Ok(Signal::Normal(Value::Undefined))),
+            },
+            ExportNamedDeclaration(_) | ExportFromDeclaration(_) | ExportAllDeclaration(_) => {
                 Ok(Signal::Normal(Value::Undefined))
             }
             ExpressionStatement(x) => Ok(Signal::Normal(self.eval_expr(&x.expression, e)?)),
@@ -14600,7 +14647,8 @@ fn contains_accessor_syntax(source: &str) -> bool {
     // OXC owns the grammar; this is only a conservative admission guard for
     // the JIT, not a parser.  Requiring a keyword boundary avoids matching
     // ordinary words such as "getter" while covering object/class accessors.
-    source.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+    source
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|token| matches!(token, "get" | "set"))
 }
 
