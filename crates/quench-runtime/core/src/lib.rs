@@ -15442,7 +15442,9 @@ impl Vm {
                             match element {
                                 AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(
                                     default,
-                                ) => iterator_try!(self.eval_expr(&default.init, e.clone())),
+                                ) => iterator_try!(
+                                    self.evaluate_destructuring_default(default, e.clone())
+                                ),
                                 _ => element_value,
                             }
                         } else {
@@ -15506,7 +15508,7 @@ impl Vm {
                                     match &property.binding {
                                         AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(
                                             default,
-                                        ) => self.eval_expr(&default.init, e.clone())?,
+                                        ) => self.evaluate_destructuring_default(default, e.clone())?,
                                         _ => value,
                                     }
                                 } else {
@@ -15593,6 +15595,22 @@ impl Vm {
             _ => None,
         };
         Ok(lvalue)
+    }
+
+    fn evaluate_destructuring_default<'a>(
+        &mut self,
+        default: &AssignmentTargetWithDefault<'a>,
+        e: Env,
+    ) -> JsResult<Value> {
+        let value = self.eval_expr(&default.init, e)?;
+        if value.is_function()
+            && is_anonymous_function_definition(&default.init)
+            && function_name_is_inferable(&value)
+            && let Some(name) = assignment_target_name(&default.binding)
+        {
+            set_function_name(&value, &name);
+        }
+        Ok(value)
     }
 
     fn assign_simple_target<'a>(
