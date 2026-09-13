@@ -9400,7 +9400,7 @@ impl Vm {
                     return self.delete_expression(&v.argument, e);
                 }
                 if v.operator == oxc_syntax::operator::UnaryOperator::Typeof
-                    && let Expression::Identifier(identifier) = &v.argument
+                    && let Some(identifier) = typeof_identifier(&v.argument)
                     && !Environment::is_tdz(&e, identifier.name.as_str())
                     && Environment::get(&e, identifier.name.as_str()).is_none()
                 {
@@ -11157,6 +11157,16 @@ fn contains_eval_call(source: &str) -> bool {
         let suffix = suffix.trim_start();
         suffix.starts_with('(') || suffix.starts_with(')')
     })
+}
+
+fn typeof_identifier<'a>(expression: &'a Expression<'a>) -> Option<&'a IdentifierReference<'a>> {
+    match expression {
+        Expression::Identifier(identifier) => Some(identifier),
+        Expression::ParenthesizedExpression(parenthesized) => {
+            typeof_identifier(&parenthesized.expression)
+        }
+        _ => None,
+    }
 }
 
 macro_rules! with_strict_mode {
