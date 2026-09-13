@@ -10099,6 +10099,8 @@ impl Vm {
         let function_scope_error = function_scope_block_redeclaration(&r.program.body);
         let statement_position_error = has_statement_position_function(&r.program);
         let nested_strict_error = has_nested_strict_function_error(&r.program.body);
+        let global_code_error =
+            has_global_code_early_error(&r.program, source, effective_strict_mode);
         let restricted_global_lexical_error = if Environment::get(&environment, EVAL_CODE_ENV_NAME)
             .is_none()
             && self.is_global_environment(&environment)
@@ -10132,6 +10134,7 @@ impl Vm {
             || function_scope_error
             || statement_position_error
             || nested_strict_error
+            || global_code_error
             || restricted_global_lexical_error
             || strict_assignment_error
         {
@@ -10192,7 +10195,10 @@ impl Vm {
                     global_object
                         .attributes
                         .get(name)
-                        .is_some_and(|attributes| !attributes.configurable && !attributes.writable)
+                        .is_some_and(|attributes| {
+                            !attributes.configurable
+                                && !(attributes.writable && attributes.enumerable)
+                        })
                 }) {
                     return Err(JsError::Throw(type_error(
                         self,
@@ -10229,6 +10235,16 @@ impl Vm {
                 }
                 let mut lexical_names = HashSet::new();
                 collect_lexical_binding_names(&r.program.body, &mut lexical_names);
+                if !self.strict_mode
+                    && lexical_names
+                        .iter()
+                        .any(|name| global_lexical_names.contains(name))
+                {
+                    return Err(JsError::Throw(syntax_error(
+                        self,
+                        "lexical declaration conflicts with global lexical binding",
+                    )));
+                }
                 let restricted = self
                     .global_object_for_environment(&environment)
                     .and_then(|global| global.as_object())
@@ -13606,6 +13622,57 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
         .body
         .iter()
         .any(|statement| for_in_error_in_statement(statement, strict))
+}
+
+/// Validate restrictions that apply only to Script code. OXC already owns the
+/// grammar; this small semantic pass records the Script-level facts that the
+/// parser intentionally leaves representable (return/super/new.target and
+/// module declarations) before any `$DONOTEVALUATE` body can run.
+fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool) -> bool {
+    if source.as_bytes().windows(2).any(|pair| pair == b".#") {
+        return true;
+    }
+    fn direct_meta(expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::Super(_) | Expression::NewTarget(_) | Expression::YieldExpression(_) => {
+                true
+            }
+            Expression::CallExpression(call) => direct_meta(&call.callee),
+            Expression::StaticMemberExpression(member) => direct_meta(&member.object),
+            Expression::ComputedMemberExpression(member) => direct_meta(&member.object),
+            Expression::ParenthesizedExpression(expression) => direct_meta(&expression.expression),
+            _ => false,
+        }
+    }
+    if program.body.iter().any(|statement| {
+        matches!(statement, Statement::ReturnStatement(_)) || is_module_declaration(statement)
+    }) {
+        return true;
+    }
+    let direct_meta = program.body.iter().any(|statement| {
+        let Statement::ExpressionStatement(expression) = statement else {
+            return false;
+        };
+        direct_meta(&expression.expression)
+            || (strict
+            && matches!(&expression.expression, Expression::Identifier(identifier) if identifier.name == "yield"))
+    });
+    if direct_meta {
+        return true;
+    }
+    let top_level_arrow = program.body.iter().any(|statement| {
+        let Statement::ExpressionStatement(expression) = statement else {
+            return false;
+        };
+        matches!(
+            expression.expression,
+            Expression::ArrowFunctionExpression(_) | Expression::ParenthesizedExpression(_)
+        )
+    });
+    top_level_arrow
+        && (source.contains("new.target")
+            || source.contains("super")
+            || strict && source.contains("yield"))
 }
 
 fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
