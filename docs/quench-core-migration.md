@@ -221,6 +221,9 @@ Verification completed:
 - internal execution-environment slots now come from one `environment_keys!`
   macro table, so eval, function, class, and constructor code share one
   namespace and cannot drift through repeated string literals
+- typed-array iterator values and lengths now share one
+  `typed_array_dispatch!` variant table; numeric, BigInt, and the explicit
+  Uint16/float16 exception are selected from that single representation
 - builtin prototype ownership is now declared once on `BuiltinOwner` and
   lowered through one installer path; Node host bootstrap values likewise use
   the `with_host_values!` declaration macro so ordered host wiring has one
