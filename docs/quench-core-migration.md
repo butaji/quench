@@ -201,6 +201,10 @@ Verification completed:
 - module graph edges are declared once by the `module_request!` Rust macro and
   reused by linking, deferred namespace checks, and async continuation release;
   this keeps graph facts data-first instead of duplicating OXC pattern matches
+- `ToPrimitive` hints are represented by one `PrimitiveHint` fact (`default`,
+  `number`, or `string`) across binary operators, constructors, Date, BigInt,
+  and string conversion; object spread likewise lowers through one enumerable
+  key/data-property reducer rather than a second object-copy implementation
 - intrinsic data-property installation now uses the declarative
   `install_data_properties!` Rust macro for Math and BigInt tables, keeping
   values and descriptors in one source-of-truth declaration
