@@ -74,7 +74,7 @@ Verification completed:
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - canonical stencil Test262 stage 10 (`language/expressions`) now reaches
-  9,268/11,101 fixtures; strict assignment-target early errors are validated
+  9,280/11,101 fixtures; strict assignment-target early errors are validated
   from the OXC target tree (including nested destructuring), while the focused
   arrow-function slice remains 55/55 after preserving parameter/body
   environments, lexical `new.target`/`super`, direct-eval conflicts, and
@@ -82,6 +82,9 @@ Verification completed:
 - canonical stencil Test262 stage 11 (`language/function-code`) is fully green
   at 217/217; this confirms the same source-boundary early-error and function
   environment machinery across the next language partition
+- canonical stencil Test262 stage 12 (`language/future-reserved-words`) is
+  fully green at 55/55, including escaped and top-level strict `yield`
+  bindings
 - production `quench-node` build and a core-backed Node smoke test
 - core-backed `tests/node-compat/stage-2235` (2/2 fixtures)
 - core-backed `tests/node-compat/stage-2650/buffer-tostring-range.js`

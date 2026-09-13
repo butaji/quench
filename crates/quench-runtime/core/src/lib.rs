@@ -12058,7 +12058,7 @@ impl Vm {
             )));
         }
         self.strict_mode = effective_strict_mode;
-        if self.strict_mode && has_strict_yield_binding(&r.program) {
+        if self.strict_mode && has_strict_yield_binding(&r.program, effective_strict_mode) {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "yield is reserved as an identifier in strict mode",
@@ -17924,7 +17924,7 @@ fn has_strict_legacy_literal_escape(source: &str) -> bool {
     false
 }
 
-fn has_strict_yield_binding(program: &Program<'_>) -> bool {
+fn has_strict_yield_binding(program: &Program<'_>, inherited_strict: bool) -> bool {
     struct Scan {
         strict_depth: usize,
         invalid: bool,
@@ -17959,7 +17959,7 @@ fn has_strict_yield_binding(program: &Program<'_>) -> bool {
         }
     }
     let mut scan = Scan {
-        strict_depth: 0,
+        strict_depth: usize::from(inherited_strict),
         invalid: false,
     };
     scan.visit_program(program);
