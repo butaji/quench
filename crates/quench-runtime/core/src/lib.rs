@@ -7374,9 +7374,17 @@ impl Vm {
     }
 
     fn module_key(&self, path: &Path) -> PathBuf {
-        fs::canonicalize(path).unwrap_or_else(|_| {
+        let path = if path.extension().and_then(|extension| extension.to_str()) == Some("mjs")
+            && !path.exists()
+            && path.with_extension("js").exists()
+        {
+            path.with_extension("js")
+        } else {
+            path.to_path_buf()
+        };
+        fs::canonicalize(&path).unwrap_or_else(|_| {
             if path.is_absolute() {
-                path.to_path_buf()
+                path.clone()
             } else {
                 self.cwd.join(path)
             }
@@ -10609,6 +10617,12 @@ impl Vm {
             return namespace.clone();
         }
         let object = self.ordinary_object();
+        // Publish the identity before walking re-export edges.  Cyclic
+        // `export * as ns from self` graphs can request the same namespace
+        // recursively during construction; early interning preserves one
+        // object identity and bounds the graph walk.
+        self.module_namespace_cache
+            .insert(key.clone(), object.clone());
         let resolutions = self.module_export_bindings(path).unwrap_or_default();
         let mut names = exports
             .keys()
@@ -10661,7 +10675,6 @@ impl Vm {
             object_data.prototype = None;
             object_data.extensible = false;
         }
-        self.module_namespace_cache.insert(key, object.clone());
         object
     }
 
@@ -10840,6 +10853,13 @@ impl Vm {
                         // the specified TypeError instead of exposing an
                         // empty placeholder.
                         self.module_namespace(&target, &exports, true)
+                    } else if target_evaluating && import_type.is_none() && imported == "*" {
+                        // Namespace self-imports are instantiated before the
+                        // module has an export object.  Keep the binding
+                        // inert until the module completes; this avoids
+                        // recursively materializing the module while it is
+                        // still evaluating.
+                        Value::Undefined
                     } else if target_evaluating && import_type.is_none() {
                         self.module_import_ref(&target, &imported)
                     } else if imported == "*" {
@@ -11275,20 +11295,22 @@ impl Vm {
         };
         if module_source {
             if let Some(mut exports) = self.module_export_stack.pop() {
-                // Exported `let`/`var` bindings are live cells.  The compact
-                // cache stores values, so refresh each declared name from the
-                // module environment after execution to preserve assignments
-                // performed during initialization.
-                for name in exports.keys().cloned().collect::<Vec<_>>() {
-                    if let Some(value) = Environment::get(&environment, &name) {
-                        exports.insert(name, value);
+                if out.is_ok() {
+                    // Exported `let`/`var` bindings are live cells.  The
+                    // compact cache stores values, so refresh each declared
+                    // name from the module environment after execution to
+                    // preserve assignments performed during initialization.
+                    for name in exports.keys().cloned().collect::<Vec<_>>() {
+                        if let Some(value) = Environment::get(&environment, &name) {
+                            exports.insert(name, value);
+                        }
                     }
+                    if let Some(key) = module_key.as_ref() {
+                        self.module_exports_cache
+                            .insert(key.clone(), exports.clone());
+                    }
+                    self.module_exports_cache.insert(p.to_path_buf(), exports);
                 }
-                if let Some(key) = module_key.as_ref() {
-                    self.module_exports_cache
-                        .insert(key.clone(), exports.clone());
-                }
-                self.module_exports_cache.insert(p.to_path_buf(), exports);
             }
             if module_owner {
                 if let Some(key) = module_key {
@@ -11528,9 +11550,17 @@ impl Vm {
                 if let Some(parent) = self.source_stack.last().and_then(|path| path.parent()) {
                     let source = self.resolve_module_request(parent, export.source.value.as_str());
                     let exports = self.load_module_exports(&source)?;
-                    for (name, value) in exports {
-                        if name != "default" {
-                            self.record_module_export(name, value);
+                    if let Some(exported) = &export.exported {
+                        let namespace = self.module_namespace(&source, &exports, false);
+                        self.record_module_export(
+                            module_export_name_for_early_error(exported),
+                            namespace,
+                        );
+                    } else {
+                        for (name, value) in exports {
+                            if name != "default" {
+                                self.record_module_export(name, value);
+                            }
                         }
                     }
                 }
