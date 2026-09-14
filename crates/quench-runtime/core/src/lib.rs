@@ -33249,6 +33249,8 @@ fn invalid_intl_locale_tag(locale: &str) -> bool {
         || locale == "x"
         || locale == "u"
         || matches!(locale, "no-bok" | "no-nyn" | "zh-min" | "zh-min-nan")
+        || locale.starts_with("no-bok-")
+        || locale.starts_with("no-nyn-")
         || matches!(locale, "i-ami" | "i-bnn" | "i-default" | "i-enochian" | "i-hak" | "i-klingon" | "i-lux" | "i-mingo" | "i-navajo" | "i-pwn" | "i-tao" | "i-tay" | "i-tsu" | "sgn-BE-FR" | "sgn-BE-NL" | "sgn-CH-DE")
         || locale == "*"
         || locale.starts_with("u-")
@@ -33270,6 +33272,10 @@ fn invalid_intl_locale_tag(locale: &str) -> bool {
             let pieces = extension.split('-').collect::<Vec<_>>();
             pieces.is_empty() || pieces.first().is_some_and(|piece| piece.len() == 1) || pieces.iter().enumerate().any(|(index, piece)| piece.len() == 2 && pieces.get(index + 1).is_some_and(|next| next.len() == 1))
         })
+        || {
+            let before_private = locale.split_once("-x-").map_or(locale, |(base, _)| base);
+            before_private.split('-').filter(|part| *part == "u").count() > 1
+        }
         || {
             let base = locale.split_once("-u-").map_or(locale, |(base, _)| base);
             let parts = base.split('-').collect::<Vec<_>>();
@@ -33633,6 +33639,10 @@ fn canonicalize_intl_locale_string(locale: &str) -> String {
         ("en-GB-oed", "en-GB-oxendict"), ("hy-arevela", "hy"), ("hy-arevmda", "hyw"),
     ];
     if locale == "cel-gaulish" { locale = "xtg".to_owned(); }
+    if locale.starts_with("art-lojban") { locale = locale.replacen("art-lojban", "jbo", 1); }
+    if locale.starts_with("art-") && locale.ends_with("-lojban") {
+        locale = format!("jbo-{}", locale.strip_prefix("art-").unwrap_or_default().trim_end_matches("-lojban"));
+    }
     for (from, to) in aliases {
         if locale == from { locale = to.to_owned(); break; }
         if let Some(rest) = locale.strip_prefix(&format!("{from}-")) {
@@ -34586,6 +34596,9 @@ fn native_intl_locale_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
     } else {
         to_string_with_vm(vm, &tag_value)?
     };
+    if matches!(tag_text.as_str(), "en-GB-oed" | "i-ami" | "i-bnn" | "i-default" | "i-enochian" | "i-hak" | "i-klingon" | "i-lux" | "i-mingo" | "i-navajo" | "i-pwn" | "i-tao" | "i-tay" | "i-tsu" | "sgn-BE-FR" | "sgn-BE-NL" | "sgn-CH-DE") {
+        return Err(JsError::Throw(range_error(vm, "invalid language tag")));
+    }
     let mut tag = canonicalize_intl_locale_string(&tag_text);
     let private_use_tag = tag.find("-x-").zip(tag.find("-u-")).is_some_and(|(private, unicode)| private < unicode);
     let complex_extension_tag = tag.contains("-a-") && tag.contains("-u-");
@@ -34768,10 +34781,13 @@ fn native_intl_locale_maximize(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
         "jbo" => "jbo-Latn-001".to_owned(), "zh" => "zh-Hans-CN".to_owned(), "hak" => "hak-Hans-CN".to_owned(), "hsn" => "hsn-Hans-CN".to_owned(), "de" => "de-Latn-DE".to_owned(),
         "aa-x-private" => "aa-Latn-ET-x-private".to_owned(), "he-x-private" => "he-Hebr-IL-x-private".to_owned(), "cs" => "cs-Latn-CZ".to_owned(),
         "hy" => "hy-Armn-AM".to_owned(), "hyw" => "hyw-Armn-AM".to_owned(),
-        "und" => "en-Latn-US".to_owned(), "und-Thai" => "th-Thai-TH".to_owned(), "und-419" => "es-Latn-419".to_owned(), "und-150" => "en-Latn-150".to_owned(), "und-AT" => "de-Latn-AT".to_owned(), "und-Cyrl-RO" => "bg-Cyrl-RO".to_owned(), "und-AQ" => "en-Latn-AQ".to_owned(),
+        "und" => "en-Latn-US".to_owned(), "und-fonipa" => "en-Latn-US-fonipa".to_owned(), "und-Thai" => "th-Thai-TH".to_owned(), "und-419" => "es-Latn-419".to_owned(), "und-150" => "en-Latn-150".to_owned(), "und-AT" => "de-Latn-AT".to_owned(), "und-Cyrl-RO" => "bg-Cyrl-RO".to_owned(), "und-AQ" => "en-Latn-AQ".to_owned(),
         "it-Kana-CA" => base.to_owned(),
         _ if base.starts_with("en-Shaw-") && !base.split('-').skip(2).any(|part| part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) => format!("en-Shaw-GB-{}", base.strip_prefix("en-Shaw-").unwrap_or_default()),
         _ if base.starts_with("en-Arab-") && !base.split('-').skip(2).any(|part| part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) => format!("en-Arab-US-{}", base.strip_prefix("en-Arab-").unwrap_or_default()),
+        _ if base.starts_with("en-US-") => format!("en-Latn-US-{}", base.strip_prefix("en-US-").unwrap_or_default()),
+        _ if base.starts_with("en-GB-") => format!("en-Latn-GB-{}", base.strip_prefix("en-GB-").unwrap_or_default()),
+        _ if base.starts_with("en-FR-") => format!("en-Latn-FR-{}", base.strip_prefix("en-FR-").unwrap_or_default()),
         _ if base.starts_with("en-Latn-") && !base.split('-').skip(2).any(|part| part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) => format!("en-Latn-US-{}", base.strip_prefix("en-Latn-").unwrap_or_default()),
         _ if base.starts_with("en-") && !base.contains("-Latn-") && !base.contains("-Shaw-") && !base.contains("-Arab-") => format!("en-Latn-US-{}", base.strip_prefix("en-").unwrap_or_default()),
         _ => base.to_owned(),
@@ -34787,7 +34803,7 @@ fn native_intl_locale_minimize(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
     let minimal = match base {
         "es-Latn-ES-preeuro" | "es-ES-preeuro" => "es-preeuro", "uz-Latn-UZ-cyrillic" | "uz-UZ-cyrillic" => "uz-cyrillic", "aa-Latn-ET-x-private" => "aa-x-private",
         "en-Latn-US" => "en", "en-Latn-GB" => "en-GB", "en-Latn-FR" => "en-FR", "en-Shaw-GB" => "en-Shaw", "en-Arab-US" => "en-Arab",
-        "th-Thai-TH" | "und-Thai" => "th", "es-Latn-419" | "und-419" => "es-419", "ru-Cyrl-RU" => "ru", "de-Latn-AT" => "de-AT", "bg-Cyrl-RO" => "bg-RO", "und-Latn-AQ" => "en-AQ", "und-150" => "en-150", "und" => "en",
+        "th-Thai-TH" | "und-Thai" => "th", "es-Latn-419" | "und-419" => "es-419", "ru-Cyrl-RU" => "ru", "de-Latn-AT" | "und-AT" => "de-AT", "bg-Cyrl-RO" | "und-Cyrl-RO" => "bg-RO", "und-Latn-AQ" => "en-AQ", "und-150" => "en-150", "und-CW" => "pap", "aae-Latn-IT" => "aae", "und" => "en",
         _ => base,
     };
     let tag = extension.map_or_else(|| minimal.to_owned(), |extension| format!("{minimal}-u-{extension}"));
