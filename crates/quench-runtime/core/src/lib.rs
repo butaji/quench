@@ -15812,6 +15812,12 @@ impl Vm {
                     Instanceof => return Ok(Value::Bool(instance_of_with_vm(self, &a, &b)?)),
                     In => {
                         let key = self.to_property_key(a)?;
+                        if !b.is_object_like() || is_symbol_carrier(&b) {
+                            return Err(JsError::Throw(type_error(
+                                self,
+                                "right-hand side of in is not an object",
+                            )));
+                        }
                         return Ok(Value::Bool(self.has_property_with_proxy(&b, &key)?));
                     }
                 };
@@ -15852,7 +15858,11 @@ impl Vm {
                     self.assign_target(&v.left, value.clone(), e)?;
                     return Ok(value);
                 }
-                let target = self.resolve_target(&v.left, e.clone())?;
+                let target = if v.operator == Assign {
+                    self.resolve_target_for_put(&v.left, e.clone())?
+                } else {
+                    self.resolve_target(&v.left, e.clone())?
+                };
                 let old = if v.operator == Assign {
                     // Simple assignment performs PutValue without an
                     // antecedent GetValue; unresolved sloppy names therefore
@@ -16374,6 +16384,32 @@ impl Vm {
             return Err(JsError::Message("target unsupported".into()));
         };
         self.resolve_simple_target(s, e)
+    }
+
+    fn resolve_target_for_put<'a>(
+        &mut self,
+        t: &AssignmentTarget<'a>,
+        e: Env,
+    ) -> JsResult<LValue> {
+        let Some(s) = t.as_simple_assignment_target() else {
+            return Err(JsError::Message("target unsupported".into()));
+        };
+        match s {
+            SimpleAssignmentTarget::ComputedMemberExpression(m) => {
+                let object = self.eval_expr(&m.object, e.clone())?;
+                let key = self.eval_expr(&m.expression, e.clone())?;
+                if matches!(&m.object, Expression::Super(_)) {
+                    Ok(LValue::DeferredSuperProp {
+                        base: object,
+                        receiver: Environment::get(&e, "this").unwrap_or(Value::Undefined),
+                        key,
+                    })
+                } else {
+                    Ok(LValue::DeferredProp { object, key })
+                }
+            }
+            _ => self.resolve_simple_target(s, e),
+        }
     }
 
     fn resolve_simple_target<'a>(
