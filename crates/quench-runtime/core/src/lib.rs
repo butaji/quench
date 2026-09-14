@@ -279,6 +279,7 @@ environment_keys! {
     SWITCH_ENVIRONMENT_NAME => "switch-environment",
     CLASS_FIELD_INITIALIZER_ENV_NAME => "class-field-initializer",
     CLASS_CONSTRUCTOR_ENV_NAME => "class-constructor",
+    STATIC_BLOCK_ENV_NAME => "static-block",
 }
 const CLASS_FIELDS_INITIALIZED_PROP: &str = "\0quench:class-fields-initialized";
 const CLASS_FIELD_KEY_PREFIX: &str = "\0quench:class-field-key:";
@@ -286,6 +287,7 @@ const CLASS_PRIVATE_KEY_PREFIX: &str = "\0quench:class-private-key:";
 const CLASS_PRIVATE_BRAND_PREFIX: &str = "\0quench:class-private-brand:";
 const DERIVED_CONSTRUCTOR_PROP: &str = "\0quench:derived-constructor";
 const DERIVED_THIS_PROP: &str = "\0quench:derived-this";
+const DERIVED_SUPER_CALLED_PROP: &str = "\0quench:derived-super-called";
 const DERIVED_THIS_BINDING: &str = "\0quench:derived-this-binding";
 // Internal object markers are semantic facts, not ad-hoc property probes.
 // Declare each marker once and derive the predicate used by every execution
@@ -11686,8 +11688,15 @@ impl Vm {
         if !has_instance_fields {
             return Ok(());
         }
+        // A derived instance contains one field set per class in its chain.
+        // Key the completion marker by the class environment so a base
+        // constructor cannot suppress the derived class's fields.
+        let initialized_key = format!(
+            "{CLASS_FIELDS_INITIALIZED_PROP}:{:x}",
+            Rc::as_ptr(&class_env) as usize
+        );
         if self
-            .get_prop(receiver, CLASS_FIELDS_INITIALIZED_PROP)
+            .get_prop(receiver, &initialized_key)
             .truthy()
         {
             return Ok(());
@@ -11744,7 +11753,7 @@ impl Vm {
                 &[receiver.clone(), Value::string_value(key), descriptor],
             )?;
         }
-        self.set_prop(receiver, CLASS_FIELDS_INITIALIZED_PROP, Value::Bool(true));
+        self.set_prop(receiver, &initialized_key, Value::Bool(true));
         Ok(())
     }
 
@@ -11768,6 +11777,7 @@ impl Vm {
                 "Cannot add private field to object",
             )));
         }
+        self.set_prop(&target, &Self::private_brand_key(key), Value::Bool(true));
         self.set_prop_with_accessors(&target, key, value)
     }
 
@@ -11784,14 +11794,16 @@ impl Vm {
         let mut installed = HashSet::new();
         for element in &class.body.body {
             let private_name = match element {
-                ClassElement::PropertyDefinition(field) if !field.r#static => match &field.key {
-                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
-                    _ => None,
-                },
                 ClassElement::MethodDefinition(method) if !method.r#static => match &method.key {
                     PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
                     _ => None,
                 },
+                ClassElement::AccessorProperty(property) if !property.r#static => {
+                    match &property.key {
+                        PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
             if let Some(private_name) = private_name {
@@ -11833,6 +11845,7 @@ impl Vm {
             } => (*node, env.clone(), super_constructor.clone()),
             _ => unreachable!("call_class requires a class function"),
         };
+        let is_derived = super_constructor.is_some();
         let constructor = class.body.body.iter().find_map(|element| {
             let ClassElement::MethodDefinition(method) = element else {
                 return None;
@@ -11859,6 +11872,10 @@ impl Vm {
             if super_constructor.is_some() {
                 self.set_prop(&constructor, DERIVED_CONSTRUCTOR_PROP, Value::Bool(true));
                 self.set_prop(&constructor, DERIVED_THIS_PROP, this.clone());
+                self.set_prop(&constructor, DERIVED_SUPER_CALLED_PROP, Value::Bool(false));
+                if let Some(class_value) = Environment::get(&env, CLASS_CONSTRUCTOR_ENV_NAME) {
+                    self.set_prop(&class_value, DERIVED_SUPER_CALLED_PROP, Value::Bool(false));
+                }
             }
             let constructor_this = if super_constructor.is_some() {
                 Value::Undefined
@@ -11866,6 +11883,16 @@ impl Vm {
                 this.clone()
             };
             let result = self.call_arguments(&constructor, constructor_this, args.as_slice())?;
+            if super_constructor.is_some()
+                && !result.is_object_like()
+                && !Environment::get(&env, CLASS_CONSTRUCTOR_ENV_NAME)
+                    .is_some_and(|class| self.get_prop(&class, DERIVED_SUPER_CALLED_PROP).truthy())
+            {
+                return Err(JsError::Throw(reference_error(
+                    self,
+                    "this",
+                )));
+            }
             if let Some(regexp) = result.as_regexp_ref() {
                 regexp.borrow_mut().prototype = this
                     .as_object_ref()
@@ -11895,6 +11922,11 @@ impl Vm {
         // `super()` for a derived constructor.
         let receiver = if result.is_object_like() {
             result
+        } else if is_derived {
+            Environment::get(&env, CLASS_CONSTRUCTOR_ENV_NAME)
+                .map(|class| self.get_prop(&class, DERIVED_THIS_PROP))
+                .filter(|value| value.is_object_like())
+                .unwrap_or(this)
         } else {
             this
         };
@@ -13617,7 +13649,7 @@ impl Vm {
             )));
         }
         self.strict_mode = effective_strict_mode;
-        if self.strict_mode && has_strict_yield_binding(&r.program, effective_strict_mode) {
+        if has_yield_binding_early_error(&r.program, effective_strict_mode) {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "yield is reserved as an identifier in strict mode",
@@ -13639,7 +13671,10 @@ impl Vm {
                 "yield is reserved in modules",
             )));
         }
-        if self.strict_mode && has_strict_reserved_binding(&r.program) {
+        if self.strict_mode
+            && (has_strict_reserved_binding(&r.program)
+                || has_strict_reserved_label(&r.program))
+        {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "reserved word used as a binding in strict mode",
@@ -14902,6 +14937,7 @@ impl Vm {
             ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
                     e.borrow_mut().lexical_names.insert(id.name.to_string());
+                    e.borrow_mut().immutable_names.insert(id.name.to_string());
                     e.borrow_mut().tdz_names.remove(id.name.as_str());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
@@ -14928,6 +14964,7 @@ impl Vm {
             Declaration::ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
                     e.borrow_mut().lexical_names.insert(id.name.to_string());
+                    e.borrow_mut().immutable_names.insert(id.name.to_string());
                     e.borrow_mut().tdz_names.remove(id.name.as_str());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
@@ -16015,30 +16052,28 @@ impl Vm {
         // Static private members brand the constructor object itself before
         // any static initializer executes.
         for element in &n.body.body {
-            let ClassElement::MethodDefinition(method) = element else {
-                continue;
+            let key = match element {
+                ClassElement::MethodDefinition(method) if method.r#static => {
+                    match &method.key {
+                        PropertyKey::PrivateIdentifier(identifier) => {
+                            Some(self.private_key(identifier.name.as_str(), &class_env))
+                        }
+                        _ => None,
+                    }
+                }
+                ClassElement::AccessorProperty(property) if property.r#static => {
+                    match &property.key {
+                        PropertyKey::PrivateIdentifier(identifier) => {
+                            Some(self.private_key(identifier.name.as_str(), &class_env))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
             };
-            if !method.r#static {
-                continue;
+            if let Some(key) = key {
+                self.set_prop(&class, &Self::private_brand_key(&key), Value::Bool(true));
             }
-            let PropertyKey::PrivateIdentifier(identifier) = &method.key else {
-                continue;
-            };
-            let key = self.private_key(identifier.name.as_str(), &class_env);
-            self.set_prop(&class, &Self::private_brand_key(&key), Value::Bool(true));
-        }
-        for element in &n.body.body {
-            let ClassElement::PropertyDefinition(field) = element else {
-                continue;
-            };
-            if !field.r#static {
-                continue;
-            }
-            let PropertyKey::PrivateIdentifier(identifier) = &field.key else {
-                continue;
-            };
-            let key = self.private_key(identifier.name.as_str(), &class_env);
-            self.set_prop(&class, &Self::private_brand_key(&key), Value::Bool(true));
         }
         if let Some(id) = &n.id {
             class_env.borrow_mut().tdz_names.remove(id.name.as_str());
@@ -16233,6 +16268,9 @@ impl Vm {
             match element {
                 ClassElement::StaticBlock(block) => {
                     let block_environment = Environment::new(Some(class_env.clone()));
+                    block_environment
+                        .borrow_mut()
+                        .declare(STATIC_BLOCK_ENV_NAME, Value::Bool(true));
                     let _ = self.exec_stmts(&block.body, block_environment)?;
                 }
                 ClassElement::PropertyDefinition(field) if field.r#static => {
@@ -16536,6 +16574,9 @@ impl Vm {
                         )));
                     }
                     let receiver = if matches!(&member.object, Expression::Super(_)) {
+                        if Environment::is_tdz(&e, "this") {
+                            return Err(JsError::Throw(reference_error(self, "this")));
+                        }
                         Environment::get(&e, "this").unwrap_or(Value::Undefined)
                     } else {
                         object.clone()
@@ -16567,6 +16608,9 @@ impl Vm {
                     let key_value = self.eval_expr(&member.expression, e.clone())?;
                     let key = self.to_property_key(key_value)?;
                     let receiver = if matches!(&member.object, Expression::Super(_)) {
+                        if Environment::is_tdz(&e, "this") {
+                            return Err(JsError::Throw(reference_error(self, "this")));
+                        }
                         Environment::get(&e, "this").unwrap_or(Value::Undefined)
                     } else {
                         object.clone()
@@ -16599,6 +16643,9 @@ impl Vm {
                     )));
                 }
                 let receiver = if matches!(&member.object, Expression::Super(_)) {
+                    if Environment::is_tdz(&e, "this") {
+                        return Err(JsError::Throw(reference_error(self, "this")));
+                    }
                     Environment::get(&e, "this").unwrap_or(Value::Undefined)
                 } else {
                     object.clone()
@@ -16626,6 +16673,9 @@ impl Vm {
                 let key_value = self.eval_expr(&member.expression, e.clone())?;
                 let key = self.to_property_key(key_value)?;
                 let receiver = if matches!(&member.object, Expression::Super(_)) {
+                    if Environment::is_tdz(&e, "this") {
+                        return Err(JsError::Throw(reference_error(self, "this")));
+                    }
                     Environment::get(&e, "this").unwrap_or(Value::Undefined)
                 } else {
                     object.clone()
@@ -17819,6 +17869,12 @@ impl Vm {
                         && let Some(function) = class_value.as_function_ref()
                         && let FunctionKind::Class { node, .. } = &function.kind
                     {
+                        // A base constructor may return a replacement object;
+                        // that object becomes the derived constructor's
+                        // receiver even when the derived body later returns
+                        // undefined.
+                        self.set_prop(&class_value, DERIVED_THIS_PROP, result.clone());
+                        self.set_prop(&class_value, DERIVED_SUPER_CALLED_PROP, Value::Bool(true));
                         self.install_class_private_brands(node, &class_environment, &result)?;
                         self.initialize_class_instance_fields(
                             node,
@@ -18987,6 +19043,18 @@ impl Vm {
                 };
                 Some(LValue::DeferredProp { object, key })
             }
+            AssignmentTarget::PrivateFieldExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                let key = self.private_key(member.field.name.as_str(), &e);
+                if !self.has_private_brand(&object, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot write private member #{}", member.field.name),
+                    )));
+                }
+                Some(LValue::PrivateProp(object, key))
+            }
             _ => None,
         };
         Ok(lvalue)
@@ -19027,6 +19095,18 @@ impl Vm {
                     Err(error) => return Err(error),
                 };
                 Ok(Some(LValue::DeferredProp { object, key }))
+            }
+            AssignmentTarget::PrivateFieldExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                let key = self.private_key(member.field.name.as_str(), &e);
+                if !self.has_private_brand(&object, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot write private member #{}", member.field.name),
+                    )));
+                }
+                Ok(Some(LValue::PrivateProp(object, key)))
             }
             _ => Ok(None),
         }
@@ -19111,12 +19191,20 @@ impl Vm {
 /// to inherited/non-writable or non-extensible properties are ignored, while
 /// strict writes and all Proxy paths preserve their observable TypeError.
 fn set_assignment_property(vm: &mut Vm, object: &Value, key: &str, value: Value) -> JsResult<()> {
+    // An accessor setter is user code: exceptions thrown by it propagate even
+    // when the surrounding assignment is sloppy.  Only the ordinary [[Set]]
+    // failures (non-writable or non-extensible targets) receive sloppy-mode
+    // suppression.
+    let invokes_setter = vm
+        .find_accessor(object, key)
+        .is_some_and(|(_, setter)| setter.is_some());
     match vm.set_prop_with_accessors(object, key, value) {
         Ok(()) => Ok(()),
         Err(JsError::Throw(error))
             if !vm.strict_mode
                 && proxy_target(object).is_none()
                 && !vm.restricted_function_property(object, key)
+                && !invokes_setter
                 && is_type_error_value(&error) =>
         {
             Ok(())
@@ -19345,6 +19433,7 @@ fn is_variable_environment(environment: &Env) -> bool {
     let candidate = environment.borrow();
     candidate.contains_local(dynbytecode::ARGUMENTS_BINDING_NAME)
         || candidate.contains_local(FUNCTION_ENV_NAME)
+        || candidate.contains_local(STATIC_BLOCK_ENV_NAME)
         || candidate.contains_local(STRICT_EVAL_ENV_NAME)
         || candidate.contains_local(MODULE_ENVIRONMENT_NAME)
         || candidate.parent.is_none()
@@ -20219,6 +20308,69 @@ fn expression_contains_identifier(expression: &Expression<'_>, name: &str) -> bo
     scan.found
 }
 
+fn statements_contain_identifier(statements: &[Statement<'_>], name: &str) -> bool {
+    struct Scan<'b> {
+        name: &'b str,
+        found: bool,
+    }
+    impl<'a, 'b> Visit<'a> for Scan<'b> {
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            if identifier.name == self.name {
+                self.found = true;
+            }
+            ast_walk::walk_identifier_reference(self, identifier);
+        }
+    }
+    let mut scan = Scan { name, found: false };
+    for statement in statements {
+        scan.visit_statement(statement);
+        if scan.found {
+            break;
+        }
+    }
+    scan.found
+}
+
+fn statements_contain_await(statements: &[Statement<'_>]) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_await_expression(&mut self, expression: &AwaitExpression<'a>) {
+            self.found = true;
+            ast_walk::walk_await_expression(self, expression);
+        }
+    }
+    let mut scan = Scan { found: false };
+    for statement in statements {
+        scan.visit_statement(statement);
+        if scan.found {
+            break;
+        }
+    }
+    scan.found
+}
+
+fn statements_contain_yield(statements: &[Statement<'_>]) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_yield_expression(&mut self, expression: &YieldExpression<'a>) {
+            self.found = true;
+            ast_walk::walk_yield_expression(self, expression);
+        }
+    }
+    let mut scan = Scan { found: false };
+    for statement in statements {
+        scan.visit_statement(statement);
+        if scan.found {
+            break;
+        }
+    }
+    scan.found
+}
+
 fn source_contains_identifier(source: &str, name: &str) -> bool {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
@@ -20557,6 +20709,46 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
             ast_walk::walk_object_property(self, property);
         }
 
+        fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+            if self.strict() {
+                let mut names = Vec::new();
+                for declarator in &declaration.declarations {
+                    pattern_bound_names(&declarator.id, &mut names);
+                }
+                if names
+                    .iter()
+                    .any(|name| matches!(name.as_str(), "eval" | "arguments"))
+                {
+                    self.invalid = true;
+                }
+            }
+            ast_walk::walk_variable_declaration(self, declaration);
+        }
+
+        fn visit_for_in_statement(&mut self, statement: &ForInStatement<'a>) {
+            if self.strict()
+                && statement
+                    .left
+                    .as_assignment_target()
+                    .is_some_and(assignment_target_contains_strict_reserved)
+            {
+                self.invalid = true;
+            }
+            ast_walk::walk_for_in_statement(self, statement);
+        }
+
+        fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
+            if self.strict()
+                && statement
+                    .left
+                    .as_assignment_target()
+                    .is_some_and(assignment_target_contains_strict_reserved)
+            {
+                self.invalid = true;
+            }
+            ast_walk::walk_for_of_statement(self, statement);
+        }
+
         fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
             let body_strict = arrow.body.as_function_body().is_some_and(|body| {
                 body.directives
@@ -20631,16 +20823,18 @@ fn has_for_binding_early_error(program: &Program<'_>, module: bool) -> bool {
             }
             pattern_bound_names(&declarator.id, &mut names);
         }
-        let mut unique = HashSet::new();
-        invalid |= names.iter().any(|name| !unique.insert(name.clone()));
-        invalid |= names
-            .iter()
-            .any(|name| name == "let" || (module && name == "await"));
-        let mut var_names = Vec::new();
-        collect_strict_eval_var_names(std::slice::from_ref(body), &mut var_names, false);
-        invalid |= names
-            .iter()
-            .any(|name| var_names.iter().any(|var_name| var_name == name));
+        if declaration.kind != VariableDeclarationKind::Var {
+            let mut unique = HashSet::new();
+            invalid |= names.iter().any(|name| !unique.insert(name.clone()));
+            invalid |= names
+                .iter()
+                .any(|name| name == "let" || (module && name == "await"));
+            let mut var_names = Vec::new();
+            collect_strict_eval_var_names(std::slice::from_ref(body), &mut var_names, false);
+            invalid |= names
+                .iter()
+                .any(|name| var_names.iter().any(|var_name| var_name == name));
+        }
         invalid || labelled_function_statement(body)
     }
 
@@ -20798,9 +20992,36 @@ fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool
             _ => false,
         }
     }
-    if program.body.iter().any(|statement| {
-        matches!(statement, Statement::ReturnStatement(_)) || is_module_declaration(statement)
-    }) {
+    struct TopLevelReturnScan {
+        function_depth: usize,
+        found: bool,
+    }
+    impl<'a> Visit<'a> for TopLevelReturnScan {
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            self.function_depth += 1;
+            ast_walk::walk_function(self, function, flags);
+            self.function_depth -= 1;
+        }
+
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            self.function_depth += 1;
+            ast_walk::walk_arrow_function_expression(self, arrow);
+            self.function_depth -= 1;
+        }
+
+        fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+            if self.function_depth == 0 {
+                self.found = true;
+            }
+            ast_walk::walk_return_statement(self, statement);
+        }
+    }
+    let mut top_level_return = TopLevelReturnScan {
+        function_depth: 0,
+        found: false,
+    };
+    top_level_return.visit_program(program);
+    if top_level_return.found || program.body.iter().any(is_module_declaration) {
         return true;
     }
     let direct_meta = program.body.iter().any(|statement| {
@@ -20818,10 +21039,7 @@ fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool
         let Statement::ExpressionStatement(expression) = statement else {
             return false;
         };
-        matches!(
-            expression.expression,
-            Expression::ArrowFunctionExpression(_) | Expression::ParenthesizedExpression(_)
-        )
+        matches!(expression.expression, Expression::ArrowFunctionExpression(_))
     });
     top_level_arrow
         && (source.contains("new.target")
@@ -21209,6 +21427,7 @@ fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
         lexical
             .iter()
             .any(|name| vars.iter().any(|candidate| candidate == *name))
+            || lexical_names.iter().any(|name| name == "let")
             || lexical_names.iter().enumerate().any(|(index, name)| {
                 lexical_names
                     .iter()
@@ -21249,6 +21468,7 @@ fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
                 }
                 Statement::SwitchStatement(statement) => {
                     let mut names = HashSet::new();
+                    let mut lexical_names = Vec::new();
                     let duplicate = statement
                         .cases
                         .iter()
@@ -21279,8 +21499,19 @@ fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
                             _ => None,
                         })
                         .flatten()
-                        .any(|name| !names.insert(name));
+                        .any(|name| {
+                            lexical_names.push(name.clone());
+                            !names.insert(name)
+                        });
+                    let mut vars = Vec::new();
+                    for case in &statement.cases {
+                        collect_strict_eval_var_names(&case.consequent, &mut vars, false);
+                    }
+                    let cross_scope_redeclaration = lexical_names
+                        .iter()
+                        .any(|name| vars.iter().any(|candidate| candidate == name));
                     duplicate
+                        || cross_scope_redeclaration
                         || statement
                             .cases
                             .iter()
@@ -21372,32 +21603,35 @@ fn function_scope_block_redeclaration(statements: &[Statement<'_>]) -> bool {
 }
 
 fn has_statement_position_function(program: &Program<'_>) -> bool {
+    fn statement_position(statement: &Statement<'_>) -> bool {
+        matches!(statement, Statement::FunctionDeclaration(_))
+            || labelled_function_statement(statement)
+    }
     fn nested(statement: &Statement<'_>) -> bool {
         match statement {
             Statement::IfStatement(statement) => {
-                matches!(statement.consequent, Statement::FunctionDeclaration(_))
+                statement_position(&statement.consequent)
                     || statement.alternate.as_ref().is_some_and(|alternate| {
-                        matches!(alternate, Statement::FunctionDeclaration(_))
+                        statement_position(alternate)
                     })
             }
             Statement::WhileStatement(statement) => {
-                matches!(statement.body, Statement::FunctionDeclaration(_))
+                statement_position(&statement.body)
             }
             Statement::DoWhileStatement(statement) => {
-                matches!(statement.body, Statement::FunctionDeclaration(_))
+                statement_position(&statement.body)
             }
             Statement::ForStatement(statement) => {
-                matches!(statement.body, Statement::FunctionDeclaration(_))
+                statement_position(&statement.body)
             }
             Statement::ForInStatement(statement) => {
-                matches!(statement.body, Statement::FunctionDeclaration(_))
+                statement_position(&statement.body)
             }
             Statement::ForOfStatement(statement) => {
-                matches!(statement.body, Statement::FunctionDeclaration(_))
+                statement_position(&statement.body)
             }
             Statement::LabeledStatement(statement) => {
-                matches!(statement.body, Statement::FunctionDeclaration(_))
-                    || nested(&statement.body)
+                statement_position(&statement.body) || nested(&statement.body)
             }
             Statement::WithStatement(statement) => nested(&statement.body),
             Statement::BlockStatement(block) => block.body.iter().any(nested),
@@ -21461,6 +21695,26 @@ fn has_catch_parameter_early_error(program: &Program<'_>, inherited_strict: bool
                 self.invalid = true;
             }
             ast_walk::walk_catch_parameter(self, parameter);
+        }
+
+        fn visit_catch_clause(&mut self, clause: &CatchClause<'a>) {
+            if let Some(parameter) = &clause.param {
+                let mut bound = Vec::new();
+                pattern_bound_names(&parameter.pattern, &mut bound);
+                let mut lexical = HashSet::new();
+                collect_direct_lexical_names(&clause.body.body, &mut lexical);
+                for statement in &clause.body.body {
+                    if let Statement::FunctionDeclaration(function) = statement
+                        && let Some(id) = &function.id
+                    {
+                        lexical.insert(id.name.to_string());
+                    }
+                }
+                if bound.iter().any(|name| lexical.contains(name)) {
+                    self.invalid = true;
+                }
+            }
+            ast_walk::walk_catch_clause(self, clause);
         }
     }
     let mut scan = Scan {
@@ -21784,9 +22038,10 @@ fn has_strict_legacy_literal_escape(source: &str) -> bool {
     false
 }
 
-fn has_strict_yield_binding(program: &Program<'_>, inherited_strict: bool) -> bool {
+fn has_yield_binding_early_error(program: &Program<'_>, inherited_strict: bool) -> bool {
     struct Scan {
         strict_depth: usize,
+        yield_depth: usize,
         invalid: bool,
     }
     impl<'a> Visit<'a> for Scan {
@@ -21805,14 +22060,20 @@ fn has_strict_yield_binding(program: &Program<'_>, inherited_strict: bool) -> bo
             if body_strict {
                 self.strict_depth += 1;
             }
+            if function.generator {
+                self.yield_depth += 1;
+            }
             ast_walk::walk_function(self, function, flags);
+            if function.generator {
+                self.yield_depth -= 1;
+            }
             if body_strict {
                 self.strict_depth -= 1;
             }
         }
 
         fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
-            if self.strict_depth > 0 && identifier.name == "yield" {
+            if (self.strict_depth > 0 || self.yield_depth > 0) && identifier.name == "yield" {
                 self.invalid = true;
             }
             ast_walk::walk_binding_identifier(self, identifier);
@@ -21820,6 +22081,7 @@ fn has_strict_yield_binding(program: &Program<'_>, inherited_strict: bool) -> bo
     }
     let mut scan = Scan {
         strict_depth: usize::from(inherited_strict),
+        yield_depth: 0,
         invalid: false,
     };
     scan.visit_program(program);
@@ -21843,6 +22105,34 @@ fn has_strict_reserved_binding(program: &Program<'_>) -> bool {
                 | "static"
         )
     })
+}
+
+fn has_strict_reserved_label(program: &Program<'_>) -> bool {
+    const RESERVED: [&str; 9] = [
+        "implements",
+        "interface",
+        "let",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "static",
+        "yield",
+    ];
+    struct Scan {
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_labeled_statement(&mut self, statement: &LabeledStatement<'a>) {
+            if RESERVED.contains(&statement.label.name.as_str()) {
+                self.invalid = true;
+            }
+            ast_walk::walk_labeled_statement(self, statement);
+        }
+    }
+    let mut scan = Scan { invalid: false };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn has_strict_reserved_shorthand(program: &Program<'_>, inherited_strict: bool) -> bool {
@@ -21987,12 +22277,13 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
     }
     impl<'a> Visit<'a> for Scan {
         fn visit_class(&mut self, class: &Class<'a>) {
-            let mut private_names: HashMap<&str, u8> = HashMap::new();
+            let mut private_names: HashMap<&str, (bool, u8)> = HashMap::new();
             let mut constructors = 0usize;
             for element in &class.body.body {
-                let (key, kind, expression_errors, super_error) = match element {
+                let (key, is_static, kind, expression_errors, super_error) = match element {
                     ClassElement::PropertyDefinition(field) => (
                         private_name_and_kind(&field.key),
+                        field.r#static,
                         1,
                         field
                             .key
@@ -22017,6 +22308,7 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                         };
                         (
                             private_name_and_kind(&method.key),
+                            method.r#static,
                             method_kind,
                             false,
                             method.kind != MethodDefinitionKind::Constructor
@@ -22025,6 +22317,7 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                     }
                     ClassElement::AccessorProperty(property) => (
                         private_name_and_kind(&property.key),
+                        property.r#static,
                         1,
                         property
                             .key
@@ -22035,7 +22328,43 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                             .as_ref()
                             .is_some_and(|value| expression_has_field_error(value)),
                     ),
-                    _ => (None, 1, false, false),
+                    ClassElement::StaticBlock(block) => (
+                        None,
+                        true,
+                        1,
+                        statements_contain_identifier(&block.body, "arguments")
+                            || statements_contain_await(&block.body)
+                            || statements_contain_yield(&block.body)
+                            || statements_contain_identifier(&block.body, "yield")
+                            || {
+                                let mut lexical = Vec::new();
+                                for statement in &block.body {
+                                    match statement {
+                                        Statement::VariableDeclaration(declaration)
+                                            if declaration.kind != VariableDeclarationKind::Var =>
+                                        {
+                                            for declarator in &declaration.declarations {
+                                                pattern_bound_names(&declarator.id, &mut lexical);
+                                            }
+                                        }
+                                        Statement::ClassDeclaration(class) => {
+                                            if let Some(id) = &class.id {
+                                                lexical.push(id.name.to_string());
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                let mut unique = HashSet::new();
+                                let duplicate = lexical.iter().any(|name| !unique.insert(name));
+                                let mut vars = Vec::new();
+                                collect_strict_eval_var_names(&block.body, &mut vars, true);
+                                duplicate
+                                    || lexical.iter().any(|name| vars.iter().any(|var| var == name))
+                            },
+                        false,
+                    ),
+                    _ => (None, false, 1, false, false),
                 };
                 if expression_errors || super_error {
                     self.invalid = true;
@@ -22043,14 +22372,17 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                 let Some((name, _)) = key else {
                     continue;
                 };
-                let previous = private_names.entry(name).or_default();
-                let merged = *previous | kind;
-                // A private getter/setter pair is the sole duplicate form
-                // permitted by the class static semantics.
-                if *previous != 0 && merged != 6 {
+                let previous = private_names.entry(name).or_insert((is_static, 0));
+                if previous.0 != is_static {
                     self.invalid = true;
                 }
-                *previous = merged;
+                let merged = previous.1 | kind;
+                // A private getter/setter pair is the sole duplicate form
+                // permitted by the class static semantics.
+                if previous.1 != 0 && merged != 6 {
+                    self.invalid = true;
+                }
+                previous.1 = merged;
             }
             if constructors > 1 {
                 self.invalid = true;
