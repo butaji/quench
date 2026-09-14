@@ -5834,6 +5834,8 @@ struct Vm {
     sync_generator_iterators: Vec<Value>,
     sync_generator_pending_yield: Option<SyncGeneratorPendingYield>,
     sync_generator_replay_value: Option<Value>,
+    sync_generator_replay_values: Vec<Value>,
+    sync_generator_yield_index: usize,
     sync_generator_resume: Option<SyncGeneratorResume>,
     sync_generator_return_value: Option<Value>,
     mapped_arguments: RefCell<Vec<(ObjectHandle, Env, Vec<String>)>>,
@@ -5871,6 +5873,7 @@ struct SyncGeneratorContinuation {
     mapped_arguments_object: Option<ObjectHandle>,
     pending_iterators: Vec<Value>,
     pending_yield: Option<SyncGeneratorPendingYield>,
+    replay_values: Vec<Value>,
 }
 
 enum SyncGeneratorResume {
@@ -5976,6 +5979,8 @@ impl Vm {
             sync_generator_iterators: Vec::new(),
             sync_generator_pending_yield: None,
             sync_generator_replay_value: None,
+            sync_generator_replay_values: Vec::new(),
+            sync_generator_yield_index: 0,
             sync_generator_resume: None,
             sync_generator_return_value: None,
             mapped_arguments: RefCell::new(Vec::new()),
@@ -9854,7 +9859,14 @@ impl Vm {
                 Value::Bool(true),
             );
         }
-        let body_environment = if non_simple_parameters {
+        let split_named_body_binding = node.id.as_ref().is_some_and(|identifier| {
+            node.body
+                .as_ref()
+                .is_some_and(|body| {
+                    dynbytecode::contains_var_named(&body.statements, identifier.name.as_str())
+                })
+        });
+        let body_environment = if non_simple_parameters || split_named_body_binding {
             let body_environment = Environment::new(Some(e.clone()));
             body_environment
                 .borrow_mut()
@@ -10008,6 +10020,7 @@ impl Vm {
             mapped_arguments_object: None,
             pending_iterators: Vec::new(),
             pending_yield: None,
+            replay_values: Vec::new(),
         })
     }
 
@@ -10077,6 +10090,8 @@ impl Vm {
         self.sync_generator_return_value = None;
         self.sync_generator_yielding = true;
         self.sync_generator_iterators = std::mem::take(&mut continuation.pending_iterators);
+        self.sync_generator_replay_values = std::mem::take(&mut continuation.replay_values);
+        self.sync_generator_yield_index = 0;
         let resume_value = match &resume {
             SyncGeneratorResume::Next(value)
             | SyncGeneratorResume::Return(value)
@@ -10095,7 +10110,11 @@ impl Vm {
                 &self.sync_generator_resume,
                 Some(SyncGeneratorResume::Next(_))
             ) {
-                self.sync_generator_replay_value = Some(resume_value.clone());
+                if matches!(&pending, SyncGeneratorPendingYield::Replay { .. }) {
+                    self.sync_generator_replay_values.push(resume_value.clone());
+                } else {
+                    self.sync_generator_replay_value = Some(resume_value.clone());
+                }
             }
             self.sync_generator_pending_yield = Some(pending);
         }
@@ -10146,13 +10165,19 @@ impl Vm {
                     }
                     Ok(Signal::Return(value)) => {
                         continuation.done = true;
+                        self.sync_generator_pending_yield = None;
+                        self.sync_generator_replay_values.clear();
                         return Ok(generator_result(self, value, true));
                     }
                     Ok(Signal::Break(_) | Signal::Continue(_)) => {
                         continuation.done = true;
+                        self.sync_generator_pending_yield = None;
+                        self.sync_generator_replay_values.clear();
                         return Ok(generator_result(self, Value::Undefined, true));
                     }
                     Ok(Signal::Normal(_)) => {
+                        self.sync_generator_pending_yield = None;
+                        self.sync_generator_replay_values.clear();
                         if let Some(value) = self.sync_generator_return_value.take() {
                             continuation.done = true;
                             return Ok(generator_result(self, value, true));
@@ -10168,6 +10193,7 @@ impl Vm {
         }
         continuation.pending_iterators = std::mem::take(&mut self.sync_generator_iterators);
         continuation.pending_yield = self.sync_generator_pending_yield.take();
+        continuation.replay_values = std::mem::take(&mut self.sync_generator_replay_values);
         self.sync_generator_replay_value = None;
         self.sync_generator_resume = None;
         self.sync_generator_yielding = false;
@@ -16162,21 +16188,29 @@ impl Vm {
                     }
                     return Err(JsError::Yield(value));
                 }
-                if let Some(value) = self.sync_generator_replay_value.take() {
-                    return Ok(value);
-                }
                 let value = yield_expression
                     .argument
                     .as_ref()
                     .map(|argument| self.eval_expr(argument, e.clone()))
                     .transpose()?
                     .unwrap_or(Value::Undefined);
+                let yield_index = self.sync_generator_yield_index;
+                self.sync_generator_yield_index = self.sync_generator_yield_index.saturating_add(1);
+                if let Some(value) = self.sync_generator_replay_values.get(yield_index).cloned() {
+                    return Ok(value);
+                }
                 if self.sync_generator_yielding {
                     if yield_expression.delegate {
                         return Err(JsError::Message(
                             "unsupported delegated generator yield".into(),
                         ));
                     }
+                    // Resume ordinary `yield` expressions at the same
+                    // statement and feed the caller's value back into the
+                    // expression.  Without this replay marker the statement
+                    // cursor advanced past a suspended return/assignment.
+                    self.sync_generator_pending_yield =
+                        Some(SyncGeneratorPendingYield::Replay { statement: 0 });
                     return Err(JsError::Yield(value));
                 }
                 let Some(yields) = self.async_generator_yields.as_mut() else {
