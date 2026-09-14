@@ -12872,6 +12872,7 @@ impl Vm {
         let nested_strict_error = has_nested_strict_function_error(&r.program.body);
         let class_early_error = has_class_element_early_error(&r.program);
         let strict_delete_error = has_strict_delete_identifier(&r.program, effective_strict_mode);
+        let strict_update_error = has_strict_update_identifier(&r.program, effective_strict_mode);
         let eval_context = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
         let function_super_error = if eval_context && source.contains("super") {
             false
@@ -12927,6 +12928,7 @@ impl Vm {
             || nested_strict_error
             || class_early_error
             || strict_delete_error
+            || strict_update_error
             || function_super_error
             || global_code_error
             || has_class_strict_name_error(&r.program)
@@ -16550,6 +16552,15 @@ impl Vm {
         // A Reference captures its resolved environment at evaluation time.
         // Direct eval may add a `var` binding later, but that declaration must
         // not retarget an already-created lvalue.
+        let realm = self.realm_environment_for_environment(e);
+        if let Some(global) = self.global_object_for_environment(&realm)
+            && self.has_property_with_proxy(&global, name)?
+        {
+            // Global object bindings are Object Environment Record
+            // references. Keep the object edge explicit so PutValue repeats
+            // HasProperty after a getter (or proxy trap) mutates the target.
+            return Ok(LValue::WithProp(global, name.to_owned()));
+        }
         Ok(LValue::UnresolvedVar(e.clone(), name.to_owned()))
     }
     fn read_lvalue(&mut self, target: &LValue) -> JsResult<Value> {
@@ -19946,6 +19957,57 @@ fn has_strict_delete_identifier(program: &Program<'_>, inherited_strict: bool) -
                 self.invalid = true;
             }
             ast_walk::walk_unary_expression(self, expression);
+        }
+    }
+    let mut scan = Scan {
+        strict_depth: usize::from(inherited_strict),
+        invalid: false,
+    };
+    scan.visit_program(program);
+    scan.invalid
+}
+
+fn has_strict_update_identifier(program: &Program<'_>, inherited_strict: bool) -> bool {
+    struct Scan {
+        strict_depth: usize,
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.strict_depth += 1;
+            ast_walk::walk_class(self, class);
+            self.strict_depth -= 1;
+        }
+
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let body_strict = function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+            let inherited = self.strict_depth > 0;
+            if inherited || body_strict {
+                self.strict_depth += 1;
+            }
+            ast_walk::walk_function(self, function, flags);
+            if inherited || body_strict {
+                self.strict_depth -= 1;
+            }
+        }
+
+        fn visit_update_expression(&mut self, expression: &UpdateExpression<'a>) {
+            fn strict_name(expression: &SimpleAssignmentTarget<'_>) -> bool {
+                match expression {
+                    SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+                        matches!(identifier.name.as_str(), "eval" | "arguments")
+                    }
+                    _ => false,
+                }
+            }
+            if self.strict_depth > 0 && strict_name(&expression.argument) {
+                self.invalid = true;
+            }
+            ast_walk::walk_update_expression(self, expression);
         }
     }
     let mut scan = Scan {
