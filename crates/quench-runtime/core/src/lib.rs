@@ -12829,13 +12829,17 @@ impl Vm {
         let nested_strict_error = has_nested_strict_function_error(&r.program.body);
         let class_early_error = has_class_element_early_error(&r.program);
         let strict_delete_error = has_strict_delete_identifier(&r.program, effective_strict_mode);
-        let function_super_error = has_invalid_function_super(&r.program);
+        let eval_context = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
+        let function_super_error = if eval_context && source.contains("super") {
+            false
+        } else {
+            has_invalid_function_super(&r.program)
+        };
         // Script-only early errors (return, module declarations, and
         // top-level `super`/`new.target`) do not apply when the parser was
         // explicitly given a module source type.  Module files are executed
         // by the same stencil core, so keep the validation shared while
         // selecting the grammar's source-level early-error set here.
-        let eval_context = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
         let eval_function_meta =
             eval_context && (source.contains("new.target") || source.contains("super"));
         let global_code_error = if st.is_module() || eval_function_meta {
