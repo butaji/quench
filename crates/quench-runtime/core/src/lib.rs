@@ -15900,7 +15900,8 @@ impl Vm {
                 Ok(value)
             }
             UpdateExpression(v) => {
-                let old = self.eval_simple_target(&v.argument, e.clone())?;
+                let target = self.resolve_simple_target(&v.argument, e.clone())?;
+                let old = self.read_lvalue(&target)?;
                 if is_bigint_marker(&old) {
                     let value = parse_bigint_text(old.as_string().map_or("", String::as_str))
                         .map_err(|_| JsError::Throw(type_error(self, "invalid BigInt value")))?;
@@ -15910,7 +15911,7 @@ impl Vm {
                     } else {
                         bigint_marker(value - one)
                     };
-                    self.assign_simple_target(&v.argument, next.clone(), e)?;
+                    self.write_lvalue(target, next.clone())?;
                     return Ok(if v.prefix { next } else { old });
                 }
                 let primitive = if old.is_object_like() {
@@ -15924,7 +15925,7 @@ impl Vm {
                 } else {
                     numeric - 1.0
                 };
-                self.assign_simple_target(&v.argument, Value::Number(n), e)?;
+                self.write_lvalue(target, Value::Number(n))?;
                 Ok(if v.prefix {
                     Value::Number(n)
                 } else {
@@ -16346,6 +16347,14 @@ impl Vm {
         let Some(s) = t.as_simple_assignment_target() else {
             return Err(JsError::Message("target unsupported".into()));
         };
+        self.resolve_simple_target(s, e)
+    }
+
+    fn resolve_simple_target<'a>(
+        &mut self,
+        s: &SimpleAssignmentTarget<'a>,
+        e: Env,
+    ) -> JsResult<LValue> {
         match s {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(i) => {
                 self.resolve_identifier_target(&e, i.name.as_str())
