@@ -5836,6 +5836,7 @@ struct Vm {
     sync_generator_replay_value: Option<Value>,
     sync_generator_replay_values: Vec<Value>,
     sync_generator_yield_index: usize,
+    sync_generator_omit_done: bool,
     sync_generator_resume: Option<SyncGeneratorResume>,
     sync_generator_return_value: Option<Value>,
     mapped_arguments: RefCell<Vec<(ObjectHandle, Env, Vec<String>)>>,
@@ -5981,6 +5982,7 @@ impl Vm {
             sync_generator_replay_value: None,
             sync_generator_replay_values: Vec::new(),
             sync_generator_yield_index: 0,
+            sync_generator_omit_done: false,
             sync_generator_resume: None,
             sync_generator_return_value: None,
             mapped_arguments: RefCell::new(Vec::new()),
@@ -10089,6 +10091,7 @@ impl Vm {
         self.strict_mode = continuation.strict;
         self.sync_generator_return_value = None;
         self.sync_generator_yielding = true;
+        self.sync_generator_omit_done = false;
         self.sync_generator_iterators = std::mem::take(&mut continuation.pending_iterators);
         self.sync_generator_replay_values = std::mem::take(&mut continuation.replay_values);
         self.sync_generator_yield_index = 0;
@@ -13709,7 +13712,16 @@ impl Vm {
         let mut last = Value::Undefined;
         for s in b {
             match self.exec_stmt(s, e.clone())? {
-                Signal::Normal(v) => last = v,
+                Signal::Normal(v) => {
+                    last = v;
+                    // A completed delegated `yield*` carries an abrupt
+                    // return completion through the expression evaluator.
+                    // Bubble it through nested statement lists so code after
+                    // the delegation does not run before `finally`.
+                    if let Some(value) = self.sync_generator_return_value.take() {
+                        return Ok(Signal::Return(value));
+                    }
+                }
                 x => return Ok(x),
             }
         }
@@ -14277,6 +14289,12 @@ impl Vm {
             TryStatement(x) => {
                 let try_environment = Environment::new(Some(e.clone()));
                 let r = self.exec_stmts(&x.block.body, try_environment);
+                // A generator suspension is an internal control-flow edge,
+                // not an abrupt completion visible to the language.  In
+                // particular, `yield` inside a `try` must leave its
+                // `finally` pending until the continuation resumes; running
+                // it here would tear down delegation on the first `next()`.
+                let suspended = matches!(r, Err(JsError::Yield(_)));
                 let out = match r {
                     Ok(v) => Ok(v),
                     Err(JsError::Throw(v)) => {
@@ -14308,7 +14326,7 @@ impl Vm {
                     }
                     Err(v) => Err(v),
                 };
-                if let Some(f) = &x.finalizer {
+                if !suspended && let Some(f) = &x.finalizer {
                     self.exec_stmts(&f.body, e)?;
                 }
                 out
@@ -14731,7 +14749,7 @@ impl Vm {
         &mut self,
         iterator: &Value,
         input: Option<Value>,
-    ) -> JsResult<(bool, Value)> {
+    ) -> JsResult<(bool, Value, bool)> {
         let next = self.get_prop_with_accessors(iterator, "next")?;
         if !next.is_function() {
             return Err(JsError::Throw(type_error(
@@ -14750,6 +14768,7 @@ impl Vm {
             )));
         }
         let done = self.get_prop_with_accessors(&result, "done")?.truthy();
+        let done_present = self.has_own_property_key(&result, "done");
         let value = if done
             || !self.has_own_property_key(&result, "done")
             || self.find_accessor(&result, "value").is_none()
@@ -14758,7 +14777,7 @@ impl Vm {
         } else {
             Value::Undefined
         };
-        Ok((done, value))
+        Ok((done, value, done_present))
     }
 
     fn iterator_result_from_call(
@@ -14775,7 +14794,14 @@ impl Vm {
             )));
         }
         let done = self.get_prop_with_accessors(&result, "done")?.truthy();
-        let value = self.get_prop_with_accessors(&result, "value")?;
+        let value = if done
+            || !self.has_own_property_key(&result, "done")
+            || self.find_accessor(&result, "value").is_none()
+        {
+            self.get_prop_with_accessors(&result, "value")?
+        } else {
+            Value::Undefined
+        };
         Ok((done, value))
     }
 
@@ -16103,13 +16129,21 @@ impl Vm {
                         let is_return = matches!(&resume, SyncGeneratorResume::Return(_));
                         let (done, value) = match resume {
                             SyncGeneratorResume::Next(input) => {
-                                self.iterator_next_with_input(&iterator, Some(input))?
+                                let (done, value, done_present) =
+                                    self.iterator_next_with_input(&iterator, Some(input))?;
+                                if !done && !done_present {
+                                    self.sync_generator_omit_done = true;
+                                }
+                                (done, value)
                             }
                             SyncGeneratorResume::Throw(input) => {
                                 let throw = self.get_prop_with_accessors(&iterator, "throw")?;
-                                if throw.is_undefined() {
+                                if throw.is_undefined() || throw.is_null() {
                                     self.iterator_close(&iterator)?;
-                                    return Err(JsError::Throw(input));
+                                    return Err(JsError::Throw(type_error(
+                                        self,
+                                        "iterator does not provide a throw method",
+                                    )));
                                 }
                                 if !throw.is_function() {
                                     return Err(JsError::Throw(type_error(
@@ -16122,7 +16156,7 @@ impl Vm {
                             SyncGeneratorResume::Return(input) => {
                                 let return_method =
                                     self.get_prop_with_accessors(&iterator, "return")?;
-                                if return_method.is_undefined() {
+                                if return_method.is_undefined() || return_method.is_null() {
                                     self.sync_generator_return_value = Some(input.clone());
                                     (true, input)
                                 } else {
@@ -16173,10 +16207,13 @@ impl Vm {
                         .unwrap_or(Value::Undefined);
                     let record = self.iterator_record(&source)?;
                     let iterator = record.iterator;
-                    let (done, value) =
+                    let (done, value, done_present) =
                         self.iterator_next_with_input(&iterator, Some(Value::Undefined))?;
                     if done {
                         return Ok(value);
+                    }
+                    if !done_present {
+                        self.sync_generator_omit_done = true;
                     }
                     if self.sync_generator_yielding {
                         self.sync_generator_iterators.push(iterator.clone());
@@ -23116,7 +23153,10 @@ fn native_sync_generator_constructor(
 fn generator_result(vm: &mut Vm, value: Value, done: bool) -> Value {
     let result = vm.object(None);
     vm.set_prop(&result, "value", value);
-    vm.set_prop(&result, "done", Value::Bool(done));
+    if !vm.sync_generator_omit_done {
+        vm.set_prop(&result, "done", Value::Bool(done));
+    }
+    vm.sync_generator_omit_done = false;
     result
 }
 
