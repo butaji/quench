@@ -7407,6 +7407,7 @@ impl Vm {
                 .prototype = Some(object_prototype);
         }
         self.set_prop(&promise_prototype, "constructor", promise.clone());
+        set_property_attributes(&promise, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
         install_builtin_methods!(
             self,
             promise_prototype.clone(),
@@ -36876,6 +36877,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                             .or_else(|| {
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_finalization_registry_constructor))
                                     .then_some("FinalizationRegistry")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_promise_constructor))
+                                    .then_some("Promise")
                             })
                             .or_else(|| {
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_sync_generator_constructor))
