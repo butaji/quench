@@ -276,6 +276,7 @@ environment_keys! {
     NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
     SUPER_CALLED_ENV_NAME => "super-called",
     CLASS_FIELDS_INITIALIZED_ENV_NAME => "class-fields-initialized",
+    SWITCH_ENVIRONMENT_NAME => "switch-environment",
     CLASS_FIELD_INITIALIZER_ENV_NAME => "class-field-initializer",
     CLASS_CONSTRUCTOR_ENV_NAME => "class-constructor",
 }
@@ -14579,6 +14580,9 @@ impl Vm {
             SwitchStatement(x) => {
                 let d = self.eval_expr(&x.discriminant, e.clone())?;
                 let switch_environment = Environment::new(Some(e.clone()));
+                switch_environment
+                    .borrow_mut()
+                    .declare(SWITCH_ENVIRONMENT_NAME, Value::Bool(true));
                 let mut switch_lexical_names = HashSet::new();
                 for case in &x.cases {
                     collect_lexical_binding_names(&case.consequent, &mut switch_lexical_names);
@@ -14587,35 +14591,51 @@ impl Vm {
                     .borrow_mut()
                     .lexical_names
                     .extend(switch_lexical_names);
-                let mut active = false;
-                let mut completion = None;
-                for c in &x.cases {
-                    if !active {
-                        active = match &c.test {
-                            Some(t) => eq_strict(&d, &self.eval_expr(t, e.clone())?),
-                            None => true,
-                        }
+                {
+                    let names = switch_environment.borrow().lexical_names.clone();
+                    let mut environment = switch_environment.borrow_mut();
+                    for name in names {
+                        environment.tdz_names.insert(name.clone());
+                        environment.declare(&name, Value::Undefined);
                     }
-                    if active {
-                        for st in &c.consequent {
-                            match self.exec_stmt(st, switch_environment.clone())? {
-                                Signal::Break(None, _) => {
-                                    return Ok(completion
-                                        .map_or(Signal::Normal(Value::Undefined), Signal::Normal));
-                                }
-                                Signal::Break(Some(label), value) => {
-                                    return Ok(Signal::Break(Some(label), value));
-                                }
-                                Signal::Return(v) => return Ok(Signal::Return(v)),
-                                Signal::Continue(None, value) => {
-                                    return Ok(Signal::Continue(None, value));
-                                }
-                                Signal::Continue(Some(label), value) => {
-                                    return Ok(Signal::Continue(Some(label), value));
-                                }
-                                Signal::Normal(value) => completion = Some(value),
-                                Signal::Empty => {}
+                }
+                let mut start_case = None;
+                let mut default_case = None;
+                for (index, case) in x.cases.iter().enumerate() {
+                    match &case.test {
+                        None => default_case = Some(index),
+                        Some(test) if start_case.is_none() => {
+                            if eq_strict(&d, &self.eval_expr(test, switch_environment.clone())?) {
+                                start_case = Some(index);
+                                break;
                             }
+                        }
+                        Some(_) => {}
+                    }
+                }
+                let mut completion = None;
+                for c in x.cases.iter().skip(start_case.or(default_case).unwrap_or(x.cases.len())) {
+                    for st in &c.consequent {
+                        match self.exec_stmt(st, switch_environment.clone())? {
+                            Signal::Break(None, value) => {
+                                return Ok(Signal::Normal(
+                                    value
+                                        .or(completion)
+                                        .unwrap_or(Value::Undefined),
+                                ));
+                            }
+                            Signal::Break(Some(label), value) => {
+                                return Ok(Signal::Break(Some(label), value));
+                            }
+                            Signal::Return(v) => return Ok(Signal::Return(v)),
+                            Signal::Continue(None, value) => {
+                                return Ok(Signal::Continue(None, value.or(completion)));
+                            }
+                            Signal::Continue(Some(label), value) => {
+                                return Ok(Signal::Continue(Some(label), value));
+                            }
+                            Signal::Normal(value) => completion = Some(value),
+                            Signal::Empty => {}
                         }
                     }
                 }
@@ -14696,7 +14716,14 @@ impl Vm {
                     } else {
                         e.clone()
                     };
-                    self.declare_function_binding(f, function_environment, i.name.as_str(), true);
+                    let annex_b_allowed =
+                        Environment::get(&function_environment, SWITCH_ENVIRONMENT_NAME).is_none();
+                    self.declare_function_binding(
+                        f,
+                        function_environment,
+                        i.name.as_str(),
+                        annex_b_allowed,
+                    );
                 }
                 Ok(Signal::Empty)
             }
@@ -19356,7 +19383,18 @@ fn collect_script_binding_names(statements: &[Statement<'_>], names: &mut Vec<St
             }
             Statement::SwitchStatement(statement) => {
                 for case in &statement.cases {
-                    collect_script_binding_names(&case.consequent, names);
+                    for nested in &case.consequent {
+                        if let Statement::VariableDeclaration(declaration) = nested
+                            && declaration.kind == VariableDeclarationKind::Var
+                        {
+                            names.extend(
+                                declaration
+                                    .declarations
+                                    .iter()
+                                    .filter_map(|declarator| pattern_name(&declarator.id)),
+                            );
+                        }
+                    }
                 }
             }
             Statement::TryStatement(statement) => {
@@ -19492,7 +19530,18 @@ fn collect_global_object_binding_names(statements: &[Statement<'_>], names: &mut
             }
             Statement::SwitchStatement(statement) => {
                 for case in &statement.cases {
-                    collect_global_object_binding_names(&case.consequent, names);
+                    for nested in &case.consequent {
+                        if let Statement::VariableDeclaration(declaration) = nested
+                            && declaration.kind == VariableDeclarationKind::Var
+                        {
+                            names.extend(
+                                declaration
+                                    .declarations
+                                    .iter()
+                                    .filter_map(|declarator| pattern_name(&declarator.id)),
+                            );
+                        }
+                    }
                 }
             }
             Statement::TryStatement(statement) => {
