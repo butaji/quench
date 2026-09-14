@@ -8761,6 +8761,10 @@ impl Vm {
     }
 
     pub(crate) fn get_prop_with_accessors(&mut self, object: &Value, key: &str) -> JsResult<Value> {
+        if Self::is_private_storage_key(key) {
+            let target = private_target(object);
+            return self.get_prop_with_receiver(&target, key, &target);
+        }
         let receiver = object.clone();
         self.get_prop_with_receiver(object, key, &receiver)
     }
@@ -9013,6 +9017,10 @@ impl Vm {
         key: &str,
         value: Value,
     ) -> JsResult<()> {
+        if Self::is_private_storage_key(key) {
+            let target = private_target(object);
+            return self.set_prop_with_receiver(&target, key, value, &target);
+        }
         let receiver = object.clone();
         self.set_prop_with_receiver(object, key, value, &receiver)
     }
@@ -11676,6 +11684,10 @@ impl Vm {
         env: &Env,
         receiver: &Value,
     ) {
+        // Private elements are stored on the underlying object even when a
+        // constructor returns a Proxy.  The proxy remains the observable
+        // value, but private-brand checks and storage bypass its traps.
+        let receiver = private_target(receiver);
         for element in &class.body.body {
             let private_name = match element {
                 ClassElement::PropertyDefinition(field) if !field.r#static => match &field.key {
@@ -11690,7 +11702,7 @@ impl Vm {
             };
             if let Some(private_name) = private_name {
                 let key = self.private_key(private_name, env);
-                self.set_prop(receiver, &Self::private_brand_key(&key), Value::Bool(true));
+                self.set_prop(&receiver, &Self::private_brand_key(&key), Value::Bool(true));
             }
         }
     }
@@ -13418,7 +13430,8 @@ impl Vm {
         // selecting the grammar's source-level early-error set here.
         let eval_function_meta =
             eval_context && (source.contains("new.target") || source.contains("super"));
-        let global_code_error = if st.is_module() || eval_function_meta {
+        let private_eval_context = eval_context && environment_has_private_names(&environment);
+        let global_code_error = if st.is_module() || eval_function_meta || private_eval_context {
             false
         } else {
             has_global_code_early_error(&r.program, source, effective_strict_mode)
@@ -14709,7 +14722,7 @@ impl Vm {
                 // identifier reads and writes below perform [[HasProperty]]
                 // and [[Set]] at the point of use, preserving deletion,
                 // accessors, and Proxy effects.
-                self.exec_stmt(&x.body, with_env)
+                self.exec_stmt(&x.body, with_env).map(update_empty_signal)
             }
             VariableDeclaration(v) => {
                 self.exec_var(v, e)?;
@@ -15948,39 +15961,20 @@ impl Vm {
                 // a copied local value for a `with` name: getters, Proxy
                 // [[HasProperty]], and deletes are observable at each read.
                 if self.with_binding_allowed(&object, name)? {
+                    // HasBinding and GetBindingValue are distinct proxy
+                    // operations. Re-probe before the actual Get so proxy
+                    // observers see the specified two-step sequence.
+                    if !self.has_property_with_proxy(&object, name)? {
+                        current = parent;
+                        continue;
+                    }
                     return Ok(self.get_prop_with_accessors(&object, name)?);
                 }
                 current = parent;
                 continue;
             }
             if let Some(value) = local {
-                if let (Some(path), Some(imported)) = (
-                    value
-                        .as_object_ref()
-                        .and_then(|object| {
-                            object
-                                .borrow()
-                                .props
-                                .get(MODULE_IMPORT_REF_PATH_PROP)
-                                .cloned()
-                        })
-                        .and_then(|value| {
-                            value.as_string().map(|value| PathBuf::from(value.as_str()))
-                        }),
-                    value
-                        .as_object_ref()
-                        .and_then(|object| {
-                            object
-                                .borrow()
-                                .props
-                                .get(MODULE_IMPORT_REF_NAME_PROP)
-                                .cloned()
-                        })
-                        .and_then(|value| value.as_string().cloned()),
-                ) {
-                    return self.resolve_module_ref(&path, imported.as_str());
-                }
-                return Ok(value);
+                return self.resolve_binding_value(value);
             }
             if let Some(object) = with_object
                 && self.has_property_with_proxy(&object, name)?
@@ -16006,6 +16000,12 @@ impl Vm {
     ) -> JsResult<(Value, Option<Value>)> {
         let target = self.resolve_identifier_target(environment, name)?;
         if let LValue::WithProp(object, key) = target {
+            // HasBinding and GetBindingValue are distinct operations for an
+            // object environment record.  The target lookup above performs
+            // HasBinding; repeat it before GetBindingValue for call refs.
+            if !self.has_property_with_proxy(&object, &key)? {
+                return Err(JsError::Throw(reference_error(self, name)));
+            }
             let value = self.get_prop_with_accessors(&object, &key)?;
             // A global-object identifier reference is still a bare call, so a
             // strict function must receive `undefined` as this.  Only an
@@ -16033,7 +16033,31 @@ impl Vm {
                 (!global_reference || object_environment).then_some(object),
             ));
         }
-        Ok((self.resolve_identifier(environment, name)?, None))
+        let raw_value = self.read_lvalue(&target)?;
+        let value = self.resolve_binding_value(raw_value)?;
+        Ok((value, None))
+    }
+
+    fn resolve_binding_value(&mut self, value: Value) -> JsResult<Value> {
+        let Some(object) = value.as_object_ref() else {
+            return Ok(value);
+        };
+        let borrowed = object.borrow();
+        let path = borrowed
+            .props
+            .get(MODULE_IMPORT_REF_PATH_PROP)
+            .and_then(|value| value.as_string())
+            .map(|value| PathBuf::from(value.as_str()));
+        let imported = borrowed
+            .props
+            .get(MODULE_IMPORT_REF_NAME_PROP)
+            .and_then(|value| value.as_string())
+            .cloned();
+        drop(borrowed);
+        match (path, imported) {
+            (Some(path), Some(imported)) => self.resolve_module_ref(&path, imported.as_str()),
+            _ => Ok(value),
+        }
     }
 
     fn with_binding_allowed(&mut self, object: &Value, name: &str) -> JsResult<bool> {
@@ -17686,7 +17710,8 @@ impl Vm {
     }
 
     fn has_private_brand(&self, value: &Value, key: &str) -> bool {
-        self.has_own_property_key(value, &Self::private_brand_key(key))
+        let target = private_target(value);
+        self.has_own_property_key(&target, &Self::private_brand_key(key))
     }
     fn make_template_object<'a>(&mut self, template: &TemplateLiteral<'a>) -> Value {
         let cache_key = (
@@ -20199,6 +20224,23 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
         .body
         .iter()
         .any(|statement| for_in_error_in_statement(statement, strict))
+}
+
+fn environment_has_private_names(environment: &Env) -> bool {
+    let mut current = Some(environment.clone());
+    while let Some(environment) = current {
+        let parent = environment.borrow().parent.clone();
+        if environment
+            .borrow()
+            .names
+            .keys()
+            .any(|name| name.starts_with(CLASS_PRIVATE_KEY_PREFIX))
+        {
+            return true;
+        }
+        current = parent;
+    }
+    false
 }
 
 /// Validate restrictions that apply only to Script code. OXC already owns the
@@ -34541,6 +34583,14 @@ fn proxy_target(value: &Value) -> Option<Value> {
         .and_then(|function| function.props.borrow().get(PROXY_TARGET_PROP).cloned())
 }
 
+fn private_target(value: &Value) -> Value {
+    let mut current = value.clone();
+    while let Some(target) = proxy_target(&current) {
+        current = target;
+    }
+    current
+}
+
 fn proxy_handler(value: &Value) -> Option<Value> {
     if let Some(object) = value.as_object_ref() {
         return object.borrow().props.get(PROXY_HANDLER_PROP).cloned();
@@ -35073,6 +35123,7 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
             .keys()
             .filter(|key| {
                 (!key.starts_with('\0') || is_symbol_key(key))
+                    && !Vm::is_private_storage_key(key)
                     && !keys.iter().any(|item| item == *key)
             })
             .cloned()
@@ -35092,6 +35143,7 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
                 .keys()
                 .filter(|key| {
                     (!key.starts_with('\0') || is_symbol_key(key))
+                        && !Vm::is_private_storage_key(key)
                         && !existing.iter().any(|item| item == *key)
                 })
                 .cloned(),
