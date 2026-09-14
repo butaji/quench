@@ -7739,12 +7739,15 @@ impl Vm {
             "WeakMap",
             "WeakRef",
             "WeakSet",
+            "FinalizationRegistry",
         ] {
             let native = match name {
                 "DataView" => native_dataview_constructor,
                 "SharedArrayBuffer" => native_shared_array_buffer_constructor,
                 "WeakMap" => native_weak_map_constructor,
+                "WeakRef" => native_weak_ref_constructor,
                 "WeakSet" => native_weak_set_constructor,
+                "FinalizationRegistry" => native_finalization_registry_constructor,
                 _ => native_subclassable_builtin,
             };
             let constructor = self.native_named(native, name, if name == "WeakMap" || name == "WeakSet" { 0 } else { 1 });
@@ -7811,11 +7814,43 @@ impl Vm {
                         "has",
                         self.native_named(native_weak_set_has, "has", 1),
                     );
-                    for method in ["add", "has"] {
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "delete",
+                        self.native_named(native_weak_set_delete, "delete", 1),
+                    );
+                    for method in ["add", "has", "delete"] {
                         set_property_attributes(&Value::Object(prototype.clone()), method, PropertyAttributes::BUILTIN_METHOD);
+                        let value = self.get_prop(&Value::Object(prototype.clone()), method);
+                        if value.is_function() { self.mark_nonconstructable(&value); }
                     }
                     let tag = self.well_known_symbol_key("toStringTag");
                     self.set_prop(&Value::Object(prototype.clone()), &tag, Value::string_value("WeakSet"));
+                    set_property_attributes(&Value::Object(prototype.clone()), &tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+                }
+                "WeakRef" => {
+                    prototype.borrow_mut().prototype = self.default_object_prototype();
+                    let deref = self.native_named(native_weak_ref_deref, "deref", 0);
+                    self.mark_nonconstructable(&deref);
+                    self.set_prop(&Value::Object(prototype.clone()), "deref", deref);
+                    set_property_attributes(&Value::Object(prototype.clone()), "deref", PropertyAttributes::BUILTIN_METHOD);
+                    let tag = self.well_known_symbol_key("toStringTag");
+                    self.set_prop(&Value::Object(prototype.clone()), &tag, Value::string_value("WeakRef"));
+                    set_property_attributes(&Value::Object(prototype.clone()), &tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+                }
+                "FinalizationRegistry" => {
+                    prototype.borrow_mut().prototype = self.default_object_prototype();
+                    let register = self.native_named(native_finalization_registry_register, "register", 2);
+                    let unregister = self.native_named(native_finalization_registry_unregister, "unregister", 1);
+                    self.mark_nonconstructable(&register);
+                    self.mark_nonconstructable(&unregister);
+                    self.set_prop(&Value::Object(prototype.clone()), "register", register);
+                    self.set_prop(&Value::Object(prototype.clone()), "unregister", unregister);
+                    set_property_attributes(&Value::Object(prototype.clone()), "register", PropertyAttributes::BUILTIN_METHOD);
+                    set_property_attributes(&Value::Object(prototype.clone()), "unregister", PropertyAttributes::BUILTIN_METHOD);
+                    let tag = self.well_known_symbol_key("toStringTag");
+                    self.set_prop(&Value::Object(prototype.clone()), &tag, Value::string_value("FinalizationRegistry"));
+                    set_property_attributes(&Value::Object(prototype.clone()), &tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
                 }
                 "DataView" => {
                     prototype.borrow_mut().prototype = self.default_object_prototype();
@@ -8013,6 +8048,30 @@ impl Vm {
                 BuiltinInstallTarget::Ignored => {}
             }
         }
+        // The compact core owns the observable WeakRef surface.  Re-publish
+        // it after the generated builtin catalog so the constructor and its
+        // prototype use the same native semantic kernel as the other weak
+        // collections.
+        let weak_ref = self.native_named(native_weak_ref_constructor, "WeakRef", 1);
+        let weak_ref_prototype = weak_ref
+            .as_function_ref()
+            .expect("WeakRef constructor")
+            .prototype
+            .clone();
+        weak_ref_prototype.borrow_mut().prototype = self.default_object_prototype();
+        let weak_ref_prototype_value = Value::Object(weak_ref_prototype.clone());
+        self.set_prop(&weak_ref, "prototype", weak_ref_prototype_value.clone());
+        self.set_prop(&weak_ref_prototype_value, "constructor", weak_ref.clone());
+        let weak_ref_deref = self.native_named(native_weak_ref_deref, "deref", 0);
+        self.mark_nonconstructable(&weak_ref_deref);
+        self.set_prop(&weak_ref_prototype_value, "deref", weak_ref_deref);
+        set_property_attributes(&weak_ref_prototype_value, "deref", PropertyAttributes::BUILTIN_METHOD);
+        let weak_ref_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&weak_ref_prototype_value, &weak_ref_tag, Value::string_value("WeakRef"));
+        set_property_attributes(&weak_ref_prototype_value, &weak_ref_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        set_property_attributes(&weak_ref_prototype_value, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        set_property_attributes(&weak_ref, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        Environment::set(&g, "WeakRef", weak_ref);
         // Annex B keeps the historical spellings as identity aliases of the
         // standard trim methods; the catalog still declares both names so
         // descriptor installation and lookup remain data-driven.
@@ -9040,7 +9099,9 @@ impl Vm {
                                 native_map_constructor,
                                 native_set_constructor,
                                 native_weak_map_constructor,
+                                native_weak_ref_constructor,
                                 native_weak_set_constructor,
+                                native_finalization_registry_constructor,
                                 native_dataview_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
@@ -26756,12 +26817,121 @@ fn native_weak_map_get_or_insert_computed(vm: &mut Vm, this: Value, args: &[Valu
     Ok(value)
 }
 
-fn native_weak_set_constructor(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_weak_ref_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(vm, "WeakRef constructor must be called with new")));
+    }
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !weak_map_key_allowed(vm, &target) {
+        return Err(JsError::Throw(type_error(vm, "Invalid target for WeakRef")));
+    }
+    let reference = if this.is_object_like() { this } else { vm.object(None) };
+    vm.set_prop(&reference, "\0weak-ref-target", target);
+    Ok(reference)
+}
+
+fn native_weak_ref_deref(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(object) = this.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "incompatible WeakRef receiver")));
+    };
+    object
+        .borrow()
+        .props
+        .get("\0weak-ref-target")
+        .cloned()
+        .ok_or_else(|| JsError::Throw(type_error(vm, "incompatible WeakRef receiver")))
+}
+
+fn native_finalization_registry_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(vm, "FinalizationRegistry constructor must be called with new")));
+    }
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() {
+        return Err(JsError::Throw(type_error(vm, "cleanup callback is not callable")));
+    }
+    let registry = if this.is_object_like() { this } else { vm.object(None) };
+    vm.set_prop(&registry, "\0finalization-registry-callback", callback);
+    vm.set_prop(&registry, "\0finalization-registry-cells", vm.array_from_values(Vec::new()));
+    Ok(registry)
+}
+
+fn native_finalization_registry_register(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = vm.get_prop(&this, "\0finalization-registry-callback");
+    if !callback.is_function() {
+        return Err(JsError::Throw(type_error(vm, "incompatible FinalizationRegistry receiver")));
+    }
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !target.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "target cannot be held weakly")));
+    }
+    let held = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let cells = vm.get_prop(&this, "\0finalization-registry-cells");
+    let length = array_value_length(&cells);
+    vm.set_prop(&cells, &length.to_string(), vm.array_from_values(vec![target, held, args.get(2).cloned().unwrap_or(Value::Undefined)]));
+    Ok(this)
+}
+
+fn native_finalization_registry_unregister(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = vm.get_prop(&this, "\0finalization-registry-callback");
+    if !callback.is_function() {
+        return Err(JsError::Throw(type_error(vm, "incompatible FinalizationRegistry receiver")));
+    }
+    let token = args.first().cloned().unwrap_or(Value::Undefined);
+    if !token.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "unregister token cannot be held weakly")));
+    }
+    let cells = vm.get_prop(&this, "\0finalization-registry-cells");
+    let Some(object) = cells.as_object_ref() else { return Ok(Value::Bool(false)); };
+    let values = object.borrow().array.as_ref().map(|array| array.values.clone()).unwrap_or_default();
+    let mut indexes = values.iter().enumerate().filter_map(|(index, cell)| {
+        vm.get_prop(cell, "2").same_bits(&token).then_some(index)
+    }).collect::<Vec<_>>();
+    let removed = !indexes.is_empty();
+    if removed {
+        let mut object = object.borrow_mut();
+        let array = object.array.as_mut().expect("registry cells array");
+        while let Some(index) = indexes.pop() { array.values.remove(index); }
+    }
+    Ok(Value::Bool(removed))
+}
+
+fn native_weak_set_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.construct_depth == 0 {
         return Err(JsError::Throw(type_error(vm, "WeakSet constructor must be called with new")));
     }
     let set = if this.is_object_like() { this } else { vm.object(None) };
     vm.set_prop(&set, WEAK_SET_VALUES_PROP, vm.array_from_values(Vec::new()));
+    if let Some(iterable) = args.first().filter(|value| !value.is_undefined() && !value.is_null()) {
+        let adder = vm.get_prop_with_accessors(&set, "add")?;
+        if !adder.is_function() {
+            return Err(JsError::Throw(type_error(vm, "WeakSet add is not callable")));
+        }
+        let mut record = match vm.iterator_record(iterable) {
+            Ok(record) => Some(record),
+            Err(error) if vm.get_prop(iterable, "length").as_number().is_some() => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(record) = record.as_mut() {
+            loop {
+                let value = match vm.iterator_step(record) {
+                    Ok(Some(value)) => value,
+                    Ok(None) => break,
+                    Err(error) => return vm.iterator_close_after_error(&record.iterator, error),
+                };
+                let result = vm.call(adder.clone(), set.clone(), vec![value]);
+                if let Err(error) = result {
+                    return vm.iterator_close_after_error(&record.iterator, error);
+                }
+            }
+        } else {
+            let length = vm.get_prop(iterable, "length").number().max(0.0) as usize;
+            for index in 0..length {
+                let value = vm.get_prop_with_accessors(iterable, &index.to_string())?;
+                vm.call(adder.clone(), set.clone(), vec![value])?;
+            }
+        }
+    }
     Ok(set)
 }
 
@@ -26774,19 +26944,47 @@ fn weak_set_values(vm: &Vm, set: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn weak_set_storage(vm: &mut Vm, set: &Value) -> JsResult<Value> {
+    let values = set
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get(WEAK_SET_VALUES_PROP).cloned())
+        .filter(|value| value.is_object_like())
+        .ok_or_else(|| JsError::Throw(type_error(vm, "incompatible WeakSet receiver")))?;
+    Ok(values)
+}
+
 fn native_weak_set_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = weak_set_storage(vm, &this)?;
     let value = args.first().cloned().unwrap_or(Value::Undefined);
-    Ok(Value::Bool(weak_set_values(vm, &this).into_iter().any(|item| item.same_bits(&value))))
+    Ok(Value::Bool(weak_set_key_allowed(vm, &value) && weak_set_values(vm, &this).into_iter().any(|item| item.same_bits(&value))))
 }
 
 fn native_weak_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = weak_set_storage(vm, &this)?;
     let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if !weak_set_key_allowed(vm, &value) {
+        return Err(JsError::Throw(type_error(vm, "Invalid value used in weak set")));
+    }
     if !weak_set_values(vm, &this).into_iter().any(|item| item.same_bits(&value)) {
         let values = vm.get_prop(&this, WEAK_SET_VALUES_PROP);
         let length = array_value_length(&values);
         vm.set_prop(&values, &length.to_string(), value);
     }
     Ok(this)
+}
+
+fn weak_set_key_allowed(vm: &Vm, value: &Value) -> bool {
+    value.is_object_like() && !vm.symbol_registry.values().any(|registered| registered.same_bits(value))
+}
+
+fn native_weak_set_delete(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = weak_set_storage(vm, &this)?;
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(object) = values.as_object_ref() else { return Ok(Value::Bool(false)); };
+    let index = object.borrow().array.as_ref().and_then(|array| array.iter().position(|item| item.same_bits(&value)));
+    let Some(index) = index else { return Ok(Value::Bool(false)); };
+    object.borrow_mut().array.as_mut().expect("weak set values array").remove(index);
+    Ok(Value::Bool(true))
 }
 
 fn dataview_index(vm: &mut Vm, value: &Value, message: &str) -> JsResult<f64> {
@@ -33554,6 +33752,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                                     .then_some("WeakMap")
                             })
                             .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_weak_ref_constructor))
+                                    .then_some("WeakRef")
+                            })
+                            .or_else(|| {
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_weak_set_constructor))
                                     .then_some("WeakSet")
                             })
@@ -33701,7 +33903,7 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     if let Some(proxy) = Environment::get(&vm.global, "Proxy") {
         vm.set_prop(&global, "Proxy", proxy);
     }
-    for name in ["ArrayBuffer", "DataView", "SharedArrayBuffer", "WeakMap", "WeakSet", "Map", "Set"] {
+    for name in ["ArrayBuffer", "DataView", "SharedArrayBuffer", "WeakMap", "WeakRef", "WeakSet", "Map", "Set"] {
         if let Some(value) = Environment::get(&vm.global, name) {
             vm.set_prop(&global, name, value);
         }
@@ -36732,12 +36934,16 @@ fn normalize_legacy_octal_escapes(pattern: &str) -> String {
     let mut index = 0usize;
     while index < bytes.len() {
         if bytes[index] >= 0x80 {
-            let character = pattern[index..]
+            let mut start = index;
+            while start > 0 && (bytes[start] & 0xc0) == 0x80 {
+                start -= 1;
+            }
+            let character = pattern[start..]
                 .chars()
                 .next()
                 .expect("valid UTF-8 pattern");
             output.push(character);
-            index += character.len_utf8();
+            index = start + character.len_utf8();
             continue;
         }
         if bytes[index] != b'\\' || index + 1 >= bytes.len() {
@@ -36792,12 +36998,16 @@ fn normalize_legacy_control_escapes(pattern: &str) -> String {
     let mut in_class = false;
     while index < bytes.len() {
         if bytes[index] >= 0x80 {
-            let character = pattern[index..]
+            let mut start = index;
+            while start > 0 && (bytes[start] & 0xc0) == 0x80 {
+                start -= 1;
+            }
+            let character = pattern[start..]
                 .chars()
                 .next()
                 .expect("valid UTF-8 pattern");
             output.push(character);
-            index += character.len_utf8();
+            index = start + character.len_utf8();
             continue;
         }
         let byte = bytes[index];
