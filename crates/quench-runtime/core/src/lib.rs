@@ -16630,7 +16630,16 @@ impl Vm {
                     Typeof => Value::String(Rc::new(
                         if z.is_undefined() || is_html_dda_value(&z) {
                             "undefined"
-                        } else if z.is_function() {
+                        } else if z.is_function()
+                            || self
+                                .builtin(BuiltinId::FunctionConstructor)
+                                .as_function_ref()
+                                .is_some_and(|function| {
+                                    z.as_object_ref().is_some_and(|object| {
+                                        std::ptr::eq(object, &*function.prototype)
+                                    })
+                                })
+                        {
                             "function"
                         } else if z.as_bool().is_some() {
                             "boolean"

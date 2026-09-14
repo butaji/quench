@@ -3687,6 +3687,16 @@ fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> 
                 "undefined"
             } else if value.is_function() {
                 "function"
+            } else if vm
+                .builtin(super::BuiltinId::FunctionConstructor)
+                .as_function_ref()
+                .is_some_and(|function| {
+                    value
+                        .as_object_ref()
+                        .is_some_and(|object| std::ptr::eq(object, &*function.prototype))
+                })
+            {
+                "function"
             } else if value.as_bool().is_some() {
                 "boolean"
             } else if value.as_number().is_some() {
