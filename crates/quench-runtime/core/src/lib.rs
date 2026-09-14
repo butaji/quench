@@ -36546,17 +36546,48 @@ define_date_string_methods! {
 
 fn native_date_to_locale_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     validate_intl_date_time_format_args(vm, args)?;
-    native_date_to_string(vm, this, &[])
+    native_date_locale_value(vm, this, args, 0)
 }
 
 fn native_date_to_locale_date_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     validate_intl_date_time_format_args(vm, args)?;
-    native_date_to_date_string(vm, this, &[])
+    native_date_locale_value(vm, this, args, 1)
 }
 
 fn native_date_to_locale_time_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     validate_intl_date_time_format_args(vm, args)?;
-    native_date_to_time_string(vm, this, &[])
+    native_date_locale_value(vm, this, args, 2)
+}
+
+/// Apply ToDateTimeOptions' observable shape rules while retaining the
+/// method-specific default when no date/time component is present.
+fn native_date_locale_value(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+    default_kind: u8,
+) -> JsResult<Value> {
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let mut has_date = false;
+    let mut has_time = false;
+    if !options.is_undefined() && !options.is_null() {
+        for key in ["weekday", "year", "month", "day"] {
+            has_date |= !vm.get_prop_with_accessors(&options, key)?.is_undefined();
+        }
+        for key in ["dayPeriod", "hour", "minute", "second", "fractionalSecondDigits"] {
+            has_time |= !vm.get_prop_with_accessors(&options, key)?.is_undefined();
+        }
+    }
+    match (has_date, has_time) {
+        (true, true) => native_date_to_string(vm, this, &[]),
+        (true, false) => native_date_to_date_string(vm, this, &[]),
+        (false, true) => native_date_to_time_string(vm, this, &[]),
+        (false, false) => match default_kind {
+            1 => native_date_to_date_string(vm, this, &[]),
+            2 => native_date_to_time_string(vm, this, &[]),
+            _ => native_date_to_string(vm, this, &[]),
+        },
+    }
 }
 
 fn native_date_to_primitive(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
