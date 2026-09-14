@@ -7457,6 +7457,37 @@ impl Vm {
         Environment::set(&g, "ArrayBuffer", array_buffer);
         let typed_array_base = self.native_named(native_typed_array_constructor, "TypedArray", 0);
         self.mark_nonconstructable(&typed_array_base);
+        let typed_array_base_prototype = typed_array_base
+            .as_function_ref()
+            .expect("TypedArray constructor")
+            .prototype
+            .clone();
+        let typed_array_base_value = Value::Object(typed_array_base_prototype);
+        for (key, getter) in [
+            ("buffer", native_typed_array_buffer as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
+            ("byteLength", native_typed_array_byte_length as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
+            ("byteOffset", native_typed_array_byte_offset as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
+            ("length", native_typed_array_length as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
+        ] {
+            let getter_name = match key {
+                "buffer" => "get buffer",
+                "byteLength" => "get byteLength",
+                "byteOffset" => "get byteOffset",
+                _ => "get length",
+            };
+            let getter = self.native_named(getter, getter_name, 0);
+            self.define_accessor_slot(
+                &typed_array_base_value,
+                key,
+                Some(getter),
+                None,
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
         for (name, bytes) in [
             ("Float64Array", 8),
             ("Float32Array", 4),
@@ -26968,14 +26999,7 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
         vm.set_prop(&backing, "\0array-buffer", Value::Bool(true));
         backing
     });
-    install_data_properties!(
-        vm,
-        this.clone(),
-        "buffer" => backing.clone(), PropertyAttributes::BUILTIN_METHOD;
-        "byteLength" => Value::Number(values.len() as f64 * bytes), PropertyAttributes::BUILTIN_METHOD;
-        "byteOffset" => Value::Number(source_offset.unwrap_or(0.0)), PropertyAttributes::BUILTIN_METHOD;
-        "length" => Value::Number(values.len() as f64), PropertyAttributes::BUILTIN_METHOD;
-    );
+    vm.set_prop(&this, TYPED_ARRAY_BUFFER, backing.clone());
     let data = vm.get_prop(&backing, ARRAY_BUFFER_DATA);
     let data = if data.is_undefined() {
         let data = vm.array_from_values(Vec::new());
@@ -27017,6 +27041,49 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
         }
     }
     Ok(this)
+}
+
+fn typed_array_internal_slots(vm: &mut Vm, this: &Value) -> JsResult<(Value, usize, usize)> {
+    let Some(object) = this.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    };
+    let object = object.borrow();
+    let Some(buffer) = object.props.get(TYPED_ARRAY_BUFFER).cloned() else {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    };
+    let offset = object
+        .props
+        .get(TYPED_ARRAY_OFFSET)
+        .map_or(0, |value| value.number().max(0.0) as usize);
+    let width = object
+        .props
+        .get("\0typed-array-bytes")
+        .map_or(1, |value| value.number().max(1.0) as usize);
+    Ok((buffer, offset, width))
+}
+
+fn native_typed_array_buffer(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(typed_array_internal_slots(vm, &this)?.0)
+}
+
+fn native_typed_array_byte_length(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let (buffer, offset, width) = typed_array_internal_slots(vm, &this)?;
+    let length = vm.get_prop(&this, "length").number().max(0.0);
+    let buffer_length = vm.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
+    if offset > buffer_length {
+        return Ok(Value::Number(0.0));
+    }
+    Ok(Value::Number((length as usize * width).min(buffer_length - offset) as f64))
+}
+
+fn native_typed_array_byte_offset(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let (_, offset, _) = typed_array_internal_slots(vm, &this)?;
+    Ok(Value::Number(offset as f64))
+}
+
+fn native_typed_array_length(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let (_, _, _) = typed_array_internal_slots(vm, &this)?;
+    Ok(vm.get_prop(&this, "length"))
 }
 
 fn native_typed_array_fill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
