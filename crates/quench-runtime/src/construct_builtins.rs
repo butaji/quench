@@ -205,21 +205,30 @@ fn construct_typed_builtin(
             "Cannot construct from an out-of-bounds TypedArray",
         )));
     }
-    use crate::ops::Builtin::*;
-    Some(match builtin {
-        Float64Array => construct_float64_array(arguments),
-        Float32Array => construct_float32_array(arguments),
-        Int8Array => construct_int8_array(arguments),
-        Int16Array => construct_int16_array(arguments),
-        Int32Array => construct_int32_array(arguments),
-        Uint8Array => construct_uint8_array(arguments),
-        Uint16Array => construct_uint16_array(arguments),
-        Uint32Array => construct_uint32_array(arguments),
-        Uint8ClampedArray => construct_uint8_clamped_array(arguments),
-        BigInt64Array => construct_bigint64_array(arguments),
-        BigUint64Array => construct_biguint64_array(arguments),
-        _ => return None,
-    })
+    // Keep the constructor facts in one table.  Each handler remains the
+    // semantic implementation; this macro only derives the repetitive
+    // dispatch shell so adding a typed array cannot drift between branches.
+    macro_rules! typed_array_constructors {
+        ($value:expr, $args:expr; $( $name:ident => $handler:ident ),+ $(,)?) => {
+            match $value {
+                $(crate::ops::Builtin::$name => Some($handler($args)),)+
+                _ => None,
+            }
+        };
+    }
+    typed_array_constructors!(builtin, arguments;
+        Float64Array => construct_float64_array,
+        Float32Array => construct_float32_array,
+        Int8Array => construct_int8_array,
+        Int16Array => construct_int16_array,
+        Int32Array => construct_int32_array,
+        Uint8Array => construct_uint8_array,
+        Uint16Array => construct_uint16_array,
+        Uint32Array => construct_uint32_array,
+        Uint8ClampedArray => construct_uint8_clamped_array,
+        BigInt64Array => construct_bigint64_array,
+        BigUint64Array => construct_biguint64_array,
+    )
 }
 
 pub(crate) fn construct_float16_array(
