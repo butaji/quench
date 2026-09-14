@@ -29183,8 +29183,11 @@ fn native_buffer_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         };
     Ok(Value::string_value(output))
 }
-fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+fn native_object(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(value) = args.first() else {
+        if vm.construct_depth > 0 && this.is_object_like() {
+            return Ok(this);
+        }
         let object_constructor = vm.builtin(BuiltinId::ObjectConstructor);
         return Ok(vm.object(Some(
             object_constructor
@@ -29195,6 +29198,9 @@ fn native_object(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
         )));
     };
     if value.is_null() || value.is_undefined() {
+        if vm.construct_depth > 0 && this.is_object_like() {
+            return Ok(this);
+        }
         let object_constructor = vm.builtin(BuiltinId::ObjectConstructor);
         return Ok(vm.object(Some(
             object_constructor
