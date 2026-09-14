@@ -9367,6 +9367,23 @@ impl Vm {
                 &[receiver.clone(), Value::string_value(key), descriptor],
             )?;
         } else {
+            if key == "length"
+                && object
+                    .as_object_ref()
+                    .is_some_and(|object| object.borrow().array.is_some())
+            {
+                let number = to_number_with_vm(self, &value)?;
+                if !number.is_finite()
+                    || number < 0.0
+                    || number > u32::MAX as f64
+                    || number.fract() != 0.0
+                {
+                    return Err(JsError::Throw(range_error(
+                        self,
+                        "invalid array length",
+                    )));
+                }
+            }
             self.set_prop(object, key, value);
         }
         Ok(())
@@ -32509,8 +32526,16 @@ fn native_array(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
         }
     }
     if a.len() == 1 && a[0].as_number().is_some() {
+        let number = a[0].number();
+        if !number.is_finite()
+            || number < 0.0
+            || number > u32::MAX as f64
+            || number.fract() != 0.0
+        {
+            return Err(JsError::Throw(range_error(vm, "invalid array length")));
+        }
         if let Some(obj) = o.as_object() {
-            set_array_length(&mut obj.borrow_mut(), a[0].number());
+            set_array_length(&mut obj.borrow_mut(), number);
         }
         return Ok(o);
     }
@@ -32804,12 +32829,45 @@ fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult
     Ok(result)
 }
 
-fn native_array_is_array(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(Value::Bool(
-        a.first()
-            .and_then(Value::as_object_ref)
-            .is_some_and(|object| object.borrow().array.is_some()),
-    ))
+fn native_array_is_array(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
+    let Some(value) = a.first() else {
+        return Ok(Value::Bool(false));
+    };
+    let mut value = value.clone();
+    loop {
+        let Some(object) = value.as_object_ref() else {
+            return Ok(Value::Bool(false));
+        };
+        let (is_arguments, is_array, target, revoked) = {
+            let borrowed = object.borrow();
+            (
+                borrowed
+                    .props
+                    .get("\0wrapper")
+                    .and_then(Value::as_string)
+                    .is_some_and(|wrapper| wrapper == "Arguments"),
+                borrowed.array.is_some(),
+                borrowed.props.get(PROXY_TARGET_PROP).cloned(),
+                borrowed
+                    .props
+                    .get(PROXY_REVOKED_PROP)
+                    .is_some_and(Value::truthy),
+            )
+        };
+        if is_arguments {
+            return Ok(Value::Bool(false));
+        }
+        if is_array {
+            return Ok(Value::Bool(true));
+        }
+        let Some(target) = target else {
+            return Ok(Value::Bool(false));
+        };
+        if revoked {
+            return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
+        }
+        value = target;
+    }
 }
 fn array_from_length(vm: &mut Vm, source: &Value) -> JsResult<usize> {
     let length_value = vm.get_prop_with_accessors(source, "length")?;
@@ -32836,17 +32894,15 @@ fn array_from_target(
     if !constructable(target) {
         return Ok(vm.array());
     }
-    let prototype = vm.get_prop(target, "prototype").as_object();
-    let receiver = vm.object(prototype);
     let arguments = pass_length
         .then(|| vec![Value::Number(length as f64)])
         .unwrap_or_default();
-    let result = vm.call(target.clone(), receiver.clone(), arguments)?;
-    Ok(if result.is_object_like() {
-        result
-    } else {
-        receiver
-    })
+    let arguments = vm.array_from_values(arguments);
+    native_reflect_construct(
+        vm,
+        Value::Undefined,
+        &[target.clone(), arguments, target.clone()],
+    )
 }
 
 fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
@@ -32894,6 +32950,10 @@ fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
         let iterator_key = vm.well_known_symbol_key("iterator");
         let iterator = vm.get_prop_with_accessors(&source, &iterator_key)?;
         if iterator.is_function() {
+            // The iterable branch performs Construct(C) before invoking the
+            // user-provided @@iterator method. This ordering is observable
+            // when either operation throws.
+            let target = array_from_target(vm, &this, 0, false)?;
             let iterator = vm.call_arguments(&iterator, source.clone(), &[] as &[Value])?;
             if iterator.is_undefined() || iterator.is_null() {
                 return Err(JsError::Throw(type_error(
@@ -32901,31 +32961,57 @@ fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
                     "Array.from iterator method returned a non-object",
                 )));
             }
-            let mut values = Vec::new();
+            // Array.from creates the result before pulling the first value
+            // from an iterator.  Any abrupt completion after GetIterator
+            // therefore closes that iterator, including a throwing custom
+            // constructor or a mapper/property write.
+            let mut length = 0usize;
             loop {
-                let next = vm.get_prop_with_accessors(&iterator, "next")?;
-                let step = vm.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
+                let next = match vm.get_prop_with_accessors(&iterator, "next") {
+                    Ok(next) => next,
+                    Err(error) => return vm.iterator_close_after_error(&iterator, error),
+                };
+                let step = match vm.call_arguments(&next, iterator.clone(), &[] as &[Value]) {
+                    Ok(step) => step,
+                    Err(error) => return vm.iterator_close_after_error(&iterator, error),
+                };
                 if !step.is_object_like() {
-                    return Err(JsError::Throw(type_error(
-                        vm,
-                        "Iterator result is not an object",
-                    )));
+                    return vm.iterator_close_after_error(
+                        &iterator,
+                        JsError::Throw(type_error(vm, "Iterator result is not an object")),
+                    );
                 }
-                if vm.get_prop_with_accessors(&step, "done")?.truthy() {
+                let done = match vm.get_prop_with_accessors(&step, "done") {
+                    Ok(done) => done.truthy(),
+                    Err(error) => return vm.iterator_close_after_error(&iterator, error),
+                };
+                if done {
                     break;
                 }
-                let value = vm.get_prop_with_accessors(&step, "value")?;
-                let index = values.len();
-                values.push(map_value(vm, value, index)?);
-                if values.len() > MAX_MATERIALIZED_ARRAY_LENGTH {
-                    return Err(JsError::Throw(range_error(
-                        vm,
-                        "Array.from iterable exceeds the materialized array limit",
-                    )));
+                let value = match vm.get_prop_with_accessors(&step, "value") {
+                    Ok(value) => value,
+                    Err(error) => return vm.iterator_close_after_error(&iterator, error),
+                };
+                let mapped = match map_value(vm, value, length) {
+                    Ok(mapped) => mapped,
+                    Err(error) => return vm.iterator_close_after_error(&iterator, error),
+                };
+                if length >= MAX_MATERIALIZED_ARRAY_LENGTH {
+                    return vm.iterator_close_after_error(
+                        &iterator,
+                        JsError::Throw(range_error(
+                            vm,
+                            "Array.from iterable exceeds the materialized array limit",
+                        )),
+                    );
                 }
+                if let Err(error) = define_spread_property(vm, &target, length.to_string(), mapped) {
+                    return vm.iterator_close_after_error(&iterator, error);
+                }
+                length += 1;
             }
-            let length = values.len();
-            (values, length, false)
+            vm.set_prop_with_accessors(&target, "length", Value::Number(length as f64))?;
+            return Ok(target);
         } else {
             let length = array_from_length(vm, &source)?;
             if length > MAX_MATERIALIZED_ARRAY_LENGTH {
@@ -32944,11 +33030,21 @@ fn native_array_from(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
     };
     let target = array_from_target(vm, &this, length, pass_length)?;
     for (index, value) in values.into_iter().enumerate() {
-        vm.set_prop_with_accessors(&target, &index.to_string(), value)?;
+        define_spread_property(vm, &target, index.to_string(), value)?;
     }
     vm.set_prop_with_accessors(&target, "length", Value::Number(length as f64))?;
     Ok(target)
 }
+
+/// The async constructor surface shares Array.from's target/iterator kernel
+/// and exposes the required Promise boundary.  The promise is settled through
+/// the same VM queue used by async functions, so callers never observe a
+/// second array-construction implementation.
+fn native_array_from_async(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
+    let result = native_array_from(vm, this, a);
+    Ok(vm.promise_from_result(result))
+}
+
 fn native_array_of(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(vm.array_from_values(a.to_vec()))
 }
