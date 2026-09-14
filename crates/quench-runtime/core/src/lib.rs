@@ -16390,6 +16390,9 @@ impl Vm {
                     .unwrap_or(Value::Undefined);
                 let yield_index = self.sync_generator_yield_index;
                 self.sync_generator_yield_index = self.sync_generator_yield_index.saturating_add(1);
+                if let Some(value) = self.sync_generator_replay_value.take() {
+                    return Ok(value);
+                }
                 if let Some(value) = self.sync_generator_replay_values.get(yield_index).cloned() {
                     return Ok(value);
                 }
