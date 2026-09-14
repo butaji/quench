@@ -7747,7 +7747,7 @@ impl Vm {
                 "WeakSet" => native_weak_set_constructor,
                 _ => native_subclassable_builtin,
             };
-            let constructor = self.native_named(native, name, 1);
+            let constructor = self.native_named(native, name, if name == "WeakMap" || name == "WeakSet" { 0 } else { 1 });
             let prototype = constructor
                 .as_function_ref()
                 .expect("subclassable builtin")
@@ -7759,8 +7759,11 @@ impl Vm {
                 "constructor",
                 constructor.clone(),
             );
+            set_property_attributes(&constructor, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+            set_property_attributes(&Value::Object(prototype.clone()), "constructor", PropertyAttributes::BUILTIN_METHOD);
             match name {
                 "WeakMap" => {
+                    prototype.borrow_mut().prototype = self.default_object_prototype();
                     self.set_prop(
                         &Value::Object(prototype.clone()),
                         "get",
@@ -7776,8 +7779,28 @@ impl Vm {
                         "has",
                         self.native_named(native_weak_map_has, "has", 1),
                     );
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "delete",
+                        self.native_named(native_weak_map_delete, "delete", 1),
+                    );
+                    let get_or_insert = self.native_named(native_weak_map_get_or_insert, "getOrInsert", 2);
+                    let get_or_insert_computed = self.native_named(native_weak_map_get_or_insert_computed, "getOrInsertComputed", 2);
+                    self.mark_nonconstructable(&get_or_insert);
+                    self.mark_nonconstructable(&get_or_insert_computed);
+                    self.set_prop(&Value::Object(prototype.clone()), "getOrInsert", get_or_insert);
+                    self.set_prop(&Value::Object(prototype.clone()), "getOrInsertComputed", get_or_insert_computed);
+                    for method in ["get", "set", "has", "delete", "getOrInsert", "getOrInsertComputed"] {
+                        let value = self.get_prop(&Value::Object(prototype.clone()), method);
+                        if value.is_function() { self.mark_nonconstructable(&value); }
+                        set_property_attributes(&Value::Object(prototype.clone()), method, PropertyAttributes::BUILTIN_METHOD);
+                    }
+                    let tag = self.well_known_symbol_key("toStringTag");
+                    self.set_prop(&Value::Object(prototype.clone()), &tag, Value::string_value("WeakMap"));
+                    set_property_attributes(&Value::Object(prototype.clone()), &tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
                 }
                 "WeakSet" => {
+                    prototype.borrow_mut().prototype = self.default_object_prototype();
                     self.set_prop(
                         &Value::Object(prototype.clone()),
                         "add",
@@ -7788,6 +7811,11 @@ impl Vm {
                         "has",
                         self.native_named(native_weak_set_has, "has", 1),
                     );
+                    for method in ["add", "has"] {
+                        set_property_attributes(&Value::Object(prototype.clone()), method, PropertyAttributes::BUILTIN_METHOD);
+                    }
+                    let tag = self.well_known_symbol_key("toStringTag");
+                    self.set_prop(&Value::Object(prototype.clone()), &tag, Value::string_value("WeakSet"));
                 }
                 "DataView" => {
                     prototype.borrow_mut().prototype = self.default_object_prototype();
@@ -26567,13 +26595,71 @@ fn native_set_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value>
     ))?
 }
 
-fn native_weak_map_constructor(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_weak_map_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.construct_depth == 0 {
         return Err(JsError::Throw(type_error(vm, "WeakMap constructor must be called with new")));
     }
     let map = if this.is_object_like() { this } else { vm.object(None) };
     vm.set_prop(&map, WEAK_MAP_ENTRIES_PROP, vm.array_from_values(Vec::new()));
+    if let Some(iterable) = args.first().filter(|value| !value.is_undefined() && !value.is_null()) {
+        let adder = vm.get_prop_with_accessors(&map, "set")?;
+        if !adder.is_function() {
+            return Err(JsError::Throw(type_error(vm, "WeakMap set is not callable")));
+        }
+        let mut record = match vm.iterator_record(iterable) {
+            Ok(record) => Some(record),
+            Err(error) if vm.get_prop(iterable, "length").as_number().is_some() => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(record) = record.as_mut() {
+          loop {
+            let item = match vm.iterator_step(record) {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(error) => return vm.iterator_close_after_error(&record.iterator, error),
+            };
+            let result = (|| {
+                if !item.is_object_like() {
+                    return Err(JsError::Throw(type_error(vm, "WeakMap entry is not an object")));
+                }
+                let key = vm.get_prop_with_accessors(&item, "0")?;
+                let value = vm.get_prop_with_accessors(&item, "1")?;
+                vm.call(adder.clone(), map.clone(), vec![key, value])
+            })();
+            if let Err(error) = result {
+                return vm.iterator_close_after_error(&record.iterator, error);
+            }
+          }
+        } else {
+            let length = vm.get_prop(iterable, "length").number().max(0.0) as usize;
+            for index in 0..length {
+                let item = vm.get_prop_with_accessors(iterable, &index.to_string())?;
+                if !item.is_object_like() {
+                    return Err(JsError::Throw(type_error(vm, "WeakMap entry is not an object")));
+                }
+                let key = vm.get_prop_with_accessors(&item, "0")?;
+                let value = vm.get_prop_with_accessors(&item, "1")?;
+                vm.call(adder.clone(), map.clone(), vec![key, value])?;
+            }
+        }
+    }
     Ok(map)
+}
+
+fn weak_map_storage(vm: &mut Vm, map: &Value) -> JsResult<Value> {
+    let entries = map
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get(WEAK_MAP_ENTRIES_PROP).cloned())
+        .filter(|value| value.is_object_like())
+        .ok_or_else(|| JsError::Throw(type_error(vm, "incompatible WeakMap receiver")))?;
+    Ok(entries)
+}
+
+fn weak_map_key_allowed(vm: &Vm, key: &Value) -> bool {
+    if !key.is_object_like() {
+        return false;
+    }
+    !vm.symbol_registry.values().any(|registered| registered.same_bits(key))
 }
 
 fn weak_map_entries(vm: &Vm, map: &Value) -> Vec<Value> {
@@ -26586,6 +26672,7 @@ fn weak_map_entries(vm: &Vm, map: &Value) -> Vec<Value> {
 }
 
 fn native_weak_map_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = weak_map_storage(vm, &this)?;
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     Ok(Value::Bool(weak_map_entries(vm, &this).into_iter().any(|pair| {
         vm.get_prop(&pair, "0").same_bits(&key)
@@ -26593,6 +26680,7 @@ fn native_weak_map_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
 }
 
 fn native_weak_map_get(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = weak_map_storage(vm, &this)?;
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     for pair in weak_map_entries(vm, &this) {
         if vm.get_prop(&pair, "0").same_bits(&key) {
@@ -26603,9 +26691,12 @@ fn native_weak_map_get(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
 }
 
 fn native_weak_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let entries = weak_map_storage(vm, &this)?;
     let key = args.first().cloned().unwrap_or(Value::Undefined);
+    if !weak_map_key_allowed(vm, &key) {
+        return Err(JsError::Throw(type_error(vm, "Invalid value used as weak map key")));
+    }
     let value = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let entries = vm.get_prop(&this, WEAK_MAP_ENTRIES_PROP);
     for pair in weak_map_entries(vm, &this) {
         if vm.get_prop(&pair, "0").same_bits(&key) {
             vm.set_prop(&pair, "1", value);
@@ -26615,6 +26706,54 @@ fn native_weak_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     let length = array_value_length(&entries);
     vm.set_prop(&entries, &length.to_string(), vm.array_from_values(vec![key, value]));
     Ok(this)
+}
+
+fn native_weak_map_delete(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let entries = weak_map_storage(vm, &this)?;
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(object) = entries.as_object_ref() else { return Ok(Value::Bool(false)); };
+    let index = object.borrow().array.as_ref().and_then(|array| {
+        array.iter().position(|pair| vm.get_prop(pair, "0").same_bits(&key))
+    });
+    let Some(index) = index else { return Ok(Value::Bool(false)); };
+    object.borrow_mut().array.as_mut().expect("weak map entries array").remove(index);
+    Ok(Value::Bool(true))
+}
+
+fn native_weak_map_get_or_insert(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = weak_map_storage(vm, &this)?;
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    if !weak_map_key_allowed(vm, &key) {
+        return Err(JsError::Throw(type_error(vm, "Invalid value used as weak map key")));
+    }
+    for pair in weak_map_entries(vm, &this) {
+        if vm.get_prop(&pair, "0").same_bits(&key) {
+            return Ok(vm.get_prop(&pair, "1"));
+        }
+    }
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    native_weak_map_set(vm, this.clone(), &[key, value.clone()])?;
+    Ok(value)
+}
+
+fn native_weak_map_get_or_insert_computed(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = weak_map_storage(vm, &this)?;
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let callback = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() {
+        return Err(JsError::Throw(type_error(vm, "callback is not a function")));
+    }
+    if !weak_map_key_allowed(vm, &key) {
+        return Err(JsError::Throw(type_error(vm, "Invalid value used as weak map key")));
+    }
+    for pair in weak_map_entries(vm, &this) {
+        if vm.get_prop(&pair, "0").same_bits(&key) {
+            return Ok(vm.get_prop(&pair, "1"));
+        }
+    }
+    let value = vm.call(callback, Value::Undefined, vec![key.clone()])?;
+    native_weak_map_set(vm, this, &[key, value.clone()])?;
+    Ok(value)
 }
 
 fn native_weak_set_constructor(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
@@ -33410,6 +33549,14 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_dataview_constructor))
                                     .then_some("DataView")
                             })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_weak_map_constructor))
+                                    .then_some("WeakMap")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_weak_set_constructor))
+                                    .then_some("WeakSet")
+                            })
                     });
                     let intrinsic = intrinsic_name
                         .map(|name| vm.get_prop(&global, name))
@@ -33554,7 +33701,7 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     if let Some(proxy) = Environment::get(&vm.global, "Proxy") {
         vm.set_prop(&global, "Proxy", proxy);
     }
-    for name in ["ArrayBuffer", "DataView", "SharedArrayBuffer"] {
+    for name in ["ArrayBuffer", "DataView", "SharedArrayBuffer", "WeakMap", "WeakSet", "Map", "Set"] {
         if let Some(value) = Environment::get(&vm.global, name) {
             vm.set_prop(&global, name, value);
         }
