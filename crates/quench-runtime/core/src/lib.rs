@@ -377,6 +377,24 @@ macro_rules! install_native_methods {
         )+
     }};
 }
+
+// Collection iterator prototypes differ only by their tag, next primitive,
+// and destination slot. Keep those facts in one declaration so Map and Set
+// cannot drift in descriptors or iterator identity.
+macro_rules! install_collection_iterator_prototype {
+    ($vm:expr, $slot:ident, $next:ident, $tag:literal) => {{
+        let iterator_prototype = $vm.object($vm.default_object_prototype());
+        let next = $vm.native_named($next, "next", 0);
+        $vm.mark_nonconstructable(&next);
+        $vm.set_prop(&iterator_prototype, "next", next);
+        let iterator_key = $vm.well_known_symbol_key("iterator");
+        $vm.set_prop(&iterator_prototype, &iterator_key, $vm.native(native_iterator_self));
+        let tag_key = $vm.well_known_symbol_key("toStringTag");
+        $vm.set_prop(&iterator_prototype, &tag_key, Value::string_value($tag));
+        set_property_attributes(&iterator_prototype, &tag_key, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        $vm.$slot = iterator_prototype.as_object();
+    }};
+}
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
 const PROXY_HANDLER_PROP: &str = "\0quench:proxy-handler";
 const PROXY_REVOKED_PROP: &str = "\0quench:proxy-revoked";
@@ -8566,22 +8584,8 @@ impl Vm {
             }
             let unscopables_key = self.well_known_symbol_key("unscopables");
             self.set_prop(&prototype, &unscopables_key, unscopables);
-            let map_iterator_prototype = self.object(self.default_object_prototype());
-            let map_next = self.native_named(native_collection_iterator_next, "next", 0);
-            self.mark_nonconstructable(&map_next);
-            self.set_prop(&map_iterator_prototype, "next", map_next);
-            self.set_prop(&map_iterator_prototype, &iterator_key, self.native(native_iterator_self));
-            self.set_prop(&map_iterator_prototype, &tag_key, Value::string_value("Map Iterator"));
-            set_property_attributes(&map_iterator_prototype, &tag_key, PropertyAttributes { writable: false, enumerable: false, configurable: true });
-            self.map_iterator_proto = map_iterator_prototype.as_object();
-            let set_iterator_prototype = self.object(self.default_object_prototype());
-            let set_next = self.native_named(native_collection_iterator_next, "next", 0);
-            self.mark_nonconstructable(&set_next);
-            self.set_prop(&set_iterator_prototype, "next", set_next);
-            self.set_prop(&set_iterator_prototype, &iterator_key, self.native(native_iterator_self));
-            self.set_prop(&set_iterator_prototype, &tag_key, Value::string_value("Set Iterator"));
-            set_property_attributes(&set_iterator_prototype, &tag_key, PropertyAttributes { writable: false, enumerable: false, configurable: true });
-            self.set_iterator_proto = set_iterator_prototype.as_object();
+            install_collection_iterator_prototype!(self, map_iterator_proto, native_collection_iterator_next, "Map Iterator");
+            install_collection_iterator_prototype!(self, set_iterator_proto, native_collection_iterator_next, "Set Iterator");
         }
         let iterator = self.native_named(native_iterator_constructor, "Iterator", 0);
         let iterator_prototype = self.object(self.default_object_prototype());
