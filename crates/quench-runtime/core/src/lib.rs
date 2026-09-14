@@ -33278,11 +33278,14 @@ fn native_intl_date_time_format_constructor(
         INTL_DATE_TIME_FORMAT_OPTIONS,
         args.get(1).cloned().unwrap_or(Value::Undefined),
     );
-    vm.set_prop(
-        &result,
-        "format",
-        vm.native_named(native_intl_date_time_format_format, "format", 1),
-    );
+    let format = vm.native_named(native_intl_date_time_format_format, "format", 1);
+    let bind = vm.get_prop(&format, "bind");
+    let bound = if bind.is_function() {
+        vm.call_arguments(&bind, format.clone(), &[result.clone()][..])?
+    } else {
+        format
+    };
+    vm.set_prop(&result, "format", bound);
     Ok(result)
 }
 
