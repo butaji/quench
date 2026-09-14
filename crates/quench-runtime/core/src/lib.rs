@@ -18801,8 +18801,7 @@ fn has_strict_reserved_binding(program: &Program<'_>) -> bool {
 }
 
 fn has_class_strict_name_error(program: &Program<'_>) -> bool {
-    const RESERVED: [&str; 12] = [
-        "await",
+    const RESERVED: [&str; 11] = [
         "enum",
         "implements",
         "interface",
