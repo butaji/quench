@@ -2314,6 +2314,24 @@ fn finish_direct_call(
             parent.guest.resume_target = select_single_target(parent, target_pc);
             DIRECT_CALL_EXCEPTION
         }
+        // Proper-tail-call completion is an interpreter control record, not
+        // a guest exception.  The stencil ABI has no tail-call continuation
+        // payload yet, so return the ordinary fallback marker and let the
+        // same VM re-enter the function through its complete evaluator.
+        Err(JsError::TailCall { .. }) => {
+            if parent.direct_call_stats_enabled {
+                DIRECT_CALL_RUNTIME_STATS
+                    .exceptions
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            let target_pc = exceptional_pc(
+                parent,
+                JsError::Message("unsupported tail call in stencil".to_string()),
+                code.ops.len(),
+            );
+            parent.guest.resume_target = select_single_target(parent, target_pc);
+            DIRECT_CALL_EXCEPTION
+        }
         Err(error) => {
             if parent.direct_call_stats_enabled {
                 DIRECT_CALL_RUNTIME_STATS
@@ -3260,8 +3278,18 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let callee = unsafe { &*frame.guest.register_values.add(*callee as usize) };
             let pc = next - NEXT_INSTRUCTION_DISTANCE;
             let cache = (pc < frame.call_ic_count).then(|| unsafe { &*frame.call_ics.add(pc) });
-            let result = unsafe { &mut *frame.vm }
-                .call_arguments_with_ic(callee, receiver, &arguments, cache)?;
+            let result = match unsafe { &mut *frame.vm }
+                .call_arguments_with_ic(callee, receiver, &arguments, cache)
+            {
+                Err(JsError::TailCall { .. }) => {
+                    // Tail-call completion is an evaluator continuation, not
+                    // a guest exception.  The stencil frame cannot carry its
+                    // callee/receiver/arguments record yet, so force the
+                    // shared VM fallback before any observable effect leaks.
+                    return Err(JsError::Message("unsupported tail call in stencil".into()));
+                }
+                result => result?,
+            };
             put(frame, dst, result);
         }
         DynOp::Construct { dst, callee, args } => {
