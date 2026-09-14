@@ -10134,7 +10134,15 @@ impl Vm {
             if key == "length"
                 && object
                     .as_object_ref()
-                    .is_some_and(|object| object.borrow().array.is_some())
+                    .is_some_and(|object| {
+                        object.borrow().array.is_some()
+                            && object
+                                .borrow()
+                                .props
+                                .get("\0wrapper")
+                                .and_then(Value::as_string)
+                                .is_none_or(|wrapper| wrapper != "Arguments")
+                    })
             {
                 let number = to_number_with_vm(self, &value)?;
                 if !number.is_finite()
