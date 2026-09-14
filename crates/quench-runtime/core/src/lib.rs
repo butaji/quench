@@ -10658,6 +10658,12 @@ impl Vm {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
         }
+        if let FunctionKind::User { env, .. } = &function.kind
+            && environment_has_named_function_bindings(env)
+        {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         // Parameter defaults and destructuring are initialized by the shared
         // environment binder. Keep these shapes on that path until their
         // stencil lowering carries the same binding semantics.
@@ -17662,6 +17668,18 @@ fn environment_has_deleted_bindings(environment: &Env) -> bool {
     while let Some(candidate) = current {
         let borrowed = candidate.borrow();
         if !borrowed.deleted_names.is_empty() {
+            return true;
+        }
+        current = borrowed.parent.clone();
+    }
+    false
+}
+
+fn environment_has_named_function_bindings(environment: &Env) -> bool {
+    let mut current = Some(environment.clone());
+    while let Some(candidate) = current {
+        let borrowed = candidate.borrow();
+        if !borrowed.named_function_names.is_empty() {
             return true;
         }
         current = borrowed.parent.clone();
