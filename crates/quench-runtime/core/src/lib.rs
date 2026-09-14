@@ -5753,6 +5753,7 @@ struct Vm {
     source_stack: Vec<PathBuf>,
     source_ids: Vec<usize>,
     module_cache: HashMap<PathBuf, Value>,
+    template_cache: HashMap<(Option<usize>, u32, u32), Value>,
     // Module records are owned by this VM instance.  The cache stores the
     // canonical export map once a source has evaluated; an empty entry is
     // installed before dependency traversal so cycles observe a stable
@@ -5892,6 +5893,7 @@ impl Vm {
             source_stack: Vec::new(),
             source_ids: Vec::new(),
             module_cache: HashMap::new(),
+            template_cache: HashMap::new(),
             module_exports_cache: HashMap::new(),
             module_namespace_cache: HashMap::new(),
             module_errors: HashMap::new(),
@@ -16839,7 +16841,7 @@ impl Vm {
                 Ok(Value::RegExp(Rc::new(RefCell::new(regexp))))
             }
             TaggedTemplateExpression(v) => {
-                let tag = self.eval_expr(&v.tag, e.clone())?;
+                let (tag, receiver, _) = self.eval_call_reference(&v.tag, e.clone(), false)?;
                 let template = self.make_template_object(&v.quasi);
                 let mut arguments = vec![template];
                 arguments.extend(
@@ -16849,7 +16851,7 @@ impl Vm {
                         .map(|expression| self.eval_expr(expression, e.clone()))
                         .collect::<JsResult<Vec<_>>>()?,
                 );
-                self.call(tag, Value::Undefined, arguments)
+                self.call(tag, receiver, arguments)
             }
             _ => Err(JsError::Message("unsupported expression".into())),
         }
@@ -16902,6 +16904,14 @@ impl Vm {
         self.has_own_property_key(value, &Self::private_brand_key(key))
     }
     fn make_template_object<'a>(&mut self, template: &TemplateLiteral<'a>) -> Value {
+        let cache_key = (
+            self.source_ids.last().copied(),
+            template.span.start,
+            template.span.end,
+        );
+        if let Some(cached) = self.template_cache.get(&cache_key) {
+            return cached.clone();
+        }
         let cooked = self.array_from_values(
             template
                 .quasis
@@ -16924,7 +16934,21 @@ impl Vm {
                 .map(|quasi| Value::string_value(quasi.value.raw.as_str()))
                 .collect(),
         );
-        self.set_prop(&cooked, "raw", raw);
+        self.set_prop(&cooked, "raw", raw.clone());
+        if let Some(object) = cooked.as_object_ref() {
+            let raw_attributes = PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            };
+            object
+                .borrow_mut()
+                .attributes
+                .insert("raw".into(), raw_attributes);
+        }
+        set_integrity_level(&raw, true);
+        set_integrity_level(&cooked, true);
+        self.template_cache.insert(cache_key, cooked.clone());
         cooked
     }
     fn member_parts<'a>(&mut self, m: &MemberExpression<'a>, e: Env) -> JsResult<(Value, String)> {
