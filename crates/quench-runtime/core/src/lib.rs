@@ -13368,7 +13368,7 @@ impl Vm {
                     .as_expression()
                     .map(|expression| {
                         self.eval_expr(expression, e).map(|value| {
-                            if value.as_function_ref().is_some_and(|function| {
+                            if value.as_function_ref().is_some_and(|_| {
                                 let name = self.get_prop(&value, "name");
                                 name.is_undefined()
                                     || name.as_string().is_some_and(|name| name.is_empty())
