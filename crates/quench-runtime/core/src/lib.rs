@@ -37016,6 +37016,11 @@ fn normalize_legacy_control_escapes(pattern: &str) -> String {
         } else if byte == b']' {
             in_class = false;
         }
+        if byte == b'\\' && index + 1 < bytes.len() && bytes[index + 1] == b'\\' {
+            output.push_str(r"\\");
+            index += 2;
+            continue;
+        }
         if byte == b'\\' && index + 2 < bytes.len() && bytes[index + 1] == b'c' {
             let next = bytes[index + 2];
             let valid =
@@ -37024,14 +37029,22 @@ fn normalize_legacy_control_escapes(pattern: &str) -> String {
                 let value = next.to_ascii_uppercase() & 0x1f;
                 output.push_str(&format!(r"\x{value:02X}"));
             } else {
-                output.push('c');
+                output.push_str(r"\\c");
+                if next >= 0x80 {
+                    let mut start = index + 2;
+                    while start > 0 && (bytes[start] & 0xc0) == 0x80 { start -= 1; }
+                    let character = pattern[start..].chars().next().expect("valid UTF-8 pattern");
+                    output.push(character);
+                    index = start + character.len_utf8();
+                    continue;
+                }
                 output.push(next as char);
             }
             index += 3;
             continue;
         }
         if byte == b'\\' && index + 2 == bytes.len() && bytes[index + 1] == b'c' {
-            output.push('c');
+            output.push_str(r"\\c");
             index += 2;
             continue;
         }
