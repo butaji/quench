@@ -3218,14 +3218,8 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             strict,
         } => {
             let object = get(frame, object);
-            let deleted = unsafe { &mut *frame.vm }.delete_prop_with_vm(&object, &key)?;
-            if *strict && !deleted {
-                return Err(JsError::Throw(super::type_error(
-                    unsafe { &mut *frame.vm },
-                    "property is not configurable",
-                )));
-            }
-            put(frame, dst, Value::Bool(deleted));
+            let result = unsafe { &mut *frame.vm }.delete_member_with_vm(&object, &key, *strict)?;
+            put(frame, dst, result);
         }
         DynOp::DeleteComputed {
             dst,
@@ -3236,14 +3230,22 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let object = get(frame, object);
             let key_value = get(frame, key);
             let key = unsafe { &mut *frame.vm }.to_property_key(key_value)?;
-            let deleted = unsafe { &mut *frame.vm }.delete_prop_with_vm(&object, &key)?;
-            if *strict && !deleted {
+            let result = unsafe { &mut *frame.vm }.delete_member_with_vm(&object, &key, *strict)?;
+            put(frame, dst, result);
+        }
+        DynOp::DeleteName { dst, name, strict } => {
+            let result = unsafe { &mut *frame.vm }
+                .delete_name_with_vm(&frame.environment, &name, *strict)?;
+            put(frame, dst, result);
+        }
+        DynOp::DeleteLocal { dst, strict } => {
+            if *strict {
                 return Err(JsError::Throw(super::type_error(
                     unsafe { &mut *frame.vm },
-                    "property is not configurable",
+                    "cannot delete a binding in strict mode",
                 )));
             }
-            put(frame, dst, Value::Bool(deleted));
+            put(frame, dst, Value::Bool(false));
         }
         DynOp::Call {
             dst,
