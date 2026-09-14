@@ -8662,7 +8662,7 @@ impl Vm {
         // Private names are not string properties.  Their compact storage is
         // still reachable by the dedicated private-member evaluator, but
         // ordinary `in`/reflection queries must not expose it.
-        if key.starts_with('#') {
+        if Self::is_private_storage_key(key) {
             return false;
         }
         if let Some(object) = value.as_object() {
@@ -11660,7 +11660,7 @@ impl Vm {
                 set_function_name(&value, &display_key);
             }
             if matches!(&field.key, PropertyKey::PrivateIdentifier(_)) {
-                self.set_prop_with_accessors(receiver, &key, value)?;
+                self.initialize_private_field(receiver, &key, value)?;
                 continue;
             }
             let descriptor = self.ordinary_object();
@@ -11678,12 +11678,35 @@ impl Vm {
         Ok(())
     }
 
+    fn initialize_private_field(
+        &mut self,
+        receiver: &Value,
+        key: &str,
+        value: Value,
+    ) -> JsResult<()> {
+        let target = private_target(receiver);
+        if self.has_own_property_key(&target, key)
+            || !native_object_is_extensible(
+                self,
+                Value::Undefined,
+                std::slice::from_ref(&target),
+            )?
+            .truthy()
+        {
+            return Err(JsError::Throw(type_error(
+                self,
+                "Cannot add private field to object",
+            )));
+        }
+        self.set_prop_with_accessors(&target, key, value)
+    }
+
     fn install_class_private_brands(
         &mut self,
         class: &Class<'static>,
         env: &Env,
         receiver: &Value,
-    ) {
+    ) -> JsResult<()> {
         // Private elements are stored on the underlying object even when a
         // constructor returns a Proxy.  The proxy remains the observable
         // value, but private-brand checks and storage bypass its traps.
@@ -11702,9 +11725,24 @@ impl Vm {
             };
             if let Some(private_name) = private_name {
                 let key = self.private_key(private_name, env);
-                self.set_prop(&receiver, &Self::private_brand_key(&key), Value::Bool(true));
+                let brand = Self::private_brand_key(&key);
+                if self.has_own_property_key(&receiver, &brand)
+                    || !native_object_is_extensible(
+                        self,
+                        Value::Undefined,
+                        std::slice::from_ref(&receiver),
+                    )?
+                    .truthy()
+                {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "Cannot add private element to object",
+                    )));
+                }
+                self.set_prop(&receiver, &brand, Value::Bool(true));
             }
         }
+        Ok(())
     }
 
     fn call_class(
@@ -11735,7 +11773,7 @@ impl Vm {
         // Base instances receive private brands before their constructor body;
         // derived instances receive them at the first successful super() call.
         if super_constructor.is_none() {
-            self.install_class_private_brands(class, &env, &this);
+            self.install_class_private_brands(class, &env, &this)?;
         }
         let result = if let Some(constructor) = constructor {
             if super_constructor.is_none() {
@@ -11762,7 +11800,7 @@ impl Vm {
             result
         } else if let Some(super_constructor) = super_constructor {
             let result = self.call_arguments(&super_constructor, this.clone(), args.as_slice())?;
-            self.install_class_private_brands(class, &env, &result);
+            self.install_class_private_brands(class, &env, &result)?;
             let field_env = Environment::new(Some(env.clone()));
             field_env.borrow_mut().declare("this", result.clone());
             self.initialize_class_instance_fields(class, env.clone(), field_env, &result)?;
@@ -13370,7 +13408,7 @@ impl Vm {
                 "invalid function parameter list",
             )));
         }
-        if effective_strict_mode && has_strict_var_or_with_early_error(&r.program) {
+        if has_strict_var_or_with_early_error(&r.program, effective_strict_mode) {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "invalid strict-mode declaration or with statement",
@@ -15927,6 +15965,10 @@ impl Vm {
                         };
                         set_function_name(&value, &display_key);
                     }
+                    if matches!(&field.key, PropertyKey::PrivateIdentifier(_)) {
+                        self.initialize_private_field(&class, &key, value)?;
+                        continue;
+                    }
                     let descriptor = self.ordinary_object();
                     self.set_prop(&descriptor, "value", value);
                     self.set_prop(&descriptor, "writable", Value::Bool(true));
@@ -17451,7 +17493,7 @@ impl Vm {
                         && let Some(function) = class_value.as_function_ref()
                         && let FunctionKind::Class { node, .. } = &function.kind
                     {
-                        self.install_class_private_brands(node, &class_environment, &result);
+                        self.install_class_private_brands(node, &class_environment, &result)?;
                         self.initialize_class_instance_fields(
                             node,
                             class_environment,
@@ -19283,63 +19325,61 @@ fn collect_strict_eval_var_names(
     }
 }
 
-fn has_strict_var_or_with_early_error(program: &Program<'_>) -> bool {
+fn has_strict_var_or_with_early_error(program: &Program<'_>, inherited_strict: bool) -> bool {
     let mut names = Vec::new();
     collect_strict_eval_var_names(&program.body, &mut names, true);
-    if names
+    if inherited_strict
+        && names
         .iter()
         .any(|name| strict_assignment_reserved_name!(name.as_str()) || name == "await")
     {
         return true;
     }
-    fn contains_with(statements: &[Statement<'_>]) -> bool {
-        statements.iter().any(|statement| match statement {
-            Statement::WithStatement(_) => true,
-            Statement::BlockStatement(block) => contains_with(&block.body),
-            Statement::IfStatement(statement) => {
-                contains_with(std::slice::from_ref(&statement.consequent))
-                    || statement
-                        .alternate
-                        .as_ref()
-                        .is_some_and(|alternate| contains_with(std::slice::from_ref(alternate)))
-            }
-            Statement::WhileStatement(statement) => {
-                contains_with(std::slice::from_ref(&statement.body))
-            }
-            Statement::DoWhileStatement(statement) => {
-                contains_with(std::slice::from_ref(&statement.body))
-            }
-            Statement::ForStatement(statement) => {
-                contains_with(std::slice::from_ref(&statement.body))
-            }
-            Statement::ForInStatement(statement) => {
-                contains_with(std::slice::from_ref(&statement.body))
-            }
-            Statement::ForOfStatement(statement) => {
-                contains_with(std::slice::from_ref(&statement.body))
-            }
-            Statement::LabeledStatement(statement) => {
-                contains_with(std::slice::from_ref(&statement.body))
-            }
-            Statement::SwitchStatement(statement) => statement
-                .cases
-                .iter()
-                .any(|case| contains_with(&case.consequent)),
-            Statement::TryStatement(statement) => {
-                contains_with(&statement.block.body)
-                    || statement
-                        .handler
-                        .as_ref()
-                        .is_some_and(|handler| contains_with(&handler.body.body))
-                    || statement
-                        .finalizer
-                        .as_ref()
-                        .is_some_and(|finalizer| contains_with(&finalizer.body))
-            }
-            _ => false,
-        })
+    struct StrictWithScan {
+        strict_stack: Vec<bool>,
+        invalid: bool,
+        inherited_strict: bool,
     }
-    contains_with(&program.body)
+    impl StrictWithScan {
+        fn strict(&self) -> bool {
+            self.strict_stack
+                .last()
+                .copied()
+                .unwrap_or(self.inherited_strict)
+        }
+    }
+    impl<'a> Visit<'a> for StrictWithScan {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.strict_stack.push(true);
+            ast_walk::walk_class(self, class);
+            self.strict_stack.pop();
+        }
+
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let body_strict = function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+            self.strict_stack.push(self.strict() || body_strict);
+            ast_walk::walk_function(self, function, flags);
+            self.strict_stack.pop();
+        }
+
+        fn visit_with_statement(&mut self, statement: &WithStatement<'a>) {
+            if self.strict() {
+                self.invalid = true;
+            }
+            ast_walk::walk_with_statement(self, statement);
+        }
+    }
+    let mut scan = StrictWithScan {
+        strict_stack: Vec::new(),
+        invalid: false,
+        inherited_strict,
+    };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn collect_script_binding_names(statements: &[Statement<'_>], names: &mut Vec<String>) {
@@ -28852,7 +28892,7 @@ fn native_reflect_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
 fn native_reflect_delete_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     let target = reflect_require_object(vm, args.first(), "deleteProperty")?;
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
-    if key.starts_with('#') {
+    if Vm::is_private_storage_key(&key) {
         return Ok(Value::Undefined);
     }
     Ok(Value::Bool(vm.delete_prop_with_vm(&target, &key)?))
@@ -30676,6 +30716,12 @@ fn dynamic_function_constructor(
             "invalid Function constructor source",
         )));
     }
+    if dynamic_function_body_early_error(&parsed.program) {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "invalid strict Function constructor source",
+        )));
+    }
     let Some(Statement::FunctionDeclaration(function)) = parsed.program.body.first() else {
         return Err(JsError::Throw(syntax_error(
             vm,
@@ -30983,11 +31029,11 @@ fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
             return true;
         }
     }
-    // `with` is forbidden in a strict function body. This conservative token
-    // check covers the dynamic-constructor source forms while leaving strings
-    // and property names to the parser/reducer.
-    body.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-        .any(|token| token == "with")
+    false
+}
+
+fn dynamic_function_body_early_error(program: &Program<'_>) -> bool {
+    has_strict_var_or_with_early_error(program, true)
 }
 
 fn normalize_hashbang(source: &str) -> String {
@@ -34255,7 +34301,7 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             object
                 .props
                 .keys()
-                .filter(|key| !key.contains('\0') && !key.starts_with('#'))
+                .filter(|key| !key.contains('\0') && !Vm::is_private_storage_key(key))
                 .cloned()
                 .map(Value::string_value),
         );
@@ -34263,7 +34309,7 @@ fn native_object_get_own_property_names(vm: &mut Vm, _: Value, args: &[Value]) -
             .props
             .keys()
             .filter_map(|key| accessor_key(key).map(|(_, key)| key.to_owned()))
-            .filter(|key| !key.starts_with('#'))
+            .filter(|key| !Vm::is_private_storage_key(key))
             .filter(|key| !keys.iter().any(|existing| existing.string() == *key))
             .map(Value::string_value)
             .collect::<Vec<_>>();
@@ -34586,6 +34632,12 @@ fn proxy_target(value: &Value) -> Option<Value> {
 fn private_target(value: &Value) -> Value {
     let mut current = value.clone();
     while let Some(target) = proxy_target(&current) {
+        // Instance private elements follow a Proxy to its ordinary target,
+        // while static private names are branded on the class constructor
+        // itself.  A Proxy around that function must fail the brand check.
+        if target.as_function_ref().is_some() {
+            return current;
+        }
         current = target;
     }
     current
@@ -35205,7 +35257,7 @@ fn function_own_property_keys(
     let is_builtin = matches!(function.kind, FunctionKind::Builtin(_));
     let visible = |key: &str| {
         if (key.starts_with('\0') && !is_symbol_key(key))
-            || key.starts_with('#')
+            || Vm::is_private_storage_key(key)
             || (!include_symbols && is_symbol_key(key))
         {
             return false;
@@ -35806,7 +35858,7 @@ fn object_receiver(vm: &mut Vm, value: &Value) -> JsResult<Value> {
 fn native_object_has_own_property(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
-    if key.starts_with('#') {
+    if Vm::is_private_storage_key(&key) {
         return Ok(Value::Bool(false));
     }
     if is_module_namespace(&target) {
@@ -35881,7 +35933,7 @@ fn native_object_property_is_enumerable(
     // non-enumerable because it is held on function metadata, not props.
     let target = object_receiver(vm, &this)?;
     let key = vm.to_property_key(args.first().cloned().unwrap_or(Value::Undefined))?;
-    if key.starts_with('#') {
+    if Vm::is_private_storage_key(&key) {
         return Ok(Value::Undefined);
     }
     if is_module_namespace(&target) {
