@@ -8722,6 +8722,7 @@ impl Vm {
             },
         );
         install_regexp_legacy_accessors(self);
+        self.install_disposable_stack_intrinsics(&g);
         self.install_global_aliases();
         let test262 = self.object(None);
         self.set_prop(&test262, "createRealm", self.native(native_create_realm));
@@ -8871,6 +8872,65 @@ impl Vm {
         );
     }
 
+    fn install_disposable_stack_intrinsics(&mut self, global: &Env) {
+        let global_object = self
+            .global_object_for_environment(global)
+            .unwrap_or_else(|| self.object(None));
+        let constructor = self.install_disposable_stack_on_global(&global_object);
+        Environment::set(global, "AsyncDisposableStack", constructor);
+        let sync_constructor = self.get_prop(&global_object, "DisposableStack");
+        if sync_constructor.is_function() {
+            Environment::set(global, "DisposableStack", sync_constructor);
+        }
+    }
+
+    fn install_disposable_stack_on_global(&mut self, global: &Value) -> Value {
+        let constructor = self.native_named(native_async_disposable_stack_constructor, "AsyncDisposableStack", 0);
+        let prototype = self.object(self.default_object_prototype());
+        self.set_prop(&constructor, "prototype", prototype.clone());
+        set_property_attributes(&constructor, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        let prototype = self.get_prop(&constructor, "prototype");
+        self.set_prop(&prototype, "constructor", constructor.clone());
+        set_property_attributes(&prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        for (name, native, length) in [
+            ("use", native_async_disposable_stack_use as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>, 1),
+            ("adopt", native_async_disposable_stack_adopt as _, 2),
+            ("defer", native_async_disposable_stack_defer as _, 1),
+            ("move", native_async_disposable_stack_move as _, 0),
+            ("disposeAsync", native_async_disposable_stack_dispose_async as _, 0),
+        ] {
+            let method = self.native_named(native, name, length);
+            self.mark_nonconstructable(&method);
+            self.set_prop(&prototype, name, method);
+            set_property_attributes(&prototype, name, PropertyAttributes::BUILTIN_METHOD);
+        }
+        let disposed = self.native_named(native_async_disposable_stack_disposed_getter, "get disposed", 0);
+        self.mark_nonconstructable(&disposed);
+        self.define_accessor_slot(&prototype, "disposed", Some(disposed), None, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        let async_dispose = self.get_prop(&prototype, "disposeAsync");
+        let async_dispose_key = self.well_known_symbol_key("asyncDispose");
+        self.set_prop(&prototype, &async_dispose_key, async_dispose);
+        set_property_attributes(&prototype, &async_dispose_key, PropertyAttributes::BUILTIN_METHOD);
+        let tag_key = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&prototype, &tag_key, Value::string_value("AsyncDisposableStack"));
+        set_property_attributes(&prototype, &tag_key, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        self.set_prop(global, "AsyncDisposableStack", constructor.clone());
+        // The synchronous counterpart is needed as an invalid cross-brand
+        // receiver in the explicit-resource-management contract.  Its full
+        // semantics are installed by the same intrinsic table when enabled;
+        // this lightweight brand is enough to keep RequireInternalSlot
+        // observations distinct from AsyncDisposableStack.
+        let sync_constructor = self.native_named(native_disposable_stack_constructor, "DisposableStack", 0);
+        let sync_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&sync_constructor, "prototype", sync_prototype.clone());
+        set_property_attributes(&sync_constructor, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        let sync_prototype = self.get_prop(&sync_constructor, "prototype");
+        self.set_prop(&sync_prototype, "constructor", sync_constructor.clone());
+        set_property_attributes(&sync_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        self.set_prop(global, "DisposableStack", sync_constructor);
+        constructor
+    }
+
     fn install_global_aliases(&self) {
         // Keep the host-facing global aliases on the same VM-owned object.
         // The core environment remains the binding authority; this object is
@@ -8907,6 +8967,7 @@ impl Vm {
                 "URIError",
                 "AggregateError",
                 "SuppressedError",
+                "AsyncDisposableStack",
                 "Promise",
                 "Proxy",
                 "ArrayBuffer",
@@ -9405,6 +9466,8 @@ impl Vm {
                                 native_intl_duration_format_constructor,
                                 native_intl_list_format_constructor,
                                 native_intl_locale_constructor,
+                                native_async_disposable_stack_constructor,
+                                native_disposable_stack_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
                             ) =>
@@ -30493,6 +30556,164 @@ fn native_abstract_module_source(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult
 fn native_abstract_module_source_tag_getter(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::Undefined)
 }
+const ASYNC_DISPOSABLE_STACK_BRAND: &str = "\0async-disposable-stack-brand";
+const ASYNC_DISPOSABLE_STACK_ITEMS: &str = "\0async-disposable-stack-items";
+const ASYNC_DISPOSABLE_STACK_DISPOSED: &str = "\0async-disposable-stack-disposed";
+
+fn async_disposable_stack_receiver(vm: &mut Vm, this: &Value) -> JsResult<Value> {
+    if !vm.get_prop(this, ASYNC_DISPOSABLE_STACK_BRAND).truthy() {
+        return Err(JsError::Throw(type_error(vm, "incompatible AsyncDisposableStack receiver")));
+    }
+    Ok(this.clone())
+}
+
+fn native_async_disposable_stack_constructor(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if vm.current_new_target.is_none() {
+        return Err(JsError::Throw(type_error(vm, "AsyncDisposableStack requires new")));
+    }
+    let result = if this.is_object_like() { this } else { vm.object(None) };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
+        && !is_symbol_carrier(&prototype_value)
+        && let Some(prototype) = prototype_value.as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    vm.set_prop(&result, ASYNC_DISPOSABLE_STACK_BRAND, Value::Bool(true));
+    vm.set_prop(&result, ASYNC_DISPOSABLE_STACK_ITEMS, vm.array());
+    vm.set_prop(&result, ASYNC_DISPOSABLE_STACK_DISPOSED, Value::Bool(false));
+    Ok(result)
+}
+
+fn native_disposable_stack_constructor(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if vm.current_new_target.is_none() {
+        return Err(JsError::Throw(type_error(vm, "DisposableStack requires new")));
+    }
+    let result = if this.is_object_like() { this } else { vm.object(None) };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    vm.set_prop(&result, "\0disposable-stack-brand", Value::Bool(true));
+    Ok(result)
+}
+
+fn native_async_disposable_stack_use(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let receiver = async_disposable_stack_receiver(vm, &this)?;
+    if vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_DISPOSED).truthy() {
+        return Err(JsError::Throw(reference_error(vm, "AsyncDisposableStack is disposed")));
+    }
+    let resource = args.first().cloned().unwrap_or(Value::Undefined);
+    if resource.is_null() || resource.is_undefined() {
+        return Ok(resource);
+    }
+    if !resource.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "invalid disposable resource")));
+    }
+    let async_key = vm.well_known_symbol_key("asyncDispose");
+    let sync_key = vm.well_known_symbol_key("dispose");
+    let method = vm.get_prop(&resource, &async_key);
+    let method = if method.is_undefined() { vm.get_prop(&resource, &sync_key) } else { method };
+    if method.is_null() || method.is_undefined() || !method.is_function() {
+        return Err(JsError::Throw(type_error(vm, "invalid disposable resource")));
+    }
+    let items = vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_ITEMS);
+    let index = vm.get_prop(&items, "length").number().max(0.0) as usize;
+    let item = vm.object(None);
+    vm.set_prop(&item, "kind", Value::string_value("resource"));
+    vm.set_prop(&item, "value", resource.clone());
+    vm.set_prop(&items, &index.to_string(), item);
+    Ok(resource)
+}
+
+fn native_async_disposable_stack_adopt(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let receiver = async_disposable_stack_receiver(vm, &this)?;
+    if vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_DISPOSED).truthy() {
+        return Err(JsError::Throw(reference_error(vm, "AsyncDisposableStack is disposed")));
+    }
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let callback = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "onDispose is not callable"))); }
+    let items = vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_ITEMS);
+    let index = vm.get_prop(&items, "length").number().max(0.0) as usize;
+    let item = vm.object(None);
+    vm.set_prop(&item, "kind", Value::string_value("callback"));
+    vm.set_prop(&item, "value", value.clone());
+    vm.set_prop(&item, "callback", callback);
+    vm.set_prop(&items, &index.to_string(), item);
+    Ok(value)
+}
+
+fn native_async_disposable_stack_defer(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let receiver = async_disposable_stack_receiver(vm, &this)?;
+    if vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_DISPOSED).truthy() {
+        return Err(JsError::Throw(reference_error(vm, "AsyncDisposableStack is disposed")));
+    }
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "onDispose is not callable"))); }
+    let items = vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_ITEMS);
+    let index = vm.get_prop(&items, "length").number().max(0.0) as usize;
+    let item = vm.object(None);
+    vm.set_prop(&item, "kind", Value::string_value("defer"));
+    vm.set_prop(&item, "callback", callback);
+    vm.set_prop(&items, &index.to_string(), item);
+    Ok(Value::Undefined)
+}
+
+fn native_async_disposable_stack_move(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let receiver = async_disposable_stack_receiver(vm, &this)?;
+    if vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_DISPOSED).truthy() {
+        return Err(JsError::Throw(reference_error(vm, "AsyncDisposableStack is disposed")));
+    }
+    let result_prototype = Environment::get(&vm.global, "AsyncDisposableStack")
+        .and_then(|constructor| vm.get_prop(&constructor, "prototype").as_object());
+    let result = vm.object(result_prototype);
+    vm.set_prop(&result, ASYNC_DISPOSABLE_STACK_BRAND, Value::Bool(true));
+    vm.set_prop(&result, ASYNC_DISPOSABLE_STACK_ITEMS, vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_ITEMS));
+    vm.set_prop(&result, ASYNC_DISPOSABLE_STACK_DISPOSED, Value::Bool(false));
+    vm.set_prop(&receiver, ASYNC_DISPOSABLE_STACK_DISPOSED, Value::Bool(true));
+    vm.set_prop(&receiver, ASYNC_DISPOSABLE_STACK_ITEMS, vm.array());
+    Ok(result)
+}
+
+fn native_async_disposable_stack_dispose_async(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let receiver = async_disposable_stack_receiver(vm, &this)?;
+    let promise_ctor = Environment::get(&vm.global, "Promise").unwrap_or_else(|| vm.native_named(native_promise_constructor, "Promise", 1));
+    let (promise, resolve, reject) = new_promise_capability(vm, promise_ctor)?;
+    if vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_DISPOSED).truthy() {
+        let _ = vm.call(resolve, Value::Undefined, vec![Value::Undefined]);
+        return Ok(promise);
+    }
+    vm.set_prop(&receiver, ASYNC_DISPOSABLE_STACK_DISPOSED, Value::Bool(true));
+    let items = vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_ITEMS);
+    let length = vm.get_prop(&items, "length").number().max(0.0) as usize;
+    for index in (0..length).rev() {
+        let item = vm.get_prop(&items, &index.to_string());
+        let kind = vm.get_prop(&item, "kind").as_string().cloned().unwrap_or_default();
+        let callback = if kind == "resource" {
+            let resource = vm.get_prop(&item, "value");
+            vm.get_prop(&resource, &vm.well_known_symbol_key("asyncDispose"))
+        } else { vm.get_prop(&item, "callback") };
+        if callback.is_function() {
+            let value = if kind == "resource" { vm.get_prop(&item, "value") } else { Value::Undefined };
+            let callback_this = if kind == "resource" { value.clone() } else { Value::Undefined };
+            if let Err(error) = vm.call(callback, callback_this, vec![value]) {
+                let _ = vm.call(reject, Value::Undefined, vec![error_value(error)]);
+                return Ok(promise);
+            }
+        }
+    }
+    let _ = vm.call(resolve, Value::Undefined, vec![Value::Undefined]);
+    Ok(promise)
+}
+
+fn native_async_disposable_stack_disposed_getter(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let receiver = async_disposable_stack_receiver(vm, &this)?;
+    Ok(vm.get_prop(&receiver, ASYNC_DISPOSABLE_STACK_DISPOSED))
+}
 fn native_throw_type_error(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Err(JsError::Throw(type_error(
         vm,
@@ -35932,6 +36153,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                                     .then_some("Intl.Locale")
                             })
                             .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_async_disposable_stack_constructor))
+                                    .then_some("AsyncDisposableStack")
+                            })
+                            .or_else(|| {
                                 matches!(function.kind, FunctionKind::Builtin(BuiltinId::AggregateErrorConstructor))
                                     .then_some("AggregateError")
                             })
@@ -36090,6 +36315,7 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     if let Some(value) = Environment::get(&vm.global, "Intl") {
         vm.set_prop(&global, "Intl", value);
     }
+    vm.install_disposable_stack_on_global(&global);
     for name in [
         "parseInt",
         "parseFloat",
