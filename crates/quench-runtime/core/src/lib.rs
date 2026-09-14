@@ -36956,6 +36956,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                                     .then_some("AggregateError")
                             })
                             .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::SuppressedErrorConstructor))
+                                    .then_some("SuppressedError")
+                            })
+                            .or_else(|| {
                                 matches!(function.kind, FunctionKind::Builtin(BuiltinId::ErrorConstructor))
                                     .then_some("Error")
                             })
