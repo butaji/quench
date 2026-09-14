@@ -13353,6 +13353,7 @@ impl Vm {
             // interpreter path (the same VM semantics, with a correct
             // fallback) rather than exposing a stale cached global register.
             && !contains_accessor_syntax(source)
+            && !has_object_method_syntax(&r.program)
             && !contains_async_function_constructor_probe(source)
             && !has_inferable_binding_initializer(&r.program)
             && !has_direct_lexical_declaration(&r.program.body)
@@ -15233,6 +15234,14 @@ impl Vm {
                         )));
                     }
                     let method_value = self.make_user(&method.value, class_env.clone());
+                    if !method.value.generator && !method.value.r#async {
+                        self.mark_nonconstructable(&method_value);
+                        self.set_prop(
+                            &method_value,
+                            PROXY_NO_PROTOTYPE_PROP,
+                            Value::Bool(true),
+                        );
+                    }
                     let display_key = match &method.key {
                         PropertyKey::PrivateIdentifier(identifier) => {
                             format!("#{}", identifier.name)
@@ -16139,6 +16148,13 @@ impl Vm {
                             {
                                 env.borrow_mut()
                                     .declare(CLASS_HOME_OBJECT_ENV_NAME, o.clone());
+                                if let FunctionKind::User { node, .. } = &function.kind
+                                    && !node.generator
+                                    && !node.r#async
+                                {
+                                    self.mark_nonconstructable(&z);
+                                    self.set_prop(&z, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
+                                }
                             }
                             let is_legacy_proto = is_legacy_proto_property(p);
                             if is_legacy_proto {
@@ -21013,6 +21029,22 @@ fn contains_accessor_syntax(source: &str) -> bool {
     source
         .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|token| matches!(token, "get" | "set"))
+}
+
+fn has_object_method_syntax(program: &Program<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_object_property(&mut self, property: &ObjectProperty<'a>) {
+            self.found |=
+                property.method || matches!(property.kind, PropertyKind::Get | PropertyKind::Set);
+            ast_walk::walk_object_property(self, property);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_program(program);
+    scan.found
 }
 
 fn contains_async_function_constructor_probe(source: &str) -> bool {
@@ -28022,7 +28054,11 @@ pub(crate) fn constructable(value: &Value) -> bool {
         return false;
     };
     match &function.kind {
-        FunctionKind::User { node, .. } => !node.generator && !node.r#async,
+        FunctionKind::User { node, .. } => {
+            !node.generator
+                && !node.r#async
+                && !function.props.borrow().contains_key("\0nonconstructable")
+        }
         FunctionKind::Builtin(id) => id.is_constructable(),
         FunctionKind::Native(_) => !function.props.borrow().contains_key("\0nonconstructable"),
         FunctionKind::Arrow { .. } => false,
