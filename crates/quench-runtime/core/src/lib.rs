@@ -26767,6 +26767,25 @@ fn decode_float16(bits: u16) -> f64 {
 }
 
 fn encode_float16(value: f64) -> u16 {
+    if value.is_nan() {
+        return 0x7e00;
+    }
+    let sign_bit = if value.is_sign_negative() { 0x8000 } else { 0 };
+    if value.is_infinite() {
+        return sign_bit | 0x7c00;
+    }
+    if value.abs() >= 65504.0 && value.abs() < 65520.0 {
+        return sign_bit | 0x7bff;
+    }
+    if value.abs() < 2f64.powi(-14) {
+        let scaled = value.abs() * 2f64.powi(24);
+        let mut rounded = scaled.floor() as u16;
+        let remainder = scaled - rounded as f64;
+        if remainder > 0.5 || (remainder == 0.5 && rounded & 1 != 0) {
+            rounded += 1;
+        }
+        return sign_bit | rounded;
+    }
     let bits = (value as f32).to_bits();
     let sign = ((bits >> 16) & 0x8000) as u16;
     let exponent = ((bits >> 23) & 0xff) as i32;
@@ -26784,7 +26803,12 @@ fn encode_float16(value: f64) -> u16 {
         }
         let mantissa = fraction | 0x80_0000;
         let shift = (14 - half_exponent) as u32;
-        let rounded = (mantissa + (1 << (shift - 1))) >> shift;
+        let mut rounded = mantissa >> shift;
+        let remainder = mantissa & ((1 << shift) - 1);
+        let halfway = 1 << (shift - 1);
+        if remainder > halfway || (remainder == halfway && rounded & 1 != 0) {
+            rounded += 1;
+        }
         return sign | rounded as u16;
     }
     let mut rounded = fraction >> 13;
@@ -26868,6 +26892,15 @@ fn dataview_write(
     float: bool,
     bigint: bool,
 ) -> JsResult<Value> {
+    if this.as_object_ref().is_some_and(|object| {
+        object
+            .borrow()
+            .props
+            .get("\0dataview-buffer")
+            .is_some_and(|buffer| vm.get_prop(buffer, "immutable").truthy())
+    }) {
+        return Err(JsError::Throw(type_error(vm, "cannot write an immutable ArrayBuffer")));
+    }
     let offset = args
         .first()
         .map(|value| dataview_index(vm, value, "offset is out of bounds"))
@@ -26884,9 +26917,6 @@ fn dataview_write(
     let offset = offset as usize;
     if offset.checked_add(width).is_none_or(|end| end > length) {
         return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
-    }
-    if vm.get_prop(&buffer, "immutable").truthy() {
-        return Err(JsError::Throw(type_error(vm, "cannot write an immutable ArrayBuffer")));
     }
     let bits = if bigint {
         let modulus = BigInt::from(1_u8) << (width * 8);
