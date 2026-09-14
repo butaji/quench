@@ -1953,6 +1953,24 @@ impl Compiler {
                 return Ok(dst);
             }
             if let Some(member) = value.argument.as_member_expression() {
+                // Super-property deletion has an evaluation order that is
+                // not representable by the ordinary member lvalue path:
+                // resolving `super` must fail before a computed key runs.
+                // Defer both forms to the canonical VM evaluator.
+                if matches!(
+                    member,
+                    MemberExpression::StaticMemberExpression(member)
+                        if matches!(&member.object, Expression::Super(_))
+                ) || matches!(
+                    member,
+                    MemberExpression::ComputedMemberExpression(member)
+                        if matches!(&member.object, Expression::Super(_))
+                ) {
+                    return Err(CompileGap {
+                        span: value.span,
+                        reason: "super delete deferred to shared semantics",
+                    });
+                }
                 match self.member_lvalue(member)? {
                     Lvalue::Static { object, key } => self.emit(
                         DynOp::DeleteStatic {
@@ -1975,13 +1993,13 @@ impl Compiler {
                     Lvalue::Name(_) => unreachable!(),
                 };
             } else {
-                self.emit(
-                    DynOp::LoadLiteral {
-                        dst,
-                        value: Literal::Bool(true),
-                    },
-                    value.span,
-                );
+                // Non-reference operands are still evaluated (`delete
+                // call()`), so use the shared evaluator instead of folding
+                // them to `true` in the stencil compiler.
+                return Err(CompileGap {
+                    span: value.span,
+                    reason: "non-reference delete deferred to shared semantics",
+                });
             }
             return Ok(dst);
         }
