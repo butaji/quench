@@ -14545,9 +14545,19 @@ impl Vm {
                         break;
                     }
                     let value = self.get_prop_with_accessors(&step, "value")?;
-                    self.assign_for_left(&x.left, value, loop_environment.clone())?;
+                    if let Err(error) =
+                        self.assign_for_left(&x.left, value, loop_environment.clone())
+                    {
+                        return self.iterator_close_after_error(&iterator, error);
+                    }
+                    let body_signal = match self.exec_stmt(&x.body, loop_environment.clone()) {
+                        Ok(signal) => signal,
+                        Err(error) => {
+                            return self.iterator_close_after_error(&iterator, error);
+                        }
+                    };
                     match consume_loop_signal(
-                        self.exec_stmt(&x.body, loop_environment.clone())?,
+                        body_signal,
                         loop_label.as_deref(),
                         &mut completion,
                     ) {
@@ -15003,11 +15013,7 @@ impl Vm {
             }
             _ => {
                 if let Some(t) = l.as_assignment_target() {
-                    if let Some(s) = t.as_simple_assignment_target() {
-                        if let SimpleAssignmentTarget::AssignmentTargetIdentifier(i) = s {
-                            Environment::set(&e, i.name.as_str(), v)
-                        }
-                    }
+                    self.assign_target(t, v, e)?;
                 }
             }
         }
@@ -15150,6 +15156,17 @@ impl Vm {
         Ok(())
     }
 
+    fn iterator_close_after_error<T>(
+        &mut self,
+        iterator: &Value,
+        original: JsError,
+    ) -> JsResult<T> {
+        match self.iterator_close(iterator) {
+            Err(close_error) => Err(close_error),
+            Ok(()) => Err(original),
+        }
+    }
+
     fn bind_pattern<'a>(
         &mut self,
         pattern: &BindingPattern<'a>,
@@ -15256,35 +15273,42 @@ impl Vm {
             unreachable!();
         };
         let mut record = self.iterator_record(&value)?;
-        for element in &array.elements {
-            let Some(element) = element else {
-                let _ = self.iterator_step(&mut record)?;
-                continue;
-            };
-            let element_value = self.iterator_step(&mut record)?.unwrap_or(Value::Undefined);
-            self.bind_pattern_with_eval_env(
-                element,
-                element_value,
-                target.clone(),
-                eval_env.clone(),
-            )?;
-        }
-        if let Some(rest) = &array.rest {
-            let mut values = Vec::new();
-            while let Some(value) = self.iterator_step(&mut record)? {
-                values.push(value);
+        let result = (|| {
+            for element in &array.elements {
+                let Some(element) = element else {
+                    let _ = self.iterator_step(&mut record)?;
+                    continue;
+                };
+                let element_value =
+                    self.iterator_step(&mut record)?.unwrap_or(Value::Undefined);
+                self.bind_pattern_with_eval_env(
+                    element,
+                    element_value,
+                    target.clone(),
+                    eval_env.clone(),
+                )?;
             }
-            self.bind_pattern_with_eval_env(
-                &rest.argument,
-                self.array_from_values(values),
-                target,
-                eval_env,
-            )?;
-        } else if !record.done {
-            self.iterator_close(&record.iterator)?;
-            record.done = true;
+            if let Some(rest) = &array.rest {
+                let mut values = Vec::new();
+                while let Some(value) = self.iterator_step(&mut record)? {
+                    values.push(value);
+                }
+                self.bind_pattern_with_eval_env(
+                    &rest.argument,
+                    self.array_from_values(values),
+                    target,
+                    eval_env,
+                )?;
+            } else if !record.done {
+                self.iterator_close(&record.iterator)?;
+                record.done = true;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            return self.iterator_close_after_error(&record.iterator, error);
         }
-        Ok(())
+        result
     }
 
     fn probe_with_binding(&mut self, environment: &Env, name: &str) -> JsResult<()> {
