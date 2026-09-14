@@ -27023,7 +27023,9 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
     };
     let had_source = source_buffer.is_some();
     let backing = source_buffer.unwrap_or_else(|| {
-        let backing = vm.object(None);
+        let prototype = Environment::get(&vm.global, "ArrayBuffer")
+            .and_then(|value| value.as_function_ref().map(|function| function.prototype.clone()));
+        let backing = vm.object(prototype);
         vm.set_prop(
             &backing,
             "byteLength",
