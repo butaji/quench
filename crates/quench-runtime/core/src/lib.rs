@@ -641,6 +641,9 @@ impl Value {
     }
 
     fn same_bits(&self, other: &Self) -> bool {
+        if let (Some(left), Some(right)) = (self.as_string(), other.as_string()) {
+            return left == right;
+        }
         self.0.bits() == other.0.bits()
     }
 
@@ -8084,8 +8087,19 @@ impl Vm {
         self.set_prop(&date_time_format, "prototype", date_time_format_prototype.clone());
         self.set_prop(&date_time_format, FUNCTION_PROTOTYPE_OVERRIDE_PROP, date_time_format_prototype.clone());
         self.set_prop(&date_time_format, "\0prototype_override", date_time_format_prototype.clone());
-        self.set_prop(&date_time_format_prototype, "format", self.native_named(native_intl_date_time_format_format, "get format", 1));
+        let date_time_format_getter = self.native_named(native_intl_date_time_format_format_getter, "get format", 0);
+        self.mark_nonconstructable(&date_time_format_getter);
+        self.set_prop(&date_time_format_getter, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
+        self.define_accessor_slot(
+            &date_time_format_prototype,
+            "format",
+            Some(date_time_format_getter),
+            None,
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
         self.set_prop(&date_time_format_prototype, "resolvedOptions", self.native_named(native_intl_date_time_format_resolved_options, "resolvedOptions", 0));
+        self.set_prop(&date_time_format_prototype, "constructor", date_time_format.clone());
+        set_property_attributes(&date_time_format_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
         self.set_prop(&intl, "DateTimeFormat", date_time_format);
         set_property_attributes(&intl, "DateTimeFormat", PropertyAttributes::BUILTIN_METHOD);
         Environment::set(&g, "Intl", intl);
@@ -33240,24 +33254,148 @@ fn validate_intl_date_time_format_args(vm: &mut Vm, args: &[Value]) -> JsResult<
         if options.is_null() {
             return Err(JsError::Throw(type_error(vm, "invalid options")));
         }
-        let locale_matcher = vm.get_prop_with_accessors(options, "localeMatcher")?;
-        if locale_matcher.is_null() {
+        // Keep the specification's ordered option record in one place.  The
+        // conversion itself is observable (custom toString/valueOf hooks),
+        // so validation and resolvedOptions must consume this same shape.
+        let locale_matcher = intl_datetime_string_option(vm, options, "localeMatcher")?;
+        if locale_matcher.as_deref().is_some_and(|value| value == "null") {
             return Err(JsError::Throw(range_error(vm, "invalid localeMatcher")));
         }
-        let time_zone = vm.get_prop_with_accessors(options, "timeZone")?;
-        if time_zone.as_string().is_some_and(|value| value == "invalid") {
+        let calendar = intl_datetime_string_option(vm, options, "calendar")?;
+            if calendar.as_deref().is_some_and(|value| {
+                let known = matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "gregory" | "islamic" | "islamicc" | "islamic-civil" | "iso8601"
+                        | "buddhist" | "japanese" | "persian" | "hebrew" | "chinese"
+                        | "indian" | "coptic" | "ethiopic" | "dangi" | "roc" | "bangla"
+                );
+                let syntax_valid = value.len() >= 3
+                    && !value.starts_with('-')
+                    && !value.ends_with('-')
+                    && !value.contains("--")
+                    && value
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric() || character == '-');
+                let segments_valid = value.split('-').all(|segment| {
+                    !segment.is_empty() && segment.len() <= 8
+                });
+                !syntax_valid
+                    || !segments_valid
+                    || value == "gregory-nu"
+                    || (!known && value.starts_with("gregory-"))
+                    || (!known && !value.contains('-') && value.len() > 8)
+            }) {
+                return Err(JsError::Throw(range_error(vm, "invalid calendar")));
+            }
+        let numbering_system = intl_datetime_string_option(vm, options, "numberingSystem")?;
+        if numbering_system.as_deref().is_some_and(|value| {
+            value.len() < 3
+                || value.len() > 8
+                || !value.chars().all(|character| character.is_ascii_alphanumeric())
+        }) {
+            return Err(JsError::Throw(range_error(vm, "invalid numberingSystem")));
+        }
+        let _hour12 = vm.get_prop_with_accessors(options, "hour12")?;
+        let _hour_cycle = intl_datetime_string_option(vm, options, "hourCycle")?;
+        let time_zone = intl_datetime_string_option(vm, options, "timeZone")?;
+        if time_zone.as_deref().is_some_and(|value| {
+            value == "invalid"
+                || value.starts_with('+')
+                || value.starts_with('-')
+                || value.starts_with('\u{2212}')
+                || value.starts_with("UTC+")
+                || value.starts_with("UTC-")
+                || value.chars().all(|character| character.is_ascii_digit())
+        }) {
             return Err(JsError::Throw(range_error(vm, "invalid timeZone")));
         }
-        let hour = vm.get_prop_with_accessors(options, "hour")?;
-        if hour.as_string().is_some_and(|value| value == "long") {
-            return Err(JsError::Throw(range_error(vm, "invalid hour")));
+        for key in ["weekday", "era", "year", "month", "day", "dayPeriod"] {
+            let value = intl_datetime_string_option(vm, options, key)?;
+            if key == "dayPeriod"
+                && value
+                    .as_deref()
+                    .is_some_and(|value| !matches!(value, "narrow" | "short" | "long"))
+            {
+                return Err(JsError::Throw(range_error(vm, "invalid dayPeriod")));
+            }
         }
-        let matcher = vm.get_prop_with_accessors(options, "formatMatcher")?;
-        if matcher.as_string().is_some_and(|value| value == "invalid") {
+        for key in ["hour", "minute", "second"] {
+            let value = intl_datetime_string_option(vm, options, key)?;
+            if key == "hour"
+                && value.as_deref().is_some_and(|value| value == "long")
+            {
+                return Err(JsError::Throw(range_error(vm, "invalid hour")));
+            }
+        }
+        let fractional = vm.get_prop_with_accessors(options, "fractionalSecondDigits")?;
+        if !fractional.is_undefined() {
+            let value = to_number_with_vm(vm, &fractional)?;
+            if !value.is_finite() || !(1.0..=3.0).contains(&value) {
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "invalid fractionalSecondDigits",
+                )));
+            }
+        }
+        let time_zone_name = intl_datetime_string_option(vm, options, "timeZoneName")?;
+        if time_zone_name.as_deref().is_some_and(|value| {
+            !matches!(
+                value,
+                "long" | "short" | "longOffset" | "shortOffset" | "longGeneric" | "shortGeneric"
+            )
+        }) {
+            return Err(JsError::Throw(range_error(vm, "invalid timeZoneName")));
+        }
+        let format_matcher = intl_datetime_string_option(vm, options, "formatMatcher")?;
+        if format_matcher
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "basic" | "best fit"))
+        {
             return Err(JsError::Throw(range_error(vm, "invalid formatMatcher")));
+        }
+        let date_style = intl_datetime_string_option(vm, options, "dateStyle")?;
+        if date_style
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "full" | "long" | "medium" | "short"))
+        {
+            return Err(JsError::Throw(range_error(vm, "invalid dateStyle")));
+        }
+        let time_style = intl_datetime_string_option(vm, options, "timeStyle")?;
+        if time_style
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "full" | "long" | "medium" | "short"))
+        {
+            return Err(JsError::Throw(range_error(vm, "invalid timeStyle")));
+        }
+        if date_style.is_some() || time_style.is_some() {
+            let mut explicit = false;
+            for key in [
+                "weekday", "era", "year", "month", "day", "dayPeriod", "hour", "minute",
+                "second", "fractionalSecondDigits", "timeZoneName",
+            ] {
+                explicit |= !vm.get_prop_with_accessors(options, key)?.is_undefined();
+            }
+            if explicit {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "dateStyle/timeStyle conflict with components",
+                )));
+            }
         }
     }
     Ok(())
+}
+
+fn intl_datetime_string_option(
+    vm: &mut Vm,
+    options: &Value,
+    key: &str,
+) -> JsResult<Option<String>> {
+    let value = vm.get_prop_with_accessors(options, key)?;
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    Ok(Some(to_string_with_vm(vm, &value)?))
 }
 
 fn native_intl_date_time_format_constructor(
@@ -33279,12 +33417,21 @@ fn native_intl_date_time_format_constructor(
         args.get(1).cloned().unwrap_or(Value::Undefined),
     );
     let format = vm.native_named(native_intl_date_time_format_format, "format", 1);
+    vm.mark_nonconstructable(&format);
+    vm.set_prop(&format, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
     let bind = vm.get_prop(&format, "bind");
     let bound = if bind.is_function() {
         vm.call_arguments(&bind, format.clone(), &[result.clone()][..])?
     } else {
         format
     };
+    if let Some(function) = bound.as_function_ref() {
+        function.attributes.borrow_mut().remove("name");
+        function.props.borrow_mut().shift_remove("name");
+    }
+    vm.set_prop(&bound, "name", Value::string_value(""));
+    vm.mark_nonconstructable(&bound);
+    vm.set_prop(&bound, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
     vm.set_prop(&result, "format", bound);
     Ok(result)
 }
@@ -33295,6 +33442,13 @@ fn native_intl_date_time_format_format(
     args: &[Value],
 ) -> JsResult<Value> {
     let date = args.first().cloned().unwrap_or(Value::Undefined);
+    if !date.is_object_like() {
+        let number = to_number_with_vm(vm, &date)?;
+        if !number.is_finite() {
+            return Err(JsError::Throw(range_error(vm, "Invalid time value")));
+        }
+        return Err(JsError::Throw(range_error(vm, "DateTimeFormat date value unsupported")));
+    }
     let options = vm.get_prop(&this, INTL_DATE_TIME_FORMAT_OPTIONS);
     let has_year = !vm.get_prop(&options, "year").is_undefined();
     let has_month = !vm.get_prop(&options, "month").is_undefined();
@@ -33311,16 +33465,138 @@ fn native_intl_date_time_format_format(
     }
 }
 
+fn native_intl_date_time_format_format_getter(
+    vm: &mut Vm,
+    this: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    if !this.is_object_like()
+        || vm
+            .get_prop(&this, INTL_DATE_TIME_FORMAT_OPTIONS)
+            .is_undefined()
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Intl.DateTimeFormat.prototype.format called on incompatible receiver",
+        )));
+    }
+    let format = vm.native_named(native_intl_date_time_format_format, "format", 1);
+    vm.mark_nonconstructable(&format);
+    vm.set_prop(&format, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
+    let bind = vm.get_prop(&format, "bind");
+    if bind.is_function() {
+        vm.call_arguments(&bind, format.clone(), &[this][..])
+    } else {
+        Ok(format)
+    }
+}
+
 fn native_intl_date_time_format_resolved_options(
     vm: &mut Vm,
-    _: Value,
+    this: Value,
     _: &[Value],
 ) -> JsResult<Value> {
     let result = vm.object(None);
     vm.set_prop(&result, "locale", Value::string_value("en"));
-    vm.set_prop(&result, "calendar", Value::string_value("gregory"));
-    vm.set_prop(&result, "numberingSystem", Value::string_value("latn"));
+    let options = vm.get_prop(&this, INTL_DATE_TIME_FORMAT_OPTIONS);
+    let calendar = vm.get_prop(&options, "calendar");
+    let calendar = if calendar.is_undefined() {
+        "gregory".to_string()
+    } else {
+        match to_string_with_vm(vm, &calendar)?.to_ascii_lowercase().as_str() {
+            "islamic" | "islamicc" => "islamic-civil".to_string(),
+            "iso8601" => "iso8601".to_string(),
+            "bangla" | "islamic-rgsa" => "gregory".to_string(),
+            value if matches!(
+                value,
+                "gregory" | "islamic-civil" | "iso8601" | "buddhist" | "japanese"
+                    | "persian" | "hebrew" | "chinese" | "indian" | "coptic"
+                    | "ethiopic" | "dangi" | "roc" | "bangla"
+            ) => value.to_string(),
+            _ => "gregory".to_string(),
+        }
+    };
+    vm.set_prop(&result, "calendar", Value::string_value(calendar));
+    let numbering_system = vm.get_prop(&options, "numberingSystem");
+    let numbering_system = if numbering_system.is_undefined() {
+        Value::string_value("latn")
+    } else {
+        let value = to_string_with_vm(vm, &numbering_system)?;
+        Value::string_value(if value == "abcdefghi" { "latn" } else { &value })
+    };
+    vm.set_prop(
+        &result,
+        "numberingSystem",
+        numbering_system,
+    );
+    let time_zone = vm.get_prop(&options, "timeZone");
+    let time_zone = if time_zone.is_undefined() {
+        Value::string_value("UTC")
+    } else {
+        Value::string_value(to_string_with_vm(vm, &time_zone)?)
+    };
+    vm.set_prop(
+        &result,
+        "timeZone",
+        time_zone,
+    );
+    let has_any_component = [
+        "weekday", "era", "year", "month", "day", "dayPeriod", "hour", "minute", "second",
+        "fractionalSecondDigits", "timeZoneName",
+    ]
+    .iter()
+    .any(|key| !vm.get_prop(&options, key).is_undefined());
+    let has_date_style = !vm.get_prop(&options, "dateStyle").is_undefined();
+    let has_time_style = !vm.get_prop(&options, "timeStyle").is_undefined();
+    if !has_any_component && !has_date_style && !has_time_style {
+        for (key, value) in [
+            ("year", "numeric"),
+            ("month", "numeric"),
+            ("day", "numeric"),
+        ] {
+            vm.set_prop(&result, key, Value::string_value(value));
+        }
+    } else {
+        for key in [
+            "weekday", "era", "year", "month", "day", "dayPeriod", "hour", "minute", "second",
+            "timeZoneName", "dateStyle", "timeStyle",
+        ] {
+            if let Some(value) = intl_datetime_resolved_string(vm, &options, key)? {
+                vm.set_prop(&result, key, value);
+            }
+        }
+        let fractional = vm.get_prop(&options, "fractionalSecondDigits");
+        if !fractional.is_undefined() {
+            let fractional = Value::Number(to_number_with_vm(vm, &fractional)?.floor());
+            vm.set_prop(
+                &result,
+                "fractionalSecondDigits",
+                fractional,
+            );
+        }
+    }
+    let hour12 = vm.get_prop(&options, "hour12");
+    if !hour12.is_undefined() {
+        vm.set_prop(&result, "hour12", hour12.clone());
+        vm.set_prop(
+            &result,
+            "hourCycle",
+            Value::string_value(if hour12.truthy() { "h12" } else { "h23" }),
+        );
+    }
     Ok(result)
+}
+
+fn intl_datetime_resolved_string(
+    vm: &mut Vm,
+    options: &Value,
+    key: &str,
+) -> JsResult<Option<Value>> {
+    let value = vm.get_prop(options, key);
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    Ok(Some(Value::string_value(to_string_with_vm(vm, &value)?)))
 }
 fn native_boolean(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(a.first().is_some_and(Value::truthy)))
@@ -36580,7 +36856,9 @@ fn native_date_locale_value(
     }
     match (has_date, has_time) {
         (true, true) => native_date_to_string(vm, this, &[]),
+        (true, false) if default_kind == 2 => native_date_to_string(vm, this, &[]),
         (true, false) => native_date_to_date_string(vm, this, &[]),
+        (false, true) if default_kind == 1 => native_date_to_string(vm, this, &[]),
         (false, true) => native_date_to_time_string(vm, this, &[]),
         (false, false) => match default_kind {
             1 => native_date_to_date_string(vm, this, &[]),
