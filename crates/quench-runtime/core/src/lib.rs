@@ -26642,6 +26642,22 @@ fn native_weak_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Val
     Ok(this)
 }
 
+fn dataview_index(vm: &mut Vm, value: &Value, message: &str) -> JsResult<f64> {
+    let number = to_number_with_vm(vm, value)?;
+    if number.is_infinite() {
+        return Err(JsError::Throw(range_error(vm, message)));
+    }
+    let number = if number.is_nan() || number == 0.0 {
+        0.0
+    } else {
+        number.trunc()
+    };
+    if number < 0.0 {
+        return Err(JsError::Throw(range_error(vm, message)));
+    }
+    Ok(if number == 0.0 { 0.0 } else { number })
+}
+
 fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.construct_depth == 0 {
         return Err(JsError::Throw(type_error(vm, "DataView constructor must be called with new")));
@@ -26658,12 +26674,9 @@ fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     let buffer_length = vm.get_prop(&buffer, "byteLength").number().max(0.0);
     let offset = args
         .get(1)
-        .map(|value| to_number_with_vm(vm, value))
+        .map(|value| dataview_index(vm, value, "invalid DataView byteOffset"))
         .transpose()?
         .unwrap_or(0.0);
-    if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 {
-        return Err(JsError::Throw(range_error(vm, "invalid DataView byteOffset")));
-    }
     if buffer
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.get("\0array-buffer-detached").is_some_and(Value::truthy))
@@ -26674,10 +26687,7 @@ fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
         return Err(JsError::Throw(range_error(vm, "DataView byteOffset is out of bounds")));
     }
     let byte_length = if let Some(value) = args.get(2).filter(|value| !value.is_undefined()) {
-        let value = to_number_with_vm(vm, value)?;
-        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
-            return Err(JsError::Throw(range_error(vm, "invalid DataView byteLength")));
-        }
+        let value = dataview_index(vm, value, "invalid DataView byteLength")?;
         if offset + value > buffer_length {
             return Err(JsError::Throw(range_error(vm, "DataView byteLength is out of bounds")));
         }
@@ -26744,6 +26754,50 @@ fn dataview_parts(vm: &mut Vm, this: &Value) -> JsResult<(Value, usize, usize)> 
     }
 }
 
+fn decode_float16(bits: u16) -> f64 {
+    let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exponent = (bits >> 10) & 0x1f;
+    let fraction = bits & 0x03ff;
+    match exponent {
+        0 => sign * (fraction as f64) * 2f64.powi(-24),
+        0x1f if fraction == 0 => sign * f64::INFINITY,
+        0x1f => f64::NAN,
+        _ => sign * (1.0 + fraction as f64 / 1024.0) * 2f64.powi(exponent as i32 - 15),
+    }
+}
+
+fn encode_float16(value: f64) -> u16 {
+    let bits = (value as f32).to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32;
+    let fraction = bits & 0x7f_ffff;
+    if exponent == 0xff {
+        return sign | 0x7c00 | u16::from(fraction != 0) * 0x0200;
+    }
+    let half_exponent = exponent - 127 + 15;
+    if half_exponent >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if half_exponent <= 0 {
+        if half_exponent < -10 {
+            return sign;
+        }
+        let mantissa = fraction | 0x80_0000;
+        let shift = (14 - half_exponent) as u32;
+        let rounded = (mantissa + (1 << (shift - 1))) >> shift;
+        return sign | rounded as u16;
+    }
+    let mut rounded = fraction >> 13;
+    let remainder = fraction & 0x1fff;
+    if remainder > 0x1000 || (remainder == 0x1000 && rounded & 1 != 0) {
+        rounded += 1;
+    }
+    if rounded == 0x400 {
+        return sign | (((half_exponent + 1) as u16) << 10);
+    }
+    sign | ((half_exponent as u16) << 10) | rounded as u16
+}
+
 fn dataview_read(
     vm: &mut Vm,
     this: &Value,
@@ -26753,15 +26807,12 @@ fn dataview_read(
     float: bool,
     bigint: bool,
 ) -> JsResult<Value> {
-    let (buffer, base, length) = dataview_parts(vm, this)?;
     let offset = args
         .first()
-        .map(|value| to_number_with_vm(vm, value))
+        .map(|value| dataview_index(vm, value, "offset is out of bounds"))
         .transpose()?
         .unwrap_or(0.0);
-    if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 {
-        return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
-    }
+    let (buffer, base, length) = dataview_parts(vm, this)?;
     let offset = offset as usize;
     if offset.checked_add(width).is_none_or(|end| end > length) {
         return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
@@ -26794,6 +26845,7 @@ fn dataview_read(
         let value = match width {
             4 => f32::from_bits(bits as u32) as f64,
             8 => f64::from_bits(bits),
+            2 => decode_float16(bits as u16),
             _ => bits as f64,
         };
         return Ok(Value::Number(value));
@@ -26816,29 +26868,52 @@ fn dataview_write(
     float: bool,
     bigint: bool,
 ) -> JsResult<Value> {
-    let (buffer, base, length) = dataview_parts(vm, this)?;
     let offset = args
         .first()
-        .map(|value| to_number_with_vm(vm, value))
+        .map(|value| dataview_index(vm, value, "offset is out of bounds"))
         .transpose()?
-        .unwrap_or(f64::NAN);
-    if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 {
-        return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
-    }
+        .unwrap_or(0.0);
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let bigint_integer = bigint.then(|| bigint_value(vm, &value)).transpose()?;
+    let number = if let Some(integer) = bigint_integer.as_ref() {
+        integer.to_f64().unwrap_or(0.0)
+    } else {
+        to_number_with_vm(vm, &value)?
+    };
+    let (buffer, base, length) = dataview_parts(vm, this)?;
     let offset = offset as usize;
     if offset.checked_add(width).is_none_or(|end| end > length) {
         return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
     }
-    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let number = if bigint { bigint_value(vm, &value)?.to_f64().unwrap_or(0.0) } else { to_number_with_vm(vm, &value)? };
-    let bits = if float {
+    if vm.get_prop(&buffer, "immutable").truthy() {
+        return Err(JsError::Throw(type_error(vm, "cannot write an immutable ArrayBuffer")));
+    }
+    let bits = if bigint {
+        let modulus = BigInt::from(1_u8) << (width * 8);
+        let mut integer = bigint_integer.expect("bigint conversion is present") % &modulus;
+        if integer.sign() == Sign::Minus {
+            integer += &modulus;
+        }
+        integer.to_u64().unwrap_or(0)
+    } else if float {
         match width {
             4 => (number as f32).to_bits() as u64,
             8 => number.to_bits(),
+            2 => encode_float16(number) as u64,
             _ => number as u64,
         }
     } else {
-        number.trunc() as i64 as u64
+        let modulus = 2f64.powi((width * 8) as i32);
+        if !number.is_finite() || number == 0.0 {
+            0
+        } else {
+            let remainder = number.trunc() % modulus;
+            if remainder < 0.0 {
+                (remainder + modulus) as u64
+            } else {
+                remainder as u64
+            }
+        }
     };
     let little = args.get(2).is_some_and(Value::truthy);
     let data = vm.get_prop(&buffer, ARRAY_BUFFER_DATA);
