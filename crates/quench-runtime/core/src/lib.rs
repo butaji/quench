@@ -9471,14 +9471,19 @@ impl Vm {
             }
             Expression::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
-                let key_value = self.eval_expr(&member.expression, e)?;
-                let key = self.to_property_key(key_value)?;
+                // A super reference is rejected before evaluating its
+                // property expression.  Besides preserving the specified
+                // ReferenceError, this keeps ToPropertyKey and arbitrary
+                // user code out of the failure path (notably when `this` is
+                // still uninitialised in a derived constructor).
                 if matches!(&member.object, Expression::Super(_)) {
                     return Err(JsError::Throw(reference_error(
                         self,
                         "cannot delete a super property",
                     )));
                 }
+                let key_value = self.eval_expr(&member.expression, e)?;
+                let key = self.to_property_key(key_value)?;
                 if object.is_null() || object.is_undefined() {
                     return Err(JsError::Throw(type_error(
                         self,
@@ -9490,7 +9495,13 @@ impl Vm {
             Expression::Identifier(identifier) => {
                 self.delete_name_with_vm(&e, identifier.name.as_str(), self.strict_mode)
             }
-            _ => Ok(Value::Bool(true)),
+            _ => {
+                // `delete` still evaluates non-reference operands (for
+                // example, `delete foo()`), then discards the resulting
+                // value and reports success.
+                self.eval_expr(x, e)?;
+                Ok(Value::Bool(true))
+            }
         }
     }
 
@@ -19918,9 +19929,18 @@ fn has_strict_delete_identifier(program: &Program<'_>, inherited_strict: bool) -
         }
 
         fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
+            fn is_identifier_reference(expression: &Expression<'_>) -> bool {
+                match expression {
+                    Expression::Identifier(_) => true,
+                    Expression::ParenthesizedExpression(parenthesized) => {
+                        is_identifier_reference(&parenthesized.expression)
+                    }
+                    _ => false,
+                }
+            }
             if self.strict_depth > 0
                 && expression.operator == oxc_syntax::operator::UnaryOperator::Delete
-                && (matches!(expression.argument, Expression::Identifier(_))
+                && (is_identifier_reference(&expression.argument)
                     || expression_contains_private_reference(&expression.argument))
             {
                 self.invalid = true;
