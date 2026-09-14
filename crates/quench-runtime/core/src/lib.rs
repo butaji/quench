@@ -5679,12 +5679,13 @@ fn compare_bigint_mixed(op: Op, left: &Value, right: &Value) -> Value {
     } else {
         (bigint_value_unchecked(right), left, false)
     };
+    let boolean_number = other.as_bool().map(|value| if value { 1.0 } else { 0.0 });
     let ordering = if let Some(string) = other.as_string() {
         let Ok(other) = parse_bigint_text(string) else {
             return Value::Bool(false);
         };
         bigint.cmp(&other)
-    } else if let Some(number) = other.as_number() {
+    } else if let Some(number) = other.as_number().or(boolean_number) {
         if let Some(other) = number_to_bigint_exact(number) {
             bigint.cmp(&other)
         } else if number.is_nan() {
@@ -16609,7 +16610,9 @@ impl Vm {
                             Value::Number(-to_number_with_vm(self, &numeric)?)
                         }
                     }
-                    LogicalNot => Value::Bool(!z.truthy()),
+                    LogicalNot => {
+                        Value::Bool(!z.truthy())
+                    }
                     BitwiseNot => {
                         let numeric = to_primitive_for_binary(self, &z, PrimitiveHint::Number)?;
                         if is_bigint_marker(&numeric) {
