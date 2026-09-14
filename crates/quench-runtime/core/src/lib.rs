@@ -399,6 +399,25 @@ macro_rules! install_collection_iterator_prototype {
         $vm.$slot = iterator_prototype.as_object();
     }};
 }
+
+// Every typed-array constructor is the same semantic constructor with a
+// different element kind and width. Keep that metadata as one declaration so
+// construction, reflection, and indexed conversion consume the same record.
+macro_rules! install_typed_array_constructor_metadata {
+    ($vm:expr, $constructor:expr, $name:expr, $bytes:expr) => {{
+        let constructor = $constructor.clone();
+        let name = $name;
+        let bytes = $bytes;
+        $vm.set_prop(&constructor, "\0typed-array-kind", Value::string_value(name));
+        $vm.set_prop(&constructor, "\0typed-array-bytes", Value::Number(bytes as f64));
+        $vm.set_prop(&constructor, "BYTES_PER_ELEMENT", Value::Number(bytes as f64));
+        set_property_attributes(
+            &constructor,
+            "BYTES_PER_ELEMENT",
+            PropertyAttributes::BUILTIN_CONSTANT,
+        );
+    }};
+}
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
 const PROXY_HANDLER_PROP: &str = "\0quench:proxy-handler";
 const PROXY_REVOKED_PROP: &str = "\0quench:proxy-revoked";
@@ -7701,18 +7720,7 @@ impl Vm {
         ] {
             let constructor = self.native_named(native_typed_array_constructor, name, 1);
             self.set_prop(&constructor, FUNCTION_PROTOTYPE_CHAIN_PROP, typed_array_base.clone());
-            self.set_prop(&constructor, "\0typed-array-kind", Value::string_value(name));
-            self.set_prop(&constructor, "\0typed-array-bytes", Value::Number(bytes as f64));
-            self.set_prop(
-                &constructor,
-                "BYTES_PER_ELEMENT",
-                Value::Number(bytes as f64),
-            );
-            set_property_attributes(
-                &constructor,
-                "BYTES_PER_ELEMENT",
-                PropertyAttributes::BUILTIN_CONSTANT,
-            );
+            install_typed_array_constructor_metadata!(self, constructor, name, bytes);
             let prototype = constructor
                 .as_function_ref()
                 .expect("typed array constructor")
