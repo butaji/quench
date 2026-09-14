@@ -8522,6 +8522,7 @@ impl Vm {
         );
         for (constructor, name) in error_names {
             let function = self.builtin(constructor);
+            set_property_attributes(&function, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
             let prototype = function
                 .as_function_ref()
                 .expect("error constructor")
@@ -35929,6 +35930,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                             .or_else(|| {
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_intl_locale_constructor))
                                     .then_some("Intl.Locale")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::AggregateErrorConstructor))
+                                    .then_some("AggregateError")
                             })
                     });
                     let intrinsic = intrinsic_name
