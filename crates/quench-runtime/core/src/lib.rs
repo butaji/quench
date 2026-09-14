@@ -8903,7 +8903,7 @@ impl Vm {
         // %Function.prototype%. Function values carry their own prototype
         // object separately, so route this accessor explicitly rather than
         // pretending the own `prototype` slot is the internal [[Prototype]].
-        if self.restricted_function_property(object, key) {
+        if self.restricted_function_property(object, key) && !self.has_own_property_key(object, key) {
             let thrower = self.throw_type_error();
             return self.call_property_accessor(thrower, receiver.clone(), &[]);
         }
@@ -9074,7 +9074,7 @@ impl Vm {
             }
             return self.set_prop_with_receiver(&target, key, value, receiver);
         }
-        if self.restricted_function_property(object, key) {
+        if self.restricted_function_property(object, key) && !self.has_own_property_key(object, key) {
             let thrower = self.throw_type_error();
             self.call_property_accessor(thrower, receiver.clone(), &[value][..])?;
             return Ok(());
@@ -11320,6 +11320,13 @@ impl Vm {
         let derived_constructor = callee
             .as_ref()
             .is_some_and(|callee| self.get_prop(callee, DERIVED_CONSTRUCTOR_PROP).truthy());
+        if derived_constructor {
+            // `super()` state is per constructor activation. Declare it in
+            // the fresh call environment so Environment::set cannot fall
+            // through to the global object when the first super call runs.
+            e.borrow_mut()
+                .declare(SUPER_CALLED_ENV_NAME, Value::Bool(false));
+        }
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = strict;
         // Ordinary (non-strict) calls substitute the global object for a
@@ -15500,9 +15507,17 @@ impl Vm {
             )));
         }
         let super_prototype = match super_constructor.as_ref() {
-            Some(constructor) => constructor
-                .as_function_ref()
-                .map(|function| function.prototype.clone()),
+            Some(constructor) if constructor.is_null() => None,
+            Some(constructor) => {
+                let prototype = self.get_prop_with_accessors(constructor, "prototype")?;
+                if prototype.is_undefined() || (!prototype.is_null() && !prototype.is_object_like()) {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "superclass prototype is not an object",
+                    )));
+                }
+                prototype.as_object()
+            }
             None => self.default_object_prototype(),
         };
         let prototype = self.object_value(Object::ordinary(super_prototype));
@@ -15636,6 +15651,12 @@ impl Vm {
                 configurable: true,
             },
         );
+        if let Some(function) = class.as_function_ref() {
+            function
+                .attributes
+                .borrow_mut()
+                .insert("prototype".into(), PropertyAttributes::BUILTIN_CONSTANT);
+        }
         if let Some(super_constructor) =
             class
                 .as_function_ref()
@@ -15719,11 +15740,16 @@ impl Vm {
                         self.mark_nonconstructable(&method_value);
                         self.set_prop(&method_value, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
                     }
-                    let display_key = match &method.key {
+                    let property_name = match &method.key {
                         PropertyKey::PrivateIdentifier(identifier) => {
                             format!("#{}", identifier.name)
                         }
-                        _ => key.clone(),
+                        _ => property_key_display_name(self, &key),
+                    };
+                    let display_key = match method.kind {
+                        MethodDefinitionKind::Get => format!("get {property_name}"),
+                        MethodDefinitionKind::Set => format!("set {property_name}"),
+                        _ => property_name,
                     };
                     // Function construction seeds an empty `name` slot.  The
                     // ordinary [[Set]] path intentionally refuses to mutate
@@ -15737,14 +15763,6 @@ impl Vm {
                         "name",
                         PropertyAttributes::INFERRED_FUNCTION_NAME,
                     );
-                    if method.r#static && key == "name" {
-                        // A static `name` method is an ordinary class property and
-                        // intentionally shadows the constructor's inferred name.
-                        if let Some(function) = class.as_function_ref() {
-                            function.props.borrow_mut().shift_remove("name");
-                            function.attributes.borrow_mut().remove("name");
-                        }
-                    }
                     match method.kind {
                         MethodDefinitionKind::Method => {
                             let method_attributes =
@@ -15753,13 +15771,24 @@ impl Vm {
                                 } else {
                                     PropertyAttributes::BUILTIN_METHOD
                                 };
-                            install_data_property!(
-                                self,
-                                target.clone(),
-                                key,
-                                method_value,
-                                method_attributes
-                            );
+                            if method.r#static && matches!(key.as_str(), "name" | "length") {
+                                // Static methods may intentionally replace the
+                                // constructor's metadata properties. Update the
+                                // canonical function table in place so the
+                                // metadata key order remains length/name/prototype.
+                                if let Some(function) = class.as_function_ref() {
+                                    function.props.borrow_mut().insert(key.clone(), method_value);
+                                    function.attributes.borrow_mut().insert(key, method_attributes);
+                                }
+                            } else {
+                                install_data_property!(
+                                    self,
+                                    target.clone(),
+                                    key,
+                                    method_value,
+                                    method_attributes
+                                );
+                            }
                         }
                         MethodDefinitionKind::Get | MethodDefinitionKind::Set => {
                             // Class accessor declarations are accumulated by key: a
@@ -15822,7 +15851,7 @@ impl Vm {
                             PropertyKey::PrivateIdentifier(identifier) => {
                                 format!("#{}", identifier.name)
                             }
-                            _ => key.clone(),
+                            _ => property_key_display_name(self, &key),
                         };
                         set_function_name(&value, &display_key);
                     }
@@ -33569,6 +33598,7 @@ fn define_function_property(
     let mut attributes = function.attributes.borrow_mut();
     let internal_prototype = key == "prototype"
         && constructable(target)
+        && !matches!(function.kind, FunctionKind::Bound { .. })
         && !props.contains_key(PROXY_NO_PROTOTYPE_PROP)
         && !props.contains_key("prototype");
     let old_accessor = props.contains_key(&accessor_slot("get", key))
@@ -34976,8 +35006,18 @@ fn function_own_property_keys(
     };
 
     let mut keys = Vec::with_capacity(props.len() + attributes.len() + 1);
+    if include_metadata {
+        for key in ["length", "name"] {
+            if (props.contains_key(key) || attributes.contains_key(key)) && visible(key) {
+                keys.push(key.to_owned());
+            }
+        }
+        if is_constructable {
+            keys.push("prototype".into());
+        }
+    }
     for key in props.keys() {
-        if key == "prototype" {
+        if matches!(key.as_str(), "prototype" | "name" | "length") {
             continue;
         }
         if !include_metadata && matches!(key.as_str(), "name" | "length") {
@@ -34986,16 +35026,11 @@ fn function_own_property_keys(
         if visible(key) {
             keys.push(key.clone());
         }
-        // Class/function own-key order places the prototype immediately after
-        // name, before user-defined static properties.
-        if include_metadata && key == "name" && is_constructable {
-            keys.push("prototype".into());
-        }
-    }
-    if include_metadata && is_constructable && !keys.iter().any(|key| key == "prototype") {
-        keys.push("prototype".into());
     }
     for key in attributes.keys() {
+        if matches!(key.as_str(), "name" | "length") {
+            continue;
+        }
         if !props.contains_key(key) && visible(key) {
             keys.push(key.clone());
         }
