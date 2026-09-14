@@ -14550,11 +14550,12 @@ impl Vm {
                 "class extends value is not a constructor",
             )));
         }
-        let super_prototype = super_constructor.as_ref().and_then(|constructor| {
-            constructor
+        let super_prototype = match super_constructor.as_ref() {
+            Some(constructor) => constructor
                 .as_function_ref()
-                .map(|function| function.prototype.clone())
-        });
+                .map(|function| function.prototype.clone()),
+            None => self.default_object_prototype(),
+        };
         let prototype = self.object_value(Object::ordinary(super_prototype));
         let prototype_handle = prototype
             .as_object()
