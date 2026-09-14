@@ -13390,7 +13390,6 @@ impl Vm {
             // interpreter path (the same VM semantics, with a correct
             // fallback) rather than exposing a stale cached global register.
             && !contains_accessor_syntax(source)
-            && !has_object_method_syntax(&r.program)
             && !contains_async_function_constructor_probe(source)
             && !has_inferable_binding_initializer(&r.program)
             && !has_direct_lexical_declaration(&r.program.body)
@@ -21079,22 +21078,6 @@ fn contains_accessor_syntax(source: &str) -> bool {
     source
         .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|token| matches!(token, "get" | "set"))
-}
-
-fn has_object_method_syntax(program: &Program<'_>) -> bool {
-    struct Scan {
-        found: bool,
-    }
-    impl<'a> Visit<'a> for Scan {
-        fn visit_object_property(&mut self, property: &ObjectProperty<'a>) {
-            self.found |=
-                property.method || matches!(property.kind, PropertyKind::Get | PropertyKind::Set);
-            ast_walk::walk_object_property(self, property);
-        }
-    }
-    let mut scan = Scan { found: false };
-    scan.visit_program(program);
-    scan.found
 }
 
 fn contains_async_function_constructor_probe(source: &str) -> bool {
