@@ -12785,6 +12785,12 @@ impl Vm {
                 "for-in statement initializer is not permitted",
             )));
         }
+        if has_duplicate_legacy_proto_property(&r.program) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "duplicate __proto__ property in object literal",
+            )));
+        }
         if st.is_module()
             && (has_module_early_error(&r.program)
                 || has_invalid_module_control_flow(&r.program)
@@ -15619,6 +15625,19 @@ impl Vm {
                             {
                                 env.borrow_mut()
                                     .declare(CLASS_HOME_OBJECT_ENV_NAME, o.clone());
+                            }
+                            let is_legacy_proto = is_legacy_proto_property(p);
+                            if is_legacy_proto {
+                                // The legacy literal form changes the newly
+                                // created object's prototype and does not
+                                // create an own data property. Non-object and
+                                // non-null values are ignored by the spec.
+                                if let Some(object) = o.as_object_ref() {
+                                    if z.is_null() || (z.is_object() && !is_symbol_carrier(&z)) {
+                                        object.borrow_mut().prototype = z.as_object();
+                                    }
+                                }
+                                continue;
                             }
                             match p.kind {
                                 PropertyKind::Get | PropertyKind::Set => {
@@ -19668,6 +19687,46 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                 self.invalid = true;
             }
             ast_walk::walk_class(self, class);
+        }
+    }
+    let mut scan = Scan { invalid: false };
+    scan.visit_program(program);
+    scan.invalid
+}
+
+fn is_legacy_proto_property(property: &ObjectProperty<'_>) -> bool {
+    property.kind == PropertyKind::Init
+        && !property.method
+        && !property.computed
+        && match &property.key {
+            PropertyKey::StaticIdentifier(identifier) => identifier.name == "__proto__",
+            PropertyKey::StringLiteral(string) => string.value == "__proto__",
+            _ => false,
+        }
+}
+
+/// The legacy uncomputed `__proto__` data-property form is an early-error
+/// duplicate even though ordinary object properties may repeat. Keep this
+/// static fact in the AST validator so `$DONOTEVALUATE` and all other source
+/// effects are skipped before evaluation starts.
+fn has_duplicate_legacy_proto_property(program: &Program<'_>) -> bool {
+    struct Scan {
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_object_expression(&mut self, object: &ObjectExpression<'a>) {
+            let count = object
+                .properties
+                .iter()
+                .filter(|property| {
+                    let ObjectPropertyKind::ObjectProperty(property) = property else {
+                        return false;
+                    };
+                    is_legacy_proto_property(property)
+                })
+                .count();
+            self.invalid |= count > 1;
+            ast_walk::walk_object_expression(self, object);
         }
     }
     let mut scan = Scan { invalid: false };
