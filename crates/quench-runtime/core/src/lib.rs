@@ -10811,6 +10811,13 @@ impl Vm {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
         }
+        // `super` depends on the method's [[HomeObject]] and the live
+        // prototype chain.  Numeric lowering has neither reference, so keep
+        // every super-bearing user function on the shared evaluator.
+        if function_contains_super(node) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         let cache_key = node as *const Function<'static> as usize;
         if let Some(code) = self.jit_cache.get(&cache_key) {
             *function.dyn_jit.borrow_mut() = Some(code.clone());
@@ -19080,6 +19087,21 @@ fn function_contains_new_target(function: &Function<'_>) -> bool {
         fn visit_new_target(&mut self, target: &NewTarget) {
             self.found = true;
             ast_walk::walk_new_target(self, target);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_function(function, ScopeFlags::empty());
+    scan.found
+}
+
+fn function_contains_super(function: &Function<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_super(&mut self, expression: &Super) {
+            self.found = true;
+            ast_walk::walk_super(self, expression);
         }
     }
     let mut scan = Scan { found: false };
