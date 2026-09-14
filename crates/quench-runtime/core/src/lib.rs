@@ -13472,6 +13472,7 @@ impl Vm {
             || has_class_strict_name_error(&r.program)
             || restricted_global_lexical_error
             || strict_assignment_error
+            || has_catch_parameter_early_error(&r.program, effective_strict_mode)
         {
             return Err(JsError::Throw(syntax_error(
                 self,
@@ -14681,10 +14682,17 @@ impl Vm {
                     }
                     Err(v) => Err(v),
                 };
-                if !suspended && let Some(f) = &x.finalizer {
-                    self.exec_stmts(&f.body, e)?;
+                if suspended {
+                    return out;
                 }
-                out
+                let Some(f) = &x.finalizer else {
+                    return out.map(update_empty_signal);
+                };
+                let finalizer = self.exec_stmts(&f.body, e)?;
+                match finalizer {
+                    Signal::Empty | Signal::Normal(_) => out.map(update_empty_signal),
+                    abrupt => Ok(update_empty_signal(abrupt)),
+                }
             }
             WithStatement(x) => {
                 let object = self.eval_expr(&x.object, e.clone())?;
@@ -20853,6 +20861,54 @@ fn has_statement_position_function(program: &Program<'_>) -> bool {
         }
     }
     program.body.iter().any(nested)
+}
+
+fn has_catch_parameter_early_error(program: &Program<'_>, inherited_strict: bool) -> bool {
+    struct Scan {
+        strict_stack: Vec<bool>,
+        invalid: bool,
+    }
+    impl Scan {
+        fn strict(&self) -> bool {
+            self.strict_stack.last().copied().unwrap_or(false)
+        }
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let body_strict = function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+            self.strict_stack
+                .push(self.strict() || body_strict);
+            ast_walk::walk_function(self, function, flags);
+            self.strict_stack.pop();
+        }
+
+        fn visit_catch_parameter(&mut self, parameter: &CatchParameter<'a>) {
+            let mut names = Vec::new();
+            pattern_bound_names(&parameter.pattern, &mut names);
+            let mut seen = HashSet::new();
+            if names.iter().any(|name| !seen.insert(name)) {
+                self.invalid = true;
+            }
+            if self.strict()
+                && names
+                    .iter()
+                    .any(|name| matches!(name.as_str(), "eval" | "arguments"))
+            {
+                self.invalid = true;
+            }
+            ast_walk::walk_catch_parameter(self, parameter);
+        }
+    }
+    let mut scan = Scan {
+        strict_stack: vec![inherited_strict],
+        invalid: false,
+    };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn has_nested_strict_function_error(statements: &[Statement<'_>]) -> bool {
