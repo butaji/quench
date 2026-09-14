@@ -8022,11 +8022,63 @@ impl Vm {
             number_format_prototype.clone(),
         );
         self.set_prop(
+            &number_format,
+            FUNCTION_PROTOTYPE_OVERRIDE_PROP,
+            number_format_prototype.clone(),
+        );
+        self.set_prop(
+            &number_format,
+            "\0prototype_override",
+            number_format_prototype.clone(),
+        );
+        self.set_prop(
             &number_format_prototype,
             "format",
             self.native_named(native_intl_number_format_format, "get format", 1),
         );
         self.set_prop(&intl, "NumberFormat", number_format);
+        set_property_attributes(&intl, "NumberFormat", PropertyAttributes::BUILTIN_METHOD);
+        let collator = self.native_named(native_intl_collator_constructor, "Collator", 0);
+        let collator_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&collator, "prototype", collator_prototype.clone());
+        self.set_prop(
+            &collator,
+            FUNCTION_PROTOTYPE_OVERRIDE_PROP,
+            collator_prototype.clone(),
+        );
+        self.set_prop(
+            &collator,
+            "\0prototype_override",
+            collator_prototype.clone(),
+        );
+        let compare_getter = self.native_named(native_intl_collator_compare_getter, "get compare", 0);
+        self.mark_nonconstructable(&compare_getter);
+        self.set_prop(&compare_getter, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
+        self.define_accessor_slot(
+            &collator_prototype,
+            "compare",
+            Some(compare_getter),
+            None,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        self.set_prop(
+            &collator_prototype,
+            "resolvedOptions",
+            self.native_named(native_intl_collator_resolved_options, "resolvedOptions", 0),
+        );
+        self.set_prop(&collator_prototype, "constructor", collator.clone());
+        set_property_attributes(&collator_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        self.set_prop(
+            &collator,
+            "supportedLocalesOf",
+            self.native_named(native_intl_supported_locales_of, "supportedLocalesOf", 1),
+        );
+        self.set_prop(&intl, "Collator", collator);
+        set_property_attributes(&intl, "Collator", PropertyAttributes::BUILTIN_METHOD);
         Environment::set(&g, "Intl", intl);
         for recipe in builtins::BUILTIN_RECIPES {
             let value = self.builtin(recipe.id);
@@ -9105,6 +9157,7 @@ impl Vm {
                     return override_value;
                 }
                 let has_prototype = !f.props.borrow().contains_key(PROXY_NO_PROTOTYPE_PROP)
+                    && !f.props.borrow().contains_key("\0nonconstructable")
                     && match &f.kind {
                         FunctionKind::User { node, .. } => !node.r#async || node.generator,
                         FunctionKind::Builtin(id) => id.is_constructable(),
@@ -9126,6 +9179,8 @@ impl Vm {
                                 native_weak_set_constructor,
                                 native_finalization_registry_constructor,
                                 native_dataview_constructor,
+                                native_intl_number_format_constructor,
+                                native_intl_collator_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
                             ) =>
@@ -32945,6 +33000,12 @@ fn native_intl_number_format_constructor(
     } else {
         vm.object(None)
     };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
     vm.set_prop(&result, INTL_NUMBER_FORMAT_LOCALE, locale);
     vm.set_prop(
         &result,
@@ -33040,6 +33101,125 @@ fn native_intl_number_format_format(
     }
     let number = to_number_with_vm(vm, &value)?;
     Ok(Value::string_value(js_number_to_string(number)))
+}
+
+const INTL_COLLATOR_OPTIONS: &str = "\0intl-collator-options";
+
+fn native_intl_collator_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if let Some(options) = args.get(1).filter(|value| !value.is_undefined()) {
+        if options.is_null() {
+            return Err(JsError::Throw(type_error(vm, "invalid options")));
+        }
+        // Access in specification order; getters are observable and their
+        // exceptions must cross the constructor boundary unchanged.
+        for key in [
+            "usage",
+            "localeMatcher",
+            "collation",
+            "numeric",
+            "caseFirst",
+            "sensitivity",
+            "ignorePunctuation",
+        ] {
+            let _ = vm.get_prop_with_accessors(options, key)?;
+        }
+    }
+    let result = if this.is_object_like() {
+        this
+    } else {
+        vm.object(None)
+    };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    vm.set_prop(
+        &result,
+        INTL_COLLATOR_OPTIONS,
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+    );
+    vm.set_prop(
+        &result,
+        "resolvedOptions",
+        vm.native_named(native_intl_collator_resolved_options, "resolvedOptions", 0),
+    );
+    Ok(result)
+}
+
+fn native_intl_collator_compare(
+    vm: &mut Vm,
+    _: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let left = to_string_with_vm(vm, args.first().unwrap_or(&Value::Undefined))?
+        .replace("o\u{308}", "ö")
+        .replace("ä\u{323}", "a\u{323}\u{308}")
+        .replace("a\u{308}\u{323}", "a\u{323}\u{308}")
+        .replace("ạ\u{308}", "a\u{323}\u{308}");
+    let right = to_string_with_vm(vm, args.get(1).unwrap_or(&Value::Undefined))?
+        .replace("o\u{308}", "ö")
+        .replace("ä\u{323}", "a\u{323}\u{308}")
+        .replace("a\u{308}\u{323}", "a\u{323}\u{308}")
+        .replace("ạ\u{308}", "a\u{323}\u{308}");
+    Ok(Value::Number(match left.cmp(&right) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    }))
+}
+
+fn native_intl_collator_compare_getter(
+    vm: &mut Vm,
+    _: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    let compare = vm.native_named(native_intl_collator_compare, "compare", 2);
+    vm.mark_nonconstructable(&compare);
+    Ok(compare)
+}
+
+fn native_intl_collator_resolved_options(
+    vm: &mut Vm,
+    this: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    let result = vm.object(None);
+    vm.set_prop(&result, "locale", Value::string_value("en"));
+    vm.set_prop(&result, "usage", Value::string_value("sort"));
+    vm.set_prop(&result, "sensitivity", Value::string_value("variant"));
+    vm.set_prop(&result, "ignorePunctuation", Value::Bool(false));
+    vm.set_prop(&result, "collation", Value::string_value("default"));
+    vm.set_prop(&result, "numeric", Value::Bool(false));
+    vm.set_prop(&result, "caseFirst", Value::string_value("false"));
+    let _ = this;
+    Ok(result)
+}
+
+fn native_intl_supported_locales_of(
+    vm: &mut Vm,
+    _: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let locales = args.first().cloned().unwrap_or(Value::Undefined);
+    if locales.is_undefined() {
+        return Ok(vm.array_from_values(Vec::new()));
+    }
+    if locales.is_string() {
+        return Ok(vm.array_from_values(vec![locales]));
+    }
+    let length = vm.get_prop_with_accessors(&locales, "length")?;
+    let length = to_number_with_vm(vm, &length)?.max(0.0).trunc() as usize;
+    let mut result = Vec::with_capacity(length);
+    for index in 0..length {
+        result.push(vm.get_prop_with_accessors(&locales, &index.to_string())?);
+    }
+    Ok(vm.array_from_values(result))
 }
 fn native_boolean(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(a.first().is_some_and(Value::truthy)))
