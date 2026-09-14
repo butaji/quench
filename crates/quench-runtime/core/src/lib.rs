@@ -6471,6 +6471,18 @@ impl Vm {
             .map(|function| function.prototype.clone());
         let generator_function_prototype = self.object(function_prototype);
         let generator_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&generator_prototype, "constructor", generator_function_prototype.clone());
+        set_property_attributes(&generator_prototype, "constructor", PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        install_native_methods!(
+            self,
+            generator_prototype.clone(),
+            "next" => native_sync_generator_next / 1,
+            "return" => native_sync_generator_return / 1,
+            "throw" => native_sync_generator_throw / 1,
+        );
+        let generator_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&generator_prototype, &generator_tag, Value::string_value("Generator"));
+        set_property_attributes(&generator_prototype, &generator_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
         self.set_prop(
             &generator_function_prototype,
             "prototype",
@@ -6530,6 +6542,18 @@ impl Vm {
             .map(|function| function.prototype.clone());
         let generator_function_prototype = self.object(function_prototype);
         let generator_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&generator_prototype, "constructor", generator_function_prototype.clone());
+        set_property_attributes(&generator_prototype, "constructor", PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        install_native_methods!(
+            self,
+            generator_prototype.clone(),
+            "next" => native_sync_generator_next / 1,
+            "return" => native_sync_generator_return / 1,
+            "throw" => native_sync_generator_throw / 1,
+        );
+        let generator_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&generator_prototype, &generator_tag, Value::string_value("Generator"));
+        set_property_attributes(&generator_prototype, &generator_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
         self.set_prop(&generator_function_prototype, "prototype", generator_prototype);
         self.set_prop(&generator_function_prototype, "constructor", constructor.clone());
         set_property_attributes(&generator_function_prototype, "constructor", PropertyAttributes { writable: false, enumerable: false, configurable: true });
