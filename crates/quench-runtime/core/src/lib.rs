@@ -371,12 +371,17 @@ impl JitMode {
 pub enum JsError {
     Throw(Value),
     Message(String),
+    /// Internal control flow used only while a generator continuation is
+    /// suspended. This never crosses the public VM boundary as a guest
+    /// exception.
+    Yield(Value),
 }
 
 fn error_value(error: JsError) -> Value {
     match error {
         JsError::Throw(value) => value,
         JsError::Message(message) => Value::string_value(message),
+        JsError::Yield(value) => value,
     }
 }
 
@@ -414,6 +419,7 @@ impl fmt::Display for JsError {
             }
             Self::Throw(v) => write!(f, "uncaught {}", v.display()),
             Self::Message(s) => f.write_str(s),
+            Self::Yield(value) => write!(f, "internal generator yield {}", value.display()),
         }
     }
 }
@@ -5508,6 +5514,9 @@ struct Vm {
     construct_depth: usize,
     current_constructor: Option<Value>,
     async_generator_yields: Option<Vec<Value>>,
+    sync_generator_continuations: HashMap<*const ObjectCell, SyncGeneratorContinuation>,
+    sync_generator_yielding: bool,
+    sync_generator_iterators: Vec<Value>,
     mapped_arguments: RefCell<Vec<(ObjectHandle, Env, Vec<String>)>>,
     // Synchronous bridge for thenable assimilation at an await expression.
     // The full async-module scheduler can suspend stencils later; keeping the
@@ -5524,6 +5533,28 @@ struct AsyncModuleContinuation {
     statements: &'static [Statement<'static>],
     environment: Env,
 }
+
+/// State retained by the stencil-core AST coroutine bridge for synchronous
+/// generators. The continuation is keyed by the generator object's stable
+/// heap address; environments remain reference-counted so suspended lexical
+/// state has the same lifetime as the guest iterator.
+struct SyncGeneratorContinuation {
+    function: &'static Function<'static>,
+    environment: Env,
+    body_environment: Env,
+    this: Value,
+    arguments: Vec<Value>,
+    strict: bool,
+    source_id: Option<usize>,
+    next_statement: usize,
+    done: bool,
+    async_generator: bool,
+    mapped_arguments_object: Option<ObjectHandle>,
+    pending_iterators: Vec<Value>,
+}
+
+const SYNC_GENERATOR_INSTANCE_PROP: &str = "\0quench:sync-generator-instance";
+const SYNC_GENERATOR_EXECUTING_PROP: &str = "\0quench:sync-generator-executing";
 impl Vm {
     fn new() -> Self {
         let g = Environment::new(None);
@@ -5587,6 +5618,9 @@ impl Vm {
             construct_depth: 0,
             current_constructor: None,
             async_generator_yields: None,
+            sync_generator_continuations: HashMap::new(),
+            sync_generator_yielding: false,
+            sync_generator_iterators: Vec::new(),
             mapped_arguments: RefCell::new(Vec::new()),
             await_result: None,
             async_module_continuations: Vec::new(),
@@ -6089,6 +6123,7 @@ impl Vm {
             Ok(value) => ("fulfilled", value),
             Err(JsError::Throw(value)) => ("rejected", value),
             Err(JsError::Message(message)) => ("rejected", Value::string_value(message)),
+            Err(JsError::Yield(value)) => ("rejected", value),
         };
         self.set_prop(promise, PROMISE_STATE_PROP, Value::string_value(state));
         self.set_prop(promise, PROMISE_RESULT_PROP, value.clone());
@@ -9188,6 +9223,9 @@ impl Vm {
         args: Vec<Value>,
         prototype: Option<ObjectHandle>,
     ) -> JsResult<Value> {
+        let mut continuation =
+            self.prepare_sync_generator_activation(function.clone(), this.clone(), args.clone())?;
+        continuation.async_generator = true;
         let iterator = self.object(prototype);
         self.set_prop(&iterator, ASYNC_GENERATOR_INSTANCE_PROP, Value::Bool(true));
         self.set_prop(&iterator, ASYNC_GENERATOR_FUNCTION_PROP, function);
@@ -9219,7 +9257,308 @@ impl Vm {
             "next",
             self.native_named(native_async_generator_next, "next", 1),
         );
+        let key = iterator
+            .as_object()
+            .expect("async generator instance is an object")
+            .as_ptr();
+        self.sync_generator_continuations.insert(key, continuation);
         Ok(iterator)
+    }
+
+    fn prepare_sync_generator_activation(
+        &mut self,
+        function: Value,
+        this: Value,
+        args: Vec<Value>,
+    ) -> JsResult<SyncGeneratorContinuation> {
+        let Some(function_ref) = function.as_function_ref() else {
+            return Err(JsError::Throw(type_error(
+                self,
+                "invalid generator function",
+            )));
+        };
+        let (node, outer, source_id, function_strict) = match &function_ref.kind {
+            FunctionKind::User { node, env } => (
+                *node,
+                env.clone(),
+                function_ref.source_id,
+                function_ref.strict,
+            ),
+            _ => {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "invalid generator function",
+                )));
+            }
+        };
+        let e = Environment::new(Some(outer));
+        let non_simple_parameters = node.params.items.iter().any(|parameter| {
+            parameter.initializer.is_some()
+                || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+        }) || node.params.rest.is_some();
+        if non_simple_parameters {
+            e.borrow_mut().declare(
+                dynbytecode::NON_SIMPLE_ARGUMENTS_ENV_NAME,
+                Value::Bool(true),
+            );
+        }
+        let body_environment = if non_simple_parameters {
+            let body_environment = Environment::new(Some(e.clone()));
+            body_environment
+                .borrow_mut()
+                .declare(FUNCTION_ENV_NAME, Value::Bool(true));
+            body_environment
+        } else {
+            e.clone()
+        };
+        let strict = function_strict
+            || node.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+        if let Some(body) = &node.body {
+            reserve_function_bindings(&body_environment, &body.statements, strict);
+            let mut lexical_names = HashSet::new();
+            collect_direct_lexical_names(&body.statements, &mut lexical_names);
+            body_environment
+                .borrow_mut()
+                .lexical_names
+                .extend(lexical_names);
+        }
+        let previous_strict_mode = self.strict_mode;
+        self.strict_mode = strict;
+        let this = if !strict && (this.is_null() || this.is_undefined()) {
+            Environment::get(&self.global, "globalThis").unwrap_or(Value::Undefined)
+        } else if !strict && (!this.is_object_like() || is_symbol_carrier(&this)) {
+            self.box_this_value(this)
+        } else {
+            this
+        };
+        e.borrow_mut().declare("this", this.clone());
+        let av = self.object_value(Object::array(self.default_object_prototype(), args.clone()));
+        self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
+        if strict {
+            let throw_type_error = self.throw_type_error();
+            self.define_accessor_slot(
+                &av,
+                "callee",
+                Some(throw_type_error.clone()),
+                Some(throw_type_error.clone()),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                },
+            );
+            self.define_accessor_slot(
+                &av,
+                "caller",
+                Some(throw_type_error.clone()),
+                Some(throw_type_error),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                },
+            );
+        } else {
+            self.set_prop(&av, "callee", function.clone());
+            set_property_attributes(
+                &av,
+                "callee",
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+        set_property_attributes(
+            &av,
+            "length",
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        e.borrow_mut().declare("arguments", av.clone());
+        e.borrow_mut().declare(FUNCTION_ENV_NAME, Value::Bool(true));
+        e.borrow_mut().declare(
+            NEW_TARGET_VALUE_NAME,
+            self.current_new_target.clone().unwrap_or(Value::Undefined),
+        );
+        e.borrow_mut()
+            .declare(NEW_TARGET_ALLOWED_NAME, Value::Bool(true));
+        e.borrow_mut().implicit_arguments = true;
+        {
+            let mut parameter_names = e.borrow_mut();
+            for parameter in &node.params.items {
+                let mut names = Vec::new();
+                pattern_bound_names(&parameter.pattern, &mut names);
+                parameter_names.parameter_names.extend(names);
+            }
+            if let Some(rest) = &node.params.rest {
+                let mut names = Vec::new();
+                pattern_bound_names(&rest.rest.argument, &mut names);
+                parameter_names.parameter_names.extend(names);
+            }
+        }
+        {
+            let mut environment = e.borrow_mut();
+            for parameter in &node.params.items {
+                let mut names = Vec::new();
+                pattern_bound_names(&parameter.pattern, &mut names);
+                environment.tdz_names.extend(names);
+            }
+            if let Some(rest) = &node.params.rest {
+                let mut names = Vec::new();
+                pattern_bound_names(&rest.rest.argument, &mut names);
+                environment.tdz_names.extend(names);
+            }
+        }
+        for (index, parameter) in node.params.items.iter().enumerate() {
+            let argument = args.get(index).cloned().unwrap_or(Value::Undefined);
+            let argument = if argument.is_undefined() {
+                parameter
+                    .initializer
+                    .as_ref()
+                    .map(|initializer| self.eval_expr(initializer, e.clone()))
+                    .transpose()?
+                    .unwrap_or(argument)
+            } else {
+                argument
+            };
+            self.bind_pattern(&parameter.pattern, argument, e.clone())?;
+        }
+        if let Some(rest) = &node.params.rest {
+            self.bind_pattern(
+                &rest.rest.argument,
+                self.array_from_values(
+                    args.iter().skip(node.params.items.len()).cloned().collect(),
+                ),
+                e.clone(),
+            )?;
+        }
+        self.strict_mode = previous_strict_mode;
+        Ok(SyncGeneratorContinuation {
+            function: node,
+            environment: e,
+            body_environment,
+            this,
+            arguments: args,
+            strict,
+            source_id,
+            next_statement: 0,
+            done: false,
+            async_generator: false,
+            mapped_arguments_object: None,
+            pending_iterators: Vec::new(),
+        })
+    }
+
+    fn make_sync_generator_instance(
+        &mut self,
+        function: Value,
+        this: Value,
+        args: Vec<Value>,
+    ) -> JsResult<Value> {
+        let continuation = self.prepare_sync_generator_activation(function, this, args)?;
+        let iterator = self.object(None);
+        self.set_prop(&iterator, SYNC_GENERATOR_INSTANCE_PROP, Value::Bool(true));
+        self.set_prop(&iterator, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
+        self.set_prop(
+            &iterator,
+            "next",
+            self.native_named(native_sync_generator_next, "next", 1),
+        );
+        self.set_prop(
+            &iterator,
+            "return",
+            self.native_named(native_sync_generator_return, "return", 1),
+        );
+        self.set_prop(
+            &iterator,
+            "throw",
+            self.native_named(native_sync_generator_throw, "throw", 1),
+        );
+        self.set_prop(
+            &iterator,
+            &self.well_known_symbol_key("iterator"),
+            self.native(native_iterator_self),
+        );
+        let key = iterator
+            .as_object()
+            .expect("generator instance is an object")
+            .as_ptr();
+        self.sync_generator_continuations.insert(key, continuation);
+        Ok(iterator)
+    }
+
+    fn resume_sync_generator(&mut self, iterator: &Value) -> JsResult<Value> {
+        let key = iterator
+            .as_object()
+            .ok_or_else(|| JsError::Throw(type_error(self, "invalid generator receiver")))?
+            .as_ptr();
+        let Some(mut continuation) = self.sync_generator_continuations.remove(&key) else {
+            return Err(JsError::Throw(type_error(
+                self,
+                "invalid generator receiver",
+            )));
+        };
+        if continuation.done {
+            self.sync_generator_continuations.insert(key, continuation);
+            return Ok(generator_result(self, Value::Undefined, true));
+        }
+        let previous_strict_mode = self.strict_mode;
+        self.strict_mode = continuation.strict;
+        self.sync_generator_yielding = true;
+        self.sync_generator_iterators = std::mem::take(&mut continuation.pending_iterators);
+        if let Some(source_id) = continuation.source_id {
+            self.source_ids.push(source_id);
+        }
+        let result = (|| {
+            let Some(body) = &continuation.function.body else {
+                continuation.done = true;
+                return Ok(generator_result(self, Value::Undefined, true));
+            };
+            while continuation.next_statement < body.statements.len() {
+                let index = continuation.next_statement;
+                continuation.next_statement += 1;
+                match self.exec_stmt(
+                    &body.statements[index],
+                    continuation.body_environment.clone(),
+                ) {
+                    Err(JsError::Yield(value)) => {
+                        return Ok(generator_result(self, value, false));
+                    }
+                    Err(error) => {
+                        continuation.done = true;
+                        return Err(error);
+                    }
+                    Ok(Signal::Return(value)) => {
+                        continuation.done = true;
+                        return Ok(generator_result(self, value, true));
+                    }
+                    Ok(Signal::Break(_) | Signal::Continue(_)) => {
+                        continuation.done = true;
+                        return Ok(generator_result(self, Value::Undefined, true));
+                    }
+                    Ok(Signal::Normal(_)) => {}
+                }
+            }
+            continuation.done = true;
+            Ok(generator_result(self, Value::Undefined, true))
+        })();
+        if continuation.source_id.is_some() {
+            self.source_ids.pop();
+        }
+        continuation.pending_iterators = std::mem::take(&mut self.sync_generator_iterators);
+        self.sync_generator_yielding = false;
+        self.strict_mode = previous_strict_mode;
+        self.sync_generator_continuations.insert(key, continuation);
+        result
     }
     fn resolve_async_generator_next(&mut self, iterator: &Value, promise: &Value) {
         let values = self.get_prop(iterator, ASYNC_GENERATOR_VALUES_PROP);
@@ -9312,6 +9651,7 @@ impl Vm {
             let value = match error {
                 JsError::Throw(value) => value,
                 JsError::Message(message) => Value::string_value(message),
+                JsError::Yield(value) => value,
             };
             self.set_prop(iterator, ASYNC_GENERATOR_ERROR_PROP, value.clone());
             self.settle_promise(first, Err(JsError::Throw(value.clone())));
@@ -9446,32 +9786,8 @@ impl Vm {
                 && node.generator
                 && !node.r#async
             {
-                // Synchronous generator suspension is not yet a stencil
-                // frame, so materialize its yields through the same AST
-                // evaluator and expose the canonical array iterator protocol.
-                let previous_yields = self.async_generator_yields.take();
-                self.async_generator_yields = Some(Vec::new());
-                let result = self.call_user(
-                    node,
-                    env.clone(),
-                    t,
-                    a.materialize(),
-                    f.source_id,
-                    f.strict,
-                    Some(c.clone()),
-                );
-                if let Ok(value) = &result
-                    && !value.is_undefined()
-                {
-                    if let Some(yields) = self.async_generator_yields.as_mut() {
-                        yields.push(value.clone());
-                    }
-                }
-                let yields = self.async_generator_yields.take().unwrap_or_default();
-                self.async_generator_yields = previous_yields;
-                result?;
-                let values = self.array_from_values(yields);
-                return native_array_iterator(self, values, &[]);
+                let _ = (node, env);
+                return self.make_sync_generator_instance(c.clone(), t, a.materialize());
             }
             if matches!(f.kind, FunctionKind::Class { .. }) && self.current_new_target.is_some() {
                 return self.call_class(&f, t, a.materialize());
@@ -14357,6 +14673,7 @@ impl Vm {
                         let reason = match error {
                             JsError::Throw(value) => value,
                             JsError::Message(message) => Value::string_value(message),
+                            JsError::Yield(value) => value,
                         };
                         self.call(reject, Value::Undefined, vec![reason])?;
                     }
@@ -14452,6 +14769,14 @@ impl Vm {
                     .map(|argument| self.eval_expr(argument, e.clone()))
                     .transpose()?
                     .unwrap_or(Value::Undefined);
+                if self.sync_generator_yielding {
+                    if yield_expression.delegate {
+                        return Err(JsError::Message(
+                            "unsupported delegated generator yield".into(),
+                        ));
+                    }
+                    return Err(JsError::Yield(value));
+                }
                 let Some(yields) = self.async_generator_yields.as_mut() else {
                     return Err(JsError::Message("unsupported yield expression".into()));
                 };
@@ -14876,6 +15201,7 @@ impl Vm {
                     Err(JsError::Message(error)) => {
                         return Err(JsError::Message(format!("{error} at {:?}", v.span)));
                     }
+                    Err(JsError::Yield(value)) => return Err(JsError::Yield(value)),
                 };
                 Ok(result)
             }
@@ -15463,14 +15789,20 @@ impl Vm {
         match t {
             AssignmentTarget::ArrayAssignmentTarget(pattern) => {
                 let mut record = self.iterator_record(&v)?;
+                let pending_start = self.sync_generator_iterators.len();
+                if self.sync_generator_yielding {
+                    self.sync_generator_iterators.push(record.iterator.clone());
+                }
                 macro_rules! iterator_try {
                     ($operation:expr) => {
                         match $operation {
                             Ok(value) => value,
+                            Err(JsError::Yield(value)) => return Err(JsError::Yield(value)),
                             Err(error) => {
                                 if !record.done {
                                     let _ = self.iterator_close(&record.iterator);
                                 }
+                                self.sync_generator_iterators.truncate(pending_start);
                                 return Err(error);
                             }
                         }
@@ -15519,6 +15851,7 @@ impl Vm {
                 } else if !record.done {
                     self.iterator_close(&record.iterator)?;
                 }
+                self.sync_generator_iterators.truncate(pending_start);
                 Ok(())
             }
             AssignmentTarget::ObjectAssignmentTarget(pattern) => {
@@ -20265,6 +20598,87 @@ fn native_typed_array_fill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     Ok(this)
 }
 
+fn generator_result(vm: &mut Vm, value: Value, done: bool) -> Value {
+    let result = vm.object(None);
+    vm.set_prop(&result, "value", value);
+    vm.set_prop(&result, "done", Value::Bool(done));
+    result
+}
+
+fn native_sync_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if vm
+        .get_prop(&this, SYNC_GENERATOR_INSTANCE_PROP)
+        .is_undefined()
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Generator.prototype.next called on incompatible receiver",
+        )));
+    }
+    if vm.get_prop(&this, SYNC_GENERATOR_EXECUTING_PROP).truthy() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Generator is already executing",
+        )));
+    }
+    vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
+    let result = vm.resume_sync_generator(&this);
+    vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
+    result
+}
+
+fn native_sync_generator_return(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm
+        .get_prop(&this, SYNC_GENERATOR_INSTANCE_PROP)
+        .is_undefined()
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Generator.prototype.return called on incompatible receiver",
+        )));
+    }
+    let key = this
+        .as_object()
+        .expect("generator instance is an object")
+        .as_ptr();
+    if let Some(mut continuation) = vm.sync_generator_continuations.remove(&key) {
+        continuation.done = true;
+        for iterator in continuation.pending_iterators.iter().rev() {
+            vm.iterator_close(iterator)?;
+        }
+        continuation.pending_iterators.clear();
+        vm.sync_generator_continuations.insert(key, continuation);
+    }
+    Ok(generator_result(
+        vm,
+        args.first().cloned().unwrap_or(Value::Undefined),
+        true,
+    ))
+}
+
+fn native_sync_generator_throw(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm
+        .get_prop(&this, SYNC_GENERATOR_INSTANCE_PROP)
+        .is_undefined()
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Generator.prototype.throw called on incompatible receiver",
+        )));
+    }
+    let key = this
+        .as_object()
+        .expect("generator instance is an object")
+        .as_ptr();
+    if let Some(mut continuation) = vm.sync_generator_continuations.remove(&key) {
+        continuation.done = true;
+        vm.sync_generator_continuations.insert(key, continuation);
+    }
+    Err(JsError::Throw(
+        args.first().cloned().unwrap_or(Value::Undefined),
+    ))
+}
+
 fn native_async_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if vm
         .get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP)
@@ -20274,6 +20688,24 @@ fn native_async_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
             vm,
             "AsyncGenerator.prototype.next called on incompatible receiver",
         )))));
+    }
+    let key = this
+        .as_object()
+        .expect("async generator instance is an object")
+        .as_ptr();
+    if vm.sync_generator_continuations.contains_key(&key) {
+        let promise = vm.new_pending_promise();
+        if vm.get_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP).truthy() {
+            let queue = vm.get_prop(&this, ASYNC_GENERATOR_QUEUE_PROP);
+            let length = array_from_length(vm, &queue).unwrap_or(0);
+            vm.set_prop(&queue, &length.to_string(), promise.clone());
+            return Ok(promise);
+        }
+        vm.set_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
+        let result = vm.resume_sync_generator(&this);
+        vm.set_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
+        vm.settle_promise(&promise, result);
+        return Ok(promise);
     }
     let promise = vm.new_pending_promise();
     if vm.get_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP).truthy() {
@@ -20305,6 +20737,18 @@ fn native_async_generator_return(vm: &mut Vm, this: Value, args: &[Value]) -> Js
             "AsyncGenerator.prototype.return called on incompatible receiver",
         )))));
     }
+    let key = this
+        .as_object()
+        .expect("async generator instance is an object")
+        .as_ptr();
+    if let Some(mut continuation) = vm.sync_generator_continuations.remove(&key) {
+        continuation.done = true;
+        for iterator in continuation.pending_iterators.iter().rev() {
+            vm.iterator_close(iterator)?;
+        }
+        continuation.pending_iterators.clear();
+        vm.sync_generator_continuations.insert(key, continuation);
+    }
     let result = vm.object(None);
     vm.set_prop(
         &result,
@@ -20323,6 +20767,15 @@ fn native_async_generator_throw(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
             vm,
             "AsyncGenerator.prototype.throw called on incompatible receiver",
         )))));
+    }
+    let key = this
+        .as_object()
+        .expect("async generator instance is an object")
+        .as_ptr();
+    if let Some(mut continuation) = vm.sync_generator_continuations.remove(&key) {
+        continuation.done = true;
+        continuation.pending_iterators.clear();
+        vm.sync_generator_continuations.insert(key, continuation);
     }
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     Ok(vm.promise_from_result(Err(JsError::Throw(value))))
