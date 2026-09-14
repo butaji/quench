@@ -5953,6 +5953,9 @@ struct Vm {
     sync_generator_yielding: bool,
     sync_generator_iterators: Vec<Value>,
     sync_generator_pending_yield: Option<SyncGeneratorPendingYield>,
+    sync_generator_statement_frames: Vec<SyncGeneratorReplayFrame>,
+    sync_generator_replay_frames: Vec<SyncGeneratorReplayFrame>,
+    sync_generator_yield_frames: Vec<SyncGeneratorReplayFrame>,
     sync_generator_replay_value: Option<Value>,
     sync_generator_replay_values: Vec<Value>,
     sync_generator_yield_index: usize,
@@ -5995,6 +5998,24 @@ struct SyncGeneratorContinuation {
     pending_iterators: Vec<Value>,
     pending_yield: Option<SyncGeneratorPendingYield>,
     replay_values: Vec<Value>,
+    replay_frames: Vec<SyncGeneratorReplayFrame>,
+}
+
+/// Statement-list cursor captured at a generator suspension.  Replaying an
+/// enclosing loop must resume the active list after the statement that yielded
+/// instead of evaluating its already-completed prefix a second time.
+#[derive(Clone)]
+struct SyncGeneratorReplayFrame {
+    statements: &'static [Statement<'static>],
+    index: usize,
+    environment: Env,
+}
+
+struct SyncGeneratorForOfBodyResume {
+    iteration_environment: Env,
+    disposable_start: usize,
+    body_pending: Box<SyncGeneratorPendingYield>,
+    replay_frames: Vec<SyncGeneratorReplayFrame>,
 }
 
 enum SyncGeneratorResume {
@@ -6022,6 +6043,21 @@ enum SyncGeneratorPendingYield {
     Delegated {
         iterator: Value,
         statement: usize,
+    },
+    ForOf {
+        iterator: Value,
+        next: Value,
+        body: &'static Statement<'static>,
+        left: &'static ForStatementLeft<'static>,
+        loop_environment: Env,
+        iteration_environment: Env,
+        disposable_start: usize,
+        lexical_iteration: bool,
+        loop_label: Option<String>,
+        completion: Option<Value>,
+        statement: usize,
+        body_pending: Box<SyncGeneratorPendingYield>,
+        replay_frames: Vec<SyncGeneratorReplayFrame>,
     },
     Replay {
         statement: usize,
@@ -6101,6 +6137,9 @@ impl Vm {
             sync_generator_yielding: false,
             sync_generator_iterators: Vec::new(),
             sync_generator_pending_yield: None,
+            sync_generator_statement_frames: Vec::new(),
+            sync_generator_replay_frames: Vec::new(),
+            sync_generator_yield_frames: Vec::new(),
             sync_generator_replay_value: None,
             sync_generator_replay_values: Vec::new(),
             sync_generator_yield_index: 0,
@@ -10422,6 +10461,7 @@ impl Vm {
             pending_iterators: Vec::new(),
             pending_yield: None,
             replay_values: Vec::new(),
+            replay_frames: Vec::new(),
         })
     }
 
@@ -10505,6 +10545,9 @@ impl Vm {
         // the inner activation; otherwise the inner continuation consumes the
         // outer yield replay token and the outer loop repeats its body.
         let previous_pending_yield = self.sync_generator_pending_yield.take();
+        let previous_statement_frames = std::mem::take(&mut self.sync_generator_statement_frames);
+        let previous_replay_frames = std::mem::take(&mut self.sync_generator_replay_frames);
+        let previous_yield_frames = std::mem::take(&mut self.sync_generator_yield_frames);
         let previous_replay_value = self.sync_generator_replay_value.take();
         let previous_replay_values = std::mem::take(&mut self.sync_generator_replay_values);
         let previous_yield_index = self.sync_generator_yield_index;
@@ -10518,6 +10561,7 @@ impl Vm {
         self.sync_generator_omit_done = false;
         self.sync_generator_iterators = std::mem::take(&mut continuation.pending_iterators);
         self.sync_generator_replay_values = std::mem::take(&mut continuation.replay_values);
+        self.sync_generator_replay_frames = std::mem::take(&mut continuation.replay_frames);
         self.sync_generator_yield_index = 0;
         let resume_value = match &resume {
             SyncGeneratorResume::Next(value)
@@ -10531,6 +10575,7 @@ impl Vm {
                 | SyncGeneratorPendingYield::PreparedDefault { statement, .. }
                 | SyncGeneratorPendingYield::DeferredProperty { statement, .. }
                 | SyncGeneratorPendingYield::Delegated { statement, .. }
+                | SyncGeneratorPendingYield::ForOf { statement, .. }
                 | SyncGeneratorPendingYield::Replay { statement } => *statement,
             };
             if matches!(
@@ -10542,6 +10587,9 @@ impl Vm {
                 } else {
                     self.sync_generator_replay_value = Some(resume_value.clone());
                 }
+            }
+            if let SyncGeneratorPendingYield::ForOf { replay_frames, .. } = &pending {
+                self.sync_generator_replay_frames = replay_frames.clone();
             }
             self.sync_generator_pending_yield = Some(pending);
         }
@@ -10577,6 +10625,9 @@ impl Vm {
                                     *statement = index;
                                 }
                                 SyncGeneratorPendingYield::Delegated { statement, .. } => {
+                                    *statement = index;
+                                }
+                                SyncGeneratorPendingYield::ForOf { statement, .. } => {
                                     *statement = index;
                                 }
                                 SyncGeneratorPendingYield::Replay { statement } => {
@@ -10640,6 +10691,12 @@ impl Vm {
         continuation.pending_iterators = std::mem::take(&mut self.sync_generator_iterators);
         continuation.pending_yield = self.sync_generator_pending_yield.take();
         continuation.replay_values = std::mem::take(&mut self.sync_generator_replay_values);
+        continuation.replay_frames = std::mem::take(&mut self.sync_generator_replay_frames);
+        if continuation.replay_frames.is_empty() {
+            continuation.replay_frames = std::mem::take(&mut self.sync_generator_yield_frames);
+        } else {
+            self.sync_generator_yield_frames.clear();
+        }
         if continuation.done
             && let Some(object) = continuation.mapped_arguments_object.take()
         {
@@ -10651,6 +10708,9 @@ impl Vm {
         self.sync_generator_resume = None;
         self.sync_generator_yielding = previous_generator_yielding;
         self.sync_generator_pending_yield = previous_pending_yield;
+        self.sync_generator_statement_frames = previous_statement_frames;
+        self.sync_generator_replay_frames = previous_replay_frames;
+        self.sync_generator_yield_frames = previous_yield_frames;
         self.sync_generator_replay_value = previous_replay_value;
         self.sync_generator_replay_values = previous_replay_values;
         self.sync_generator_yield_index = previous_yield_index;
@@ -14480,7 +14540,38 @@ impl Vm {
         result
     }
 
+    fn capture_generator_yield_frames(&mut self) {
+        self.sync_generator_yield_frames = self.sync_generator_statement_frames.clone();
+    }
+
+    fn replay_environment_for<'a>(&self, b: &[Statement<'a>]) -> Option<Env> {
+        let statements = unsafe {
+            std::mem::transmute::<&[Statement<'a>], &'static [Statement<'static>]>(b)
+        };
+        self.sync_generator_replay_frames
+            .first()
+            .filter(|frame| {
+                frame.statements.as_ptr() == statements.as_ptr()
+                    && frame.statements.len() == statements.len()
+            })
+            .map(|frame| frame.environment.clone())
+    }
+
     fn exec_stmts_inner<'a>(&mut self, b: &[Statement<'a>], e: Env) -> JsResult<Signal> {
+        let statements = unsafe {
+            std::mem::transmute::<&[Statement<'a>], &'static [Statement<'static>]>(b)
+        };
+        let replay_index = self
+            .sync_generator_replay_frames
+            .first()
+            .filter(|frame| {
+                frame.statements.as_ptr() == statements.as_ptr()
+                    && frame.statements.len() == statements.len()
+            })
+            .map(|frame| frame.index);
+        if replay_index.is_some() {
+            self.sync_generator_replay_frames.remove(0);
+        }
         let annex_b_allowed = !b.iter().any(|statement| {
             direct_lexical_binding_name(statement).is_some_and(|name| {
                 b.iter().any(|candidate| {
@@ -14513,8 +14604,15 @@ impl Vm {
         }
         let mut last = Value::Undefined;
         let mut has_completion = false;
-        for s in b {
-            match self.exec_stmt(s, e.clone())? {
+        for (index, s) in b.iter().enumerate().skip(replay_index.unwrap_or(0)) {
+            self.sync_generator_statement_frames.push(SyncGeneratorReplayFrame {
+                statements,
+                index,
+                environment: e.clone(),
+            });
+            let statement_result = self.exec_stmt(s, e.clone());
+            self.sync_generator_statement_frames.pop();
+            match statement_result? {
                 Signal::Empty => {}
                 Signal::Normal(v) => {
                     has_completion = true;
@@ -14743,7 +14841,9 @@ impl Vm {
             }
             ExpressionStatement(x) => Ok(Signal::Normal(self.eval_expr(&x.expression, e)?)),
             BlockStatement(x) => {
-                let block_environment = Environment::new(Some(e));
+                let block_environment = self
+                    .replay_environment_for(&x.body)
+                    .unwrap_or_else(|| Environment::new(Some(e)));
                 let mut lexical_names = HashSet::new();
                 collect_direct_lexical_names(&x.body, &mut lexical_names);
                 block_environment
@@ -15008,6 +15108,42 @@ impl Vm {
                 Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
             }
             ForOfStatement(x) => {
+                if let Some(pending) = self.sync_generator_pending_yield.take() {
+                    if let SyncGeneratorPendingYield::ForOf {
+                        iterator,
+                        next,
+                        body,
+                        left,
+                        loop_environment,
+                        iteration_environment,
+                        disposable_start,
+                        lexical_iteration,
+                        loop_label,
+                        completion,
+                        body_pending,
+                        replay_frames,
+                        ..
+                    } = pending
+                    {
+                        return self.run_for_of_iterator(
+                            left,
+                            body,
+                            loop_environment,
+                            lexical_iteration,
+                            loop_label,
+                            completion,
+                            iterator,
+                            next,
+                            Some(SyncGeneratorForOfBodyResume {
+                                iteration_environment,
+                                disposable_start,
+                                body_pending,
+                                replay_frames,
+                            }),
+                        );
+                    }
+                    self.sync_generator_pending_yield = Some(pending);
+                }
                 let loop_label = self.pending_loop_label.take();
                 let mut completion = None;
                 let loop_environment = match &x.left {
@@ -15066,79 +15202,17 @@ impl Vm {
                         "iterator next method is not callable",
                     )));
                 }
-                loop {
-                    let step = self.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
-                    if !step.is_object_like() || is_symbol_carrier(&step) {
-                        return Err(JsError::Throw(type_error(
-                            self,
-                            "iterator result is not an object",
-                        )));
-                    }
-                    if self.get_prop_with_accessors(&step, "done")?.truthy() {
-                        break;
-                    }
-                    let value = self.get_prop_with_accessors(&step, "value")?;
-                    let iteration_environment = if lexical_iteration {
-                        self.for_binding_environment(&x.left, &e, false)
-                    } else {
-                        loop_environment.clone()
-                    };
-                    let disposable_start = iteration_environment.borrow().disposables.len();
-                    if let Err(error) =
-                        self.assign_for_left(&x.left, value.clone(), iteration_environment.clone())
-                    {
-                        return match error {
-                            JsError::Yield(value) => Err(JsError::Yield(value)),
-                            error => self.iterator_close_after_error(&iterator, error),
-                        };
-                    }
-                    // A generator `.return()` can resume a yield embedded in
-                    // the left-hand destructuring target.  The target has
-                    // completed its own IteratorClose; now preserve the
-                    // abrupt completion at the surrounding ForOf boundary so
-                    // the outer iterator is closed exactly once as well.
-                    if let Some(return_value) = self.sync_generator_return_value.take() {
-                        self.iterator_close(&iterator)?;
-                        return Ok(Signal::Return(return_value));
-                    }
-                    if let Err(error) =
-                        self.register_for_of_disposable(&x.left, &value, &iteration_environment)
-                    {
-                        return self.iterator_close_after_error(&iterator, error);
-                    }
-                    let body_signal = match self.exec_for_of_iteration(
-                        &x.body,
-                        iteration_environment,
-                        disposable_start,
-                    ) {
-                        Ok(signal) => signal,
-                        Err(error) => match error {
-                            JsError::Yield(value) => return Err(JsError::Yield(value)),
-                            error => return self.iterator_close_after_error(&iterator, error),
-                        },
-                    };
-                    match consume_loop_signal(
-                        body_signal,
-                        loop_label.as_deref(),
-                        &mut completion,
-                    ) {
-                        LoopAction::Break => {
-                            self.iterator_close(&iterator)?;
-                            break;
-                        }
-                        LoopAction::Continue => {}
-                        LoopAction::Propagate(signal) => {
-                            if matches!(
-                                &signal,
-                                Signal::Return(_) | Signal::Break(..) | Signal::Continue(..)
-                            ) {
-                                self.iterator_close(&iterator)?;
-                            }
-                            return Ok(signal);
-                        }
-                    }
-                }
-                Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
+                self.run_for_of_iterator(
+                    &x.left,
+                    &x.body,
+                    loop_environment,
+                    lexical_iteration,
+                    loop_label,
+                    completion,
+                    iterator,
+                    next,
+                    None,
+                )
             }
             SwitchStatement(x) => {
                 let d = self.eval_expr(&x.discriminant, e.clone())?;
@@ -15205,7 +15279,9 @@ impl Vm {
                 Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
             }
             TryStatement(x) => {
-                let try_environment = Environment::new(Some(e.clone()));
+                let try_environment = self
+                    .replay_environment_for(&x.block.body)
+                    .unwrap_or_else(|| Environment::new(Some(e.clone())));
                 let r = self.exec_stmts(&x.block.body, try_environment);
                 // A generator suspension is an internal control-flow edge,
                 // not an abrupt completion visible to the language.  In
@@ -15852,6 +15928,188 @@ impl Vm {
     ) -> JsResult<Signal> {
         let result = self.exec_stmt(body, environment.clone());
         self.finish_disposable_scope(&environment, start, result)
+    }
+
+    fn suspend_for_of_body<'a>(
+        &mut self,
+        iterator: Value,
+        next: Value,
+        body: &Statement<'a>,
+        left: &ForStatementLeft<'a>,
+        loop_environment: Env,
+        iteration_environment: Env,
+        disposable_start: usize,
+        lexical_iteration: bool,
+        loop_label: Option<String>,
+        completion: Option<Value>,
+        value: Value,
+    ) -> JsResult<Signal> {
+        let body = unsafe {
+            std::mem::transmute::<&Statement<'a>, &'static Statement<'static>>(body)
+        };
+        let left = unsafe {
+            std::mem::transmute::<&ForStatementLeft<'a>, &'static ForStatementLeft<'static>>(left)
+        };
+        let body_pending = self
+            .sync_generator_pending_yield
+            .take()
+            .unwrap_or(SyncGeneratorPendingYield::Replay { statement: 0 });
+        let replay_frames = std::mem::take(&mut self.sync_generator_yield_frames);
+        self.sync_generator_pending_yield = Some(SyncGeneratorPendingYield::ForOf {
+            iterator,
+            next,
+            body,
+            left,
+            loop_environment,
+            iteration_environment,
+            disposable_start,
+            lexical_iteration,
+            loop_label,
+            completion,
+            statement: 0,
+            body_pending: Box::new(body_pending),
+            replay_frames,
+        });
+        Err(JsError::Yield(value))
+    }
+
+    fn run_for_of_iterator<'a>(
+        &mut self,
+        left: &ForStatementLeft<'a>,
+        body: &Statement<'a>,
+        loop_environment: Env,
+        lexical_iteration: bool,
+        loop_label: Option<String>,
+        mut completion: Option<Value>,
+        iterator: Value,
+        next: Value,
+        resume_body: Option<SyncGeneratorForOfBodyResume>,
+    ) -> JsResult<Signal> {
+        if let Some(resume) = resume_body {
+            self.sync_generator_replay_frames = resume.replay_frames;
+            self.sync_generator_pending_yield = Some(*resume.body_pending);
+            let body_signal = match self.exec_for_of_iteration(
+                body,
+                resume.iteration_environment.clone(),
+                resume.disposable_start,
+            ) {
+                Ok(signal) => signal,
+                Err(JsError::Yield(value)) => {
+                    return self.suspend_for_of_body(
+                        iterator.clone(),
+                        next.clone(),
+                        body,
+                        left,
+                        loop_environment.clone(),
+                        resume.iteration_environment,
+                        resume.disposable_start,
+                        lexical_iteration,
+                        loop_label.clone(),
+                        completion.clone(),
+                        value,
+                    );
+                }
+                Err(error) => return self.iterator_close_after_error(&iterator, error),
+            };
+            match consume_loop_signal(
+                body_signal,
+                loop_label.as_deref(),
+                &mut completion,
+            ) {
+                LoopAction::Break => {
+                    self.iterator_close(&iterator)?;
+                    return Ok(Signal::Normal(
+                        completion.unwrap_or(Value::Undefined),
+                    ));
+                }
+                LoopAction::Continue => {}
+                LoopAction::Propagate(signal) => {
+                    if matches!(
+                        &signal,
+                        Signal::Return(_) | Signal::Break(..) | Signal::Continue(..)
+                    ) {
+                        self.iterator_close(&iterator)?;
+                    }
+                    return Ok(signal);
+                }
+            }
+        }
+        loop {
+            let step = self.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
+            if !step.is_object_like() || is_symbol_carrier(&step) {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "iterator result is not an object",
+                )));
+            }
+            if self.get_prop_with_accessors(&step, "done")?.truthy() {
+                break;
+            }
+            let value = self.get_prop_with_accessors(&step, "value")?;
+            let iteration_environment = if lexical_iteration {
+                self.for_binding_environment(left, &loop_environment, false)
+            } else {
+                loop_environment.clone()
+            };
+            let disposable_start = iteration_environment.borrow().disposables.len();
+            if let Err(error) = self.assign_for_left(left, value.clone(), iteration_environment.clone()) {
+                return match error {
+                    JsError::Yield(value) => Err(JsError::Yield(value)),
+                    error => self.iterator_close_after_error(&iterator, error),
+                };
+            }
+            if let Some(return_value) = self.sync_generator_return_value.take() {
+                self.iterator_close(&iterator)?;
+                return Ok(Signal::Return(return_value));
+            }
+            if let Err(error) = self.register_for_of_disposable(left, &value, &iteration_environment) {
+                return self.iterator_close_after_error(&iterator, error);
+            }
+            let body_signal = match self.exec_for_of_iteration(
+                body,
+                iteration_environment.clone(),
+                disposable_start,
+            ) {
+                Ok(signal) => signal,
+                Err(JsError::Yield(value)) => {
+                    return self.suspend_for_of_body(
+                        iterator.clone(),
+                        next.clone(),
+                        body,
+                        left,
+                        loop_environment.clone(),
+                        iteration_environment,
+                        disposable_start,
+                        lexical_iteration,
+                        loop_label.clone(),
+                        completion.clone(),
+                        value,
+                    );
+                }
+                Err(error) => return self.iterator_close_after_error(&iterator, error),
+            };
+            match consume_loop_signal(
+                body_signal,
+                loop_label.as_deref(),
+                &mut completion,
+            ) {
+                LoopAction::Break => {
+                    self.iterator_close(&iterator)?;
+                    break;
+                }
+                LoopAction::Continue => {}
+                LoopAction::Propagate(signal) => {
+                    if matches!(
+                        &signal,
+                        Signal::Return(_) | Signal::Break(..) | Signal::Continue(..)
+                    ) {
+                        self.iterator_close(&iterator)?;
+                    }
+                    return Ok(signal);
+                }
+            }
+        }
+        Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
     }
 
     fn for_binding_environment<'a>(
@@ -17720,6 +17978,7 @@ impl Vm {
                                 iterator,
                                 statement: 0,
                             });
+                        self.capture_generator_yield_frames();
                         return Err(JsError::Yield(value));
                     }
                     let source = yield_expression
@@ -17745,6 +18004,7 @@ impl Vm {
                                 iterator,
                                 statement: 0,
                             });
+                        self.capture_generator_yield_frames();
                     }
                     return Err(JsError::Yield(value));
                 }
@@ -17798,6 +18058,7 @@ impl Vm {
                     // cursor advanced past a suspended return/assignment.
                     self.sync_generator_pending_yield =
                         Some(SyncGeneratorPendingYield::Replay { statement: 0 });
+                    self.capture_generator_yield_frames();
                     return Err(JsError::Yield(value));
                 }
                 let Some(yields) = self.async_generator_yields.as_mut() else {
