@@ -5273,42 +5273,55 @@ fn instance_of(value: &Value, ctor: &Value) -> bool {
     }
 }
 
-/// Evaluate `instanceof` through the canonical internal-prototype operation.
-/// Ordinary objects can use the compact prototype walk above, but a Proxy's
-/// `[[GetPrototypeOf]]` is observable and may invoke user code. Keep that
-/// effect at the VM boundary so the stencil and AST paths share one semantic
-/// operation instead of each growing a proxy special case.
+/// Evaluate `instanceof` through one VM operation. This includes the
+/// observable @@hasInstance lookup/call, callable validation, custom
+/// `prototype`, and proxy `[[GetPrototypeOf]]` effects; execution tiers must
+/// not substitute a raw prototype walk for any of those steps.
 fn instance_of_with_vm(vm: &mut Vm, value: &Value, ctor: &Value) -> JsResult<bool> {
-    if proxy_target(value).is_none() {
-        return Ok(instance_of(value, ctor));
+    let has_instance_key = vm.well_known_symbol_key("hasInstance");
+    let has_instance = vm.get_prop_with_accessors(ctor, &has_instance_key)?;
+    if !has_instance.is_undefined() && !has_instance.is_null() {
+        if !has_instance.is_function() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "@@hasInstance is not callable",
+            )));
+        }
+        let result = vm.call(has_instance, ctor.clone(), vec![value.clone()])?;
+        return Ok(result.truthy());
     }
-    let Some(constructor) = ctor.as_function_ref() else {
-        return Ok(false);
-    };
+    let callable = ctor.is_function()
+        || proxy_target(ctor).is_some_and(|target| target.is_function());
+    if !callable {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "right-hand side of instanceof is not callable",
+        )));
+    }
     let prototype = vm.get_prop_with_accessors(ctor, "prototype")?;
     if !prototype.is_object_like() || is_symbol_carrier(&prototype) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "instanceof prototype is not an object",
+        )));
+    }
+    if !value.is_object_like() || is_symbol_carrier(value) {
         return Ok(false);
     }
     let mut current = value.clone();
     loop {
-        let current_prototype = if proxy_target(&current).is_some() {
-            native_object_get_prototype_of(vm, Value::Undefined, &[current.clone()])?
-        } else if let Some(object) = current.as_object_ref() {
-            object
-                .borrow()
-                .prototype
-                .clone()
-                .map(Value::Object)
+        let current_prototype = if current.is_regexp() {
+            vm.builtin(BuiltinId::RegExpConstructor)
+                .as_function_ref()
+                .map(|function| Value::Object(function.prototype.clone()))
                 .unwrap_or(Value::Null)
-        } else if let Some(function) = current.as_function_ref() {
-            Value::Object(function.prototype.clone())
         } else {
-            return Ok(false);
+            native_object_get_prototype_of(vm, Value::Undefined, &[current.clone()])?
         };
         if current_prototype.is_null() {
             return Ok(false);
         }
-        if current_prototype.same_bits(&Value::Object(constructor.prototype.clone())) {
+        if current_prototype.same_bits(&prototype) {
             return Ok(true);
         }
         current = current_prototype;

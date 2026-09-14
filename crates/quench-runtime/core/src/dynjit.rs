@@ -3041,22 +3041,11 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         DynOp::InstanceOf { dst, left, right } => {
             let left_value = get_ref(frame, *left).clone();
             let right_value = get_ref(frame, *right).clone();
-            let value = if super::proxy_target(&left_value).is_some() {
-                Value::Bool(super::instance_of_with_vm(
-                    vm(frame),
-                    &left_value,
-                    &right_value,
-                )?)
-            } else if let Some(cache) = instanceof_ic() {
-                Value::Bool(instance_of_cached(
-                    &left_value,
-                    &right_value,
-                    cache,
-                    unsafe { (*frame.vm).prototype_epoch.get() },
-                ))
-            } else {
-                Value::Bool(instance_of(&left_value, &right_value))
-            };
+            let value = Value::Bool(super::instance_of_with_vm(
+                vm(frame),
+                &left_value,
+                &right_value,
+            )?);
             put(frame, dst, value);
         }
         DynOp::In { dst, left, right } => {
@@ -4484,6 +4473,15 @@ fn select_direct_block_template(
     end: usize,
 ) -> Option<DirectBlockTemplate> {
     let ops = &code.ops.get(start..end)?;
+    // `instanceof` observes @@hasInstance, prototype getters, proxies, and
+    // callable checks.  Keep every block containing it on the shared VM
+    // operation until those guards are represented in the stencil contract.
+    if ops
+        .iter()
+        .any(|instruction| matches!(instruction.op, DynOp::InstanceOf { .. }))
+    {
+        return None;
+    }
     if let [
         first_receiver_load,
         first_value_load,
