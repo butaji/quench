@@ -35028,7 +35028,7 @@ fn function_own_property_keys(
         }
     }
     for key in attributes.keys() {
-        if matches!(key.as_str(), "name" | "length") {
+        if matches!(key.as_str(), "name" | "length" | "prototype") {
             continue;
         }
         if !props.contains_key(key) && visible(key) {
