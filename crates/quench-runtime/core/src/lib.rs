@@ -8024,11 +8024,13 @@ impl Vm {
             "prototype",
             number_format_prototype.clone(),
         );
-        self.set_prop(
-            &number_format,
-            FUNCTION_PROTOTYPE_OVERRIDE_PROP,
-            number_format_prototype.clone(),
-        );
+        if let Some(function_prototype) = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            self.set_prop(&number_format, FUNCTION_PROTOTYPE_CHAIN_PROP, function_prototype);
+        }
         self.set_prop(
             &number_format,
             "\0prototype_override",
@@ -8044,11 +8046,13 @@ impl Vm {
         let collator = self.native_named(native_intl_collator_constructor, "Collator", 0);
         let collator_prototype = self.object(self.default_object_prototype());
         self.set_prop(&collator, "prototype", collator_prototype.clone());
-        self.set_prop(
-            &collator,
-            FUNCTION_PROTOTYPE_OVERRIDE_PROP,
-            collator_prototype.clone(),
-        );
+        if let Some(function_prototype) = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            self.set_prop(&collator, FUNCTION_PROTOTYPE_CHAIN_PROP, function_prototype);
+        }
         self.set_prop(
             &collator,
             "\0prototype_override",
@@ -8085,7 +8089,13 @@ impl Vm {
         let date_time_format = self.native_named(native_intl_date_time_format_constructor, "DateTimeFormat", 0);
         let date_time_format_prototype = self.object(self.default_object_prototype());
         self.set_prop(&date_time_format, "prototype", date_time_format_prototype.clone());
-        self.set_prop(&date_time_format, FUNCTION_PROTOTYPE_OVERRIDE_PROP, date_time_format_prototype.clone());
+        if let Some(function_prototype) = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            self.set_prop(&date_time_format, FUNCTION_PROTOTYPE_CHAIN_PROP, function_prototype);
+        }
         self.set_prop(&date_time_format, "\0prototype_override", date_time_format_prototype.clone());
         let date_time_format_getter = self.native_named(native_intl_date_time_format_format_getter, "get format", 0);
         self.mark_nonconstructable(&date_time_format_getter);
@@ -8102,6 +8112,35 @@ impl Vm {
         set_property_attributes(&date_time_format_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
         self.set_prop(&intl, "DateTimeFormat", date_time_format);
         set_property_attributes(&intl, "DateTimeFormat", PropertyAttributes::BUILTIN_METHOD);
+        let display_names = self.native_named(native_intl_display_names_constructor, "DisplayNames", 2);
+        let display_names_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&display_names, "prototype", display_names_prototype.clone());
+        set_property_attributes(&display_names, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        if let Some(function_prototype) = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            self.set_prop(&display_names, FUNCTION_PROTOTYPE_CHAIN_PROP, function_prototype);
+        }
+        self.set_prop(&display_names, "\0prototype_override", display_names_prototype.clone());
+        let display_names_of = self.native_named(native_intl_display_names_of, "of", 1);
+        let display_names_resolved_options = self.native_named(native_intl_display_names_resolved_options, "resolvedOptions", 0);
+        self.set_prop(&display_names_prototype, "of", display_names_of);
+        self.set_prop(&display_names_prototype, "resolvedOptions", display_names_resolved_options);
+        set_property_attributes(&display_names_prototype, "of", PropertyAttributes::BUILTIN_METHOD);
+        set_property_attributes(&display_names_prototype, "resolvedOptions", PropertyAttributes::BUILTIN_METHOD);
+        self.set_prop(&display_names_prototype, "constructor", display_names.clone());
+        set_property_attributes(&display_names_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        let display_names_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&display_names_prototype, &display_names_tag, Value::string_value("Intl.DisplayNames"));
+        set_property_attributes(
+            &display_names_prototype,
+            &display_names_tag,
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
+        self.set_prop(&intl, "DisplayNames", display_names);
+        set_property_attributes(&intl, "DisplayNames", PropertyAttributes::BUILTIN_METHOD);
         Environment::set(&g, "Intl", intl);
         for recipe in builtins::BUILTIN_RECIPES {
             let value = self.builtin(recipe.id);
@@ -9204,6 +9243,8 @@ impl Vm {
                                 native_dataview_constructor,
                                 native_intl_number_format_constructor,
                                 native_intl_collator_constructor,
+                                native_intl_date_time_format_constructor,
+                                native_intl_display_names_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
                             ) =>
@@ -10029,6 +10070,10 @@ impl Vm {
         let mut object = object.borrow_mut();
         let get_slot = accessor_slot("get", key);
         let set_slot = accessor_slot("set", key);
+        // An accessor definition replaces an existing data property.  Keep
+        // the property table in one canonical shape so [[Get]] cannot see a
+        // stale data value before consulting the new getter.
+        object.props.shift_remove(key);
         if let Some(getter) = getter {
             object.props.insert(&get_slot, getter);
         } else if object.props.contains_key(&get_slot) {
@@ -33598,6 +33643,195 @@ fn intl_datetime_resolved_string(
     }
     Ok(Some(Value::string_value(to_string_with_vm(vm, &value)?)))
 }
+
+const INTL_DISPLAY_NAMES_OPTIONS: &str = "\0intl-display-names-options";
+const INTL_DISPLAY_NAMES_BRAND: &str = "\0intl-display-names-brand";
+const INTL_DISPLAY_NAMES_LOCALE: &str = "\0intl-display-names-locale";
+
+fn native_intl_display_names_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    validate_intl_number_format_args(vm, &[args.first().cloned().unwrap_or(Value::Undefined)])?;
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !options.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "DisplayNames options must be an object")));
+    }
+    let locale_matcher = intl_datetime_string_option(vm, &options, "localeMatcher")?;
+    if locale_matcher
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "lookup" | "best fit"))
+    {
+        return Err(JsError::Throw(range_error(vm, "invalid localeMatcher")));
+    }
+    let style = intl_datetime_string_option(vm, &options, "style")?;
+    if style
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "narrow" | "short" | "long"))
+    {
+        return Err(JsError::Throw(range_error(vm, "invalid style")));
+    }
+    let fallback = intl_datetime_string_option(vm, &options, "fallback")?;
+    if fallback
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "code" | "none"))
+    {
+        return Err(JsError::Throw(range_error(vm, "invalid fallback")));
+    }
+    let language_display = intl_datetime_string_option(vm, &options, "languageDisplay")?;
+    if language_display
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "dialect" | "standard"))
+    {
+        return Err(JsError::Throw(range_error(vm, "invalid languageDisplay")));
+    }
+    let type_value = intl_datetime_string_option(vm, &options, "type")?;
+    let Some(type_value) = type_value else {
+        return Err(JsError::Throw(type_error(vm, "DisplayNames type is required")));
+    };
+    if !matches!(
+        type_value.as_str(),
+        "language" | "region" | "script" | "currency" | "calendar" | "dateTimeField"
+    ) {
+        return Err(JsError::Throw(range_error(vm, "invalid DisplayNames type")));
+    }
+    let result = if this.is_object_like() { this } else { vm.object(None) };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    vm.set_prop(&result, INTL_DISPLAY_NAMES_OPTIONS, options);
+    vm.set_prop(&result, INTL_DISPLAY_NAMES_BRAND, Value::Bool(true));
+    let locale = args
+        .first()
+        .and_then(Value::as_string)
+        .cloned()
+        .unwrap_or_else(|| "en".into());
+    vm.set_prop(&result, INTL_DISPLAY_NAMES_LOCALE, Value::string_value(locale));
+    Ok(result)
+}
+
+fn native_intl_display_names_of(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if !vm.get_prop(&this, INTL_DISPLAY_NAMES_BRAND).truthy() {
+        return Err(JsError::Throw(type_error(vm, "incompatible DisplayNames receiver")));
+    }
+    let code = args.first().cloned().unwrap_or(Value::Undefined);
+    let code = to_string_with_vm(vm, &code)?;
+    let options = vm.get_prop(&this, INTL_DISPLAY_NAMES_OPTIONS);
+    let type_value = vm.get_prop(&options, "type").string();
+    let valid = match type_value.as_str() {
+        "language" => display_names_valid_language(&code),
+        "region" => display_names_valid_region(&code),
+        "script" => code.len() == 4 && code.chars().all(|character| character.is_ascii_alphabetic()),
+        "currency" => code.len() == 3 && code.chars().all(|character| character.is_ascii_alphabetic()),
+        "calendar" => display_names_valid_calendar(&code),
+        "dateTimeField" => matches!(
+            code.as_str(),
+            "era" | "year" | "quarter" | "month" | "weekOfYear" | "weekday" | "day"
+                | "dayPeriod" | "hour" | "minute" | "second" | "timeZoneName"
+        ),
+        _ => false,
+    };
+    if !valid {
+        return Err(JsError::Throw(range_error(vm, "invalid DisplayNames code")));
+    }
+    Ok(Value::string_value(code))
+}
+
+fn native_intl_display_names_resolved_options(
+    vm: &mut Vm,
+    this: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    if !vm.get_prop(&this, INTL_DISPLAY_NAMES_BRAND).truthy() {
+        return Err(JsError::Throw(type_error(vm, "incompatible DisplayNames receiver")));
+    }
+    let result = vm.object(None);
+    let options = vm.get_prop(&this, INTL_DISPLAY_NAMES_OPTIONS);
+    vm.set_prop(&result, "locale", vm.get_prop(&this, INTL_DISPLAY_NAMES_LOCALE));
+    for (key, default) in [
+        ("style", "long"),
+        ("type", "language"),
+        ("fallback", "code"),
+        ("languageDisplay", "dialect"),
+    ] {
+        let value = vm.get_prop(&options, key);
+        let value = if value.is_undefined() {
+            Value::string_value(default)
+        } else {
+            Value::string_value(to_string_with_vm(vm, &value)?)
+        };
+        vm.set_prop(
+            &result,
+            key,
+            value,
+        );
+    }
+    Ok(result)
+}
+
+fn display_names_valid_region(code: &str) -> bool {
+    (code.len() == 2 && code.chars().all(|character| character.is_ascii_alphabetic()))
+        || (code.len() == 3 && code.chars().all(|character| character.is_ascii_digit()))
+}
+
+fn display_names_valid_calendar(code: &str) -> bool {
+    let mut segments = code.split('-');
+    let Some(first) = segments.next() else { return false; };
+    (3..=8).contains(&first.len())
+        && first.chars().all(|character| character.is_ascii_alphanumeric())
+        && segments.all(|segment| {
+            (3..=8).contains(&segment.len())
+                && segment.chars().all(|character| character.is_ascii_alphanumeric())
+        })
+}
+
+fn display_names_valid_language(code: &str) -> bool {
+    if code == "root" || code.is_empty() || code.contains('_') {
+        return false;
+    }
+    let segments = code.split('-').collect::<Vec<_>>();
+    let Some(language) = segments.first() else { return false; };
+    if !((2..=3).contains(&language.len()) || (5..=8).contains(&language.len()))
+        || !language.chars().all(|character| character.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    let mut script_seen = false;
+    let mut region_seen = false;
+    let mut variants = std::collections::HashSet::new();
+    for segment in segments.iter().skip(1) {
+        if segment.is_empty() || segment.len() == 1 || !segment.chars().all(|character| character.is_ascii_alphanumeric()) {
+            return false;
+        }
+        if segment.len() == 4 && segment.chars().all(|character| character.is_ascii_alphabetic()) {
+            if script_seen { return false; }
+            script_seen = true;
+        } else if display_names_valid_region(segment) {
+            if region_seen { return false; }
+            region_seen = true;
+        } else if (5..=8).contains(&segment.len()) {
+            if !variants.insert(segment.to_ascii_lowercase()) { return false; }
+        } else if segment.len() == 4
+            && segment
+                .as_bytes()
+                .first()
+                .is_some_and(|character| character.is_ascii_digit())
+        {
+            if !variants.insert(segment.to_ascii_lowercase()) { return false; }
+        } else {
+            return false;
+        }
+    }
+    true
+}
 fn native_boolean(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(a.first().is_some_and(Value::truthy)))
 }
@@ -34586,21 +34820,28 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_weak_set_constructor))
                                     .then_some("WeakSet")
                             })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_intl_display_names_constructor))
+                                    .then_some("Intl.DisplayNames")
+                            })
                     });
                     let intrinsic = intrinsic_name
-                        .map(|name| vm.get_prop(&global, name))
+                        .map(|name| {
+                            if let Some((namespace, property)) = name.split_once('.') {
+                                let namespace = vm.get_prop(&global, namespace);
+                                vm.get_prop(&namespace, property)
+                            } else {
+                                vm.get_prop(&global, name)
+                            }
+                        })
                         .filter(|value| value.is_function())
                         .unwrap_or_else(|| vm.get_prop(&global, "Object"));
                     intrinsic
                         .as_function_ref()
-                        .map(|function| function.prototype.clone())
+                        .and_then(|_| vm.get_prop(&intrinsic, "prototype").as_object())
                 })
         })
-        .or_else(|| {
-            target
-                .as_function_ref()
-                .map(|function| function.prototype.clone())
-        });
+        .or_else(|| vm.get_prop(&target, "prototype").as_object());
     let object = vm.object(prototype);
     if let Some(prototype_function) = prototype_function {
         vm.set_prop(&object, "\0prototype_function", prototype_function);
@@ -34734,6 +34975,9 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
         if let Some(value) = Environment::get(&vm.global, name) {
             vm.set_prop(&global, name, value);
         }
+    }
+    if let Some(value) = Environment::get(&vm.global, "Intl") {
+        vm.set_prop(&global, "Intl", value);
     }
     for name in [
         "parseInt",
