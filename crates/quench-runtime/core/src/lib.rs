@@ -7353,6 +7353,29 @@ impl Vm {
                 self.native_named(native_array_buffer_resize, "resize", 1),
             );
         }
+        let array_buffer_is_view =
+            self.native_named(native_array_buffer_is_view, "isView", 1);
+        self.mark_nonconstructable(&array_buffer_is_view);
+        self.set_prop(&array_buffer, "isView", array_buffer_is_view);
+        set_property_attributes(
+            &array_buffer,
+            "isView",
+            PropertyAttributes::BUILTIN_METHOD,
+        );
+        let array_buffer_species = self.native_named(native_species_getter, "get [Symbol.species]", 0);
+        self.mark_nonconstructable(&array_buffer_species);
+        let species_key = self.well_known_symbol_key("species");
+        self.define_accessor_slot(
+            &array_buffer,
+            &species_key,
+            Some(array_buffer_species),
+            None,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         Environment::set(&g, "ArrayBuffer", array_buffer);
         let typed_array_base = self.native_named(native_typed_array_constructor, "TypedArray", 0);
         self.mark_nonconstructable(&typed_array_base);
@@ -26138,6 +26161,17 @@ fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     vm.set_prop(&view, "\0dataview-buffer", buffer.clone());
     vm.set_prop(&view, "buffer", buffer);
     Ok(view)
+}
+
+fn native_array_buffer_is_view(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(value) = args.first().and_then(Value::as_object_ref) else {
+        return Ok(Value::Bool(false));
+    };
+    let object = value.borrow();
+    Ok(Value::Bool(
+        object.props.contains_key("\0dataview-buffer")
+            || object.props.contains_key(TYPED_ARRAY_BUFFER),
+    ))
 }
 
 fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
