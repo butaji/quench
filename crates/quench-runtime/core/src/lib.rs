@@ -8589,6 +8589,23 @@ impl Vm {
         }
         let iterator = self.native_named(native_iterator_constructor, "Iterator", 0);
         let iterator_prototype = self.object(self.default_object_prototype());
+        // Array/Map/Set iterator prototypes are allocated before the Iterator
+        // intrinsic itself.  Wire their common ancestry once the authoritative
+        // prototype exists instead of giving each collection a private chain.
+        if let Some(iterator_prototype_handle) = iterator_prototype.as_object() {
+            for prototype in [
+                self.array_iterator_proto.clone(),
+                self.map_iterator_proto.clone(),
+                self.set_iterator_proto.clone(),
+                self.string_iterator_proto.clone(),
+                self.regexp_iterator_proto.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                prototype.borrow_mut().prototype = Some(iterator_prototype_handle.clone());
+            }
+        }
         self.set_prop(&iterator, "prototype", iterator_prototype.clone());
         set_property_attributes(&iterator, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
         self.set_prop(&iterator_prototype, "constructor", iterator.clone());
@@ -8625,9 +8642,28 @@ impl Vm {
             self.set_prop(&iterator, name, method);
             set_property_attributes(&iterator, name, PropertyAttributes::BUILTIN_METHOD);
         }
-        Environment::set(&g, "Iterator", iterator);
-        if let Some(array_iterator_proto) = self.array_iterator_proto.as_ref() {
-            array_iterator_proto.borrow_mut().prototype = Some(iterator_prototype.as_object().expect("Iterator.prototype object"));
+        // Native function prototype assignment copies the object shape.  Do
+        // this final publication after all Iterator.prototype properties are
+        // declared so the guest-visible prototype is the authoritative one.
+        self.set_prop(&iterator, "prototype", iterator_prototype.clone());
+        set_property_attributes(&iterator, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        Environment::set(&g, "Iterator", iterator.clone());
+        if let Some(iterator_prototype_handle) = iterator
+            .as_function_ref()
+            .map(|function| function.prototype.clone())
+        {
+            for prototype in [
+                self.array_iterator_proto.clone(),
+                self.map_iterator_proto.clone(),
+                self.set_iterator_proto.clone(),
+                self.string_iterator_proto.clone(),
+                self.regexp_iterator_proto.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                prototype.borrow_mut().prototype = Some(iterator_prototype_handle.clone());
+            }
         }
         for (constructor, prototype) in [
             (BuiltinId::ObjectConstructor, BuiltinId::ObjectConstructor),
@@ -9702,6 +9738,7 @@ impl Vm {
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
                                 native_realm_type_error,
+                                native_iterator_constructor,
                             ) =>
                         {
                             true
@@ -21509,7 +21546,7 @@ fn function_property_writable(function: &FunctionValue<'_>, key: &str) -> bool {
 
 impl Vm {
     fn well_known_symbol_key(&self, name: &str) -> String {
-        Environment::get(&self.global, "Symbol")
+        let result = Environment::get(&self.global, "Symbol")
             .and_then(|symbol| {
                 let value = self.get_prop(&symbol, name);
                 value
@@ -21517,7 +21554,8 @@ impl Vm {
                     .and_then(|object| object.borrow().props.get("\0symbol-key").cloned())
             })
             .and_then(|key| key.as_string().cloned())
-            .unwrap_or_else(|| format!("Symbol(Symbol.{name})"))
+            .unwrap_or_else(|| format!("Symbol(Symbol.{name})"));
+        result
     }
 
     fn to_property_key(&mut self, value: Value) -> JsResult<String> {
@@ -32815,7 +32853,7 @@ fn make_regexp_string_iterator(
     let prototype = if let Some(prototype) = vm.regexp_iterator_proto.clone() {
         Value::Object(prototype)
     } else {
-        let prototype = vm.object_value(Object::ordinary(None));
+        let prototype = vm.object_value(Object::ordinary(shared_iterator_prototype(vm)));
         vm.set_prop(
             &prototype,
             "next",
@@ -37881,6 +37919,11 @@ const TYPED_ARRAY_OFFSET: &str = "\0typed-array-offset";
 const TYPED_ARRAY_FIXED: &str = "\0typed-array-fixed";
 const ARRAY_BUFFER_DATA: &str = "\0array-buffer-data";
 
+fn shared_iterator_prototype(vm: &Vm) -> Option<ObjectHandle> {
+    Environment::get(&vm.global, "Iterator")
+        .and_then(|iterator| iterator.as_function_ref().map(|function| function.prototype.clone()))
+}
+
 fn typed_array_element_value(kind: &str, value: &Value) -> Value {
     if matches!(kind, "BigInt64Array" | "BigUint64Array") {
         return if is_bigint_marker(value) {
@@ -38173,7 +38216,7 @@ fn native_string_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
     let prototype = if let Some(prototype) = vm.string_iterator_proto.clone() {
         Value::Object(prototype)
     } else {
-        let prototype = vm.object_value(Object::ordinary(None));
+        let prototype = vm.object_value(Object::ordinary(shared_iterator_prototype(vm)));
         let next = vm.native_named(native_string_iterator_next, "next", 0);
         vm.set_prop(&prototype, "next", next);
         let iterator_key = vm.well_known_symbol_key("iterator");
