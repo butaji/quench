@@ -74,8 +74,9 @@ Verification completed:
   17 legacy core probes still failing)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
-- canonical stencil Test262 stage 10 (`language/expressions`) now reaches
-  9,766/11,101 fixtures; the assignment-destructuring partition is fully green
+- the last full canonical stencil Test262 stage 10 (`language/expressions`)
+  measurement reached 9,766/11,101 fixtures; subsequent focused partitions
+  are tracked below. The assignment-destructuring partition is fully green
   at 368/368, strict assignment-target early errors are validated
   and synchronous/async generator activations now retain their lexical state
   and statement continuations in the canonical core
