@@ -2966,6 +2966,11 @@ enum LValue {
         object: Value,
         key: Value,
     },
+    /// A private-name reference has stricter PutValue semantics than an
+    /// ordinary property: a failed write is observable even in sloppy code.
+    /// Keep that distinction in the lvalue shape instead of recovering it
+    /// from the implementation-only private key string later.
+    PrivateProp(Value, String),
     Prop(Value, String),
     SuperProp {
         base: Value,
@@ -8464,6 +8469,12 @@ impl Vm {
             && let Some((getter, _)) = self.find_accessor(object, key)
         {
             let Some(getter) = getter else {
+                if Self::is_private_storage_key(key) {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "private accessor has no getter",
+                    )));
+                }
                 return Ok(Value::Undefined);
             };
             return self.call_arguments(&getter, receiver.clone(), &[] as &[Value]);
@@ -8500,6 +8511,12 @@ impl Vm {
             && let Some((getter, _)) = self.find_accessor(object, key)
         {
             let Some(getter) = getter else {
+                if Self::is_private_storage_key(key) {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "private accessor has no getter",
+                    )));
+                }
                 return Ok(Value::Undefined);
             };
             return self.call_arguments(&getter, receiver.clone(), &[] as &[Value]);
@@ -14791,12 +14808,20 @@ impl Vm {
                     }
                     match method.kind {
                         MethodDefinitionKind::Method => {
+                            let method_attributes = if matches!(
+                                &method.key,
+                                PropertyKey::PrivateIdentifier(_)
+                            ) {
+                                PropertyAttributes::BUILTIN_CONSTANT
+                            } else {
+                                PropertyAttributes::BUILTIN_METHOD
+                            };
                             install_data_property!(
                                 self,
                                 target.clone(),
                                 key,
                                 method_value,
-                                PropertyAttributes::BUILTIN_METHOD
+                                method_attributes
                             );
                         }
                         MethodDefinitionKind::Get | MethodDefinitionKind::Set => {
@@ -16069,7 +16094,7 @@ impl Vm {
                         &format!("Cannot write private member #{}", m.field.name),
                     )));
                 }
-                Ok(LValue::Prop(base, key))
+                Ok(LValue::PrivateProp(base, key))
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
@@ -16115,6 +16140,7 @@ impl Vm {
             LValue::WithProp(object, key) | LValue::Prop(object, key) => {
                 self.get_prop_with_accessors(object, key)
             }
+            LValue::PrivateProp(object, key) => self.get_prop_with_accessors(object, key),
             LValue::DeferredProp { object, key } => {
                 let key = self.to_property_key(key.clone())?;
                 self.get_prop_with_accessors(object, &key)
@@ -16157,6 +16183,11 @@ impl Vm {
             LValue::DeferredProp { object, key } => {
                 let key = self.to_property_key(key)?;
                 set_assignment_property(self, &object, &key, v)?;
+            }
+            LValue::PrivateProp(object, key) => {
+                // Private methods/fields never use the sloppy [[Set]]
+                // suppression applied to ordinary properties.
+                self.set_prop_with_accessors(&object, &key, v)?;
             }
             LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {
                 if self.immutable_binding(&e, &name) || self.strict_mode {
@@ -16410,9 +16441,16 @@ impl Vm {
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
-    }
+}
 
-    /// Implement CopyDataProperties for object-rest assignment. Source key
+fn is_private_storage_key(key: &str) -> bool {
+    // Class-local private keys carry the class environment identity after the
+    // `@` delimiter.  Public string properties beginning with `#` remain
+    // ordinary properties and therefore retain normal accessor semantics.
+    key.starts_with('#') && key.contains('@')
+}
+
+/// Implement CopyDataProperties for object-rest assignment. Source key
     /// order, enumerability, accessor reads, and target descriptors all stay
     /// on the ordinary object protocol rather than being reconstructed by
     /// each destructuring branch.
