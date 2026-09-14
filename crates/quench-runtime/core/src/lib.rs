@@ -1718,6 +1718,15 @@ impl PropertyAttributes {
         enumerable: false,
         configurable: false,
     };
+
+    // NamedEvaluation creates function `name` as a non-writable, non-enumerable
+    // property that remains configurable.  Keep that descriptor beside the
+    // other declaration-level policies so every inferred name uses one fact.
+    const INFERRED_FUNCTION_NAME: Self = Self {
+        writable: false,
+        enumerable: false,
+        configurable: true,
+    };
 }
 
 /// Attach a descriptor policy to the canonical property storage for a value.
@@ -5107,30 +5116,22 @@ fn abstract_equal_with_vm(vm: &mut Vm, left: &Value, right: &Value) -> JsResult<
         return Ok(true);
     }
     if is_html_dda_value(left) || is_html_dda_value(right) {
-        return Ok((is_html_dda_value(left) && (right.is_null() || right.is_undefined()))
-            || (is_html_dda_value(right) && (left.is_null() || left.is_undefined())));
+        return Ok(
+            (is_html_dda_value(left) && (right.is_null() || right.is_undefined()))
+                || (is_html_dda_value(right) && (left.is_null() || left.is_undefined())),
+        );
     }
     if (left.is_null() && right.is_undefined()) || (left.is_undefined() && right.is_null()) {
         return Ok(true);
     }
     if left.as_bool().is_some() {
-        return abstract_equal_with_vm(
-            vm,
-            &Value::Number(left.number()),
-            right,
-        );
+        return abstract_equal_with_vm(vm, &Value::Number(left.number()), right);
     }
     if right.as_bool().is_some() {
-        return abstract_equal_with_vm(
-            vm,
-            left,
-            &Value::Number(right.number()),
-        );
+        return abstract_equal_with_vm(vm, left, &Value::Number(right.number()));
     }
     if is_symbol_carrier(left) || is_symbol_carrier(right) {
-        return Ok(is_symbol_carrier(left)
-            && is_symbol_carrier(right)
-            && left.same_bits(right));
+        return Ok(is_symbol_carrier(left) && is_symbol_carrier(right) && left.same_bits(right));
     }
     let left_object = left.is_object_like();
     let right_object = right.is_object_like();
@@ -5195,7 +5196,11 @@ fn number_to_bigint_exact(number: f64) -> Option<BigInt> {
     } else {
         return None;
     };
-    Some(if number.is_sign_negative() { -integer } else { integer })
+    Some(if number.is_sign_negative() {
+        -integer
+    } else {
+        integer
+    })
 }
 
 fn is_html_dda_value(value: &Value) -> bool {
@@ -5594,7 +5599,11 @@ fn compare_bigint_mixed(op: Op, left: &Value, right: &Value) -> Value {
     } else {
         return Value::Bool(false);
     };
-    let ordering = if bigint_left { ordering } else { ordering.reverse() };
+    let ordering = if bigint_left {
+        ordering
+    } else {
+        ordering.reverse()
+    };
     Value::Bool(match op {
         Op::Lt => ordering.is_lt(),
         Op::Le => !ordering.is_gt(),
@@ -9410,11 +9419,7 @@ impl Vm {
                         "cannot delete property of nullish value",
                     )));
                 }
-                self.delete_member_with_vm(
-                    &object,
-                    member.property.name.as_str(),
-                    self.strict_mode,
-                )
+                self.delete_member_with_vm(&object, member.property.name.as_str(), self.strict_mode)
             }
             Expression::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
@@ -9487,15 +9492,13 @@ impl Vm {
         if !deleted
             && self.is_global_environment(&binding)
             && let Some(global_this) = self.global_object_for_environment(&binding)
-            && global_this
-                .as_object_ref()
-                .is_some_and(|object| {
-                    object
-                        .borrow()
-                        .attributes
-                        .get(name)
-                        .is_some_and(|attributes| attributes.configurable)
-                })
+            && global_this.as_object_ref().is_some_and(|object| {
+                object
+                    .borrow()
+                    .attributes
+                    .get(name)
+                    .is_some_and(|attributes| attributes.configurable)
+            })
         {
             {
                 let mut binding = binding.borrow_mut();
@@ -9927,7 +9930,10 @@ impl Vm {
                 | SyncGeneratorPendingYield::Delegated { statement, .. }
                 | SyncGeneratorPendingYield::Replay { statement } => *statement,
             };
-            if matches!(&self.sync_generator_resume, Some(SyncGeneratorResume::Next(_))) {
+            if matches!(
+                &self.sync_generator_resume,
+                Some(SyncGeneratorResume::Next(_))
+            ) {
                 self.sync_generator_replay_value = Some(resume_value.clone());
             }
             self.sync_generator_pending_yield = Some(pending);
@@ -11120,8 +11126,8 @@ impl Vm {
             };
             (method.kind == MethodDefinitionKind::Constructor).then_some(&*method.value)
         });
-        if let Some(global) = self
-            .global_object_for_environment(&self.realm_environment_for_environment(&env))
+        if let Some(global) =
+            self.global_object_for_environment(&self.realm_environment_for_environment(&env))
         {
             self.set_prop(&this, REALM_GLOBAL_PROP, global);
         }
@@ -11131,27 +11137,19 @@ impl Vm {
         // point below.
         for element in &class.body.body {
             let private_name = match element {
-                ClassElement::PropertyDefinition(field) if !field.r#static => {
-                    match &field.key {
-                        PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
-                        _ => None,
-                    }
-                }
-                ClassElement::MethodDefinition(method) if !method.r#static => {
-                    match &method.key {
-                        PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
-                        _ => None,
-                    }
-                }
+                ClassElement::PropertyDefinition(field) if !field.r#static => match &field.key {
+                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                    _ => None,
+                },
+                ClassElement::MethodDefinition(method) if !method.r#static => match &method.key {
+                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                    _ => None,
+                },
                 _ => None,
             };
             if let Some(private_name) = private_name {
                 let key = self.private_key(private_name, &env);
-                self.set_prop(
-                    &this,
-                    &Self::private_brand_key(&key),
-                    Value::Bool(true),
-                );
+                self.set_prop(&this, &Self::private_brand_key(&key), Value::Bool(true));
             }
         }
         let result = if let Some(constructor) = constructor {
@@ -12863,12 +12861,9 @@ impl Vm {
             || function_super_error
             || global_code_error
             || has_class_strict_name_error(&r.program)
-            || restricted_global_lexical_error
+        || restricted_global_lexical_error
             || strict_assignment_error
         {
-            if source.contains("target-super-computed-reference") || source.contains("super[prop") {
-                eprintln!("EARLY class={} delete={} fn_super={} global={} stmt={} nested={}", class_early_error, strict_delete_error, function_super_error, global_code_error, statement_position_error, nested_strict_error);
-            }
             return Err(JsError::Throw(syntax_error(
                 self,
                 "invalid lexical declaration or statement-position function",
@@ -14436,8 +14431,7 @@ impl Vm {
         }
         let done = self.get_prop_with_accessors(&result, "done")?.truthy();
         let value = if done
-            || !self
-                .has_own_property_key(&result, "done")
+            || !self.has_own_property_key(&result, "done")
             || self.find_accessor(&result, "value").is_none()
         {
             self.get_prop_with_accessors(&result, "value")?
@@ -14893,8 +14887,8 @@ impl Vm {
             source_id: self.source_ids.last().copied(),
         };
         let class = Value::Function(Rc::new(function));
-        if let Some(global) = self
-            .global_object_for_environment(&self.realm_environment_for_environment(&class_env))
+        if let Some(global) =
+            self.global_object_for_environment(&self.realm_environment_for_environment(&class_env))
         {
             self.set_prop(&class, REALM_GLOBAL_PROP, global);
         }
@@ -14911,11 +14905,7 @@ impl Vm {
                 continue;
             };
             let key = self.private_key(identifier.name.as_str(), &class_env);
-            self.set_prop(
-                &class,
-                &Self::private_brand_key(&key),
-                Value::Bool(true),
-            );
+            self.set_prop(&class, &Self::private_brand_key(&key), Value::Bool(true));
         }
         for element in &n.body.body {
             let ClassElement::PropertyDefinition(field) = element else {
@@ -14928,11 +14918,7 @@ impl Vm {
                 continue;
             };
             let key = self.private_key(identifier.name.as_str(), &class_env);
-            self.set_prop(
-                &class,
-                &Self::private_brand_key(&key),
-                Value::Bool(true),
-            );
+            self.set_prop(&class, &Self::private_brand_key(&key), Value::Bool(true));
         }
         if let Some(id) = &n.id {
             class_env.borrow_mut().tdz_names.remove(id.name.as_str());
@@ -15058,7 +15044,7 @@ impl Vm {
                     set_property_attributes(
                         &method_value,
                         "name",
-                        PropertyAttributes::BUILTIN_CONSTANT,
+                        PropertyAttributes::INFERRED_FUNCTION_NAME,
                     );
                     let target = if method.r#static { &class } else { &prototype };
                     if method.r#static && key == "name" {
@@ -15071,14 +15057,12 @@ impl Vm {
                     }
                     match method.kind {
                         MethodDefinitionKind::Method => {
-                            let method_attributes = if matches!(
-                                &method.key,
-                                PropertyKey::PrivateIdentifier(_)
-                            ) {
-                                PropertyAttributes::BUILTIN_CONSTANT
-                            } else {
-                                PropertyAttributes::BUILTIN_METHOD
-                            };
+                            let method_attributes =
+                                if matches!(&method.key, PropertyKey::PrivateIdentifier(_)) {
+                                    PropertyAttributes::BUILTIN_CONSTANT
+                                } else {
+                                    PropertyAttributes::BUILTIN_METHOD
+                                };
                             install_data_property!(
                                 self,
                                 target.clone(),
@@ -15444,7 +15428,7 @@ impl Vm {
                             SyncGeneratorResume::Next(
                                 self.sync_generator_replay_value
                                     .take()
-                                .unwrap_or(Value::Undefined),
+                                    .unwrap_or(Value::Undefined),
                             )
                         });
                         let is_return = matches!(&resume, SyncGeneratorResume::Return(_));
@@ -15464,11 +15448,7 @@ impl Vm {
                                         "iterator throw method is not callable",
                                     )));
                                 }
-                                self.iterator_result_from_call(
-                                    &iterator,
-                                    &throw,
-                                    &[input][..],
-                                )?
+                                self.iterator_result_from_call(&iterator, &throw, &[input][..])?
                             }
                             SyncGeneratorResume::Return(input) => {
                                 let return_method =
@@ -15494,9 +15474,9 @@ impl Vm {
                         if done {
                             self.sync_generator_iterators.retain(|candidate| {
                                 candidate.as_object().is_none_or(|candidate| {
-                                    iterator.as_object().is_none_or(|active| {
-                                        candidate.as_ptr() != active.as_ptr()
-                                    })
+                                    iterator
+                                        .as_object()
+                                        .is_none_or(|active| candidate.as_ptr() != active.as_ptr())
                                 })
                             });
                             if self.sync_generator_return_value.is_none() {
@@ -15509,12 +15489,11 @@ impl Vm {
                             }
                             return Ok(value);
                         }
-                        self.sync_generator_pending_yield = Some(
-                            SyncGeneratorPendingYield::Delegated {
+                        self.sync_generator_pending_yield =
+                            Some(SyncGeneratorPendingYield::Delegated {
                                 iterator,
                                 statement: 0,
-                            },
-                        );
+                            });
                         return Err(JsError::Yield(value));
                     }
                     let source = yield_expression
@@ -15525,19 +15504,18 @@ impl Vm {
                         .unwrap_or(Value::Undefined);
                     let record = self.iterator_record(&source)?;
                     let iterator = record.iterator;
-                    let (done, value) = self
-                        .iterator_next_with_input(&iterator, Some(Value::Undefined))?;
+                    let (done, value) =
+                        self.iterator_next_with_input(&iterator, Some(Value::Undefined))?;
                     if done {
                         return Ok(value);
                     }
                     if self.sync_generator_yielding {
                         self.sync_generator_iterators.push(iterator.clone());
-                        self.sync_generator_pending_yield = Some(
-                            SyncGeneratorPendingYield::Delegated {
+                        self.sync_generator_pending_yield =
+                            Some(SyncGeneratorPendingYield::Delegated {
                                 iterator,
                                 statement: 0,
-                            },
-                        );
+                            });
                     }
                     return Err(JsError::Yield(value));
                 }
@@ -15616,6 +15594,26 @@ impl Vm {
                             let k = self.eval_property_key(&p.key, e.clone())?;
                             let z = self.eval_expr(&p.value, e.clone())?;
                             if (p.method || matches!(p.kind, PropertyKind::Get | PropertyKind::Set))
+                                && z.is_function()
+                            {
+                                let base_name = property_key_display_name(self, &k);
+                                let display_name = match p.kind {
+                                    PropertyKind::Get => format!("get {base_name}"),
+                                    PropertyKind::Set => format!("set {base_name}"),
+                                    _ => base_name,
+                                };
+                                set_function_name(&z, &display_name);
+                            } else if p.kind == PropertyKind::Init
+                                && is_anonymous_function_definition(&p.value)
+                                && z.is_function()
+                                && function_name_is_inferable(&z)
+                            {
+                                // NamedEvaluation also applies to ordinary
+                                // object data properties (`key: function () {}`
+                                // and arrows), including computed symbol keys.
+                                set_function_name(&z, &property_key_display_name(self, &k));
+                            }
+                            if (p.method || matches!(p.kind, PropertyKind::Get | PropertyKind::Set))
                                 && let Some(function) = z.as_function_ref()
                                 && let FunctionKind::User { env, .. } = &function.kind
                             {
@@ -15623,20 +15621,22 @@ impl Vm {
                                     .declare(CLASS_HOME_OBJECT_ENV_NAME, o.clone());
                             }
                             match p.kind {
-                                PropertyKind::Get => self.define_accessor_slot(
-                                    &o,
-                                    &k,
-                                    Some(z),
-                                    None,
-                                    PropertyAttributes::DEFAULT,
-                                ),
-                                PropertyKind::Set => self.define_accessor_slot(
-                                    &o,
-                                    &k,
-                                    None,
-                                    Some(z),
-                                    PropertyAttributes::DEFAULT,
-                                ),
+                                PropertyKind::Get | PropertyKind::Set => {
+                                    let (existing_getter, existing_setter) =
+                                        self.own_accessor_slots(&o, &k);
+                                    let (getter, setter) = if p.kind == PropertyKind::Get {
+                                        (Some(z), existing_setter)
+                                    } else {
+                                        (existing_getter, Some(z))
+                                    };
+                                    self.define_accessor_slot(
+                                        &o,
+                                        &k,
+                                        getter,
+                                        setter,
+                                        PropertyAttributes::DEFAULT,
+                                    );
+                                }
                                 _ => self.set_prop(&o, &k, z),
                             }
                         }
@@ -16704,16 +16704,16 @@ impl Vm {
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
-}
+    }
 
-fn is_private_storage_key(key: &str) -> bool {
-    // Class-local private keys carry the class environment identity after the
-    // `@` delimiter.  Public string properties beginning with `#` remain
-    // ordinary properties and therefore retain normal accessor semantics.
-    key.starts_with('#') && key.contains('@')
-}
+    fn is_private_storage_key(key: &str) -> bool {
+        // Class-local private keys carry the class environment identity after the
+        // `@` delimiter.  Public string properties beginning with `#` remain
+        // ordinary properties and therefore retain normal accessor semantics.
+        key.starts_with('#') && key.contains('@')
+    }
 
-/// Implement CopyDataProperties for object-rest assignment. Source key
+    /// Implement CopyDataProperties for object-rest assignment. Source key
     /// order, enumerability, accessor reads, and target descriptors all stay
     /// on the ordinary object protocol rather than being reconstructed by
     /// each destructuring branch.
@@ -17285,6 +17285,22 @@ fn assignment_target_name(target: &AssignmentTarget<'_>) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn property_key_display_name(vm: &Vm, key: &str) -> String {
+    if let Some(symbol) = vm.symbol_keys.get(key) {
+        let description = symbol
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("\0symbol").cloned())
+            .map(|value| value.string())
+            .unwrap_or_default();
+        return if description.is_empty() {
+            String::new()
+        } else {
+            format!("[{description}]")
+        };
+    }
+    key.to_owned()
 }
 
 fn function_name_is_inferable(value: &Value) -> bool {
@@ -19737,8 +19753,8 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
         }
 
         fn visit_object_property(&mut self, property: &ObjectProperty<'a>) {
-            let has_home_object = property.method
-                || matches!(property.kind, PropertyKind::Get | PropertyKind::Set);
+            let has_home_object =
+                property.method || matches!(property.kind, PropertyKind::Get | PropertyKind::Set);
             if has_home_object {
                 self.method_base_depth.push(self.ordinary_function_depth);
                 ast_walk::walk_object_property(self, property);
@@ -22611,6 +22627,10 @@ fn set_function_name(value: &Value, name: &str) {
             .props
             .borrow_mut()
             .insert("name".into(), Value::string_value(name));
+        function
+            .attributes
+            .borrow_mut()
+            .insert("name".into(), PropertyAttributes::INFERRED_FUNCTION_NAME);
     }
 }
 fn new_promise_capability(vm: &mut Vm, constructor: Value) -> JsResult<(Value, Value, Value)> {
@@ -27395,7 +27415,8 @@ fn type_error(vm: &Vm, message: &str) -> Value {
 }
 
 fn type_error_for_environment(vm: &Vm, environment: &Env, message: &str) -> Value {
-    let global = vm.global_object_for_environment(&vm.realm_environment_for_environment(environment));
+    let global =
+        vm.global_object_for_environment(&vm.realm_environment_for_environment(environment));
     let constructor = global
         .as_ref()
         .map(|global| vm.get_prop(global, "TypeError"))
