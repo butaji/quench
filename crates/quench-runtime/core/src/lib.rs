@@ -274,10 +274,14 @@ environment_keys! {
     NEW_TARGET_VALUE_NAME => "new-target",
     NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
     SUPER_CALLED_ENV_NAME => "super-called",
+    CLASS_FIELDS_INITIALIZED_ENV_NAME => "class-fields-initialized",
 }
 const CLASS_FIELD_KEY_PREFIX: &str = "\0quench:class-field-key:";
 const CLASS_PRIVATE_KEY_PREFIX: &str = "\0quench:class-private-key:";
 const CLASS_PRIVATE_BRAND_PREFIX: &str = "\0quench:class-private-brand:";
+const DERIVED_CONSTRUCTOR_PROP: &str = "\0quench:derived-constructor";
+const DERIVED_THIS_PROP: &str = "\0quench:derived-this";
+const DERIVED_THIS_BINDING: &str = "\0quench:derived-this-binding";
 // Internal object markers are semantic facts, not ad-hoc property probes.
 // Declare each marker once and derive the predicate used by every execution
 // tier.  This keeps marker spelling and object classification in one place.
@@ -11132,6 +11136,16 @@ impl Vm {
                 .named_function_names
                 .insert(identifier.name.to_string());
         }
+        let derived_constructor_target = callee
+            .as_ref()
+            .and_then(|callee| {
+                self.get_prop(callee, DERIVED_CONSTRUCTOR_PROP)
+                    .truthy()
+                    .then(|| self.get_prop(callee, DERIVED_THIS_PROP))
+            });
+        if let Some(target) = derived_constructor_target {
+            e.borrow_mut().declare(DERIVED_THIS_BINDING, target);
+        }
         let non_simple_parameters = n.params.items.iter().any(|parameter| {
             parameter.initializer.is_some()
                 || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
@@ -11177,6 +11191,9 @@ impl Vm {
                 .lexical_names
                 .extend(lexical_names);
         }
+        let derived_constructor = callee
+            .as_ref()
+            .is_some_and(|callee| self.get_prop(callee, DERIVED_CONSTRUCTOR_PROP).truthy());
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = strict;
         // Ordinary (non-strict) calls substitute the global object for a
@@ -11190,6 +11207,9 @@ impl Vm {
             this
         };
         e.borrow_mut().declare("this", this);
+        if derived_constructor {
+            e.borrow_mut().tdz_names.insert("this".to_owned());
+        }
         // Arguments are array-exotic for indexed access, but their prototype
         // is ordinary Object.prototype (not Array.prototype).
         let av = self.object_value(Object::array(self.default_object_prototype(), args.clone()));
@@ -11433,6 +11453,71 @@ impl Vm {
         object
     }
 
+    fn initialize_class_instance_fields(
+        &mut self,
+        class: &Class<'static>,
+        class_env: Env,
+        eval_env: Env,
+        receiver: &Value,
+    ) -> JsResult<()> {
+        if Environment::get(&class_env, CLASS_FIELDS_INITIALIZED_ENV_NAME)
+            .is_some_and(|value| value.truthy())
+        {
+            return Ok(());
+        }
+        for (index, element) in class.body.body.iter().enumerate() {
+            let ClassElement::PropertyDefinition(field) = element else {
+                continue;
+            };
+            if field.r#static {
+                continue;
+            }
+            let key = Environment::get(&class_env, &format!("{CLASS_FIELD_KEY_PREFIX}{index}"))
+                .and_then(|value| value.as_string().cloned())
+                .map(|value| value.to_string())
+                .map_or_else(|| self.eval_property_key(&field.key, class_env.clone()), Ok)?;
+            let value = field
+                .value
+                .as_ref()
+                .map(|value| self.eval_expr(value, eval_env.clone()))
+                .transpose()?
+                .unwrap_or(Value::Undefined);
+            if field
+                .value
+                .as_ref()
+                .is_some_and(is_anonymous_function_definition)
+            {
+                let display_key = match &field.key {
+                    PropertyKey::PrivateIdentifier(identifier) => {
+                        format!("#{}", identifier.name)
+                    }
+                    _ => key.clone(),
+                };
+                set_function_name(&value, &display_key);
+            }
+            if matches!(&field.key, PropertyKey::PrivateIdentifier(_)) {
+                self.set_prop_with_accessors(receiver, &key, value)?;
+                continue;
+            }
+            let descriptor = self.ordinary_object();
+            self.set_prop(&descriptor, "value", value);
+            self.set_prop(&descriptor, "writable", Value::Bool(true));
+            self.set_prop(&descriptor, "enumerable", Value::Bool(true));
+            self.set_prop(&descriptor, "configurable", Value::Bool(true));
+            native_object_define_property(
+                self,
+                Value::Undefined,
+                &[receiver.clone(), Value::string_value(key), descriptor],
+            )?;
+        }
+        Environment::set(
+            &class_env,
+            CLASS_FIELDS_INITIALIZED_ENV_NAME,
+            Value::Bool(true),
+        );
+        Ok(())
+    }
+
     fn call_class(
         &mut self,
         function: &FunctionValue<'static>,
@@ -11480,64 +11565,49 @@ impl Vm {
             }
         }
         let result = if let Some(constructor) = constructor {
+            if super_constructor.is_none() {
+                let field_env = Environment::new(Some(env.clone()));
+                field_env.borrow_mut().declare("this", this.clone());
+                self.initialize_class_instance_fields(class, env.clone(), field_env, &this)?;
+            }
             let constructor = self.make_user(constructor, env.clone());
-            let result = self.call_arguments(&constructor, this.clone(), args.as_slice())?;
+            if super_constructor.is_some() {
+                self.set_prop(&constructor, DERIVED_CONSTRUCTOR_PROP, Value::Bool(true));
+                self.set_prop(&constructor, DERIVED_THIS_PROP, this.clone());
+            }
+            let constructor_this = if super_constructor.is_some() {
+                Value::Undefined
+            } else {
+                this.clone()
+            };
+            let result = self.call_arguments(&constructor, constructor_this, args.as_slice())?;
             if let Some(regexp) = result.as_regexp_ref() {
                 regexp.borrow_mut().prototype = this.as_object();
             }
             result
         } else if let Some(super_constructor) = super_constructor {
             let result = self.call_arguments(&super_constructor, this.clone(), args.as_slice())?;
+            let field_env = Environment::new(Some(env.clone()));
+            field_env.borrow_mut().declare("this", result.clone());
+            self.initialize_class_instance_fields(class, env.clone(), field_env, &result)?;
             if let Some(regexp) = result.as_regexp_ref() {
                 regexp.borrow_mut().prototype = this.as_object();
             }
             result
         } else {
+            let field_env = Environment::new(Some(env.clone()));
+            field_env.borrow_mut().declare("this", this.clone());
+            self.initialize_class_instance_fields(class, env.clone(), field_env, &this)?;
             this.clone()
         };
-        // Class fields are initialized after the constructor returns.  Keep
-        // the field declaration as the single source of truth and route
-        // public fields through [[DefineOwnProperty]], so deferred module
-        // namespaces observe the specified evaluation trigger.  Private
-        // names use the same compact property representation; a namespace
-        // target still rejects the write with the required TypeError.
+        // Instance fields were initialized at the constructor-defined point
+        // above: before a base constructor body or immediately after
+        // `super()` for a derived constructor.
         let receiver = if result.is_object_like() {
             result
         } else {
             this
         };
-        for (index, element) in class.body.body.iter().enumerate() {
-            let ClassElement::PropertyDefinition(field) = element else {
-                continue;
-            };
-            if field.r#static {
-                continue;
-            }
-            let key = Environment::get(&env, &format!("{CLASS_FIELD_KEY_PREFIX}{index}"))
-                .and_then(|value| value.as_string().cloned())
-                .map(|value| value.to_string())
-                .map_or_else(|| self.eval_property_key(&field.key, env.clone()), Ok)?;
-            let value = field
-                .value
-                .as_ref()
-                .map(|value| self.eval_expr(value, env.clone()))
-                .transpose()?
-                .unwrap_or(Value::Undefined);
-            if matches!(&field.key, PropertyKey::PrivateIdentifier(_)) {
-                self.set_prop_with_accessors(&receiver, &key, value)?;
-                continue;
-            }
-            let descriptor = self.ordinary_object();
-            self.set_prop(&descriptor, "value", value);
-            self.set_prop(&descriptor, "writable", Value::Bool(true));
-            self.set_prop(&descriptor, "enumerable", Value::Bool(true));
-            self.set_prop(&descriptor, "configurable", Value::Bool(true));
-            native_object_define_property(
-                self,
-                Value::Undefined,
-                &[receiver.clone(), Value::string_value(key), descriptor],
-            )?;
-        }
         Ok(receiver)
     }
 
@@ -15261,6 +15331,9 @@ impl Vm {
                 })
                 .unwrap_or(Value::Undefined),
         );
+        class_env
+            .borrow_mut()
+            .declare(CLASS_FIELDS_INITIALIZED_ENV_NAME, Value::Bool(false));
         let constructor_method = n.body.body.iter().find_map(|element| {
             let ClassElement::MethodDefinition(method) = element else {
                 return None;
@@ -15423,6 +15496,19 @@ impl Vm {
                             .map(|value| self.eval_expr(value, class_env.clone()))
                             .transpose()?
                             .unwrap_or(Value::Undefined);
+                        if field
+                            .value
+                            .as_ref()
+                            .is_some_and(is_anonymous_function_definition)
+                        {
+                            let display_key = match &field.key {
+                                PropertyKey::PrivateIdentifier(identifier) => {
+                                    format!("#{}", identifier.name)
+                                }
+                                _ => key.clone(),
+                            };
+                            set_function_name(&value, &display_key);
+                        }
                         let descriptor = self.ordinary_object();
                         self.set_prop(&descriptor, "value", value);
                         self.set_prop(&descriptor, "writable", Value::Bool(true));
@@ -16036,7 +16122,12 @@ impl Vm {
                 }
                 self.resolve_identifier(&e, v.name.as_str())
             }
-            ThisExpression(_) => Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined)),
+            ThisExpression(_) => {
+                if Environment::is_tdz(&e, "this") {
+                    return Err(JsError::Throw(reference_error(self, "this")));
+                }
+                Ok(Environment::get(&e, "this").unwrap_or(Value::Undefined))
+            }
             NewTarget(_) => {
                 Ok(Environment::get(&e, NEW_TARGET_VALUE_NAME).unwrap_or(Value::Undefined))
             }
@@ -16809,16 +16900,39 @@ impl Vm {
                     let callee = Environment::get(&e, CLASS_SUPER_CONSTRUCTOR_ENV_NAME)
                         .unwrap_or(Value::Undefined);
                     let this = Environment::get(&e, "this").unwrap_or(Value::Undefined);
+                    let super_this = if this.is_undefined() {
+                        Environment::get(&e, DERIVED_THIS_BINDING).unwrap_or(this.clone())
+                    } else {
+                        this.clone()
+                    };
                     let args = self.eval_args(&v.arguments, e.clone())?;
                     let already_initialized = Environment::get(&e, SUPER_CALLED_ENV_NAME)
                         .is_some_and(|value| value.truthy());
                     let result = if let Some(function) = callee.as_function_ref()
                         && matches!(function.kind, FunctionKind::Class { .. })
                     {
-                        self.call_class(function, this, args)?
+                        self.call_class(function, super_this, args)?
                     } else {
-                        self.call(callee, this, args)?
+                        self.call(callee, super_this, args)?
                     };
+                    // A derived constructor's fields run immediately after
+                    // the first successful `super()` and before the next
+                    // constructor statement. Recover the class environment
+                    // from the method's lexical chain so the same field
+                    // declaration drives both constructor paths.
+                    let mut class_environment = None;
+                    let mut current = Some(e.clone());
+                    while let Some(candidate) = current {
+                        let parent = candidate.borrow().parent.clone();
+                        if candidate
+                            .borrow()
+                            .contains_local(CLASS_FIELDS_INITIALIZED_ENV_NAME)
+                        {
+                            class_environment = Some(candidate);
+                            break;
+                        }
+                        current = parent;
+                    }
                     if already_initialized {
                         return Err(JsError::Throw(reference_error(
                             self,
@@ -16832,6 +16946,19 @@ impl Vm {
                     // class-field initialization.
                     if result.is_object_like() {
                         Environment::set(&e, "this", result.clone());
+                        e.borrow_mut().tdz_names.remove("this");
+                    }
+                    if let Some(class_environment) = class_environment
+                        && let Some(class_value) = Environment::get(&class_environment, "this")
+                        && let Some(function) = class_value.as_function_ref()
+                        && let FunctionKind::Class { node, .. } = &function.kind
+                    {
+                        self.initialize_class_instance_fields(
+                            node,
+                            class_environment,
+                            e.clone(),
+                            &result,
+                        )?;
                     }
                     return Ok(result);
                 }
@@ -18167,6 +18294,28 @@ impl Vm {
         }
         if !value.is_object_like() {
             return to_string_with_vm(self, &value);
+        }
+        let exotic_key = self.well_known_symbol_key("toPrimitive");
+        let exotic = self.get_prop_with_accessors(&value, &exotic_key)?;
+        if !exotic.is_undefined() && !exotic.is_null() {
+            if !exotic.is_function() {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "@@toPrimitive is not callable",
+                )));
+            }
+            let primitive = self.call_arguments(
+                &exotic,
+                value.clone(),
+                &[Value::string_value("string")][..],
+            )?;
+            if !primitive.is_object_like() {
+                return to_string_with_vm(self, &primitive);
+            }
+            return Err(JsError::Throw(type_error(
+                self,
+                "@@toPrimitive must return a primitive value",
+            )));
         }
         for method_name in ["toString", "valueOf"] {
             let method = self.get_prop_with_accessors(&value, method_name)?;
