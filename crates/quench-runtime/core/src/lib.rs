@@ -6518,6 +6518,35 @@ impl Vm {
         constructor
     }
 
+    fn sync_generator_constructor_for_global(&self, global: &Value) -> Value {
+        let existing = self.get_prop(global, SYNC_GENERATOR_CONSTRUCTOR_PROP);
+        if existing.is_function() {
+            return existing;
+        }
+        let constructor = self.native_named(native_sync_generator_constructor, "GeneratorFunction", 1);
+        let function_prototype = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| function.prototype.clone());
+        let generator_function_prototype = self.object(function_prototype);
+        let generator_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&generator_function_prototype, "prototype", generator_prototype);
+        self.set_prop(&generator_function_prototype, "constructor", constructor.clone());
+        set_property_attributes(&generator_function_prototype, "constructor", PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        set_property_attributes(&generator_function_prototype, "prototype", PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        let tag_key = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&generator_function_prototype, &tag_key, Value::string_value("GeneratorFunction"));
+        set_property_attributes(&generator_function_prototype, &tag_key, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        self.set_prop(&constructor, FUNCTION_PROTOTYPE_OVERRIDE_PROP, generator_function_prototype.clone());
+        self.set_prop(&constructor, "\0prototype_override", generator_function_prototype.clone());
+        self.set_prop(&constructor, "prototype", generator_function_prototype);
+        set_property_attributes(&constructor, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        self.set_prop(&constructor, REALM_GLOBAL_PROP, global.clone());
+        self.set_prop(global, SYNC_GENERATOR_CONSTRUCTOR_PROP, constructor.clone());
+        self.set_prop(global, "GeneratorFunction", constructor.clone());
+        constructor
+    }
+
     fn async_constructor_for_realm(&self, generator: bool, realm_global: Option<Value>) -> Value {
         let realm_handle = realm_global.as_ref().and_then(Value::as_object);
         if let Some(realm_handle) = realm_handle.as_ref() {
@@ -9583,6 +9612,14 @@ impl Vm {
                 } else {
                     Value::Undefined
                 }
+            } else if k == "constructor" {
+                if let Some(chain) = f.props.borrow().get(FUNCTION_PROTOTYPE_CHAIN_PROP).cloned() {
+                    let value = self.get_prop(&chain, k);
+                    if !value.is_undefined() {
+                        return value;
+                    }
+                }
+                self.function_prop(f, k)
             } else if k == "inheritsFrom" {
                 let value = self.function_prop(f, k);
                 if value.is_undefined() {
@@ -17601,8 +17638,13 @@ impl Vm {
         };
         let p = self.allocate_object(Object::ordinary(self.default_object_prototype()));
         if n.generator {
+            let generator_constructor = self
+                .global_object_for_environment(&self.realm_environment_for_environment(&e))
+                .map(|global| self.get_prop(&global, "GeneratorFunction"))
+                .filter(|value| value.is_function())
+                .unwrap_or_else(|| self.sync_generator_constructor());
             if let Some(generator_prototype) = self
-                .get_prop(&self.sync_generator_constructor(), "prototype")
+                .get_prop(&generator_constructor, "prototype")
                 .as_object()
                 .map(|prototype| self.get_prop(&Value::Object(prototype), "prototype"))
                 .and_then(|value| value.as_object())
@@ -17652,6 +17694,15 @@ impl Vm {
             source_id: self.source_ids.last().copied(),
         };
         let v = Value::Function(Rc::new(f));
+        if n.generator {
+            let generator_constructor = self
+                .global_object_for_environment(&self.realm_environment_for_environment(&e))
+                .map(|global| self.get_prop(&global, "GeneratorFunction"))
+                .filter(|value| value.is_function())
+                .unwrap_or_else(|| self.sync_generator_constructor());
+            let generator_function_prototype = self.get_prop(&generator_constructor, "prototype");
+            self.set_prop(&v, FUNCTION_PROTOTYPE_CHAIN_PROP, generator_function_prototype);
+        }
         if !n.generator {
             p.borrow_mut().props.insert("constructor", v.clone());
             p.borrow_mut()
@@ -36689,6 +36740,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                                     .then_some("FinalizationRegistry")
                             })
                             .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_sync_generator_constructor))
+                                    .then_some("GeneratorFunction")
+                            })
+                            .or_else(|| {
                                 matches!(function.kind, FunctionKind::Builtin(BuiltinId::BooleanConstructor))
                                     .then_some("Boolean")
                             })
@@ -36847,6 +36902,7 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
         throw_type_error,
     );
     vm.set_prop(&global, "Function", function);
+    vm.sync_generator_constructor_for_global(&global);
     // Intrinsics are shared by the compact core today; publishing the same
     // constructor identity still preserves the observable prototype fallback
     // for cross-realm Reflect.construct while keeping the realm global
@@ -38312,6 +38368,7 @@ fn is_dynamic_constructor_native(native: fn(&mut Vm, Value, &[Value]) -> JsResul
     native_fn_matches!(
         native,
         native_function_constructor,
+        native_sync_generator_constructor,
         native_async_function_constructor,
         native_async_generator_constructor,
     )
@@ -38461,17 +38518,39 @@ fn dynamic_function_constructor(
     {
         function.prototype.borrow_mut().prototype = Some(async_generator_prototype);
     }
+    if prefix == "function *"
+        && let Some(generator_constructor) = constructor_realm_global
+            .as_ref()
+            .map(|global| vm.get_prop(global, "GeneratorFunction"))
+            .filter(|value| value.is_function())
+            .or_else(|| Some(vm.sync_generator_constructor()))
+        && let Some(generator_prototype) = vm
+            .get_prop(&generator_constructor, "prototype")
+            .as_object()
+            .map(|prototype| vm.get_prop(&Value::Object(prototype), "prototype"))
+            .and_then(|value| value.as_object())
+        && let Some(function) = result.as_function_ref()
+        && let Some(prototype) = vm.get_prop(&result, "prototype").as_object()
+    {
+        prototype.borrow_mut().prototype = Some(generator_prototype);
+        function.props.borrow_mut().remove(FUNCTION_PROTOTYPE_CHAIN_PROP);
+    }
     if let Some(global) = constructor_realm_global.as_ref() {
         vm.set_prop(&result, REALM_GLOBAL_PROP, global.clone());
     }
-    if prefix != "function *"
-        && let Some(new_target) = vm.current_new_target.clone()
+    if let Some(new_target) = vm.current_new_target.clone()
     {
         let target_realm_environment = new_target_realm_global
             .as_ref()
             .and_then(|global| vm.realm_environment_for_global(global))
             .unwrap_or_else(|| realm_environment.clone());
-        let fallback_constructor = if prefix == "async function*" {
+        let fallback_constructor = if prefix == "function *" {
+            new_target_realm_global
+                .as_ref()
+                .map(|global| vm.get_prop(global, "GeneratorFunction"))
+                .filter(|value| value.is_function())
+                .unwrap_or_else(|| vm.sync_generator_constructor())
+        } else if prefix == "async function*" {
             vm.async_constructor_for_environment(true, &target_realm_environment)
         } else if prefix == "async function" {
             vm.async_constructor_for_environment(false, &target_realm_environment)
@@ -41989,7 +42068,17 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
                         .unwrap_or_else(|| vm.async_generator_constructor());
                     return Ok(vm.get_prop(&constructor, "prototype"));
                 }
-                return Ok(vm.get_prop(&vm.sync_generator_constructor(), "prototype"));
+                let constructor = target
+                    .as_function_ref()
+                    .and_then(|function| match &function.kind {
+                        FunctionKind::User { env, .. } => vm
+                            .global_object_for_environment(&vm.realm_environment_for_environment(env))
+                            .map(|global| vm.get_prop(&global, "GeneratorFunction"))
+                            .filter(Value::is_function),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| vm.sync_generator_constructor());
+                return Ok(vm.get_prop(&constructor, "prototype"));
             }
             let prototype = target
                 .as_function_ref()
