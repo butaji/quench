@@ -14762,12 +14762,23 @@ impl Vm {
                         )));
                     }
                     let method_value = self.make_user(&method.value, class_env.clone());
-                    install_data_property!(
-                        self,
-                        method_value.clone(),
+                    let display_key = match &method.key {
+                        PropertyKey::PrivateIdentifier(identifier) => {
+                            format!("#{}", identifier.name)
+                        }
+                        _ => key.clone(),
+                    };
+                    // Function construction seeds an empty `name` slot.  The
+                    // ordinary [[Set]] path intentionally refuses to mutate
+                    // that non-writable slot, so NamedEvaluation updates the
+                    // semantic function-name fact directly and then applies
+                    // its descriptor.  Keeping this as one helper avoids a
+                    // second ad-hoc function-property representation.
+                    set_function_name(&method_value, &display_key);
+                    set_property_attributes(
+                        &method_value,
                         "name",
-                        Value::string_value(key.clone()),
-                        PropertyAttributes::BUILTIN_CONSTANT
+                        PropertyAttributes::BUILTIN_CONSTANT,
                     );
                     let target = if method.r#static { &class } else { &prototype };
                     if method.r#static && key == "name" {
