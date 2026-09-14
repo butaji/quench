@@ -25901,9 +25901,10 @@ fn native_eval(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
     let environment = vm
         .realm_environment_for_global(&this)
         .unwrap_or_else(|| vm.global.clone());
+    let caller_strict = vm.strict_mode;
     with_strict_mode!(
         vm,
-        false,
+        caller_strict,
         native_eval_in_environment(vm, a, environment, true, false)
     )
 }
@@ -25912,9 +25913,10 @@ fn native_eval_script(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> 
     let environment = vm
         .realm_environment_for_global(&this)
         .unwrap_or_else(|| vm.global.clone());
+    let caller_strict = vm.strict_mode;
     with_strict_mode!(
         vm,
-        false,
+        caller_strict,
         native_eval_in_environment(vm, a, environment, true, true)
     )
 }
