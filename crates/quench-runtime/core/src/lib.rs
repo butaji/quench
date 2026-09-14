@@ -11278,6 +11278,13 @@ impl Vm {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
         }
+        // `with` performs dynamic environment resolution and unscopables
+        // probes.  Keep every enclosing function on the shared evaluator so
+        // a stencil cannot cache an identifier against the wrong environment.
+        if function_contains_with(node) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         if function_contains_return_call(node) {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
@@ -14179,6 +14186,7 @@ impl Vm {
             && !has_direct_lexical_declaration(&r.program.body)
             && !program_contains_for_in(&r.program)
             && !program_contains_for_of(&r.program)
+            && !program_contains_with(&r.program)
         {
             (|| {
                 let statements: &'static [Statement<'static>] =
@@ -15454,6 +15462,9 @@ impl Vm {
         if !self.is_global_environment(environment) {
             return;
         }
+        if environment.borrow().lexical_names.contains(name) {
+            return;
+        }
         if let Some(global_this) = self.global_object_for_environment(environment) {
             self.set_prop(&global_this, name, value);
         }
@@ -16680,13 +16691,6 @@ impl Vm {
                 // a copied local value for a `with` name: getters, Proxy
                 // [[HasProperty]], and deletes are observable at each read.
                 if self.with_binding_allowed(&object, name)? {
-                    // HasBinding and GetBindingValue are distinct proxy
-                    // operations. Re-probe before the actual Get so proxy
-                    // observers see the specified two-step sequence.
-                    if !self.has_property_with_proxy(&object, name)? {
-                        current = parent;
-                        continue;
-                    }
                     return Ok(self.get_prop_with_accessors(&object, name)?);
                 }
                 current = parent;
@@ -20960,6 +20964,21 @@ fn program_contains_for_of(program: &Program<'_>) -> bool {
     scan.found
 }
 
+fn program_contains_with(program: &Program<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_with_statement(&mut self, statement: &WithStatement<'a>) {
+            self.found = true;
+            ast_walk::walk_with_statement(self, statement);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_program(program);
+    scan.found
+}
+
 struct IdentifierScan<'a> {
     name: &'a str,
     found: bool,
@@ -21073,6 +21092,21 @@ fn function_contains_super(function: &Function<'_>) -> bool {
         fn visit_super(&mut self, expression: &Super) {
             self.found = true;
             ast_walk::walk_super(self, expression);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_function(function, ScopeFlags::empty());
+    scan.found
+}
+
+fn function_contains_with(function: &Function<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_with_statement(&mut self, statement: &WithStatement<'a>) {
+            self.found = true;
+            ast_walk::walk_with_statement(self, statement);
         }
     }
     let mut scan = Scan { found: false };
