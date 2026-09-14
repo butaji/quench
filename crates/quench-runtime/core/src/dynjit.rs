@@ -3628,19 +3628,12 @@ fn set_static_cached(
 }
 
 fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> {
-    let marker = if super::is_bigint_marker(value) {
-        value.as_string().cloned()
-    } else {
-        value.as_object_ref().and_then(|object| {
-            object
-                .borrow()
-                .props
-                .get("\0primitive")
-                .filter(|primitive| super::is_bigint_marker(primitive))
-                .and_then(Value::as_string)
-                .cloned()
-        })
-    };
+    // A BigInt wrapper is an object for `typeof` and participates in ordinary
+    // ToPrimitive/ToNumeric coercion. Only the primitive marker itself takes
+    // the direct BigInt unary path.
+    let marker = super::is_bigint_marker(value)
+        .then(|| value.as_string().cloned())
+        .flatten();
     if let Some(marker) = marker {
         let bigint =
             super::parse_bigint_text(&marker).unwrap_or_else(|_| num_bigint::BigInt::from(0));
@@ -3661,9 +3654,15 @@ fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> 
     if matches!(
         kind,
         UnaryKind::Plus | UnaryKind::Negate | UnaryKind::BitNot
-    ) && (value.is_object() || value.is_function())
-    {
-        let number = super::to_number_with_vm(vm, value)?;
+    ) {
+        let primitive = super::to_primitive_for_binary(vm, value, super::PrimitiveHint::Number)?;
+        if super::is_bigint_marker(&primitive) {
+            return Err(JsError::Throw(super::type_error(
+                vm,
+                "cannot convert a BigInt value to a number",
+            )));
+        }
+        let number = super::to_number_with_vm(vm, &primitive)?;
         return Ok(match kind {
             UnaryKind::Plus => Value::Number(number),
             UnaryKind::Negate => Value::Number(-number),
@@ -3672,10 +3671,10 @@ fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> 
         });
     }
     Ok(match kind {
-        UnaryKind::Plus => Value::Number(value.number()),
-        UnaryKind::Negate => Value::Number(-value.number()),
+        UnaryKind::Plus => unreachable!("numeric unary handled above"),
+        UnaryKind::Negate => unreachable!("numeric unary handled above"),
         UnaryKind::Not => Value::Bool(!value.truthy()),
-        UnaryKind::BitNot => Value::Number(!i32_js(value.number()) as f64),
+        UnaryKind::BitNot => unreachable!("numeric unary handled above"),
         UnaryKind::Typeof => Value::String(Rc::new(
             if value.is_undefined()
                 || value
