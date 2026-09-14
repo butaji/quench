@@ -20165,7 +20165,11 @@ impl Vm {
                             .unwrap_or_else(|| Value::string_value("Error"));
                         self.set_prop(&r, "name", name);
                     }
-                    Ok(r)
+                    Ok(if r.is_object() || r.is_function() || r.is_regexp() {
+                        r
+                    } else {
+                        o
+                    })
                 } else {
                     Ok(if r.is_object() || r.is_function() || r.is_regexp() {
                         r
