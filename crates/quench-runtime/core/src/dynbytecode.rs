@@ -1256,6 +1256,18 @@ impl Compiler {
     }
 
     fn for_in_statement(&mut self, item: &ForInStatement<'static>) -> Result<(), CompileGap> {
+        // Enumeration is a semantic protocol (prototype traversal, live
+        // deletion checks, and observable key order). Keep it on the shared
+        // VM evaluator until the stencil has an explicit protocol-aware
+        // iterator state; emitting a snapshot-only fast path changes those
+        // observable effects.
+        let _ = item;
+        return Err(CompileGap {
+            span: item.span,
+            reason: "for-in protocol deferred to shared semantics",
+        });
+        #[allow(unreachable_code)]
+        {
         if let ForStatementLeft::VariableDeclaration(declaration) = &item.left
             && let Some(declarator) = declaration.declarations.first()
             && let Some(initializer) = &declarator.init
@@ -1295,6 +1307,7 @@ impl Compiler {
             self.patch(jump, end);
         }
         Ok(())
+        }
     }
 
     fn for_of_statement(&mut self, item: &ForOfStatement<'static>) -> Result<(), CompileGap> {

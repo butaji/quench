@@ -7336,6 +7336,11 @@ impl Vm {
                 "BYTES_PER_ELEMENT",
                 Value::Number(bytes as f64),
             );
+            set_property_attributes(
+                &constructor,
+                "BYTES_PER_ELEMENT",
+                PropertyAttributes::BUILTIN_CONSTANT,
+            );
             let prototype = constructor
                 .as_function_ref()
                 .expect("typed array constructor")
@@ -7353,10 +7358,20 @@ impl Vm {
                 "BYTES_PER_ELEMENT",
                 Value::Number(bytes as f64),
             );
+            set_property_attributes(
+                &Value::Object(prototype.clone()),
+                "BYTES_PER_ELEMENT",
+                PropertyAttributes::BUILTIN_CONSTANT,
+            );
             self.set_prop(
                 &Value::Object(prototype.clone()),
                 "constructor",
                 constructor.clone(),
+            );
+            set_property_attributes(
+                &Value::Object(prototype.clone()),
+                "constructor",
+                PropertyAttributes::BUILTIN_METHOD,
             );
             self.set_prop(
                 &Value::Object(prototype),
@@ -7398,6 +7413,23 @@ impl Vm {
                 &Value::Object(prototype),
                 "entries",
                 self.native_named(native_array_entries, "entries", 0),
+            );
+            let prototype = constructor
+                .as_function_ref()
+                .expect("typed array constructor")
+                .prototype
+                .clone();
+            for key in ["fill", "values", "keys", "entries"] {
+                set_property_attributes(
+                    &Value::Object(prototype.clone()),
+                    key,
+                    PropertyAttributes::BUILTIN_METHOD,
+                );
+            }
+            set_property_attributes(
+                &Value::Object(prototype),
+                &iterator_key,
+                PropertyAttributes::BUILTIN_METHOD,
             );
             Environment::set(&g, name, constructor);
         }
@@ -9297,12 +9329,12 @@ impl Vm {
             let set_slot = accessor_slot("set", key);
             if let Some(getter) = getter {
                 props.insert(get_slot, getter);
-            } else {
+            } else if props.contains_key(&get_slot) {
                 props.shift_remove(&get_slot);
             }
             if let Some(setter) = setter {
                 props.insert(set_slot, setter);
-            } else {
+            } else if props.contains_key(&set_slot) {
                 props.shift_remove(&set_slot);
             }
             function
@@ -9318,12 +9350,12 @@ impl Vm {
             regexp.props.shift_remove(key);
             if let Some(getter) = getter {
                 regexp.props.insert(get_slot, getter);
-            } else {
+            } else if regexp.props.contains_key(&get_slot) {
                 regexp.props.shift_remove(&get_slot);
             }
             if let Some(setter) = setter {
                 regexp.props.insert(set_slot, setter);
-            } else {
+            } else if regexp.props.contains_key(&set_slot) {
                 regexp.props.shift_remove(&set_slot);
             }
             regexp.attributes.insert(key.to_owned(), attributes);
@@ -9335,13 +9367,15 @@ impl Vm {
         let mut object = object.borrow_mut();
         let get_slot = accessor_slot("get", key);
         let set_slot = accessor_slot("set", key);
-        object.props.shift_remove(&get_slot);
-        object.props.shift_remove(&set_slot);
         if let Some(getter) = getter {
             object.props.insert(&get_slot, getter);
+        } else if object.props.contains_key(&get_slot) {
+            object.props.shift_remove(&get_slot);
         }
         if let Some(setter) = setter {
             object.props.insert(&set_slot, setter);
+        } else if object.props.contains_key(&set_slot) {
+            object.props.shift_remove(&set_slot);
         }
         object.attributes.insert(key.to_owned(), attributes);
     }
@@ -14078,6 +14112,7 @@ impl Vm {
             && !contains_async_function_constructor_probe(source)
             && !has_inferable_binding_initializer(&r.program)
             && !has_direct_lexical_declaration(&r.program.body)
+            && !program_contains_for_in(&r.program)
         {
             (|| {
                 let statements: &'static [Statement<'static>] =
@@ -14667,7 +14702,12 @@ impl Vm {
             ForStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
                 let mut completion = None;
-                let loop_environment = match &x.init {
+                let lexical_declaration = match &x.init {
+                    Some(ForStatementInit::VariableDeclaration(declaration))
+                        if declaration.kind != VariableDeclarationKind::Var => Some(declaration),
+                    _ => None,
+                };
+                let mut loop_environment = match &x.init {
                     Some(ForStatementInit::VariableDeclaration(declaration))
                         if declaration.kind != VariableDeclarationKind::Var =>
                     {
@@ -14691,6 +14731,7 @@ impl Vm {
                     _ => e.clone(),
                 };
                 let resource_start = loop_environment.borrow().disposables.len();
+                let mut first_lexical_iteration = lexical_declaration.is_some();
                 let result = (|| {
                     if let Some(i) = &x.init {
                         if let Some(z) = i.as_expression() {
@@ -14700,6 +14741,13 @@ impl Vm {
                         }
                     }
                     loop {
+                        if first_lexical_iteration {
+                            if let Some(declaration) = lexical_declaration {
+                                loop_environment =
+                                    self.for_iteration_environment(declaration, &loop_environment);
+                            }
+                            first_lexical_iteration = false;
+                        }
                         if let Some(t) = &x.test {
                             if !self.eval_expr(t, loop_environment.clone())?.truthy() {
                                 break;
@@ -14714,8 +14762,16 @@ impl Vm {
                             LoopAction::Continue => {}
                             LoopAction::Propagate(signal) => return Ok(signal),
                         }
+                        let update_environment = lexical_declaration
+                            .map(|declaration| {
+                                self.for_iteration_environment(declaration, &loop_environment)
+                            })
+                            .unwrap_or_else(|| loop_environment.clone());
                         if let Some(u) = &x.update {
-                            self.eval_expr(u, loop_environment.clone())?;
+                            self.eval_expr(u, update_environment.clone())?;
+                        }
+                        if lexical_declaration.is_some() {
+                            loop_environment = update_environment;
                         }
                     }
                     Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
@@ -14757,9 +14813,12 @@ impl Vm {
                 let ks = if proxy_target(&o).is_some() {
                     proxy_own_enumerable_keys(self, &o)?
                 } else {
-                    object_own_enumerable_keys(&o)
+                    for_in_enumerable_keys(&o)
                 };
                 for k in ks {
+                    if !self.for_in_key_is_live(&o, &k)? {
+                        continue;
+                    }
                     if is_module_namespace(&o) {
                         let _ = self.get_prop_with_accessors(&o, &k)?;
                     }
@@ -15599,6 +15658,39 @@ impl Vm {
             }
         }
         drop(environment_ref);
+        environment
+    }
+
+    /// Create the per-iteration lexical environment required by `for (let)`
+    /// and `for (const)`.  A fresh record preserves closure identity while
+    /// copying the current iteration values, with the outer loop environment
+    /// kept only as the lexical parent for name lookup.
+    fn for_iteration_environment(
+        &self,
+        declaration: &VariableDeclaration<'_>,
+        current: &Env,
+    ) -> Env {
+        let parent = current.borrow().parent.clone();
+        let environment = Environment::new(parent);
+        let mut names = Vec::new();
+        for declarator in &declaration.declarations {
+            pattern_bound_names(&declarator.id, &mut names);
+        }
+        let mut target = environment.borrow_mut();
+        target.lexical_names.extend(names.iter().cloned());
+        if matches!(
+            declaration.kind,
+            VariableDeclarationKind::Const
+                | VariableDeclarationKind::Using
+                | VariableDeclarationKind::AwaitUsing
+        ) {
+            target.immutable_names.extend(names.iter().cloned());
+        }
+        for name in names {
+            let value = Environment::get(current, &name).unwrap_or(Value::Undefined);
+            target.declare(&name, value);
+        }
+        drop(target);
         environment
     }
 
@@ -18921,6 +19013,72 @@ impl Vm {
         }
         self.has_property_with_proxy(&target, key)
     }
+
+    /// Re-check the current owner of a snapshotted `for-in` key.  Enumeration
+    /// snapshots names, but deletion or a descriptor change before the key is
+    /// visited must suppress that key without suppressing a still-visible
+    /// prototype property of the same name.
+    fn for_in_key_is_live(&mut self, value: &Value, key: &str) -> JsResult<bool> {
+        let mut current = value.clone();
+        loop {
+            // Typed-array element keys are virtual indexed properties: they
+            // have no ordinary descriptor entry, but remain enumerable while
+            // the current view contains the index.  Keep this protocol check
+            // beside the descriptor walk so deletion/prototype shadowing uses
+            // the same owner rules for ordinary and virtual properties.
+            if let Some(object) = current.as_object_ref() {
+                let object = object.borrow();
+                if let (Some(buffer), Some(offset), Some(bytes)) = (
+                    object.props.get(TYPED_ARRAY_BUFFER),
+                    object.props.get(TYPED_ARRAY_OFFSET),
+                    object.props.get("\0typed-array-bytes"),
+                ) && let Some(index) = array_index_key(key)
+                {
+                    let buffer_length = buffer
+                        .as_object_ref()
+                        .and_then(|buffer| {
+                            buffer.borrow().props.get("byteLength").and_then(Value::as_number)
+                        })
+                        .unwrap_or(0.0)
+                        .max(0.0) as usize;
+                    let width = bytes.number().max(1.0) as usize;
+                    let offset = offset.number().max(0.0) as usize;
+                    let available = buffer_length.saturating_sub(offset) / width;
+                    let declared = object
+                        .props
+                        .get("\0typed-array-length")
+                        .map_or(available, |value| value.number().max(0.0) as usize);
+                    let fixed = object
+                        .props
+                        .get(TYPED_ARRAY_FIXED)
+                        .is_some_and(Value::truthy);
+                    let length = if fixed { declared.min(available) } else { available };
+                    if index < length {
+                        return Ok(true);
+                    }
+                }
+            }
+            let descriptor = native_object_get_own_property_descriptor(
+                self,
+                Value::Undefined,
+                &[current.clone(), Value::string_value(key)],
+            )?;
+            if descriptor.is_object_like() {
+                return self
+                    .get_prop_with_accessors(&descriptor, "enumerable")
+                    .map(|value| value.truthy());
+            }
+            let prototype = native_object_get_prototype_of(
+                self,
+                Value::Undefined,
+                std::slice::from_ref(&current),
+            )?;
+            if prototype.is_null() {
+                return Ok(false);
+            }
+            current = prototype;
+        }
+    }
     fn eval_simple_target<'a>(
         &mut self,
         t: &SimpleAssignmentTarget<'a>,
@@ -20697,6 +20855,21 @@ fn source_contains_direct_super_call(source: &str) -> bool {
     let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
     let mut scan = Scan { found: false };
     scan.visit_program(&parsed.program);
+    scan.found
+}
+
+fn program_contains_for_in(program: &Program<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_for_in_statement(&mut self, statement: &ForInStatement<'a>) {
+            self.found = true;
+            ast_walk::walk_for_in_statement(self, statement);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_program(program);
     scan.found
 }
 
@@ -25351,18 +25524,14 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
         vm.set_prop(&backing, "\0array-buffer", Value::Bool(true));
         backing
     });
-    vm.set_prop(&this, "buffer", backing.clone());
-    vm.set_prop(
-        &this,
-        "byteLength",
-        Value::Number(values.len() as f64 * bytes),
+    install_data_properties!(
+        vm,
+        this.clone(),
+        "buffer" => backing.clone(), PropertyAttributes::BUILTIN_METHOD;
+        "byteLength" => Value::Number(values.len() as f64 * bytes), PropertyAttributes::BUILTIN_METHOD;
+        "byteOffset" => Value::Number(source_offset.unwrap_or(0.0)), PropertyAttributes::BUILTIN_METHOD;
+        "length" => Value::Number(values.len() as f64), PropertyAttributes::BUILTIN_METHOD;
     );
-    vm.set_prop(
-        &this,
-        "byteOffset",
-        Value::Number(source_offset.unwrap_or(0.0)),
-    );
-    vm.set_prop(&this, "length", Value::Number(values.len() as f64));
     let data = vm.get_prop(&backing, ARRAY_BUFFER_DATA);
     let data = if data.is_undefined() {
         let data = vm.array_from_values(Vec::new());
@@ -36456,6 +36625,36 @@ fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        // Typed-array indices are a view over the backing buffer rather than
+        // entries in the ordinary property table.  Project the currently
+        // available length here so Object.keys, for-in, and stencil lowering
+        // share one observable enumeration source, including resizable views.
+        if let Some(((buffer, offset), bytes)) = object
+            .props
+            .get(TYPED_ARRAY_BUFFER)
+            .cloned()
+            .zip(object.props.get(TYPED_ARRAY_OFFSET).cloned())
+            .zip(object.props.get("\0typed-array-bytes").cloned())
+        {
+            let buffer_length = buffer
+                .as_object_ref()
+                .and_then(|buffer| buffer.borrow().props.get("byteLength").and_then(Value::as_number))
+                .unwrap_or(0.0)
+                .max(0.0) as usize;
+            let offset = offset.number().max(0.0) as usize;
+            let width = bytes.number().max(1.0) as usize;
+            let available = buffer_length.saturating_sub(offset) / width;
+            let declared = object
+                .props
+                .get("\0typed-array-length")
+                .map_or(available, |value| value.number().max(0.0) as usize);
+            let fixed = object
+                .props
+                .get(TYPED_ARRAY_FIXED)
+                .is_some_and(Value::truthy);
+            let length = if fixed { declared.min(available) } else { available };
+            keys.extend((0..length).map(|index| index.to_string()));
+        }
         let mut seen = keys.iter().cloned().collect::<HashSet<_>>();
         // PropertyStorage is insertion ordered. Project hidden accessor slots
         // back to their logical key while walking that one order, so an
@@ -36557,6 +36756,28 @@ fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Enumerate a `for-in` target through its prototype chain.  This is separate
+/// from own-key projection because `Object.keys` must stop at the receiver,
+/// while `EnumerateObjectProperties` suppresses duplicate names across each
+/// subsequent prototype.
+pub(crate) fn for_in_enumerable_keys(target: &Value) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+    let mut current = Some(target.clone());
+    while let Some(value) = current {
+        for key in object_own_enumerable_keys(&value) {
+            if seen.insert(key.clone()) {
+                result.push(key);
+            }
+        }
+        current = value
+            .as_object_ref()
+            .and_then(|object| object.borrow().prototype.clone())
+            .map(Value::Object);
+    }
+    result
 }
 
 fn is_symbol_key(key: &str) -> bool {
