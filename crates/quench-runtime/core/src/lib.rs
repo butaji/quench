@@ -9309,7 +9309,22 @@ impl Vm {
         let mut continuation =
             self.prepare_sync_generator_activation(function.clone(), this.clone(), args.clone())?;
         continuation.async_generator = true;
-        let iterator = self.object(prototype);
+        let configured_value = self.get_prop_with_accessors(&function, "prototype")?;
+        let configured_prototype = configured_value
+            .as_object()
+            .filter(|_| !is_symbol_carrier(&configured_value));
+        let default_prototype =
+            function
+                .as_function_ref()
+                .and_then(|function_ref| match &function_ref.kind {
+                    FunctionKind::User { env, .. } => {
+                        let constructor = self.async_constructor_for_environment(true, env);
+                        let function_prototype = self.get_prop(&constructor, "prototype");
+                        self.get_prop(&function_prototype, "prototype").as_object()
+                    }
+                    _ => None,
+                });
+        let iterator = self.object(configured_prototype.or(default_prototype).or(prototype));
         self.set_prop(&iterator, ASYNC_GENERATOR_INSTANCE_PROP, Value::Bool(true));
         self.set_prop(&iterator, ASYNC_GENERATOR_FUNCTION_PROP, function);
         self.set_prop(
