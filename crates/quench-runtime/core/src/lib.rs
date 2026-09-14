@@ -21078,12 +21078,13 @@ fn has_strict_update_identifier(program: &Program<'_>, inherited_strict: bool) -
 fn has_invalid_function_super(program: &Program<'_>) -> bool {
     struct Scan {
         ordinary_function_depth: usize,
-        method_base_depth: Vec<usize>,
+        method_base_depth: Vec<(usize, bool)>,
         invalid: bool,
     }
     impl<'a> Visit<'a> for Scan {
         fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
-            self.method_base_depth.push(self.ordinary_function_depth);
+            self.method_base_depth
+                .push((self.ordinary_function_depth, method.value.generator));
             ast_walk::walk_method_definition(self, method);
             self.method_base_depth.pop();
         }
@@ -21092,7 +21093,12 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             let has_home_object =
                 property.method || matches!(property.kind, PropertyKind::Get | PropertyKind::Set);
             if has_home_object {
-                self.method_base_depth.push(self.ordinary_function_depth);
+                let generator = matches!(
+                    &property.value,
+                    Expression::FunctionExpression(function) if function.generator
+                );
+                self.method_base_depth
+                    .push((self.ordinary_function_depth, generator));
                 ast_walk::walk_object_property(self, property);
                 self.method_base_depth.pop();
             } else {
@@ -21113,11 +21119,25 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             let method_function = self
                 .method_base_depth
                 .last()
-                .is_some_and(|base| self.ordinary_function_depth == *base + 1);
+                .is_some_and(|(base, _)| self.ordinary_function_depth == *base + 1);
             if !method_function {
                 self.invalid = true;
             }
             ast_walk::walk_super(self, super_expression);
+        }
+
+        fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+            let direct_generator_super = matches!(expression.callee, Expression::Super(_))
+                && self
+                    .method_base_depth
+                    .last()
+                    .is_some_and(|(base, generator)| {
+                        *generator && self.ordinary_function_depth == *base + 1
+                    });
+            if direct_generator_super {
+                self.invalid = true;
+            }
+            ast_walk::walk_call_expression(self, expression);
         }
     }
     let mut scan = Scan {
