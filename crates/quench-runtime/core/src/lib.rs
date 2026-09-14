@@ -6543,6 +6543,7 @@ impl Vm {
         };
         let constructor = self.native_named(native, name, 1);
         self.set_prop(&constructor, marker, Value::Bool(true));
+        set_property_attributes(&constructor, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
         let constructor_global = realm_global
             .clone()
             .or_else(|| self.global_object_for_environment(&self.global));
