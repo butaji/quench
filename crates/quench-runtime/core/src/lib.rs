@@ -15382,7 +15382,31 @@ impl Vm {
         let target = self.resolve_identifier_target(environment, name)?;
         if let LValue::WithProp(object, key) = target {
             let value = self.get_prop_with_accessors(&object, &key)?;
-            return Ok((value, Some(object)));
+            // A global-object identifier reference is still a bare call, so a
+            // strict function must receive `undefined` as this.  Only an
+            // actual object-environment (`with`) reference supplies a
+            // receiver, even when that object happens to be globalThis.
+            let mut object_environment = false;
+            let mut current = Some(environment.clone());
+            while let Some(candidate) = current {
+                let borrowed = candidate.borrow();
+                if borrowed
+                    .with_object
+                    .as_ref()
+                    .is_some_and(|with_object| with_object.same_bits(&object))
+                {
+                    object_environment = true;
+                    break;
+                }
+                current = borrowed.parent.clone();
+            }
+            let global_reference = self
+                .global_object_for_environment(&self.realm_environment_for_environment(environment))
+                .is_some_and(|global| global.same_bits(&object));
+            return Ok((
+                value,
+                (!global_reference || object_environment).then_some(object),
+            ));
         }
         Ok((self.resolve_identifier(environment, name)?, None))
     }
