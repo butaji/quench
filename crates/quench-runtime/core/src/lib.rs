@@ -24504,18 +24504,11 @@ fn native_subclassable_builtin(_: &mut Vm, receiver: Value, _: &[Value]) -> JsRe
     Ok(receiver)
 }
 
-fn native_shared_array_buffer_constructor(
+fn shared_array_buffer_dimensions(
     vm: &mut Vm,
-    this: Value,
     args: &[Value],
-) -> JsResult<Value> {
-    if vm.construct_depth == 0 {
-        return Err(JsError::Throw(type_error(
-            vm,
-            "SharedArrayBuffer constructor must be called with new",
-        )));
-    }
-    let this = if this.is_object_like() { this } else { vm.object(None) };
+    enforce_limit: bool,
+) -> JsResult<(f64, f64, bool)> {
     let length = args
         .first()
         .map(|value| to_number_with_vm(vm, value))
@@ -24539,30 +24532,55 @@ fn native_shared_array_buffer_constructor(
             "invalid SharedArrayBuffer length",
         )));
     }
-    let (max_length, resizable) = if let Some(options) = args.get(1).filter(|value| value.is_object_like()) {
+    let (max_length, resizable) = if let Some(options) = args
+        .get(1)
+        .filter(|value| value.is_object_like())
+    {
         let value = vm.get_prop_with_accessors(options, "maxByteLength")?;
         if value.is_undefined() {
             (length, false)
         } else {
             let value = to_number_with_vm(vm, &value)?;
             if !value.is_finite() || value < 0.0 {
-                return Err(JsError::Throw(range_error(vm, "invalid SharedArrayBuffer maxByteLength")));
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "invalid SharedArrayBuffer maxByteLength",
+                )));
             }
             let value = if value == 0.0 { 0.0 } else { value.trunc() };
             if value < length {
-                return Err(JsError::Throw(range_error(vm, "invalid SharedArrayBuffer maxByteLength")));
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "invalid SharedArrayBuffer maxByteLength",
+                )));
             }
             (value, true)
         }
     } else {
         (length, false)
     };
-    if max_length > MAX_MATERIALIZED_ARRAY_LENGTH as f64 {
+    if enforce_limit && max_length > MAX_MATERIALIZED_ARRAY_LENGTH as f64 {
         return Err(JsError::Throw(range_error(
             vm,
             "SharedArrayBuffer allocation exceeds the runtime limit",
         )));
     }
+    Ok((length, max_length, resizable))
+}
+
+fn native_shared_array_buffer_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "SharedArrayBuffer constructor must be called with new",
+        )));
+    }
+    let this = if this.is_object_like() { this } else { vm.object(None) };
+    let (length, max_length, resizable) = shared_array_buffer_dimensions(vm, args, true)?;
     vm.set_prop(&this, "byteLength", Value::Number(length));
     vm.set_prop(&this, "maxByteLength", Value::Number(max_length));
     vm.set_prop(&this, "\0shared-array-buffer-resizable", Value::Bool(resizable));
@@ -32972,6 +32990,13 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
         )));
     }
     let arguments = reflect_array_arguments(vm, args.get(1))?;
+    if target.as_function_ref().is_some_and(|function| {
+        matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_shared_array_buffer_constructor))
+    }) {
+        // SharedArrayBuffer validates byteLength/maxByteLength before reading
+        // newTarget.prototype (the allocation step comes later).
+        let _ = shared_array_buffer_dimensions(vm, &arguments, false)?;
+    }
     // Promise validates its executor before GetPrototypeFromConstructor.  Do
     // that early here so a poisoned newTarget.prototype cannot mask the
     // required TypeError for a non-callable executor.
@@ -33024,14 +33049,22 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
             prototype_override
                 .is_none()
                 .then(|| ordinary_prototype.clone().unwrap_or(Value::Undefined))
-                .and_then(|value| value.as_object())
+                .and_then(|value| (!is_symbol_carrier(&value)).then(|| value.as_object()).flatten())
         })
         .or_else(|| {
             new_target
                 .as_function_ref()
                 .and_then(|function| function.props.borrow().get(REALM_GLOBAL_PROP).cloned())
                 .and_then(|global| {
-                    vm.get_prop(&global, "Object")
+                    let intrinsic = target
+                        .as_function_ref()
+                        .is_some_and(|function| {
+                            matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_shared_array_buffer_constructor))
+                        })
+                        .then(|| vm.get_prop(&global, "SharedArrayBuffer"))
+                        .filter(|value| value.is_function())
+                        .unwrap_or_else(|| vm.get_prop(&global, "Object"));
+                    intrinsic
                         .as_function_ref()
                         .map(|function| function.prototype.clone())
                 })
@@ -33169,6 +33202,11 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     }
     if let Some(proxy) = Environment::get(&vm.global, "Proxy") {
         vm.set_prop(&global, "Proxy", proxy);
+    }
+    for name in ["ArrayBuffer", "DataView", "SharedArrayBuffer"] {
+        if let Some(value) = Environment::get(&vm.global, name) {
+            vm.set_prop(&global, name, value);
+        }
     }
     for name in [
         "parseInt",
