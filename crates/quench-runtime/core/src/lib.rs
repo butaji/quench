@@ -277,6 +277,7 @@ environment_keys! {
     SUPER_CALLED_ENV_NAME => "super-called",
     CLASS_FIELDS_INITIALIZED_ENV_NAME => "class-fields-initialized",
     CLASS_FIELD_INITIALIZER_ENV_NAME => "class-field-initializer",
+    CLASS_CONSTRUCTOR_ENV_NAME => "class-constructor",
 }
 const CLASS_FIELDS_INITIALIZED_PROP: &str = "\0quench:class-fields-initialized";
 const CLASS_FIELD_KEY_PREFIX: &str = "\0quench:class-field-key:";
@@ -357,6 +358,7 @@ const MODULE_IMPORT_REF_PATH_PROP: &str = "\0quench:module-import-path";
 const MODULE_IMPORT_REF_NAME_PROP: &str = "\0quench:module-import-name";
 const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
 const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
+const FUNCTION_PROTOTYPE_CHAIN_PROP: &str = "\0quench:function-prototype-chain";
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
 const PROXY_HANDLER_PROP: &str = "\0quench:proxy-handler";
 const PROXY_REVOKED_PROP: &str = "\0quench:proxy-revoked";
@@ -2228,6 +2230,12 @@ impl Environment {
         let mut current = Some(e.clone());
         while let Some(environment) = current {
             let borrowed = environment.borrow();
+            // TDZ state belongs to the nearest environment record that owns
+            // the binding.  An outer global `let b` must not poison an inner
+            // function parameter also named `b`.
+            if borrowed.contains_local(name) {
+                return borrowed.tdz_names.contains(name);
+            }
             if borrowed.tdz_names.contains(name) {
                 return true;
             }
@@ -5363,9 +5371,15 @@ fn instance_of_with_vm(vm: &mut Vm, value: &Value, ctor: &Value) -> JsResult<boo
     let mut current = value.clone();
     loop {
         let current_prototype = if current.is_regexp() {
-            vm.builtin(BuiltinId::RegExpConstructor)
-                .as_function_ref()
-                .map(|function| Value::Object(function.prototype.clone()))
+            current
+                .as_regexp_ref()
+                .and_then(|regexp| regexp.borrow().prototype.clone())
+                .map(Value::Object)
+                .or_else(|| {
+                    vm.builtin(BuiltinId::RegExpConstructor)
+                        .as_function_ref()
+                        .map(|function| Value::Object(function.prototype.clone()))
+                })
                 .unwrap_or(Value::Null)
         } else {
             native_object_get_prototype_of(vm, Value::Undefined, &[current.clone()])?
@@ -7323,6 +7337,28 @@ impl Vm {
             );
             Environment::set(&g, "Set", constructor);
         }
+        // These constructor shells preserve subclass receiver identity. Their
+        // dedicated storage kernels live at the runtime edge; the core still
+        // publishes the correct constructor/prototype pair for inheritance.
+        for name in ["DataView", "SharedArrayBuffer", "WeakMap", "WeakRef", "WeakSet"] {
+            let constructor = self.native_named(native_subclassable_builtin, name, 1);
+            let prototype = constructor
+                .as_function_ref()
+                .expect("subclassable builtin")
+                .prototype
+                .clone();
+            self.set_prop(
+                &constructor,
+                "prototype",
+                Value::Object(prototype.clone()),
+            );
+            self.set_prop(
+                &Value::Object(prototype),
+                "constructor",
+                constructor.clone(),
+            );
+            Environment::set(&g, name, constructor);
+        }
         let json = self.object(None);
         self.set_prop(&json, "stringify", self.native(native_json_stringify));
         Environment::set(&g, "JSON", json);
@@ -7847,6 +7883,11 @@ impl Vm {
                 "Promise",
                 "Proxy",
                 "ArrayBuffer",
+                "DataView",
+                "SharedArrayBuffer",
+                "WeakMap",
+                "WeakRef",
+                "WeakSet",
                 "Float64Array",
                 "Float32Array",
                 "Int32Array",
@@ -8303,6 +8344,7 @@ impl Vm {
                                 native_typed_array_constructor,
                                 native_map_constructor,
                                 native_set_constructor,
+                                native_subclassable_builtin,
                             ) =>
                         {
                             true
@@ -11607,7 +11649,9 @@ impl Vm {
             };
             let result = self.call_arguments(&constructor, constructor_this, args.as_slice())?;
             if let Some(regexp) = result.as_regexp_ref() {
-                regexp.borrow_mut().prototype = this.as_object();
+                regexp.borrow_mut().prototype = this
+                    .as_object_ref()
+                    .and_then(|object| object.borrow().prototype.clone());
             }
             result
         } else if let Some(super_constructor) = super_constructor {
@@ -11617,7 +11661,9 @@ impl Vm {
             field_env.borrow_mut().declare("this", result.clone());
             self.initialize_class_instance_fields(class, env.clone(), field_env, &result)?;
             if let Some(regexp) = result.as_regexp_ref() {
-                regexp.borrow_mut().prototype = this.as_object();
+                regexp.borrow_mut().prototype = this
+                    .as_object_ref()
+                    .and_then(|object| object.borrow().prototype.clone());
             }
             result
         } else {
@@ -15404,7 +15450,7 @@ impl Vm {
             kind: FunctionKind::Class {
                 node: unsafe { std::mem::transmute(n) },
                 env: class_env.clone(),
-                super_constructor,
+                super_constructor: super_constructor.clone(),
             },
             strict: true,
             prototype: prototype_handle,
@@ -15418,6 +15464,16 @@ impl Vm {
             source_id: self.source_ids.last().copied(),
         };
         let class = Value::Function(Rc::new(function));
+        class_env
+            .borrow_mut()
+            .declare(CLASS_CONSTRUCTOR_ENV_NAME, class.clone());
+        let class_prototype = super_constructor.clone().unwrap_or_else(|| {
+            self.builtin(BuiltinId::FunctionConstructor)
+                .as_function_ref()
+                .map(|function| Value::Object(function.prototype.clone()))
+                .unwrap_or(Value::Null)
+        });
+        self.set_prop(&class, FUNCTION_PROTOTYPE_CHAIN_PROP, class_prototype);
         if let Some(global) =
             self.global_object_for_environment(&self.realm_environment_for_environment(&class_env))
         {
@@ -15544,7 +15600,12 @@ impl Vm {
                             "Class static property cannot be named prototype",
                         )));
                     }
-                    let method_value = self.make_user(&method.value, class_env.clone());
+                    let target = if method.r#static { &class } else { &prototype };
+                    let method_environment = Environment::new(Some(class_env.clone()));
+                    method_environment
+                        .borrow_mut()
+                        .declare(CLASS_HOME_OBJECT_ENV_NAME, target.clone());
+                    let method_value = self.make_user(&method.value, method_environment);
                     if !method.value.generator && !method.value.r#async {
                         self.mark_nonconstructable(&method_value);
                         self.set_prop(
@@ -15571,7 +15632,6 @@ impl Vm {
                         "name",
                         PropertyAttributes::INFERRED_FUNCTION_NAME,
                     );
-                    let target = if method.r#static { &class } else { &prototype };
                     if method.r#static && key == "name" {
                         // A static `name` method is an ordinary class property and
                         // intentionally shadows the constructor's inferred name.
@@ -15680,8 +15740,6 @@ impl Vm {
         Ok(class)
     }
     fn resolve_identifier(&mut self, e: &Env, name: &str) -> JsResult<Value> {
-        if name == "BindingIdentifier" {
-        }
         let mut current = Some(e.clone());
         while let Some(environment) = current {
             let (local, with_object, parent) = {
@@ -16501,16 +16559,10 @@ impl Vm {
                 Ok(Value::Undefined)
             }
             Super(_) => {
-                let home_prototype = Environment::get(&e, CLASS_HOME_OBJECT_ENV_NAME)
-                    .and_then(|value| {
-                        value
-                            .as_object_ref()
-                            .map(|home| home.borrow().prototype.clone())
-                    })
-                    .flatten();
-                Ok(home_prototype
-                    .map(Value::Object)
-                    .or_else(|| Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME))
+                if let Some(home) = Environment::get(&e, CLASS_HOME_OBJECT_ENV_NAME) {
+                    return native_object_get_prototype_of(self, Value::Undefined, &[home]);
+                }
+                Ok(Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME)
                     .unwrap_or(Value::Undefined))
             }
             ArrayExpression(v) => {
@@ -16550,7 +16602,18 @@ impl Vm {
                         }
                         ObjectPropertyKind::ObjectProperty(p) => {
                             let k = self.eval_property_key(&p.key, e.clone())?;
-                            let z = self.eval_expr(&p.value, e.clone())?;
+                            let value_environment = if p.method
+                                || matches!(p.kind, PropertyKind::Get | PropertyKind::Set)
+                            {
+                                let environment = Environment::new(Some(e.clone()));
+                                environment
+                                    .borrow_mut()
+                                    .declare(CLASS_HOME_OBJECT_ENV_NAME, o.clone());
+                                environment
+                            } else {
+                                e.clone()
+                            };
+                            let z = self.eval_expr(&p.value, value_environment)?;
                             if (p.method || matches!(p.kind, PropertyKind::Get | PropertyKind::Set))
                                 && z.is_function()
                             {
@@ -16573,14 +16636,9 @@ impl Vm {
                             }
                             if (p.method || matches!(p.kind, PropertyKind::Get | PropertyKind::Set))
                                 && let Some(function) = z.as_function_ref()
-                                && let FunctionKind::User { env, .. } = &function.kind
+                                && let FunctionKind::User { node, .. } = &function.kind
                             {
-                                env.borrow_mut()
-                                    .declare(CLASS_HOME_OBJECT_ENV_NAME, o.clone());
-                                if let FunctionKind::User { node, .. } = &function.kind
-                                    && !node.generator
-                                    && !node.r#async
-                                {
+                                if !node.generator && !node.r#async {
                                     self.mark_nonconstructable(&z);
                                     self.set_prop(&z, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
                                 }
@@ -16997,6 +17055,9 @@ impl Vm {
                         "cannot read property of nullish value",
                     )));
                 }
+                if matches!(&m.object, Expression::Super(_)) && Environment::is_tdz(&e, "this") {
+                    return Err(JsError::Throw(reference_error(self, "this")));
+                }
                 let key_value = self.eval_expr(&m.expression, e.clone())?;
                 let k = self.to_property_key(key_value)?;
                 if matches!(&m.object, Expression::Super(_)) {
@@ -17011,7 +17072,17 @@ impl Vm {
             }
             CallExpression(v) => {
                 if matches!(&v.callee, Expression::Super(_)) {
-                    let callee = Environment::get(&e, CLASS_SUPER_CONSTRUCTOR_ENV_NAME)
+                    let callee = Environment::get(&e, CLASS_CONSTRUCTOR_ENV_NAME)
+                        .and_then(|constructor| {
+                            native_object_get_prototype_of(
+                                self,
+                                Value::Undefined,
+                                &[constructor],
+                            )
+                            .ok()
+                        })
+                        .filter(|prototype| !prototype.is_null())
+                        .or_else(|| Environment::get(&e, CLASS_SUPER_CONSTRUCTOR_ENV_NAME))
                         .unwrap_or(Value::Undefined);
                     let this = Environment::get(&e, "this").unwrap_or(Value::Undefined);
                     let super_this = if this.is_undefined() {
@@ -17022,6 +17093,12 @@ impl Vm {
                     let args = self.eval_args(&v.arguments, e.clone())?;
                     let already_initialized = Environment::get(&e, SUPER_CALLED_ENV_NAME)
                         .is_some_and(|value| value.truthy());
+                    if !constructable(&callee) {
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "super constructor is not constructable",
+                        )));
+                    }
                     let result = if let Some(function) = callee.as_function_ref()
                         && matches!(function.kind, FunctionKind::Class { .. })
                     {
@@ -17426,6 +17503,9 @@ impl Vm {
         match s {
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let object = self.eval_expr(&m.object, e.clone())?;
+                if matches!(&m.object, Expression::Super(_)) && Environment::is_tdz(&e, "this") {
+                    return Err(JsError::Throw(reference_error(self, "this")));
+                }
                 let key = self.eval_expr(&m.expression, e.clone())?;
                 if matches!(&m.object, Expression::Super(_)) {
                     Ok(LValue::DeferredSuperProp {
@@ -17463,6 +17543,9 @@ impl Vm {
             }
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let base = self.eval_expr(&m.object, e.clone())?;
+                if matches!(&m.object, Expression::Super(_)) && Environment::is_tdz(&e, "this") {
+                    return Err(JsError::Throw(reference_error(self, "this")));
+                }
                 let key_value = self.eval_expr(&m.expression, e.clone())?;
                 if base.is_null() || base.is_undefined() {
                     return Err(JsError::Throw(type_error(
@@ -17636,14 +17719,34 @@ impl Vm {
                 base,
                 receiver,
                 key,
-            } => self.set_prop_with_receiver(&base, &key, v, &receiver)?,
+            } => {
+                let result = self.set_prop_with_receiver(&base, &key, v, &receiver);
+                match result {
+                    Err(JsError::Throw(error))
+                        if !self.strict_mode
+                            && !base.is_null()
+                            && !base.is_undefined()
+                            && proxy_target(&base).is_none()
+                            && is_type_error_value(&error) => {}
+                    result => result?,
+                }
+            }
             LValue::DeferredSuperProp {
                 base,
                 receiver,
                 key,
             } => {
                 let key = self.to_property_key(key)?;
-                self.set_prop_with_receiver(&base, &key, v, &receiver)?;
+                let result = self.set_prop_with_receiver(&base, &key, v, &receiver);
+                match result {
+                    Err(JsError::Throw(error))
+                        if !self.strict_mode
+                            && !base.is_null()
+                            && !base.is_undefined()
+                            && proxy_target(&base).is_none()
+                            && is_type_error_value(&error) => {}
+                    result => result?,
+                }
             }
         }
         Ok(())
@@ -21467,6 +21570,10 @@ fn prop_key<'a>(k: &PropertyKey<'a>) -> String {
         _ => String::new(),
     }
 }
+fn native_subclassable_builtin(_: &mut Vm, receiver: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(receiver)
+}
+
 fn native_parse_int(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let mut s = match a.first() {
         Some(value) => to_string_with_vm(vm, value)?,
@@ -33586,6 +33693,15 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             .unwrap_or(Value::Null));
     }
     if target.as_function().is_some() {
+        if let Some(prototype) = target.as_function_ref().and_then(|function| {
+            function
+                .props
+                .borrow()
+                .get(FUNCTION_PROTOTYPE_CHAIN_PROP)
+                .cloned()
+        }) {
+            return Ok(prototype);
+        }
         if let Some(override_value) = target.as_function_ref().and_then(|function| {
             function
                 .props
@@ -34863,6 +34979,16 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             &[proxy_target_value, prototype],
         );
     }
+    if target.is_function() && prototype.is_function() {
+        if let Some(function) = target.as_function_ref() {
+            function
+                .props
+                .borrow_mut()
+                .insert(FUNCTION_PROTOTYPE_CHAIN_PROP.into(), prototype.clone());
+            vm.invalidate_prototype_membership();
+            return Ok(target.clone());
+        }
+    }
     let symbol_prototype = prototype
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.contains_key("\0symbol"));
@@ -34876,6 +35002,14 @@ fn native_object_set_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             vm,
             "prototype must be an object or null",
         )));
+    }
+    if let Some(function) = target.as_function_ref() {
+        function
+            .props
+            .borrow_mut()
+            .insert(FUNCTION_PROTOTYPE_CHAIN_PROP.into(), prototype.clone());
+        vm.invalidate_prototype_membership();
+        return Ok(target.clone());
     }
     let Some(object) = target.as_object_ref() else {
         if !target.is_null() && !target.is_undefined() {
