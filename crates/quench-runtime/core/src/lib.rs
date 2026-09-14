@@ -13948,7 +13948,8 @@ impl Vm {
                     )));
                 }
             }
-            if var_names
+            if self.strict_mode
+                && var_names
                 .iter()
                 .any(|name| name == "arguments" && eval_arguments_conflict(&environment))
             {
@@ -14188,6 +14189,7 @@ impl Vm {
             && !program_contains_for_in(&r.program)
             && !program_contains_for_of(&r.program)
             && !program_contains_with(&r.program)
+            && !program_contains_var_declaration(&r.program)
         {
             (|| {
                 let statements: &'static [Statement<'static>] =
@@ -20985,6 +20987,21 @@ fn program_contains_with(program: &Program<'_>) -> bool {
         fn visit_with_statement(&mut self, statement: &WithStatement<'a>) {
             self.found = true;
             ast_walk::walk_with_statement(self, statement);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_program(program);
+    scan.found
+}
+
+fn program_contains_var_declaration(program: &Program<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+            self.found |= declaration.kind == VariableDeclarationKind::Var;
+            ast_walk::walk_variable_declaration(self, declaration);
         }
     }
     let mut scan = Scan { found: false };
