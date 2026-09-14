@@ -3125,9 +3125,9 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let value = get(frame, src);
             let object = get_ref(frame, *object).clone();
             if object.is_null() || object.is_undefined() {
-                return Err(JsError::Message(format!(
-                    "cannot write property {key} of {}",
-                    object.display()
+                return Err(JsError::Throw(super::type_error(
+                    unsafe { &mut *frame.vm },
+                    &format!("cannot write property {key} of {}", object.display()),
                 )));
             }
             if *strict && super::is_symbol_carrier(&object) {
@@ -3180,9 +3180,9 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let value = get(frame, src);
             let object = get_ref(frame, *object).clone();
             if object.is_null() || object.is_undefined() {
-                return Err(JsError::Message(format!(
-                    "cannot write computed property of {}",
-                    object.display()
+                return Err(JsError::Throw(super::type_error(
+                    unsafe { &mut *frame.vm },
+                    &format!("cannot write computed property of {}", object.display()),
                 )));
             }
             if *strict && super::is_symbol_carrier(&object) {
