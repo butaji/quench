@@ -5218,10 +5218,16 @@ fn in_prop(key: &Value, value: &Value) -> bool {
     false
 }
 fn i32_js(v: f64) -> i32 {
-    (v as i64 as u64 as u32) as i32
+    if !v.is_finite() || v == 0.0 {
+        return 0;
+    }
+    v.trunc().rem_euclid(4_294_967_296.0) as u32 as i32
 }
 fn u32_js(v: f64) -> u32 {
-    v as i64 as u64 as u32
+    if !v.is_finite() || v == 0.0 {
+        return 0;
+    }
+    v.trunc().rem_euclid(4_294_967_296.0) as u32
 }
 define_ops! {
  Add => numeric |x:f64,y:f64| Value::Number(x+y), generic |a:&Value,b:&Value| if a.is_string() || b.is_string(){Value::String(Rc::new(concat_string_values(&a.string(), &b.string()).into()))}else{exec_numeric_op(Op::Add,a.number(),b.number())};
@@ -5393,6 +5399,12 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
                 .unwrap_or_else(|_| BigInt::from(0));
             let right = parse_bigint_text(right.as_string().map_or("", String::as_str))
                 .unwrap_or_else(|_| BigInt::from(0));
+            if matches!(op, Op::Ushr) {
+                return Err(JsError::Throw(type_error(
+                    vm,
+                    "BigInts have no unsigned right shift",
+                )));
+            }
             return Ok(bigint_binary(op, left, right));
         }
         if matches!(op, Op::Eq | Op::Ne) {
@@ -5443,6 +5455,24 @@ fn bigint_binary(op: Op, left: BigInt, right: BigInt) -> Value {
         Op::Or => bigint_marker(left | right),
         Op::Xor => bigint_marker(left ^ right),
         Op::And => bigint_marker(left & right),
+        Op::Shl => {
+            if let Some(shift) = right.to_usize() {
+                bigint_marker(left << shift)
+            } else if right.sign() == Sign::Minus {
+                bigint_marker(left >> right.magnitude().to_usize().unwrap_or(usize::MAX))
+            } else {
+                bigint_marker(BigInt::from(0))
+            }
+        }
+        Op::Shr => {
+            if let Some(shift) = right.to_usize() {
+                bigint_marker(left >> shift)
+            } else if right.sign() == Sign::Minus {
+                bigint_marker(left << right.magnitude().to_usize().unwrap_or(usize::MAX))
+            } else {
+                bigint_marker(BigInt::from(0))
+            }
+        }
         _ => Value::Number(0.0),
     }
 }
