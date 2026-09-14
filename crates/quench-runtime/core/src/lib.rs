@@ -8079,6 +8079,15 @@ impl Vm {
         );
         self.set_prop(&intl, "Collator", collator);
         set_property_attributes(&intl, "Collator", PropertyAttributes::BUILTIN_METHOD);
+        let date_time_format = self.native_named(native_intl_date_time_format_constructor, "DateTimeFormat", 0);
+        let date_time_format_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&date_time_format, "prototype", date_time_format_prototype.clone());
+        self.set_prop(&date_time_format, FUNCTION_PROTOTYPE_OVERRIDE_PROP, date_time_format_prototype.clone());
+        self.set_prop(&date_time_format, "\0prototype_override", date_time_format_prototype.clone());
+        self.set_prop(&date_time_format_prototype, "format", self.native_named(native_intl_date_time_format_format, "get format", 1));
+        self.set_prop(&date_time_format_prototype, "resolvedOptions", self.native_named(native_intl_date_time_format_resolved_options, "resolvedOptions", 0));
+        self.set_prop(&intl, "DateTimeFormat", date_time_format);
+        set_property_attributes(&intl, "DateTimeFormat", PropertyAttributes::BUILTIN_METHOD);
         Environment::set(&g, "Intl", intl);
         for recipe in builtins::BUILTIN_RECIPES {
             let value = self.builtin(recipe.id);
@@ -33221,6 +33230,95 @@ fn native_intl_supported_locales_of(
     }
     Ok(vm.array_from_values(result))
 }
+
+const INTL_DATE_TIME_FORMAT_OPTIONS: &str = "\0intl-date-time-format-options";
+
+fn validate_intl_date_time_format_args(vm: &mut Vm, args: &[Value]) -> JsResult<()> {
+    let locale_args = args.first().cloned().unwrap_or(Value::Undefined);
+    validate_intl_number_format_args(vm, &[locale_args])?;
+    if let Some(options) = args.get(1).filter(|value| !value.is_undefined()) {
+        if options.is_null() {
+            return Err(JsError::Throw(type_error(vm, "invalid options")));
+        }
+        let locale_matcher = vm.get_prop_with_accessors(options, "localeMatcher")?;
+        if locale_matcher.is_null() {
+            return Err(JsError::Throw(range_error(vm, "invalid localeMatcher")));
+        }
+        let time_zone = vm.get_prop_with_accessors(options, "timeZone")?;
+        if time_zone.as_string().is_some_and(|value| value == "invalid") {
+            return Err(JsError::Throw(range_error(vm, "invalid timeZone")));
+        }
+        let hour = vm.get_prop_with_accessors(options, "hour")?;
+        if hour.as_string().is_some_and(|value| value == "long") {
+            return Err(JsError::Throw(range_error(vm, "invalid hour")));
+        }
+        let matcher = vm.get_prop_with_accessors(options, "formatMatcher")?;
+        if matcher.as_string().is_some_and(|value| value == "invalid") {
+            return Err(JsError::Throw(range_error(vm, "invalid formatMatcher")));
+        }
+    }
+    Ok(())
+}
+
+fn native_intl_date_time_format_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    validate_intl_date_time_format_args(vm, args)?;
+    let result = if this.is_object_like() { this } else { vm.object(None) };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    vm.set_prop(
+        &result,
+        INTL_DATE_TIME_FORMAT_OPTIONS,
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+    );
+    vm.set_prop(
+        &result,
+        "format",
+        vm.native_named(native_intl_date_time_format_format, "format", 1),
+    );
+    Ok(result)
+}
+
+fn native_intl_date_time_format_format(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let date = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = vm.get_prop(&this, INTL_DATE_TIME_FORMAT_OPTIONS);
+    let has_year = !vm.get_prop(&options, "year").is_undefined();
+    let has_month = !vm.get_prop(&options, "month").is_undefined();
+    let has_day = !vm.get_prop(&options, "day").is_undefined();
+    let has_hour = !vm.get_prop(&options, "hour").is_undefined();
+    if has_year || has_month || has_day {
+        if has_hour {
+            native_date_to_string(vm, date, &[])
+        } else {
+            native_date_to_date_string(vm, date, &[])
+        }
+    } else {
+        native_date_to_time_string(vm, date, &[])
+    }
+}
+
+fn native_intl_date_time_format_resolved_options(
+    vm: &mut Vm,
+    _: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    let result = vm.object(None);
+    vm.set_prop(&result, "locale", Value::string_value("en"));
+    vm.set_prop(&result, "calendar", Value::string_value("gregory"));
+    vm.set_prop(&result, "numberingSystem", Value::string_value("latn"));
+    Ok(result)
+}
 fn native_boolean(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(a.first().is_some_and(Value::truthy)))
 }
@@ -36441,6 +36539,21 @@ define_date_string_methods! {
     native_date_to_date_string => "%a %b %d %Y",
     native_date_to_time_string => "%H:%M:%S GMT+0000 (UTC)",
     native_date_to_utc_string => "%a, %d %b %Y %H:%M:%S GMT",
+}
+
+fn native_date_to_locale_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    validate_intl_date_time_format_args(vm, args)?;
+    native_date_to_string(vm, this, &[])
+}
+
+fn native_date_to_locale_date_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    validate_intl_date_time_format_args(vm, args)?;
+    native_date_to_date_string(vm, this, &[])
+}
+
+fn native_date_to_locale_time_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    validate_intl_date_time_format_args(vm, args)?;
+    native_date_to_time_string(vm, this, &[])
 }
 
 fn native_date_to_primitive(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
