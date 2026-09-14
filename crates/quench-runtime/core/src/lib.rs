@@ -6901,6 +6901,14 @@ impl Vm {
         *self.throw_type_error.borrow_mut() = Some(value.clone());
         value
     }
+    fn throw_type_error_for_environment(&self, environment: &Env) -> Value {
+        self.global_object_for_environment(&self.realm_environment_for_environment(environment))
+            .and_then(|global| {
+                let thrower = self.get_prop(&global, dynbytecode::THROW_TYPE_ERROR_PROP);
+                thrower.is_function().then_some(thrower)
+            })
+            .unwrap_or_else(|| self.throw_type_error())
+    }
     fn new_throw_type_error(&self) -> Value {
         let value = self.native(native_throw_type_error);
         // CreateBuiltinFunction installs `length` before `name`; preserve that
@@ -8482,6 +8490,11 @@ impl Vm {
             .builtin(BuiltinId::StringConstructor)
             .as_function_ref()
             .map(|function| Value::Object(function.prototype.clone()));
+        set_property_attributes(
+            &self.builtin(BuiltinId::StringConstructor),
+            "prototype",
+            PropertyAttributes::BUILTIN_CONSTANT,
+        );
         if let Some(string_prototype) = string_prototype {
             self.set_prop(
                 &string_prototype,
@@ -11484,8 +11497,8 @@ impl Vm {
         e.borrow_mut().declare("this", this.clone());
         let av = self.object_value(Object::array(self.default_object_prototype(), args.clone()));
         self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
-        if strict {
-            let throw_type_error = self.throw_type_error();
+        if strict || non_simple_parameters {
+            let throw_type_error = self.throw_type_error_for_environment(&body_environment);
             self.define_accessor_slot(
                 &av,
                 "callee",
@@ -12309,6 +12322,18 @@ impl Vm {
                     };
                     self.call_native_semantic(id.recipe().semantic, receiver, a)
                 }
+                FunctionKind::Native(native)
+                    if native_fn_matches!(*native, native_throw_type_error) =>
+                {
+                    let error = f
+                        .props
+                        .borrow()
+                        .get(REALM_GLOBAL_PROP)
+                        .cloned()
+                        .map(|global| realm_type_error(self, &global, "restricted function property"))
+                        .unwrap_or_else(|| type_error(self, "restricted function property"));
+                    Err(JsError::Throw(error))
+                }
                 FunctionKind::Native(native) if is_dynamic_constructor_native(*native) => {
                     let previous_constructor = self.current_constructor.replace(c.clone());
                     let result = self.call_native_semantic(*native, t, a);
@@ -12911,8 +12936,8 @@ impl Vm {
         // is ordinary Object.prototype (not Array.prototype).
         let av = self.object_value(Object::array(self.default_object_prototype(), args.clone()));
         self.set_prop(&av, "\0wrapper", Value::string_value("Arguments"));
-        if strict {
-            let throw_type_error = self.throw_type_error();
+        if strict || non_simple_parameters {
+            let throw_type_error = self.throw_type_error_for_environment(&body_environment);
             self.define_accessor_slot(
                 &av,
                 "callee",
@@ -37057,6 +37082,7 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Environment::set(&environment, "AsyncFunction", realm_async_function);
     Environment::set(&environment, "AsyncGeneratorFunction", realm_async_generator_function);
     let throw_type_error = vm.new_throw_type_error();
+    vm.set_prop(&throw_type_error, REALM_GLOBAL_PROP, global.clone());
     vm.set_prop(
         &global,
         dynbytecode::THROW_TYPE_ERROR_PROP,
@@ -37296,6 +37322,19 @@ fn intrinsic_error(vm: &Vm, constructor_id: BuiltinId, name: &str, message: &str
     vm.set_prop(&error, "constructor", vm.builtin(constructor_id));
     error
 }
+
+fn realm_type_error(vm: &Vm, global: &Value, message: &str) -> Value {
+    let constructor = vm.get_prop(global, "TypeError");
+    let prototype = constructor
+        .as_function_ref()
+        .map(|function| function.prototype.clone());
+    let error = vm.object(prototype);
+    vm.set_prop(&error, "message", Value::string_value(message));
+    vm.set_prop(&error, "name", Value::string_value("TypeError"));
+    vm.set_prop(&error, "constructor", constructor);
+    error
+}
+
 fn native_assert(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     if args.first().is_none_or(Value::truthy) {
         return Ok(Value::Undefined);
