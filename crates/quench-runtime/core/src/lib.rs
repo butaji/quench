@@ -29189,6 +29189,12 @@ fn native_date(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     };
     let millis = time_clip(millis);
     vm.set_prop(&date, "\0date", Value::Number(millis));
+    // The Date function call (without `new`) returns the current date string;
+    // only construction publishes the Date object. Keep this distinction at
+    // the native semantic boundary so every execution tier observes it.
+    if vm.current_new_target.is_none() {
+        return native_date_to_string(vm, date, &[]);
+    }
     Ok(date)
 }
 
