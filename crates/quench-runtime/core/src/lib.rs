@@ -276,6 +276,7 @@ environment_keys! {
     SUPER_CALLED_ENV_NAME => "super-called",
     CLASS_FIELDS_INITIALIZED_ENV_NAME => "class-fields-initialized",
 }
+const CLASS_FIELDS_INITIALIZED_PROP: &str = "\0quench:class-fields-initialized";
 const CLASS_FIELD_KEY_PREFIX: &str = "\0quench:class-field-key:";
 const CLASS_PRIVATE_KEY_PREFIX: &str = "\0quench:class-private-key:";
 const CLASS_PRIVATE_BRAND_PREFIX: &str = "\0quench:class-private-brand:";
@@ -11460,8 +11461,9 @@ impl Vm {
         eval_env: Env,
         receiver: &Value,
     ) -> JsResult<()> {
-        if Environment::get(&class_env, CLASS_FIELDS_INITIALIZED_ENV_NAME)
-            .is_some_and(|value| value.truthy())
+        if self
+            .get_prop(receiver, CLASS_FIELDS_INITIALIZED_PROP)
+            .truthy()
         {
             return Ok(());
         }
@@ -11510,11 +11512,7 @@ impl Vm {
                 &[receiver.clone(), Value::string_value(key), descriptor],
             )?;
         }
-        Environment::set(
-            &class_env,
-            CLASS_FIELDS_INITIALIZED_ENV_NAME,
-            Value::Bool(true),
-        );
+        self.set_prop(receiver, CLASS_FIELDS_INITIALIZED_PROP, Value::Bool(true));
         Ok(())
     }
 
@@ -15489,37 +15487,6 @@ impl Vm {
                         &format!("{CLASS_FIELD_KEY_PREFIX}{index}"),
                         Value::string_value(key.clone()),
                     );
-                    if field.r#static {
-                        let value = field
-                            .value
-                            .as_ref()
-                            .map(|value| self.eval_expr(value, class_env.clone()))
-                            .transpose()?
-                            .unwrap_or(Value::Undefined);
-                        if field
-                            .value
-                            .as_ref()
-                            .is_some_and(is_anonymous_function_definition)
-                        {
-                            let display_key = match &field.key {
-                                PropertyKey::PrivateIdentifier(identifier) => {
-                                    format!("#{}", identifier.name)
-                                }
-                                _ => key.clone(),
-                            };
-                            set_function_name(&value, &display_key);
-                        }
-                        let descriptor = self.ordinary_object();
-                        self.set_prop(&descriptor, "value", value);
-                        self.set_prop(&descriptor, "writable", Value::Bool(true));
-                        self.set_prop(&descriptor, "enumerable", Value::Bool(true));
-                        self.set_prop(&descriptor, "configurable", Value::Bool(true));
-                        native_object_define_property(
-                            self,
-                            Value::Undefined,
-                            &[class.clone(), Value::string_value(key), descriptor],
-                        )?;
-                    }
                 }
                 ClassElement::MethodDefinition(method) => {
                     if method.kind == MethodDefinitionKind::Constructor {
@@ -15614,6 +15581,48 @@ impl Vm {
                 }
                 _ => {}
             }
+        }
+        // All computed field/method keys are evaluated in declaration order
+        // before any static initializer runs.  Static values are then
+        // defined in their own order, preserving intercalated key effects.
+        for (index, element) in n.body.body.iter().enumerate() {
+            let ClassElement::PropertyDefinition(field) = element else {
+                continue;
+            };
+            if !field.r#static {
+                continue;
+            }
+            let key = Environment::get(&class_env, &format!("{CLASS_FIELD_KEY_PREFIX}{index}"))
+                .and_then(|value| value.as_string().cloned())
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            let value = field
+                .value
+                .as_ref()
+                .map(|value| self.eval_expr(value, class_env.clone()))
+                .transpose()?
+                .unwrap_or(Value::Undefined);
+            if field
+                .value
+                .as_ref()
+                .is_some_and(is_anonymous_function_definition)
+            {
+                let display_key = match &field.key {
+                    PropertyKey::PrivateIdentifier(identifier) => format!("#{}", identifier.name),
+                    _ => key.clone(),
+                };
+                set_function_name(&value, &display_key);
+            }
+            let descriptor = self.ordinary_object();
+            self.set_prop(&descriptor, "value", value);
+            self.set_prop(&descriptor, "writable", Value::Bool(true));
+            self.set_prop(&descriptor, "enumerable", Value::Bool(true));
+            self.set_prop(&descriptor, "configurable", Value::Bool(true));
+            native_object_define_property(
+                self,
+                Value::Undefined,
+                &[class.clone(), Value::string_value(key), descriptor],
+            )?;
         }
         Ok(class)
     }
