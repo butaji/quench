@@ -15010,24 +15010,45 @@ impl Vm {
                 let z = self.eval_expr(&v.argument, e)?;
                 use oxc_syntax::operator::UnaryOperator::*;
                 Ok(match v.operator {
-                    UnaryPlus if is_bigint_marker(&z) => {
-                        return Err(JsError::Throw(type_error(
-                            self,
-                            "cannot apply unary plus to a BigInt value",
-                        )));
+                    UnaryPlus => {
+                        let numeric = to_primitive_for_binary(self, &z, PrimitiveHint::Number)?;
+                        if is_bigint_marker(&numeric) {
+                            return Err(JsError::Throw(type_error(
+                                self,
+                                "cannot apply unary plus to a BigInt value",
+                            )));
+                        }
+                        Value::Number(to_number_with_vm(self, &numeric)?)
                     }
-                    UnaryPlus => Value::Number(z.number()),
-                    UnaryNegation if is_bigint_marker(&z) => {
-                        let value =
-                            parse_bigint_text(z.as_string().map_or("", |value| value.as_str()))
-                                .map_err(|_| {
-                                    JsError::Throw(type_error(self, "invalid BigInt value"))
-                                })?;
-                        bigint_marker(-value)
+                    UnaryNegation => {
+                        let numeric = to_primitive_for_binary(self, &z, PrimitiveHint::Number)?;
+                        if is_bigint_marker(&numeric) {
+                            let value = parse_bigint_text(
+                                numeric.as_string().map_or("", |value| value.as_str()),
+                            )
+                            .map_err(|_| {
+                                JsError::Throw(type_error(self, "invalid BigInt value"))
+                            })?;
+                            bigint_marker(-value)
+                        } else {
+                            Value::Number(-to_number_with_vm(self, &numeric)?)
+                        }
                     }
-                    UnaryNegation => Value::Number(-z.number()),
                     LogicalNot => Value::Bool(!z.truthy()),
-                    BitwiseNot => Value::Number(!i32_js(z.number()) as f64),
+                    BitwiseNot => {
+                        let numeric = to_primitive_for_binary(self, &z, PrimitiveHint::Number)?;
+                        if is_bigint_marker(&numeric) {
+                            let value = parse_bigint_text(
+                                numeric.as_string().map_or("", |value| value.as_str()),
+                            )
+                            .map_err(|_| {
+                                JsError::Throw(type_error(self, "invalid BigInt value"))
+                            })?;
+                            bigint_marker(!value)
+                        } else {
+                            Value::Number(!i32_js(to_number_with_vm(self, &numeric)?) as f64)
+                        }
+                    }
                     Typeof => Value::String(Rc::new(
                         if z.is_undefined() || is_html_dda_value(&z) {
                             "undefined"
