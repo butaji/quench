@@ -5312,7 +5312,20 @@ fn instance_of_with_vm(vm: &mut Vm, value: &Value, ctor: &Value) -> JsResult<boo
         let result = vm.call(has_instance, ctor.clone(), vec![value.clone()])?;
         return Ok(result.truthy());
     }
+    // `Function.prototype` is itself callable in ECMAScript.  The compact VM
+    // stores its ordinary prototype payload separately from function values,
+    // so recognize that canonical identity at this boundary instead of
+    // duplicating a second callable representation.
+    let function_prototype = vm
+        .builtin(BuiltinId::FunctionConstructor)
+        .as_function_ref()
+        .map(|function| function.prototype.clone());
+    let is_function_prototype = function_prototype.as_ref().is_some_and(|prototype| {
+        ctor.as_object_ref()
+            .is_some_and(|object| std::ptr::eq(object, &**prototype))
+    });
     let callable = ctor.is_function()
+        || is_function_prototype
         || proxy_target(ctor).is_some_and(|target| target.is_function());
     if !callable {
         return Err(JsError::Throw(type_error(
@@ -5320,15 +5333,25 @@ fn instance_of_with_vm(vm: &mut Vm, value: &Value, ctor: &Value) -> JsResult<boo
             "right-hand side of instanceof is not callable",
         )));
     }
+    // OrdinaryHasInstance returns false for primitive left operands before it
+    // reads C.prototype.  This ordering is observable when that property is a
+    // throwing accessor.
+    if !value.is_object_like() || is_symbol_carrier(value) {
+        return Ok(false);
+    }
     let prototype = vm.get_prop_with_accessors(ctor, "prototype")?;
+    // User-function prototype assignment keeps a stable internal object for
+    // compact heap layouts and records the assigned object as an alias.  The
+    // alias is the observable prototype identity used by OrdinaryHasInstance.
+    let prototype = prototype
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0prototype_alias").cloned())
+        .unwrap_or(prototype);
     if !prototype.is_object_like() || is_symbol_carrier(&prototype) {
         return Err(JsError::Throw(type_error(
             vm,
             "instanceof prototype is not an object",
         )));
-    }
-    if !value.is_object_like() || is_symbol_carrier(value) {
-        return Ok(false);
     }
     let mut current = value.clone();
     loop {
