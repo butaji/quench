@@ -15724,7 +15724,7 @@ impl Vm {
             ChainElement::PrivateFieldExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 if nullish(&object) {
-                    if optional_object(&member.object) {
+                    if member.optional || optional_object(&member.object) {
                         return Ok(Value::Undefined);
                     }
                     return Err(JsError::Throw(type_error(
