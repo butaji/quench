@@ -7330,7 +7330,7 @@ impl Vm {
             ("BigInt64Array", 8),
             ("BigUint64Array", 8),
         ] {
-            let constructor = self.native_named(native_typed_array_constructor, name, 1);
+        let constructor = self.native_named(native_typed_array_constructor, name, 1);
             self.set_prop(
                 &constructor,
                 "BYTES_PER_ELEMENT",
@@ -7373,10 +7373,26 @@ impl Vm {
                 "constructor",
                 PropertyAttributes::BUILTIN_METHOD,
             );
+            let tag_key = self.well_known_symbol_key("toStringTag");
+            self.set_prop(
+                &Value::Object(prototype.clone()),
+                &tag_key,
+                Value::string_value(name),
+            );
+            set_property_attributes(
+                &Value::Object(prototype.clone()),
+                &tag_key,
+                PropertyAttributes::BUILTIN_CONSTANT,
+            );
             self.set_prop(
                 &Value::Object(prototype),
                 "\0typed-array-bytes",
                 Value::Number(bytes as f64),
+            );
+            self.set_prop(
+                &Value::Object(prototype),
+                "\0typed-array-kind",
+                Value::string_value(name),
             );
             let prototype = constructor
                 .as_function_ref()
@@ -9478,9 +9494,14 @@ impl Vm {
             {
                 let offset = offset.number().max(0.0) as usize;
                 let width = bytes.number().max(1.0) as usize;
+                let value = object
+                    .borrow()
+                    .props
+                    .get("\0typed-array-kind")
+                    .map_or(v.clone(), |kind| typed_array_element_value(kind.string().as_str(), &v));
                 let data = self.get_prop(&buffer, ARRAY_BUFFER_DATA);
                 if data.as_object_ref().is_some() {
-                    self.set_prop(&data, &(offset / width + index).to_string(), v.clone());
+                    self.set_prop(&data, &(offset / width + index).to_string(), value);
                 }
             }
             let mut object = object.borrow_mut();
@@ -9523,8 +9544,22 @@ impl Vm {
                     });
                 return;
             }
+            let is_arguments = object
+                .props
+                .get("\0wrapper")
+                .and_then(Value::as_string)
+                .is_some_and(|wrapper| wrapper == "Arguments");
+            let argument_length = array_length(&object);
             if let Some(array) = &mut object.array {
                 if let Some(index) = array_index_key(k) {
+                    if is_arguments && index >= argument_length {
+                        object.props.insert(k, v);
+                        object
+                            .attributes
+                            .entry(k.to_owned())
+                            .or_insert(PropertyAttributes::DEFAULT);
+                        return;
+                    }
                     if index > MAX_MATERIALIZED_ARRAY_LENGTH {
                         object.props.insert(k, v);
                         let next_length = index.saturating_add(1);
@@ -11914,6 +11949,7 @@ impl Vm {
         class: &Class<'static>,
         env: &Env,
         receiver: &Value,
+        prototype: &Value,
     ) -> JsResult<()> {
         // Private elements are stored on the underlying object even when a
         // constructor returns a Proxy.  The proxy remains the observable
@@ -11954,6 +11990,25 @@ impl Vm {
                     )));
                 }
                 self.set_prop(&receiver, &brand, Value::Bool(true));
+                match element {
+                    ClassElement::MethodDefinition(method)
+                        if method.kind == MethodDefinitionKind::Method =>
+                    {
+                        let method = self.get_prop_with_accessors(prototype, &key)?;
+                        self.set_prop(&receiver, &key, method);
+                    }
+                    ClassElement::MethodDefinition(_) | ClassElement::AccessorProperty(_) => {
+                        let (getter, setter) = self.own_accessor_slots(prototype, &key);
+                        self.define_accessor_slot(
+                            &receiver,
+                            &key,
+                            getter,
+                            setter,
+                            PropertyAttributes::BUILTIN_CONSTANT,
+                        );
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(())
@@ -11988,7 +12043,12 @@ impl Vm {
         // Base instances receive private brands before their constructor body;
         // derived instances receive them at the first successful super() call.
         if super_constructor.is_none() {
-            self.install_class_private_brands(class, &env, &this)?;
+            self.install_class_private_brands(
+                class,
+                &env,
+                &this,
+                &Value::Object(function.prototype.clone()),
+            )?;
         }
         let result = if let Some(constructor) = constructor {
             if super_constructor.is_none() {
@@ -12054,7 +12114,12 @@ impl Vm {
                 }
                 _ => result,
             };
-            self.install_class_private_brands(class, &env, &result)?;
+            self.install_class_private_brands(
+                class,
+                &env,
+                &result,
+                &Value::Object(function.prototype.clone()),
+            )?;
             let field_env = Environment::new(Some(env.clone()));
             field_env.borrow_mut().declare("this", result.clone());
             self.initialize_class_instance_fields(class, env.clone(), field_env, &result)?;
@@ -14113,6 +14178,7 @@ impl Vm {
             && !has_inferable_binding_initializer(&r.program)
             && !has_direct_lexical_declaration(&r.program.body)
             && !program_contains_for_in(&r.program)
+            && !program_contains_for_of(&r.program)
         {
             (|| {
                 let statements: &'static [Statement<'static>] =
@@ -18192,7 +18258,13 @@ impl Vm {
                         // undefined.
                         self.set_prop(&class_value, DERIVED_THIS_PROP, result.clone());
                         self.set_prop(&class_value, DERIVED_SUPER_CALLED_PROP, Value::Bool(true));
-                        self.install_class_private_brands(node, &class_environment, &result)?;
+                        let prototype = Value::Object(function.prototype.clone());
+                        self.install_class_private_brands(
+                            node,
+                            &class_environment,
+                            &result,
+                            &prototype,
+                        )?;
                         self.initialize_class_instance_fields(
                             node,
                             class_environment,
@@ -20873,6 +20945,21 @@ fn program_contains_for_in(program: &Program<'_>) -> bool {
     scan.found
 }
 
+fn program_contains_for_of(program: &Program<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
+            self.found = true;
+            ast_walk::walk_for_of_statement(self, statement);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_program(program);
+    scan.found
+}
+
 struct IdentifierScan<'a> {
     name: &'a str,
     found: bool,
@@ -22123,7 +22210,9 @@ fn has_statement_position_function(program: &Program<'_>) -> bool {
             Statement::LabeledStatement(statement) => {
                 statement_position(&statement.body) || nested(&statement.body)
             }
-            Statement::WithStatement(statement) => nested(&statement.body),
+            Statement::WithStatement(statement) => {
+                statement_position(&statement.body) || nested(&statement.body)
+            }
             Statement::BlockStatement(block) => block.body.iter().any(nested),
             Statement::SwitchStatement(statement) => statement
                 .cases
@@ -25451,25 +25540,27 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
     } else {
         vm.object(None)
     };
-    let bytes = this
+    let (typed_array_kind, bytes) = this
         .as_object_ref()
         .and_then(|object| object.borrow().prototype.clone())
         .and_then(|mut prototype| {
             loop {
-                let (bytes, parent) = {
+                let (kind, bytes, parent) = {
                     let object = prototype.borrow();
                     (
+                        object.props.get("\0typed-array-kind").cloned(),
                         object.props.get("\0typed-array-bytes").cloned(),
                         object.prototype.clone(),
                     )
                 };
-                if bytes.is_some() {
-                    break bytes;
+                if kind.is_some() && bytes.is_some() {
+                    break kind.zip(bytes);
                 }
                 prototype = parent?;
             }
         })
-        .map_or(1.0, |value| value.number());
+        .map(|(kind, bytes)| (Some(kind.string()), bytes.number()))
+        .unwrap_or((None, 1.0));
     let source_buffer = args
         .first()
         .filter(|value| {
@@ -25560,6 +25651,9 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
         Value::Number(values.len() as f64),
     );
     vm.set_prop(&this, "\0typed-array-bytes", Value::Number(bytes));
+    if let Some(kind) = typed_array_kind {
+        vm.set_prop(&this, "\0typed-array-kind", Value::string_value(kind));
+    }
     if !had_source {
         for (index, value) in values.iter().cloned().enumerate() {
             vm.set_prop(&data, &index.to_string(), value);
@@ -31732,6 +31826,44 @@ const TYPED_ARRAY_OFFSET: &str = "\0typed-array-offset";
 const TYPED_ARRAY_FIXED: &str = "\0typed-array-fixed";
 const ARRAY_BUFFER_DATA: &str = "\0array-buffer-data";
 
+fn typed_array_element_value(kind: &str, value: &Value) -> Value {
+    let number = value.number();
+    let integer = if number.is_finite() { number.trunc() } else { 0.0 };
+    let modulo = |width: f64| Value::Number(integer.rem_euclid(width));
+    match kind {
+        "Uint8Array" | "Uint8ClampedArray" => {
+            if kind == "Uint8ClampedArray" {
+                Value::Number(integer.clamp(0.0, 255.0))
+            } else {
+                modulo(256.0)
+            }
+        }
+        "Int8Array" => {
+            let wrapped = integer.rem_euclid(256.0);
+            Value::Number(if wrapped >= 128.0 { wrapped - 256.0 } else { wrapped })
+        }
+        "Uint16Array" => modulo(65_536.0),
+        "Int16Array" => {
+            let wrapped = integer.rem_euclid(65_536.0);
+            Value::Number(if wrapped >= 32_768.0 {
+                wrapped - 65_536.0
+            } else {
+                wrapped
+            })
+        }
+        "Uint32Array" => modulo(4_294_967_296.0),
+        "Int32Array" => {
+            let wrapped = integer.rem_euclid(4_294_967_296.0);
+            Value::Number(if wrapped >= 2_147_483_648.0 {
+                wrapped - 4_294_967_296.0
+            } else {
+                wrapped
+            })
+        }
+        _ => value.clone(),
+    }
+}
+
 fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     if !this.is_object_like() {
         return Err(JsError::Throw(type_error(
@@ -31906,6 +32038,30 @@ fn native_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
 
 fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let source = vm.get_prop(&this, ARRAY_ITERATOR_SOURCE);
+    if let Some(object) = source.as_object_ref() {
+        let object = object.borrow();
+        if let (Some(buffer), Some(offset), Some(bytes)) = (
+            object.props.get(TYPED_ARRAY_BUFFER),
+            object.props.get(TYPED_ARRAY_OFFSET),
+            object.props.get("\0typed-array-bytes"),
+        ) {
+            let buffer_length = buffer
+                .as_object_ref()
+                .and_then(|buffer| buffer.borrow().props.get("byteLength").and_then(Value::as_number))
+                .unwrap_or(0.0)
+                .max(0.0) as usize;
+            let offset = offset.number().max(0.0) as usize;
+            let width = bytes.number().max(1.0) as usize;
+            let declared = object
+                .props
+                .get("\0typed-array-length")
+                .map_or(0, |value| value.number().max(0.0) as usize);
+            let fixed = object.props.get(TYPED_ARRAY_FIXED).is_some_and(Value::truthy);
+            if offset > buffer_length || (fixed && declared > buffer_length.saturating_sub(offset) / width) {
+                return Err(JsError::Throw(type_error(vm, "typed array is out of bounds")));
+            }
+        }
+    }
     let index = vm
         .get_prop(&this, ARRAY_ITERATOR_INDEX)
         .as_number()
@@ -32635,7 +32791,7 @@ fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
 }
 
 fn dynamic_function_body_early_error(program: &Program<'_>) -> bool {
-    has_strict_var_or_with_early_error(program, true)
+    has_strict_var_or_with_early_error(program, true) || has_function_early_error(program, true)
 }
 
 fn normalize_hashbang(source: &str) -> String {
@@ -34407,7 +34563,7 @@ fn native_error_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
         },
     ))
 }
-fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_object_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let tag = if this.is_undefined() {
         "Undefined"
     } else if this.is_null() {
@@ -34430,6 +34586,11 @@ fn native_object_to_string(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
         .is_some_and(|object| object.borrow().props.contains_key("\0date"))
     {
         "Date"
+    } else if let Some(tag) = vm
+        .get_prop(&this, &vm.well_known_symbol_key("toStringTag"))
+        .as_string()
+    {
+        return Ok(Value::string_value(format!("[object {tag}]")));
     } else if this.as_function_ref().is_some() {
         "Function"
     } else if this
