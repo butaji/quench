@@ -7337,6 +7337,29 @@ impl Vm {
             .map(|function| function.prototype.clone())
         {
             self.set_prop(&array_buffer, "prototype", Value::Object(prototype));
+            self.set_prop(
+                &Value::Object(
+                    array_buffer
+                        .as_function_ref()
+                        .expect("ArrayBuffer constructor")
+                        .prototype
+                        .clone(),
+                ),
+                "constructor",
+                array_buffer.clone(),
+            );
+            set_property_attributes(
+                &Value::Object(
+                    array_buffer
+                        .as_function_ref()
+                        .expect("ArrayBuffer constructor")
+                        .prototype
+                        .clone(),
+                ),
+                "constructor",
+                PropertyAttributes::BUILTIN_METHOD,
+            );
+        }
         let prototype = array_buffer
             .as_function_ref()
             .expect("ArrayBuffer constructor")
@@ -7348,18 +7371,21 @@ impl Vm {
             self.native_named(native_array_buffer_max_byte_length, "get maxByteLength", 0);
         let resizable = self.native_named(native_array_buffer_resizable, "get resizable", 0);
         let detached = self.native_named(native_array_buffer_detached, "get detached", 0);
-        for getter in [&byte_length, &max_byte_length, &resizable, &detached] {
+        let immutable = self.native_named(native_array_buffer_immutable, "get immutable", 0);
+        for getter in [&byte_length, &max_byte_length, &resizable, &detached, &immutable] {
             self.mark_nonconstructable(getter);
         }
         let byte_length_key = "byteLength";
         let max_byte_length_key = "maxByteLength";
         let resizable_key = "resizable";
         let detached_key = "detached";
+        let immutable_key = "immutable";
         for (key, getter) in [
             (byte_length_key, byte_length),
             (max_byte_length_key, max_byte_length),
             (resizable_key, resizable),
             (detached_key, detached),
+            (immutable_key, immutable),
         ] {
             self.define_accessor_slot(
                 &prototype_value,
@@ -7392,8 +7418,15 @@ impl Vm {
         self.set_prop(
             &prototype_value,
             "resize",
-                self.native_named(native_array_buffer_resize, "resize", 1),
-            );
+            self.native_named(native_array_buffer_resize, "resize", 1),
+        );
+        self.set_prop(
+            &prototype_value,
+            "transferToImmutable",
+            self.native_named(native_array_buffer_transfer_to_immutable, "transferToImmutable", 0),
+        );
+        for key in ["slice", "resize", "transferToImmutable"] {
+            set_property_attributes(&prototype_value, key, PropertyAttributes::BUILTIN_METHOD);
         }
         let array_buffer_is_view =
             self.native_named(native_array_buffer_is_view, "isView", 1);
@@ -26282,15 +26315,17 @@ fn native_array_buffer_max_byte_length(vm: &mut Vm, this: Value, _: &[Value]) ->
 
 fn native_array_buffer_resizable(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let this = array_buffer_receiver(vm, &this)?;
-    Ok(Value::Bool(
-        vm.get_prop(&this, "maxByteLength").number()
-            > vm.get_prop(&this, "byteLength").number(),
-    ))
+    Ok(Value::Bool(vm.get_prop(&this, "\0array-buffer-resizable").truthy()))
 }
 
 fn native_array_buffer_detached(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let _ = array_buffer_receiver(vm, &this)?;
     Ok(Value::Bool(false))
+}
+
+fn native_array_buffer_immutable(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let _ = array_buffer_receiver(vm, &this)?;
+    Ok(Value::Bool(vm.get_prop(&this, "immutable").truthy()))
 }
 
 fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -26320,13 +26355,20 @@ fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> 
         )));
     }
     let length = length.floor();
-    let max_length = args
+    let (max_length, has_max_length) = if let Some(options) = args
         .get(1)
         .filter(|value| value.is_object_like())
-        .and_then(|options| vm.get_prop_with_accessors(options, "maxByteLength").ok())
-        .filter(|value| !value.is_undefined())
-        .map(|value| value.number().floor())
-        .unwrap_or(length);
+    {
+        let value = vm.get_prop_with_accessors(options, "maxByteLength")?;
+        if value.is_undefined() {
+            (length, false)
+        } else {
+            let value = to_number_with_vm(vm, &value)?.floor();
+            (value, true)
+        }
+    } else {
+        (length, false)
+    };
     if !max_length.is_finite() || max_length < length {
         return Err(JsError::Throw(range_error(
             vm,
@@ -26343,6 +26385,7 @@ fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> 
     }
     vm.set_prop(&this, "byteLength", Value::Number(length));
     vm.set_prop(&this, "maxByteLength", Value::Number(max_length));
+    vm.set_prop(&this, "\0array-buffer-resizable", Value::Bool(has_max_length));
     vm.set_prop(&this, "\0array-buffer", Value::Bool(true));
     vm.set_prop(
         &this,
@@ -26369,9 +26412,14 @@ fn native_array_buffer_resize(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         .first()
         .map(|value| to_number_with_vm(vm, value))
         .transpose()?
-        .unwrap_or(0.0)
-        .max(0.0)
-        .floor();
+        .unwrap_or(0.0);
+    if !next.is_finite() || next < 0.0 || next.fract() != 0.0 {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "ArrayBuffer resize length is out of bounds",
+        )));
+    }
+    let next = next.floor();
     let max = vm.get_prop(&this, "maxByteLength").number();
     if next > max {
         return Err(JsError::Throw(range_error(
@@ -26388,6 +26436,22 @@ fn native_array_buffer_resize(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         vm.set_prop(&data, "length", Value::Number(0.0));
     }
     Ok(Value::Undefined)
+}
+
+fn native_array_buffer_transfer_to_immutable(
+    vm: &mut Vm,
+    this: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    let _ = array_buffer_receiver(vm, &this)?;
+    let length = vm.get_prop(&this, "byteLength").number().max(0.0) as usize;
+    let result = native_array_buffer_slice(
+        vm,
+        this,
+        &[Value::Number(0.0), Value::Number(length as f64)],
+    )?;
+    vm.set_prop(&result, "immutable", Value::Bool(true));
+    Ok(result)
 }
 
 fn native_array_buffer_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
