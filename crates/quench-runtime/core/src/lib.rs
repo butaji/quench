@@ -329,6 +329,7 @@ const PROMISE_COMBINATOR_KEY_PROP: &str = "\0quench:promise-combinator-key";
 const PROMISE_COMBINATOR_KEYED_PROP: &str = "\0quench:promise-combinator-keyed";
 const PROMISE_COMBINATOR_RESULT_PROP: &str = "\0quench:promise-combinator-result";
 const PROXY_NO_PROTOTYPE_PROP: &str = "\0quench:proxy-no-prototype";
+const SYNC_GENERATOR_CONSTRUCTOR_PROP: &str = "\0quench:sync-generator-constructor";
 const PROMISE_FINALLY_CALLBACK_PROP: &str = "\0quench:promise-finally-callback";
 const PROMISE_FINALLY_VALUE_PROP: &str = "\0quench:promise-finally-value";
 const PROMISE_FINALLY_REJECTED_PROP: &str = "\0quench:promise-finally-rejected";
@@ -6208,6 +6209,41 @@ impl Vm {
         self.async_constructor_for_realm(generator, None)
     }
 
+    fn sync_generator_constructor(&self) -> Value {
+        let global = self
+            .global_object_for_environment(&self.global)
+            .unwrap_or(Value::Undefined);
+        let existing = self.get_prop(&global, SYNC_GENERATOR_CONSTRUCTOR_PROP);
+        if existing.is_function() {
+            return existing;
+        }
+        let constructor = self.native_named(native_sync_generator_constructor, "GeneratorFunction", 1);
+        let function_prototype = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| function.prototype.clone());
+        let generator_function_prototype = self.object(function_prototype);
+        let generator_prototype = self.object(self.default_object_prototype());
+        self.set_prop(
+            &generator_function_prototype,
+            "prototype",
+            generator_prototype,
+        );
+        self.set_prop(
+            &constructor,
+            FUNCTION_PROTOTYPE_OVERRIDE_PROP,
+            generator_function_prototype.clone(),
+        );
+        self.set_prop(
+            &constructor,
+            "\0prototype_override",
+            generator_function_prototype.clone(),
+        );
+        self.set_prop(&constructor, "prototype", generator_function_prototype);
+        self.set_prop(&global, SYNC_GENERATOR_CONSTRUCTOR_PROP, constructor.clone());
+        constructor
+    }
+
     fn async_constructor_for_realm(&self, generator: bool, realm_global: Option<Value>) -> Value {
         let realm_handle = realm_global.as_ref().and_then(Value::as_object);
         if let Some(realm_handle) = realm_handle.as_ref() {
@@ -8558,7 +8594,8 @@ impl Vm {
                 || props.contains_key(&accessor_slot("get", key))
                 || props.contains_key(&accessor_slot("set", key))
                 || (key == "prototype"
-                    && constructable(value)
+                    && (constructable(value)
+                        || matches!(&function.kind, FunctionKind::User { node, .. } if node.generator))
                     && !props.contains_key(PROXY_NO_PROTOTYPE_PROP))
                 || key == "name"
                 || key == "length"
@@ -14863,6 +14900,19 @@ impl Vm {
             e
         };
         let p = self.allocate_object(Object::ordinary(self.default_object_prototype()));
+        if n.generator {
+            if let Some(generator_prototype) = self
+                .get_prop(
+                    &self.sync_generator_constructor(),
+                    "prototype",
+                )
+                .as_object()
+                .map(|prototype| self.get_prop(&Value::Object(prototype), "prototype"))
+                .and_then(|value| value.as_object())
+            {
+                p.borrow_mut().prototype = Some(generator_prototype);
+            }
+        }
         if n.r#async && n.generator {
             let constructor = self.async_constructor_for_environment(true, &e);
             let prototype = constructor
@@ -22943,6 +22993,17 @@ fn native_typed_array_fill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         vm.set_prop(&this, &index.to_string(), value.clone());
     }
     Ok(this)
+}
+
+fn native_sync_generator_constructor(
+    vm: &mut Vm,
+    _this: Value,
+    _args: &[Value],
+) -> JsResult<Value> {
+    Err(JsError::Throw(type_error(
+        vm,
+        "GeneratorFunction constructor is not directly callable",
+    )))
 }
 
 fn generator_result(vm: &mut Vm, value: Value, done: bool) -> Value {
@@ -31834,7 +31895,10 @@ fn native_object_get_own_property_descriptor(
             vm.set_prop(&descriptor, "get", getter.unwrap_or(Value::Undefined));
             vm.set_prop(&descriptor, "set", setter.unwrap_or(Value::Undefined));
             let attributes = function.attributes.borrow().get(&key).copied().unwrap_or(
-                if key == "prototype" && constructable(target) {
+                if key == "prototype"
+                    && (constructable(target)
+                        || matches!(&function.kind, FunctionKind::User { node, .. } if node.generator))
+                {
                     PropertyAttributes {
                         writable: true,
                         enumerable: false,
@@ -31898,7 +31962,8 @@ fn native_object_get_own_property_descriptor(
     }
     let value = if let Some(function) = target.as_function_ref() {
         if key == "prototype"
-            && constructable(target)
+            && (constructable(target)
+                || matches!(&function.kind, FunctionKind::User { node, .. } if node.generator))
             && !function
                 .props
                 .borrow()
@@ -31995,6 +32060,9 @@ fn native_object_get_own_property_descriptor(
         .unwrap_or(PropertyAttributes {
             writable: if prototype_metadata {
                 constructable(target)
+                    || target.as_function_ref().is_some_and(|function| {
+                        matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)
+                    })
             } else {
                 !function_metadata && !is_number_constant
             },
@@ -32908,7 +32976,7 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
         if target
             .as_function_ref()
             .is_some_and(|function| match &function.kind {
-                FunctionKind::User { node, .. } => node.r#async,
+                FunctionKind::User { node, .. } => node.r#async || node.generator,
                 FunctionKind::Arrow { node, .. } => node.r#async,
                 _ => false,
             })
@@ -32916,6 +32984,9 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             let generator = target.as_function_ref().is_some_and(|function| {
                 matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)
             });
+            if generator {
+                return Ok(vm.get_prop(&vm.sync_generator_constructor(), "prototype"));
+            }
             let prototype = target
                 .as_function_ref()
                 .and_then(|function| function.props.borrow().get("constructor").cloned())
