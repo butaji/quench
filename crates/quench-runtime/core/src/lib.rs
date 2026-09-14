@@ -2970,6 +2970,11 @@ enum LValue {
         receiver: Value,
         key: String,
     },
+    DeferredSuperProp {
+        base: Value,
+        receiver: Value,
+        key: Value,
+    },
 }
 
 // A closed, benchmark-independent vocabulary for selecting and profiling
@@ -8505,6 +8510,12 @@ impl Vm {
         value: Value,
         receiver: &Value,
     ) -> JsResult<()> {
+        if object.is_null() || object.is_undefined() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "cannot set property on nullish value",
+            )));
+        }
         if is_module_namespace(object) {
             return Err(JsError::Throw(type_error(
                 self,
@@ -15129,6 +15140,13 @@ impl Vm {
                         }
                     }
                 };
+                if v.operator == Assign
+                    && let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &v.left
+                    && is_anonymous_function_definition(&v.right)
+                    && function_name_is_inferable(&value)
+                {
+                    set_function_name(&value, identifier.name.as_str());
+                }
                 self.write_lvalue(target, value.clone())?;
                 Ok(value)
             }
@@ -15176,14 +15194,14 @@ impl Vm {
             }
             ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
+                let key_value = self.eval_expr(&m.expression, e)?;
+                let k = self.to_property_key(key_value)?;
                 if o.is_null() || o.is_undefined() {
                     return Err(JsError::Throw(type_error(
                         self,
                         "cannot read property of nullish value",
                     )));
                 }
-                let key_value = self.eval_expr(&m.expression, e)?;
-                let k = self.to_property_key(key_value)?;
                 self.get_prop_with_accessors(&o, &k)
             }
             CallExpression(v) => {
@@ -15544,15 +15562,17 @@ impl Vm {
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let base = self.eval_expr(&m.object, e.clone())?;
                 let key_value = self.eval_expr(&m.expression, e.clone())?;
-                let key = self.to_property_key(key_value)?;
                 if matches!(&m.object, Expression::Super(_)) {
-                    return Ok(LValue::SuperProp {
+                    return Ok(LValue::DeferredSuperProp {
                         base,
                         receiver: Environment::get(&e, "this").unwrap_or(Value::Undefined),
-                        key,
+                        key: key_value,
                     });
                 }
-                Ok(LValue::Prop(base, key))
+                Ok(LValue::DeferredProp {
+                    object: base,
+                    key: key_value,
+                })
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
@@ -15598,14 +15618,23 @@ impl Vm {
             LValue::WithProp(object, key) | LValue::Prop(object, key) => {
                 self.get_prop_with_accessors(object, key)
             }
-            // Prepared destructuring targets are write-only references; the
-            // source value is read from the other object before PutValue.
-            LValue::DeferredProp { .. } => Ok(Value::Undefined),
+            LValue::DeferredProp { object, key } => {
+                let key = self.to_property_key(key.clone())?;
+                self.get_prop_with_accessors(object, &key)
+            }
             LValue::SuperProp {
                 base,
                 receiver,
                 key,
             } => self.get_prop_with_receiver(base, key, receiver),
+            LValue::DeferredSuperProp {
+                base,
+                receiver,
+                key,
+            } => {
+                let key = self.to_property_key(key.clone())?;
+                self.get_prop_with_receiver(base, &key, receiver)
+            }
         }
     }
     fn write_lvalue(&mut self, target: LValue, v: Value) -> JsResult<()> {
@@ -15656,6 +15685,14 @@ impl Vm {
                 receiver,
                 key,
             } => self.set_prop_with_receiver(&base, &key, v, &receiver)?,
+            LValue::DeferredSuperProp {
+                base,
+                receiver,
+                key,
+            } => {
+                let key = self.to_property_key(key)?;
+                self.set_prop_with_receiver(&base, &key, v, &receiver)?;
+            }
         }
         Ok(())
     }
