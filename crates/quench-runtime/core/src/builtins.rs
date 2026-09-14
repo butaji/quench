@@ -303,6 +303,7 @@ builtin_catalog! {
     ArrayConstructor, Global, "Array", native_array, Generic, MAY_ALLOCATE;
     ArrayIsArray, ArrayConstructor, "isArray", native_array_is_array, Generic, PURE;
     ArrayFrom, ArrayConstructor, "from", native_array_from, Generic, MAY_ALLOCATE;
+    ArrayFromAsync, ArrayConstructor, "fromAsync", native_array_from_async, Generic, MAY_ALLOCATE;
     ArrayOf, ArrayConstructor, "of", native_array_of, Generic, MAY_ALLOCATE;
     FunctionConstructor, Global, "Function", native_function_constructor, Generic, MAY_ALLOCATE;
     StringConstructor, Global, "String", native_string, Generic, MAY_ALLOCATE;
@@ -604,6 +605,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ObjectConstructor
         | BuiltinId::ArrayIsArray
         | BuiltinId::ArrayFrom
+        | BuiltinId::ArrayFromAsync
         | BuiltinId::ArrayConstructor
         | BuiltinId::StringConstructor
         | BuiltinId::NumberConstructor
