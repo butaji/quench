@@ -7713,6 +7713,33 @@ impl Vm {
             }
             Environment::set(&g, name, constructor);
         }
+        let atomics = self.object(None);
+        install_native_methods!(
+            self,
+            atomics.clone(),
+            "add" => native_atomics_add / 3,
+            "and" => native_atomics_and / 3,
+            "compareExchange" => native_atomics_compare_exchange / 4,
+            "exchange" => native_atomics_exchange / 3,
+            "isLockFree" => native_atomics_is_lock_free / 1,
+            "load" => native_atomics_load / 2,
+            "notify" => native_atomics_notify / 3,
+            "or" => native_atomics_or / 3,
+            "store" => native_atomics_store / 3,
+            "sub" => native_atomics_sub / 3,
+            "wait" => native_atomics_wait / 4,
+            "waitAsync" => native_atomics_wait_async / 4,
+            "xor" => native_atomics_xor / 3,
+            "pause" => native_atomics_pause / 0,
+        );
+        let atomics_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&atomics, &atomics_tag, Value::string_value("Atomics"));
+        set_property_attributes(
+            &atomics,
+            &atomics_tag,
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
+        Environment::set(&g, "Atomics", atomics);
         // Collections are also used by the shared test harness (for cycle
         // detection and structural comparison). Publish their small semantic
         // kernel even when Symbol.species is unavailable in a reduced realm.
@@ -8968,6 +8995,8 @@ impl Vm {
                 "AggregateError",
                 "SuppressedError",
                 "AsyncDisposableStack",
+                "DisposableStack",
+                "Atomics",
                 "Promise",
                 "Proxy",
                 "ArrayBuffer",
@@ -9271,6 +9300,12 @@ impl Vm {
                     .zip(object.props.get("\0typed-array-bytes").cloned())
             };
             if let Some(((buffer, offset), bytes)) = typed_view {
+                let typed_kind = x
+                    .borrow()
+                    .props
+                    .get("\0typed-array-kind")
+                    .map(Value::string)
+                    .unwrap_or_default();
                 if k == "length" {
                     let buffer_len =
                         self.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
@@ -9305,13 +9340,22 @@ impl Vm {
                             value
                         })
                     }) {
+                        if matches!(typed_kind.as_str(), "BigInt64Array" | "BigUint64Array")
+                            && !is_bigint_marker(&value)
+                        {
+                            return bigint_marker(BigInt::from(value.number() as i64));
+                        }
                         return value;
                     }
                     let buffer_len =
                         self.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
                     let width = bytes.number().max(1.0) as usize;
                     if index < buffer_len.saturating_sub(offset) / width {
-                        return Value::Number(0.0);
+                        return if matches!(typed_kind.as_str(), "BigInt64Array" | "BigUint64Array") {
+                            bigint_marker(BigInt::from(0))
+                        } else {
+                            Value::Number(0.0)
+                        };
                     }
                 }
             }
@@ -28197,7 +28241,11 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
         .filter(|value| {
             value
                 .as_object_ref()
-                .is_some_and(|object| object.borrow().props.contains_key("\0array-buffer"))
+                .is_some_and(|object| {
+                    let object = object.borrow();
+                    object.props.contains_key("\0array-buffer")
+                        || object.props.contains_key("\0shared-array-buffer")
+                })
         })
         .cloned();
     let source_offset = source_buffer
@@ -30605,6 +30653,213 @@ fn native_promise_with_resolvers(vm: &mut Vm, constructor: Value, _: &[Value]) -
     vm.set_prop(&result, "reject", reject);
     Ok(result)
 }
+
+fn atomics_view(vm: &mut Vm, value: &Value, require_shared: bool) -> JsResult<(Value, String)> {
+    let Some(object) = value.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "Atomics operation requires a typed array")));
+    };
+    let object = object.borrow();
+    let Some(buffer) = object.props.get(TYPED_ARRAY_BUFFER).cloned() else {
+        return Err(JsError::Throw(type_error(vm, "Atomics operation requires a typed array")));
+    };
+    let kind = object
+        .props
+        .get("\0typed-array-kind")
+        .map(Value::string)
+        .unwrap_or_default();
+    let integer = matches!(
+        kind.as_str(),
+        "Int8Array"
+            | "Uint8Array"
+            | "Int16Array"
+            | "Uint16Array"
+            | "Int32Array"
+            | "Uint32Array"
+            | "BigInt64Array"
+            | "BigUint64Array"
+    );
+    if !integer {
+        return Err(JsError::Throw(type_error(vm, "Atomics operation requires an integer typed array")));
+    }
+    if require_shared
+        && !buffer
+            .as_object_ref()
+            .is_some_and(|buffer| buffer.borrow().props.contains_key("\0shared-array-buffer"))
+    {
+        return Err(JsError::Throw(type_error(vm, "Atomics operation requires a shared buffer")));
+    }
+    Ok((value.clone(), kind))
+}
+
+fn atomics_index(vm: &mut Vm, view: &Value, value: &Value) -> JsResult<usize> {
+    let number = to_number_with_vm(vm, value)?;
+    let index = if number.is_nan() || number == 0.0 { 0 } else if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+        return Err(JsError::Throw(range_error(vm, "Atomics index is out of range")));
+    } else {
+        number as usize
+    };
+    let length = vm.get_prop(view, "length").number().max(0.0) as usize;
+    if index >= length {
+        return Err(JsError::Throw(range_error(vm, "Atomics index is out of range")));
+    }
+    Ok(index)
+}
+
+fn atomics_number_argument(vm: &mut Vm, value: &Value) -> JsResult<Value> {
+    Ok(typed_array_element_value(
+        "Int32Array",
+        &Value::Number(to_number_with_vm(vm, value)?),
+    ))
+}
+
+fn atomics_rmw(vm: &mut Vm, this: Value, args: &[Value], op: &'static str) -> JsResult<Value> {
+    let (view, kind) = atomics_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let buffer = vm.get_prop(&view, TYPED_ARRAY_BUFFER);
+    if vm.get_prop(&buffer, "immutable").truthy() {
+        return Err(JsError::Throw(type_error(vm, "Atomics operation requires a writable buffer")));
+    }
+    let index = atomics_index(vm, &view, args.get(1).unwrap_or(&Value::Undefined))?;
+    let key = index.to_string();
+    let old = vm.get_prop(&view, &key);
+    let bigint = matches!(kind.as_str(), "BigInt64Array" | "BigUint64Array");
+    let replacement = if bigint {
+        let left = bigint_value(vm, &old)?;
+        let right = bigint_value(vm, args.get(2).unwrap_or(&Value::Undefined))?;
+        bigint_marker(match op {
+            "add" => left + right,
+            "sub" => left - right,
+            "and" => left & right,
+            "or" => left | right,
+            "xor" => left ^ right,
+            _ => right,
+        })
+    } else {
+        let left = old.number();
+        let right = to_number_with_vm(vm, args.get(2).unwrap_or(&Value::Undefined))?;
+        let value = match op {
+            "add" => left + right,
+            "sub" => left - right,
+            "and" => (left as i32 & right as i32) as f64,
+            "or" => (left as i32 | right as i32) as f64,
+            "xor" => (left as i32 ^ right as i32) as f64,
+            _ => right,
+        };
+        typed_array_element_value(&kind, &Value::Number(value))
+    };
+    vm.set_prop(&view, &key, replacement);
+    Ok(old)
+}
+
+fn native_atomics_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { atomics_rmw(vm, this, args, "add") }
+fn native_atomics_sub(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { atomics_rmw(vm, this, args, "sub") }
+fn native_atomics_and(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { atomics_rmw(vm, this, args, "and") }
+fn native_atomics_or(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { atomics_rmw(vm, this, args, "or") }
+fn native_atomics_xor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { atomics_rmw(vm, this, args, "xor") }
+
+fn native_atomics_exchange(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let (view, kind) = atomics_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let buffer = vm.get_prop(&view, TYPED_ARRAY_BUFFER);
+    if vm.get_prop(&buffer, "immutable").truthy() {
+        return Err(JsError::Throw(type_error(vm, "Atomics operation requires a writable buffer")));
+    }
+    let index = atomics_index(vm, &view, args.get(1).unwrap_or(&Value::Undefined))?;
+    let key = index.to_string();
+    let old = vm.get_prop(&view, &key);
+    let value = if matches!(kind.as_str(), "BigInt64Array" | "BigUint64Array") {
+        bigint_value(vm, args.get(2).unwrap_or(&Value::Undefined)).map(bigint_marker)?
+    } else {
+        typed_array_element_value(&kind, &atomics_number_argument(vm, args.get(2).unwrap_or(&Value::Undefined))?)
+    };
+    vm.set_prop(&view, &key, value);
+    Ok(old)
+}
+
+fn native_atomics_compare_exchange(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let (view, kind) = atomics_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let buffer = vm.get_prop(&view, TYPED_ARRAY_BUFFER);
+    if vm.get_prop(&buffer, "immutable").truthy() {
+        return Err(JsError::Throw(type_error(vm, "Atomics operation requires a writable buffer")));
+    }
+    let index = atomics_index(vm, &view, args.get(1).unwrap_or(&Value::Undefined))?;
+    let key = index.to_string();
+    let old = vm.get_prop(&view, &key);
+    let equal = if matches!(kind.as_str(), "BigInt64Array" | "BigUint64Array") {
+        bigint_value(vm, &old)? == bigint_value(vm, args.get(2).unwrap_or(&Value::Undefined))?
+    } else {
+        old.number() == to_number_with_vm(vm, args.get(2).unwrap_or(&Value::Undefined))?
+    };
+    if equal {
+        let value = if matches!(kind.as_str(), "BigInt64Array" | "BigUint64Array") {
+            bigint_value(vm, args.get(3).unwrap_or(&Value::Undefined)).map(bigint_marker)?
+        } else {
+            typed_array_element_value(&kind, &atomics_number_argument(vm, args.get(3).unwrap_or(&Value::Undefined))?)
+        };
+        vm.set_prop(&view, &key, value);
+    }
+    Ok(old)
+}
+
+fn native_atomics_load(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let (view, _) = atomics_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let index = atomics_index(vm, &view, args.get(1).unwrap_or(&Value::Undefined))?;
+    Ok(vm.get_prop(&view, &index.to_string()))
+}
+
+fn native_atomics_store(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let (view, kind) = atomics_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let buffer = vm.get_prop(&view, TYPED_ARRAY_BUFFER);
+    if vm.get_prop(&buffer, "immutable").truthy() {
+        return Err(JsError::Throw(type_error(vm, "Atomics operation requires a writable buffer")));
+    }
+    let index = atomics_index(vm, &view, args.get(1).unwrap_or(&Value::Undefined))?;
+    let value = if matches!(kind.as_str(), "BigInt64Array" | "BigUint64Array") {
+        bigint_value(vm, args.get(2).unwrap_or(&Value::Undefined)).map(bigint_marker)?
+    } else {
+        typed_array_element_value(&kind, &atomics_number_argument(vm, args.get(2).unwrap_or(&Value::Undefined))?)
+    };
+    vm.set_prop(&view, &index.to_string(), value.clone());
+    Ok(value)
+}
+
+fn native_atomics_is_lock_free(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let size = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(f64::NAN);
+    Ok(Value::Bool(matches!(size, 1.0 | 2.0 | 4.0 | 8.0)))
+}
+
+fn native_atomics_notify(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let (_, kind) = atomics_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    if !matches!(kind.as_str(), "Int32Array" | "BigInt64Array") {
+        return Err(JsError::Throw(type_error(vm, "Atomics.notify requires an Int32Array or BigInt64Array")));
+    }
+    Ok(Value::Number(0.0))
+}
+
+fn native_atomics_wait(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let (view, kind) = atomics_view(vm, args.first().unwrap_or(&Value::Undefined), true)?;
+    if !matches!(kind.as_str(), "Int32Array" | "BigInt64Array") {
+        return Err(JsError::Throw(type_error(vm, "Atomics.wait requires an Int32Array or BigInt64Array")));
+    }
+    let index = atomics_index(vm, &view, args.get(1).unwrap_or(&Value::Undefined))?;
+    let current = vm.get_prop(&view, &index.to_string());
+    let expected = args.get(2).cloned().unwrap_or(Value::Undefined);
+    if current.number() != expected.number() { return Ok(Value::string_value("not-equal")); }
+    Ok(Value::string_value("timed-out"))
+}
+
+fn native_atomics_wait_async(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let result = native_atomics_wait(vm, Value::Undefined, args)?;
+    let object = vm.object(None);
+    vm.set_prop(&object, "async", Value::Bool(false));
+    vm.set_prop(&object, "value", result);
+    Ok(object)
+}
+
+fn native_atomics_pause(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> { Ok(Value::Undefined) }
+
 fn native_promise_try(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     let call_args = args.get(1..).unwrap_or_default().to_vec();
@@ -36306,6 +36561,12 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     let symbol = vm.native_named(native_symbol, "Symbol", 0);
     let function = vm.native_named(native_function_constructor, "Function", 1);
     vm.set_prop(&function, REALM_GLOBAL_PROP, global.clone());
+    let realm_async_function = vm.async_constructor_for_realm(false, Some(global.clone()));
+    let realm_async_generator_function = vm.async_constructor_for_realm(true, Some(global.clone()));
+    vm.set_prop(&global, "AsyncFunction", realm_async_function.clone());
+    vm.set_prop(&global, "AsyncGeneratorFunction", realm_async_generator_function.clone());
+    Environment::set(&environment, "AsyncFunction", realm_async_function);
+    Environment::set(&environment, "AsyncGeneratorFunction", realm_async_generator_function);
     let throw_type_error = vm.new_throw_type_error();
     vm.set_prop(
         &global,
@@ -37169,6 +37430,13 @@ const TYPED_ARRAY_FIXED: &str = "\0typed-array-fixed";
 const ARRAY_BUFFER_DATA: &str = "\0array-buffer-data";
 
 fn typed_array_element_value(kind: &str, value: &Value) -> Value {
+    if matches!(kind, "BigInt64Array" | "BigUint64Array") {
+        return if is_bigint_marker(value) {
+            value.clone()
+        } else {
+            bigint_marker(BigInt::from(value.number() as i64))
+        };
+    }
     let number = value.number();
     let integer = if number.is_finite() { number.trunc() } else { 0.0 };
     let modulo = |width: f64| Value::Number(integer.rem_euclid(width));
@@ -37955,9 +38223,9 @@ fn dynamic_function_constructor(
         })
         .unwrap_or_else(|| vm.global.clone());
     let environment = if thrower.is_undefined() {
-        realm_environment
+        realm_environment.clone()
     } else {
-        let environment = Environment::new(Some(realm_environment));
+        let environment = Environment::new(Some(realm_environment.clone()));
         Environment::set(
             &environment,
             dynbytecode::THROW_TYPE_ERROR_ENV_NAME,
@@ -37973,16 +38241,34 @@ fn dynamic_function_constructor(
     vm.strict_mode = false;
     let result = vm.make_user(function, environment);
     vm.strict_mode = previous_strict_mode;
+    if prefix == "async function*"
+        && let Some(async_constructor) = vm
+            .async_constructor_for_environment(true, &realm_environment)
+            .as_function_ref()
+        && let Some(async_generator_prototype) = async_constructor
+            .prototype
+            .borrow()
+            .props
+            .get("prototype")
+            .and_then(Value::as_object)
+        && let Some(function) = result.as_function_ref()
+    {
+        function.prototype.borrow_mut().prototype = Some(async_generator_prototype);
+    }
     if let Some(global) = constructor_realm_global.as_ref() {
         vm.set_prop(&result, REALM_GLOBAL_PROP, global.clone());
     }
     if prefix != "function *"
         && let Some(new_target) = vm.current_new_target.clone()
     {
+        let target_realm_environment = new_target_realm_global
+            .as_ref()
+            .and_then(|global| vm.realm_environment_for_global(global))
+            .unwrap_or_else(|| realm_environment.clone());
         let fallback_constructor = if prefix == "async function*" {
-            vm.async_constructor_for_realm(true, new_target_realm_global.clone())
+            vm.async_constructor_for_environment(true, &target_realm_environment)
         } else if prefix == "async function" {
-            vm.async_constructor_for_realm(false, new_target_realm_global.clone())
+            vm.async_constructor_for_environment(false, &target_realm_environment)
         } else {
             new_target_realm_global
                 .as_ref()
@@ -38001,7 +38287,11 @@ fn dynamic_function_constructor(
                     .map(Value::Object)
             });
         if let Some(prototype) = prototype {
-            vm.set_prop(&result, FUNCTION_PROTOTYPE_OVERRIDE_PROP, prototype);
+            // This is the function object's [[Prototype]] override supplied
+            // by NewTarget. Keep it separate from the own `prototype` data
+            // property so dynamic async-generator functions retain their
+            // realm-owned %AsyncGenerator.prototype% object.
+            vm.set_prop(&result, FUNCTION_PROTOTYPE_CHAIN_PROP, prototype);
         }
     }
     Ok(result)
@@ -41482,6 +41772,17 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
                 matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)
             });
             if generator {
+                let async_generator = target.as_function_ref().is_some_and(|function| {
+                    matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async)
+                });
+                if async_generator {
+                    let constructor = target
+                        .as_function_ref()
+                        .and_then(|function| function.props.borrow().get("constructor").cloned())
+                        .filter(Value::is_function)
+                        .unwrap_or_else(|| vm.async_generator_constructor());
+                    return Ok(vm.get_prop(&constructor, "prototype"));
+                }
                 return Ok(vm.get_prop(&vm.sync_generator_constructor(), "prototype"));
             }
             let prototype = target
