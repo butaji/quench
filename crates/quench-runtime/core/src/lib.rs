@@ -5137,11 +5137,28 @@ fn abstract_equal_with_vm(vm: &mut Vm, left: &Value, right: &Value) -> JsResult<
     if right.as_bool().is_some() {
         return abstract_equal_with_vm(vm, left, &Value::Number(right.number()));
     }
-    if is_symbol_carrier(left) || is_symbol_carrier(right) {
-        return Ok(is_symbol_carrier(left) && is_symbol_carrier(right) && left.same_bits(right));
-    }
     let left_object = left.is_object_like();
     let right_object = right.is_object_like();
+    // Symbol primitives use an object carrier in the compact value model.
+    // They remain primitive for abstract equality: an ordinary object on the
+    // other side must still undergo ToPrimitive before identity is checked.
+    if is_symbol_carrier(left) {
+        if is_symbol_carrier(right) {
+            return Ok(left.same_bits(right));
+        }
+        if right_object {
+            let primitive = to_primitive_for_binary(vm, right, PrimitiveHint::Default)?;
+            return abstract_equal_with_vm(vm, left, &primitive);
+        }
+        return Ok(false);
+    }
+    if is_symbol_carrier(right) {
+        if left_object {
+            let primitive = to_primitive_for_binary(vm, left, PrimitiveHint::Default)?;
+            return abstract_equal_with_vm(vm, &primitive, right);
+        }
+        return Ok(false);
+    }
     if left_object && right_object {
         return Ok(left.same_bits(right));
     }
