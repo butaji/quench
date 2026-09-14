@@ -387,6 +387,14 @@ pub enum JsError {
     /// suspended. This never crosses the public VM boundary as a guest
     /// exception.
     Yield(Value),
+    /// Internal proper-tail-call completion. The source evaluator turns a
+    /// tail-position call into this data record; the enclosing source driver
+    /// consumes it without growing another Rust activation.
+    TailCall {
+        callee: Value,
+        receiver: Value,
+        args: Vec<Value>,
+    },
 }
 
 fn error_value(error: JsError) -> Value {
@@ -394,6 +402,7 @@ fn error_value(error: JsError) -> Value {
         JsError::Throw(value) => value,
         JsError::Message(message) => Value::string_value(message),
         JsError::Yield(value) => value,
+        JsError::TailCall { .. } => Value::Undefined,
     }
 }
 
@@ -429,6 +438,7 @@ impl fmt::Display for JsError {
                     write!(f, "uncaught object {{{properties}}}")
                 }
             }
+            Self::TailCall { .. } => f.write_str("internal tail call"),
             Self::Throw(v) => write!(f, "uncaught {}", v.display()),
             Self::Message(s) => f.write_str(s),
             Self::Yield(value) => write!(f, "internal generator yield {}", value.display()),
@@ -5654,16 +5664,10 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
                 )));
             }
             if matches!(op, Op::Div | Op::Rem) && right == BigInt::from(0u8) {
-                return Err(JsError::Throw(range_error(
-                    vm,
-                    "Division by zero",
-                )));
+                return Err(JsError::Throw(range_error(vm, "Division by zero")));
             }
             if matches!(op, Op::Pow) && right.sign() == Sign::Minus {
-                return Err(JsError::Throw(range_error(
-                    vm,
-                    "Exponent must be positive",
-                )));
+                return Err(JsError::Throw(range_error(vm, "Exponent must be positive")));
             }
             return Ok(bigint_binary(op, left, right));
         }
@@ -6273,7 +6277,8 @@ impl Vm {
         if existing.is_function() {
             return existing;
         }
-        let constructor = self.native_named(native_sync_generator_constructor, "GeneratorFunction", 1);
+        let constructor =
+            self.native_named(native_sync_generator_constructor, "GeneratorFunction", 1);
         let function_prototype = self
             .builtin(BuiltinId::FunctionConstructor)
             .as_function_ref()
@@ -6296,7 +6301,11 @@ impl Vm {
             generator_function_prototype.clone(),
         );
         self.set_prop(&constructor, "prototype", generator_function_prototype);
-        self.set_prop(&global, SYNC_GENERATOR_CONSTRUCTOR_PROP, constructor.clone());
+        self.set_prop(
+            &global,
+            SYNC_GENERATOR_CONSTRUCTOR_PROP,
+            constructor.clone(),
+        );
         constructor
     }
 
@@ -6547,6 +6556,7 @@ impl Vm {
             Err(JsError::Throw(value)) => ("rejected", value),
             Err(JsError::Message(message)) => ("rejected", Value::string_value(message)),
             Err(JsError::Yield(value)) => ("rejected", value),
+            Err(JsError::TailCall { .. }) => ("rejected", Value::Undefined),
         };
         self.set_prop(promise, PROMISE_STATE_PROP, Value::string_value(state));
         self.set_prop(promise, PROMISE_RESULT_PROP, value.clone());
@@ -7340,18 +7350,20 @@ impl Vm {
         // These constructor shells preserve subclass receiver identity. Their
         // dedicated storage kernels live at the runtime edge; the core still
         // publishes the correct constructor/prototype pair for inheritance.
-        for name in ["DataView", "SharedArrayBuffer", "WeakMap", "WeakRef", "WeakSet"] {
+        for name in [
+            "DataView",
+            "SharedArrayBuffer",
+            "WeakMap",
+            "WeakRef",
+            "WeakSet",
+        ] {
             let constructor = self.native_named(native_subclassable_builtin, name, 1);
             let prototype = constructor
                 .as_function_ref()
                 .expect("subclassable builtin")
                 .prototype
                 .clone();
-            self.set_prop(
-                &constructor,
-                "prototype",
-                Value::Object(prototype.clone()),
-            );
+            self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
             self.set_prop(
                 &Value::Object(prototype),
                 "constructor",
@@ -9914,11 +9926,9 @@ impl Vm {
             );
         }
         let split_named_body_binding = node.id.as_ref().is_some_and(|identifier| {
-            node.body
-                .as_ref()
-                .is_some_and(|body| {
-                    dynbytecode::contains_var_named(&body.statements, identifier.name.as_str())
-                })
+            node.body.as_ref().is_some_and(|body| {
+                dynbytecode::contains_var_named(&body.statements, identifier.name.as_str())
+            })
         });
         let body_environment = if non_simple_parameters || split_named_body_binding {
             let body_environment = Environment::new(Some(e.clone()));
@@ -10098,9 +10108,8 @@ impl Vm {
             next_statement: 0,
             done: false,
             async_generator: false,
-            mapped_arguments_object: mapped_parameter_list.then(|| {
-                av.as_object().expect("arguments object must be an object")
-            }),
+            mapped_arguments_object: mapped_parameter_list
+                .then(|| av.as_object().expect("arguments object must be an object")),
             pending_iterators: Vec::new(),
             pending_yield: None,
             replay_values: Vec::new(),
@@ -10396,6 +10405,7 @@ impl Vm {
                 JsError::Throw(value) => value,
                 JsError::Message(message) => Value::string_value(message),
                 JsError::Yield(value) => value,
+                JsError::TailCall { .. } => Value::Undefined,
             };
             self.set_prop(iterator, ASYNC_GENERATOR_ERROR_PROP, value.clone());
             self.settle_promise(first, Err(JsError::Throw(value.clone())));
@@ -11179,18 +11189,17 @@ impl Vm {
         }
         let e = Environment::new(Some(outer.clone()));
         if let (Some(identifier), Some(callee)) = (n.id.as_ref(), callee.as_ref()) {
-            e.borrow_mut().declare(identifier.name.as_str(), callee.clone());
+            e.borrow_mut()
+                .declare(identifier.name.as_str(), callee.clone());
             e.borrow_mut()
                 .named_function_names
                 .insert(identifier.name.to_string());
         }
-        let derived_constructor_target = callee
-            .as_ref()
-            .and_then(|callee| {
-                self.get_prop(callee, DERIVED_CONSTRUCTOR_PROP)
-                    .truthy()
-                    .then(|| self.get_prop(callee, DERIVED_THIS_PROP))
-            });
+        let derived_constructor_target = callee.as_ref().and_then(|callee| {
+            self.get_prop(callee, DERIVED_CONSTRUCTOR_PROP)
+                .truthy()
+                .then(|| self.get_prop(callee, DERIVED_THIS_PROP))
+        });
         if let Some(target) = derived_constructor_target {
             e.borrow_mut().declare(DERIVED_THIS_BINDING, target);
         }
@@ -11203,11 +11212,9 @@ impl Vm {
         // those two bindings distinct even for an otherwise-simple parameter
         // list (the ordinary function-instantiation rule).
         let split_named_body_binding = n.id.as_ref().is_some_and(|identifier| {
-            n.body
-                .as_ref()
-                .is_some_and(|body| {
-                    dynbytecode::contains_var_named(&body.statements, identifier.name.as_str())
-                })
+            n.body.as_ref().is_some_and(|body| {
+                dynbytecode::contains_var_named(&body.statements, identifier.name.as_str())
+            })
         });
         if non_simple_parameters {
             e.borrow_mut().declare(
@@ -11508,9 +11515,9 @@ impl Vm {
         eval_env: Env,
         receiver: &Value,
     ) -> JsResult<()> {
-        let has_instance_fields = class.body.body.iter().any(|element| {
-            matches!(element, ClassElement::PropertyDefinition(field) if !field.r#static)
-        });
+        let has_instance_fields = class.body.body.iter().any(
+            |element| matches!(element, ClassElement::PropertyDefinition(field) if !field.r#static),
+        );
         if !has_instance_fields {
             return Ok(());
         }
@@ -13217,9 +13224,7 @@ impl Vm {
                 self.import_meta_cache.insert(key, meta.clone());
                 meta
             };
-            environment
-                .borrow_mut()
-                .declare(IMPORT_META_ENV_NAME, meta);
+            environment.borrow_mut().declare(IMPORT_META_ENV_NAME, meta);
         }
         let r = Parser::new(&a, src, st)
             .with_options(ParseOptions {
@@ -13364,7 +13369,7 @@ impl Vm {
             || function_super_error
             || global_code_error
             || has_class_strict_name_error(&r.program)
-        || restricted_global_lexical_error
+            || restricted_global_lexical_error
             || strict_assignment_error
         {
             return Err(JsError::Throw(syntax_error(
@@ -13636,12 +13641,12 @@ impl Vm {
         if contains_async_function_constructor_probe(source)
             || source.contains(".resize(")
             || source.contains("delete arguments")
+            || source.contains("return")
         {
-            // Constructor/prototype reflection is not yet represented by the
-            // stencil property shape. Resizable ArrayBuffer mutation also
-            // changes the backing view shape across safepoints. Keep these
-            // dynamic programs on the shared interpreter path until those
-            // identities are lowered into the stencil image.
+            // Dynamic activation effects (including proper tail-call
+            // completions) are represented by the shared evaluator until the
+            // stencil ABI carries those control records explicitly. This is
+            // a semantic admission guard, not a second VM.
             self.jit_mode = JitMode::Off;
         }
         // An unexported async module can suspend after its first top-level
@@ -13670,7 +13675,7 @@ impl Vm {
         } else {
             None
         };
-        let out = if self.jit_mode == JitMode::Stencil
+        let mut out = if self.jit_mode == JitMode::Stencil
             && !eval_code
             && !script_eval
             && !contains_eval_call(source)
@@ -13759,6 +13764,19 @@ impl Vm {
             self.exec_stmts(&r.program.body, execution_environment.clone())
                 .and_then(|signal| self.complete_script_signal(signal))
         };
+        loop {
+            match out {
+                Err(JsError::TailCall {
+                    callee,
+                    receiver,
+                    args,
+                }) => out = self.call_arguments(&callee, receiver, args.as_slice()),
+                other => {
+                    out = other;
+                    break;
+                }
+            }
+        }
         if module_source {
             if let Some(mut exports) = self.module_export_stack.pop() {
                 if out.is_ok() {
@@ -14145,7 +14163,7 @@ impl Vm {
             ReturnStatement(x) => Ok(Signal::Return(
                 x.argument
                     .as_ref()
-                    .map(|z| self.eval_expr(z, e.clone()))
+                    .map(|z| self.eval_tail_expr(z, e.clone()))
                     .transpose()?
                     .unwrap_or(Value::Undefined),
             )),
@@ -14624,9 +14642,9 @@ impl Vm {
             let inferred_class_name = d
                 .init
                 .as_ref()
-                .filter(|init| {
-                    matches!(init, Expression::ClassExpression(class) if class.id.is_none())
-                })
+                .filter(
+                    |init| matches!(init, Expression::ClassExpression(class) if class.id.is_none()),
+                )
                 .and_then(|_| pattern_name(&d.id));
             let previous_class_name = self.pending_inferred_class_name.take();
             self.pending_inferred_class_name = inferred_class_name;
@@ -14638,8 +14656,7 @@ impl Vm {
                 .unwrap_or(Value::Undefined);
             self.pending_inferred_class_name = previous_class_name;
             if let Some(name) = pattern_name(&d.id)
-                && d
-                    .init
+                && d.init
                     .as_ref()
                     .is_some_and(is_anonymous_function_definition)
                 && value.as_function_ref().is_some()
@@ -15219,10 +15236,7 @@ impl Vm {
         let p = self.allocate_object(Object::ordinary(self.default_object_prototype()));
         if n.generator {
             if let Some(generator_prototype) = self
-                .get_prop(
-                    &self.sync_generator_constructor(),
-                    "prototype",
-                )
+                .get_prop(&self.sync_generator_constructor(), "prototype")
                 .as_object()
                 .map(|prototype| self.get_prop(&Value::Object(prototype), "prototype"))
                 .and_then(|value| value.as_object())
@@ -15440,12 +15454,11 @@ impl Vm {
             })
             .unwrap_or(0);
         let inferred_name = self.pending_inferred_class_name.clone();
-        let name = n
-            .id
-            .as_ref()
-            .map(|id| id.name.to_string())
-            .or(inferred_name)
-            .unwrap_or_default();
+        let name =
+            n.id.as_ref()
+                .map(|id| id.name.to_string())
+                .or(inferred_name)
+                .unwrap_or_default();
         let function = FunctionValue {
             kind: FunctionKind::Class {
                 node: unsafe { std::mem::transmute(n) },
@@ -15608,11 +15621,7 @@ impl Vm {
                     let method_value = self.make_user(&method.value, method_environment);
                     if !method.value.generator && !method.value.r#async {
                         self.mark_nonconstructable(&method_value);
-                        self.set_prop(
-                            &method_value,
-                            PROXY_NO_PROTOTYPE_PROP,
-                            Value::Bool(true),
-                        );
+                        self.set_prop(&method_value, PROXY_NO_PROTOTYPE_PROP, Value::Bool(true));
                     }
                     let display_key = match &method.key {
                         PropertyKey::PrivateIdentifier(identifier) => {
@@ -15697,13 +15706,11 @@ impl Vm {
                     let _ = self.exec_stmts(&block.body, block_environment)?;
                 }
                 ClassElement::PropertyDefinition(field) if field.r#static => {
-                    let key = Environment::get(
-                        &class_env,
-                        &format!("{CLASS_FIELD_KEY_PREFIX}{index}"),
-                    )
-                    .and_then(|value| value.as_string().cloned())
-                    .map(|value| value.to_string())
-                    .unwrap_or_default();
+                    let key =
+                        Environment::get(&class_env, &format!("{CLASS_FIELD_KEY_PREFIX}{index}"))
+                            .and_then(|value| value.as_string().cloned())
+                            .map(|value| value.to_string())
+                            .unwrap_or_default();
                     let value = field
                         .value
                         .as_ref()
@@ -15974,8 +15981,7 @@ impl Vm {
                     let object = self.eval_expr(&member.object, e.clone())?;
                     if object.is_null() || object.is_undefined() {
                         if member.optional
-                            || (chain_continues
-                                && Self::optional_chain_continues(&member.object))
+                            || (chain_continues && Self::optional_chain_continues(&member.object))
                         {
                             return Ok((Value::Undefined, Value::Undefined, true));
                         }
@@ -16004,8 +16010,7 @@ impl Vm {
                     let object = self.eval_expr(&member.object, e.clone())?;
                     if object.is_null() || object.is_undefined() {
                         if member.optional
-                            || (chain_continues
-                                && Self::optional_chain_continues(&member.object))
+                            || (chain_continues && Self::optional_chain_continues(&member.object))
                         {
                             return Ok((Value::Undefined, Value::Undefined, true));
                         }
@@ -16116,11 +16121,7 @@ impl Vm {
                     self.resolve_identifier_call(&e, identifier.name.as_str())?;
                 Ok((callee, receiver.unwrap_or(Value::Undefined), false))
             }
-            _ => Ok((
-                self.eval_expr(expression, e)?,
-                Value::Undefined,
-                false,
-            )),
+            _ => Ok((self.eval_expr(expression, e)?, Value::Undefined, false)),
         }
     }
 
@@ -16144,7 +16145,8 @@ impl Vm {
                     )?;
                     Ok(result)
                 } else {
-                    let result = self.get_prop_with_accessors(&object, member.property.name.as_str())?;
+                    let result =
+                        self.get_prop_with_accessors(&object, member.property.name.as_str())?;
                     Ok(result)
                 }
             }
@@ -16192,13 +16194,112 @@ impl Vm {
                 if !callee.is_function() {
                     return Err(JsError::Throw(type_error(self, "value is not callable")));
                 }
-                let args = self.eval_args(&call.arguments, e)?;
+                let args = self.eval_args(&call.arguments, e.clone())?;
                 let result = self.call(callee, receiver, args)?;
                 Ok(result)
             }
             ChainElement::TSNonNullExpression(expression) => {
                 self.eval_expr(&expression.expression, e)
             }
+        }
+    }
+
+    /// Evaluate an expression in tail position. Calls are represented as
+    /// data instead of entered immediately; the source driver can then reuse
+    /// one VM activation for arbitrarily deep proper-tail recursion.
+    fn eval_tail_expr<'a>(&mut self, expression: &Expression<'a>, e: Env) -> JsResult<Value> {
+        match expression {
+            Expression::ParenthesizedExpression(parenthesized) => {
+                self.eval_tail_expr(&parenthesized.expression, e)
+            }
+            Expression::SequenceExpression(sequence) => {
+                for expression in sequence
+                    .expressions
+                    .iter()
+                    .take(sequence.expressions.len().saturating_sub(1))
+                {
+                    self.eval_expr(expression, e.clone())?;
+                }
+                sequence
+                    .expressions
+                    .last()
+                    .map_or(Ok(Value::Undefined), |expression| {
+                        self.eval_tail_expr(expression, e)
+                    })
+            }
+            Expression::ConditionalExpression(conditional) => {
+                if self.eval_expr(&conditional.test, e.clone())?.truthy() {
+                    self.eval_tail_expr(&conditional.consequent, e)
+                } else {
+                    self.eval_tail_expr(&conditional.alternate, e)
+                }
+            }
+            Expression::LogicalExpression(logical) => {
+                let left = self.eval_expr(&logical.left, e.clone())?;
+                let continue_right = match logical.operator {
+                    oxc_syntax::operator::LogicalOperator::Or => !left.truthy(),
+                    oxc_syntax::operator::LogicalOperator::And => left.truthy(),
+                    oxc_syntax::operator::LogicalOperator::Coalesce => {
+                        left.is_null() || left.is_undefined()
+                    }
+                };
+                if continue_right {
+                    self.eval_tail_expr(&logical.right, e)
+                } else {
+                    Ok(left)
+                }
+            }
+            Expression::CallExpression(call) => {
+                let (callee, receiver, short_circuited) =
+                    self.eval_call_reference(&call.callee, e.clone(), true)?;
+                if short_circuited || (call.optional && (callee.is_null() || callee.is_undefined()))
+                {
+                    return Ok(Value::Undefined);
+                }
+                let args = self.eval_args(&call.arguments, e.clone())?;
+                if !callee.is_function() {
+                    return Err(JsError::Throw(type_error(self, "value is not callable")));
+                }
+                // Direct eval has caller-environment semantics and is not an
+                // ordinary tail call; retain the shared evaluator for it.
+                if !call.optional
+                    && matches!(&call.callee, Expression::Identifier(identifier) if identifier.name == "eval")
+                    && matches!(
+                        callee.as_function_ref().map(|function| &function.kind),
+                        Some(FunctionKind::Builtin(BuiltinId::Eval))
+                    )
+                {
+                    return native_eval_in_environment(self, &args, e, true, false);
+                }
+                Err(JsError::TailCall {
+                    callee,
+                    receiver,
+                    args,
+                })
+            }
+            Expression::TaggedTemplateExpression(tagged) => {
+                let (callee, receiver, _) =
+                    self.eval_call_reference(&tagged.tag, e.clone(), false)?;
+                let template = self.make_template_object(&tagged.quasi);
+                let mut args = vec![template];
+                args.extend(
+                    tagged
+                        .quasi
+                        .expressions
+                        .iter()
+                        .map(|expression| self.eval_expr(expression, e.clone()))
+                        .collect::<JsResult<Vec<_>>>()?,
+                );
+                if !callee.is_function() {
+                    return Err(JsError::Throw(type_error(self, "value is not callable")));
+                }
+                Err(JsError::TailCall {
+                    callee,
+                    receiver,
+                    args,
+                })
+            }
+            _ => self.eval_expr(expression, e),
         }
     }
 
@@ -16304,6 +16405,7 @@ impl Vm {
                     let reason = match error {
                         JsError::Throw(value) | JsError::Yield(value) => value,
                         JsError::Message(message) => Value::string_value(message),
+                        JsError::TailCall { .. } => Value::Undefined,
                     };
                     self.call(reject, Value::Undefined, vec![reason])?;
                     return Ok(promise);
@@ -16322,6 +16424,7 @@ impl Vm {
                             JsError::Throw(value) => value,
                             JsError::Message(message) => Value::string_value(message),
                             JsError::Yield(value) => value,
+                            JsError::TailCall { .. } => Value::Undefined,
                         };
                         self.call(reject, Value::Undefined, vec![reason])?;
                     }
@@ -16562,8 +16665,10 @@ impl Vm {
                 if let Some(home) = Environment::get(&e, CLASS_HOME_OBJECT_ENV_NAME) {
                     return native_object_get_prototype_of(self, Value::Undefined, &[home]);
                 }
-                Ok(Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME)
-                    .unwrap_or(Value::Undefined))
+                Ok(
+                    Environment::get(&e, CLASS_SUPER_PROTOTYPE_ENV_NAME)
+                        .unwrap_or(Value::Undefined),
+                )
             }
             ArrayExpression(v) => {
                 let a = self.array();
@@ -16724,12 +16829,12 @@ impl Vm {
                     // ReferenceError only after the global [[HasProperty]]
                     // check also misses.
                     let realm = self.realm_environment_for_environment(&e);
-                    let global_property = self
-                        .global_object_for_environment(&realm)
-                        .is_some_and(|global| {
-                            self.has_property_with_proxy(&global, identifier.name.as_str())
-                                .unwrap_or(false)
-                        });
+                    let global_property =
+                        self.global_object_for_environment(&realm)
+                            .is_some_and(|global| {
+                                self.has_property_with_proxy(&global, identifier.name.as_str())
+                                    .unwrap_or(false)
+                            });
                     if !global_property {
                         return Ok(Value::string_value("undefined"));
                     }
@@ -16761,9 +16866,7 @@ impl Vm {
                             Value::Number(-to_number_with_vm(self, &numeric)?)
                         }
                     }
-                    LogicalNot => {
-                        Value::Bool(!z.truthy())
-                    }
+                    LogicalNot => Value::Bool(!z.truthy()),
                     BitwiseNot => {
                         let numeric = to_primitive_for_binary(self, &z, PrimitiveHint::Number)?;
                         if is_bigint_marker(&numeric) {
@@ -16906,10 +17009,7 @@ impl Vm {
                     _ => Some(self.eval_expr(&v.right, e.clone())?),
                 };
                 let short_circuited = right.is_none()
-                    && matches!(
-                        v.operator,
-                        LogicalOr | LogicalAnd | LogicalNullish
-                    );
+                    && matches!(v.operator, LogicalOr | LogicalAnd | LogicalNullish);
                 macro_rules! compound_binary {
                     ($op:expr) => {
                         binary_with_vm(
@@ -16956,10 +17056,7 @@ impl Vm {
                         }
                     }
                 };
-                if matches!(
-                    v.operator,
-                    Assign | LogicalOr | LogicalAnd | LogicalNullish
-                )
+                if matches!(v.operator, Assign | LogicalOr | LogicalAnd | LogicalNullish)
                     && let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &v.left
                     && v.span.start == identifier.span.start
                     && is_anonymous_function_definition(&v.right)
@@ -17074,12 +17171,8 @@ impl Vm {
                 if matches!(&v.callee, Expression::Super(_)) {
                     let callee = Environment::get(&e, CLASS_CONSTRUCTOR_ENV_NAME)
                         .and_then(|constructor| {
-                            native_object_get_prototype_of(
-                                self,
-                                Value::Undefined,
-                                &[constructor],
-                            )
-                            .ok()
+                            native_object_get_prototype_of(self, Value::Undefined, &[constructor])
+                                .ok()
                         })
                         .filter(|prototype| !prototype.is_null())
                         .or_else(|| Environment::get(&e, CLASS_SUPER_CONSTRUCTOR_ENV_NAME))
@@ -17194,6 +17287,7 @@ impl Vm {
                         return Err(JsError::Message(format!("{error} at {:?}", v.span)));
                     }
                     Err(JsError::Yield(value)) => return Err(JsError::Yield(value)),
+                    Err(error @ JsError::TailCall { .. }) => return Err(error),
                 };
                 Ok(result)
             }
@@ -17492,11 +17586,7 @@ impl Vm {
         self.resolve_simple_target(s, e)
     }
 
-    fn resolve_target_for_put<'a>(
-        &mut self,
-        t: &AssignmentTarget<'a>,
-        e: Env,
-    ) -> JsResult<LValue> {
+    fn resolve_target_for_put<'a>(&mut self, t: &AssignmentTarget<'a>, e: Env) -> JsResult<LValue> {
         let Some(s) = t.as_simple_assignment_target() else {
             return Err(JsError::Message("target unsupported".into()));
         };
@@ -17580,8 +17670,7 @@ impl Vm {
     }
 
     fn resolve_identifier_target(&mut self, e: &Env, name: &str) -> JsResult<LValue> {
-        if name == "BindingIdentifier" {
-        }
+        if name == "BindingIdentifier" {}
         let mut current = Some(e.clone());
         while let Some(environment) = current {
             let (with_object, has_local, parent) = {
@@ -17671,6 +17760,12 @@ impl Vm {
                 set_assignment_property(self, &object, &key, v)?;
             }
             LValue::DeferredProp { object, key } => {
+                if object.is_null() || object.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot set property on nullish value",
+                    )));
+                }
                 let key = self.to_property_key(key)?;
                 set_assignment_property(self, &object, &key, v)?;
             }
@@ -17714,7 +17809,15 @@ impl Vm {
                 Environment::set(&e, &name, v.clone());
                 self.sync_mapped_argument(&e, &name, v);
             }
-            LValue::Prop(o, k) => set_assignment_property(self, &o, &k, v)?,
+            LValue::Prop(o, k) => {
+                if o.is_null() || o.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot set property on nullish value",
+                    )));
+                }
+                set_assignment_property(self, &o, &k, v)?;
+            }
             LValue::SuperProp {
                 base,
                 receiver,
@@ -18523,11 +18626,8 @@ impl Vm {
                     "@@toPrimitive is not callable",
                 )));
             }
-            let primitive = self.call_arguments(
-                &exotic,
-                value.clone(),
-                &[Value::string_value("string")][..],
-            )?;
+            let primitive =
+                self.call_arguments(&exotic, value.clone(), &[Value::string_value("string")][..])?;
             if !primitive.is_object_like() || is_symbol_carrier(&primitive) {
                 if is_symbol_carrier(&primitive) {
                     return self.to_property_key(primitive);
@@ -18545,7 +18645,8 @@ impl Vm {
                 continue;
             }
             let primitive = self.call_arguments(&method, value.clone(), &[] as &[Value])?;
-            if (!primitive.is_object() && !primitive.is_function()) || is_symbol_carrier(&primitive) {
+            if (!primitive.is_object() && !primitive.is_function()) || is_symbol_carrier(&primitive)
+            {
                 if is_symbol_carrier(&primitive) {
                     return self.to_property_key(primitive);
                 }
@@ -19818,8 +19919,7 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
         }
 
         fn visit_object_property(&mut self, property: &ObjectProperty<'a>) {
-            if (property.method
-                || matches!(property.kind, PropertyKind::Get | PropertyKind::Set))
+            if (property.method || matches!(property.kind, PropertyKind::Get | PropertyKind::Set))
                 && let Expression::FunctionExpression(function) = &property.value
             {
                 let mut names = Vec::new();
@@ -19902,7 +20002,8 @@ fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool
     }
     impl<'a> Visit<'a> for PrivateInYieldScan {
         fn visit_private_in_expression(&mut self, expression: &PrivateInExpression<'a>) {
-            if matches!(&expression.right, Expression::Identifier(identifier) if identifier.name == "yield") {
+            if matches!(&expression.right, Expression::Identifier(identifier) if identifier.name == "yield")
+            {
                 self.invalid = true;
             }
             ast_walk::walk_private_in_expression(self, expression);
@@ -21398,9 +21499,9 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             // no [[HomeObject]], even when lexically nested in a method.
             let method_function = self.field_initializer_depth > 0
                 || self
-                .method_base_depth
-                .last()
-                .is_some_and(|(base, _)| self.ordinary_function_depth == *base + 1);
+                    .method_base_depth
+                    .last()
+                    .is_some_and(|(base, _)| self.ordinary_function_depth == *base + 1);
             if !method_function {
                 self.invalid = true;
             }
