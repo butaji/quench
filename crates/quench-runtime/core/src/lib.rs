@@ -11462,6 +11462,12 @@ impl Vm {
         eval_env: Env,
         receiver: &Value,
     ) -> JsResult<()> {
+        let has_instance_fields = class.body.body.iter().any(|element| {
+            matches!(element, ClassElement::PropertyDefinition(field) if !field.r#static)
+        });
+        if !has_instance_fields {
+            return Ok(());
+        }
         if self
             .get_prop(receiver, CLASS_FIELDS_INITIALIZED_PROP)
             .truthy()
