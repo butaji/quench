@@ -7488,6 +7488,33 @@ impl Vm {
                 },
             );
         }
+        install_native_methods!(
+            self,
+            typed_array_base_value,
+            "at" => native_typed_array_at / 1,
+            "copyWithin" => native_typed_array_copy_within / 2,
+            "join" => native_typed_array_join / 1,
+            "indexOf" => native_typed_array_index_of / 1,
+            "lastIndexOf" => native_typed_array_last_index_of / 1,
+            "includes" => native_typed_array_includes / 1,
+            "reverse" => native_typed_array_reverse / 0,
+            "sort" => native_typed_array_sort / 1,
+            "set" => native_typed_array_set / 2,
+            "slice" => native_typed_array_slice / 2,
+            "subarray" => native_typed_array_subarray / 2,
+            "with" => native_typed_array_with / 2,
+            "toReversed" => native_typed_array_to_reversed / 0,
+            "toSorted" => native_typed_array_to_sorted / 1,
+            "map" => native_typed_array_map / 1,
+            "filter" => native_typed_array_filter / 1,
+            "every" => native_typed_array_every / 1,
+            "some" => native_typed_array_some / 1,
+            "find" => native_typed_array_find / 1,
+            "findIndex" => native_typed_array_find_index / 1,
+            "forEach" => native_typed_array_for_each / 1,
+            "reduce" => native_typed_array_reduce / 1,
+            "reduceRight" => native_typed_array_reduce_right / 1,
+        );
         for (name, bytes) in [
             ("Float64Array", 8),
             ("Float32Array", 4),
@@ -27119,6 +27146,184 @@ fn native_typed_array_fill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         vm.set_prop(&this, &index.to_string(), value.clone());
     }
     Ok(this)
+}
+
+fn typed_array_values(vm: &mut Vm, this: &Value) -> JsResult<Vec<Value>> {
+    let length = vm.get_prop(this, "length").number().max(0.0) as usize;
+    (0..length)
+        .map(|index| Ok(vm.get_prop_with_accessors(this, &index.to_string())?))
+        .collect()
+}
+
+fn typed_array_index(vm: &mut Vm, args: &[Value], length: usize, default: isize) -> JsResult<usize> {
+    let value = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(default as f64);
+    if value.is_nan() {
+        return Ok(0);
+    }
+    let value = value.trunc() as isize;
+    Ok(if value < 0 {
+        (length as isize + value).max(0) as usize
+    } else {
+        (value as usize).min(length)
+    })
+}
+
+fn native_typed_array_at(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    let index = typed_array_index(vm, args, values.len(), 0)?;
+    Ok(values.get(index).cloned().unwrap_or(Value::Undefined))
+}
+
+fn native_typed_array_join(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let separator = args.first().filter(|value| !value.is_undefined()).map(Value::string).unwrap_or_else(|| ",".into());
+    Ok(Value::string_value(
+        typed_array_values(vm, &this)?.iter().map(Value::string).collect::<Vec<_>>().join(&separator),
+    ))
+}
+
+fn native_typed_array_index_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    let start = typed_array_index(vm, &args[1..], values.len(), 0)?;
+    let needle = args.first().cloned().unwrap_or(Value::Undefined);
+    Ok(Value::Number(values.iter().skip(start).position(|value| eq_strict(value, &needle)).map_or(-1.0, |index| (index + start) as f64)))
+}
+
+fn native_typed_array_last_index_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    let needle = args.first().cloned().unwrap_or(Value::Undefined);
+    let end = typed_array_index(vm, &args[1..], values.len(), values.len() as isize)?;
+    Ok(Value::Number(values[..end.min(values.len())].iter().rposition(|value| eq_strict(value, &needle)).map_or(-1.0, |index| index as f64)))
+}
+
+fn native_typed_array_includes(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    let start = typed_array_index(vm, &args[1..], values.len(), 0)?;
+    let needle = args.first().cloned().unwrap_or(Value::Undefined);
+    Ok(Value::Bool(values.iter().skip(start).any(|value| eq_same_value_zero(value, &needle))))
+}
+
+fn native_typed_array_reverse(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    for (index, value) in values.into_iter().rev().enumerate() {
+        vm.set_prop(&this, &index.to_string(), value);
+    }
+    Ok(this)
+}
+
+fn native_typed_array_sort(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let mut values = typed_array_values(vm, &this)?;
+    values.sort_by(|left, right| left.number().total_cmp(&right.number()));
+    for (index, value) in values.into_iter().enumerate() {
+        vm.set_prop(&this, &index.to_string(), value);
+    }
+    Ok(this)
+}
+
+fn native_typed_array_copy_within(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    let length = values.len();
+    let target = typed_array_index(vm, args, length, 0)?;
+    let start = typed_array_index(vm, &args[1..], length, 0)?;
+    let end = typed_array_index(vm, &args[2..], length, length as isize)?;
+    for (offset, value) in values[start..end].iter().cloned().enumerate() {
+        if target + offset < length { vm.set_prop(&this, &(target + offset).to_string(), value); }
+    }
+    Ok(this)
+}
+
+fn native_typed_array_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = args.first().cloned().unwrap_or(Value::Undefined);
+    let values = if source.is_object_like() { typed_array_values(vm, &source)? } else { Vec::new() };
+    let offset = args.get(1).map(|value| to_number_with_vm(vm, value)).transpose()?.unwrap_or(0.0).max(0.0) as usize;
+    let length = vm.get_prop(&this, "length").number().max(0.0) as usize;
+    if offset.saturating_add(values.len()) > length { return Err(JsError::Throw(range_error(vm, "source is too large"))); }
+    for (index, value) in values.into_iter().enumerate() { vm.set_prop(&this, &(offset + index).to_string(), value); }
+    Ok(Value::Undefined)
+}
+
+fn native_typed_array_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    let start = typed_array_index(vm, args, values.len(), 0)?;
+    let end = typed_array_index(vm, &args[1..], values.len(), values.len() as isize)?;
+    let ctor = vm.get_prop(&this, "constructor");
+    let result = if ctor.is_function() { typed_array_construct(vm, ctor, &[Value::Number((end.saturating_sub(start)) as f64)])? } else { vm.array_from_values(Vec::new()) };
+    for (index, value) in values[start..end].iter().cloned().enumerate() { vm.set_prop(&result, &index.to_string(), value); }
+    Ok(result)
+}
+
+fn native_typed_array_subarray(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    let start = typed_array_index(vm, args, values.len(), 0)?;
+    let end = typed_array_index(vm, &args[1..], values.len(), values.len() as isize)?;
+    let result = vm.object(this.as_object_ref().and_then(|object| object.borrow().prototype.clone()));
+    let source = vm.get_prop(&this, TYPED_ARRAY_BUFFER);
+    vm.set_prop(&result, TYPED_ARRAY_BUFFER, source);
+    vm.set_prop(&result, TYPED_ARRAY_OFFSET, Value::Number((start * vm.get_prop(&this, "BYTES_PER_ELEMENT").number().max(1.0) as usize) as f64));
+    vm.set_prop(&result, "\0typed-array-length", Value::Number(end.saturating_sub(start) as f64));
+    vm.set_prop(&result, "\0typed-array-bytes", vm.get_prop(&this, "BYTES_PER_ELEMENT"));
+    Ok(result)
+}
+
+fn native_typed_array_with(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let values = typed_array_values(vm, &this)?;
+    let index = typed_array_index(vm, args, values.len(), 0)?;
+    if index >= values.len() { return Err(JsError::Throw(range_error(vm, "index out of bounds"))); }
+    let replacement_index = typed_array_index(vm, args, values.len(), 0)?;
+    let result = typed_array_construct(vm, vm.get_prop(&this, "constructor"), &[Value::Number(values.len() as f64)])?;
+    for (index, value) in values.into_iter().enumerate() { vm.set_prop(&result, &index.to_string(), if index == replacement_index { args.get(1).cloned().unwrap_or(Value::Undefined) } else { value }); }
+    Ok(result)
+}
+
+fn native_typed_array_to_reversed(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> { native_typed_array_reverse(vm, this, &[]) }
+fn native_typed_array_to_sorted(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { native_typed_array_sort(vm, this, args) }
+
+fn typed_array_callback(vm: &mut Vm, this: &Value, args: &[Value], mode: &str) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    let values = typed_array_values(vm, this)?;
+    let mut output = Vec::new();
+    for (index, value) in values.iter().cloned().enumerate() {
+        let result = vm.call(callback.clone(), Value::Undefined, vec![value.clone(), Value::Number(index as f64), this.clone()])?;
+        match mode {
+            "map" => output.push(result),
+            "filter" if result.truthy() => output.push(value),
+            "every" if !result.truthy() => return Ok(Value::Bool(false)),
+            "some" if result.truthy() => return Ok(Value::Bool(true)),
+            "find" if result.truthy() => return Ok(value),
+            "findIndex" if result.truthy() => return Ok(Value::Number(index as f64)),
+            _ => {}
+        }
+    }
+    Ok(match mode { "map" | "filter" => { let result = typed_array_construct(vm, vm.get_prop(this, "constructor"), &[Value::Number(output.len() as f64)])?; for (index, value) in output.into_iter().enumerate() { vm.set_prop(&result, &index.to_string(), value); } result }, "every" => Value::Bool(true), "some" => Value::Bool(false), "findIndex" => Value::Number(-1.0), _ => Value::Undefined })
+}
+
+fn typed_array_construct(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
+    let arguments = vm.array_from_values(args.to_vec());
+    native_reflect_construct(vm, Value::Undefined, &[constructor, arguments])
+}
+
+fn native_typed_array_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "map") }
+fn native_typed_array_filter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "filter") }
+fn native_typed_array_every(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "every") }
+fn native_typed_array_some(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "some") }
+fn native_typed_array_find(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "find") }
+fn native_typed_array_find_index(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "findIndex") }
+fn native_typed_array_for_each(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "forEach") }
+fn native_typed_array_reduce(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_reduce_impl(vm, &this, args, false) }
+fn native_typed_array_reduce_right(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_reduce_impl(vm, &this, args, true) }
+fn typed_array_reduce_impl(vm: &mut Vm, this: &Value, args: &[Value], reverse: bool) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    let mut values = typed_array_values(vm, this)?;
+    if reverse { values.reverse(); }
+    let mut accumulator = args.get(1).cloned().or_else(|| values.first().cloned()).unwrap_or(Value::Undefined);
+    let start = usize::from(args.get(1).is_none());
+    for (index, value) in values.into_iter().enumerate().skip(start) { accumulator = vm.call(callback.clone(), Value::Undefined, vec![accumulator, value, Value::Number(index as f64), this.clone()])?; }
+    Ok(accumulator)
 }
 
 fn native_sync_generator_constructor(
