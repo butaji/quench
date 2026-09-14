@@ -27460,7 +27460,9 @@ fn native_uint8array_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> Js
         return Err(JsError::Throw(syntax_error(vm, "invalid base64 alphabet")));
     }
     let remainder = compact.len() % 4;
-    if remainder == 1 && last_chunk != "stop-before-partial" {
+    if (remainder == 1 && last_chunk != "stop-before-partial")
+        || (padding == 0 && remainder != 0 && last_chunk == "strict")
+    {
         return Err(JsError::Throw(syntax_error(vm, "invalid base64 length")));
     }
     if padding > 0 && (compact.len() + padding) % 4 != 0 {
@@ -27476,7 +27478,7 @@ fn native_uint8array_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> Js
         bits += 6;
         if bits >= 8 { bits -= 8; values.push(Value::Number(((accumulator >> bits) & 0xff) as f64)); }
     }
-    if last_chunk == "stop-before-partial" && remainder != 0 && padding == 0 {
+    if last_chunk == "stop-before-partial" && remainder > 1 && padding == 0 {
         let keep = values.len().saturating_sub(1);
         values.truncate(keep);
     }
@@ -27521,12 +27523,14 @@ fn uint8array_set_result(vm: &mut Vm, target: &Value, source: Value, args: &[Val
 }
 
 fn native_uint8array_set_from_hex(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = uint8array_values(vm, &this)?;
     let constructor = Environment::get(&vm.global, "Uint8Array").unwrap_or(Value::Undefined);
     let source = native_uint8array_from_hex(vm, constructor, args)?;
     uint8array_set_result(vm, &this, source, args)
 }
 
 fn native_uint8array_set_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = uint8array_values(vm, &this)?;
     let constructor = Environment::get(&vm.global, "Uint8Array").unwrap_or(Value::Undefined);
     let source = native_uint8array_from_base64(vm, constructor, args)?;
     uint8array_set_result(vm, &this, source, args)
