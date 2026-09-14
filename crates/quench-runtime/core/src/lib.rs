@@ -8070,6 +8070,7 @@ impl Vm {
             "format",
             self.native_named(native_intl_number_format_format, "get format", 1),
         );
+        self.set_prop(&number_format_prototype, "resolvedOptions", self.native_named(native_intl_number_format_resolved_options, "resolvedOptions", 0));
         self.set_prop(&intl, "NumberFormat", number_format);
         set_property_attributes(&intl, "NumberFormat", PropertyAttributes::BUILTIN_METHOD);
         let collator = self.native_named(native_intl_collator_constructor, "Collator", 0);
@@ -33182,7 +33183,10 @@ fn native_number_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     Ok(Value::string_value(n.to_string()))
 }
 
-fn native_number_to_locale_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_number_to_locale_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let locales = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    validate_intl_number_format_args(vm, &[locales, options])?;
     Ok(Value::string_value(js_number_to_string(number_this_value(
         vm, &this,
     )?)))
@@ -33222,6 +33226,18 @@ fn native_intl_number_format_constructor(
         "format",
         vm.native_named(native_intl_number_format_format, "format", 1),
     );
+    Ok(result)
+}
+
+fn native_intl_number_format_resolved_options(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    let result = vm.object(None);
+    vm.set_prop(&result, "locale", Value::string_value("en"));
+    vm.set_prop(&result, "numberingSystem", Value::string_value("latn"));
+    vm.set_prop(&result, "style", Value::string_value("decimal"));
+    vm.set_prop(&result, "minimumIntegerDigits", Value::Number(1.0));
+    vm.set_prop(&result, "minimumFractionDigits", Value::Number(0.0));
+    vm.set_prop(&result, "maximumFractionDigits", Value::Number(3.0));
+    vm.set_prop(&result, "useGrouping", Value::Bool(true));
     Ok(result)
 }
 
