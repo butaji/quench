@@ -74,7 +74,7 @@ Verification completed:
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - canonical stencil Test262 stage 10 (`language/expressions`) now reaches
-  9,711/11,101 fixtures; strict assignment-target early errors are validated
+  9,723/11,101 fixtures; strict assignment-target early errors are validated
   and synchronous/async generator activations now retain their lexical state
   and statement continuations in the canonical core
   from the OXC target tree (including nested destructuring), while the focused
