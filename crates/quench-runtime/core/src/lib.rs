@@ -11711,6 +11711,7 @@ impl Vm {
         // constructor returns a Proxy.  The proxy remains the observable
         // value, but private-brand checks and storage bypass its traps.
         let receiver = private_target(receiver);
+        let mut installed = HashSet::new();
         for element in &class.body.body {
             let private_name = match element {
                 ClassElement::PropertyDefinition(field) if !field.r#static => match &field.key {
@@ -11726,6 +11727,9 @@ impl Vm {
             if let Some(private_name) = private_name {
                 let key = self.private_key(private_name, env);
                 let brand = Self::private_brand_key(&key);
+                if !installed.insert(brand.clone()) {
+                    continue;
+                }
                 if self.has_own_property_key(&receiver, &brand)
                     || !native_object_is_extensible(
                         self,
