@@ -9484,7 +9484,7 @@ impl Vm {
     fn delete_expression<'a>(&mut self, x: &Expression<'a>, e: Env) -> JsResult<Value> {
         match x {
             Expression::StaticMemberExpression(member) => {
-                let object = self.eval_expr(&member.object, e)?;
+                let object = self.eval_expr(&member.object, e.clone())?;
                 if matches!(&member.object, Expression::Super(_)) {
                     return Err(JsError::Throw(reference_error(
                         self,
@@ -9512,7 +9512,7 @@ impl Vm {
                         "cannot delete a super property",
                     )));
                 }
-                let key_value = self.eval_expr(&member.expression, e)?;
+                let key_value = self.eval_expr(&member.expression, e.clone())?;
                 let key = self.to_property_key(key_value)?;
                 if object.is_null() || object.is_undefined() {
                     return Err(JsError::Throw(type_error(
@@ -10660,6 +10660,16 @@ impl Vm {
         }
         if let FunctionKind::User { env, .. } = &function.kind
             && environment_has_named_function_bindings(env)
+        {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
+        // Class methods carry home-object/super metadata in their lexical
+        // environment.  Keep those activations on the evaluator until the
+        // stencil closure ABI carries that metadata and outer lexical writes
+        // with the same reference semantics.
+        if let FunctionKind::User { env, .. } = &function.kind
+            && nearest_local_binding(env, CLASS_METHOD_STRICT_ENV_NAME).is_some()
         {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
@@ -15443,6 +15453,289 @@ impl Vm {
         None
     }
 
+    fn optional_chain_continues(expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::ChainExpression(_) => true,
+            // Parentheses end the optional-chain short-circuit region, while
+            // preserving the underlying member reference for calls.
+            Expression::ParenthesizedExpression(_) => false,
+            Expression::StaticMemberExpression(member) => {
+                member.optional || Self::optional_chain_continues(&member.object)
+            }
+            Expression::ComputedMemberExpression(member) => {
+                member.optional || Self::optional_chain_continues(&member.object)
+            }
+            Expression::PrivateFieldExpression(member) => {
+                member.optional || Self::optional_chain_continues(&member.object)
+            }
+            Expression::CallExpression(call) => {
+                call.optional || Self::optional_chain_continues(&call.callee)
+            }
+            _ => false,
+        }
+    }
+
+    /// Resolve a call target while retaining the reference receiver.  The
+    /// boolean result marks a short-circuited optional base; parentheses clear
+    /// that marker but intentionally keep the member receiver for calls.
+    fn eval_call_reference<'a>(
+        &mut self,
+        expression: &Expression<'a>,
+        e: Env,
+        chain_continues: bool,
+    ) -> JsResult<(Value, Value, bool)> {
+        match expression {
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::StaticMemberExpression(member) => {
+                    let object = self.eval_expr(&member.object, e.clone())?;
+                    if object.is_null() || object.is_undefined() {
+                        if member.optional
+                            || (chain_continues
+                                && Self::optional_chain_continues(&member.object))
+                        {
+                            return Ok((Value::Undefined, Value::Undefined, true));
+                        }
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "cannot call property of nullish value",
+                        )));
+                    }
+                    let receiver = if matches!(&member.object, Expression::Super(_)) {
+                        Environment::get(&e, "this").unwrap_or(Value::Undefined)
+                    } else {
+                        object.clone()
+                    };
+                    let callee = if matches!(&member.object, Expression::Super(_)) {
+                        self.get_prop_with_receiver(
+                            &object,
+                            member.property.name.as_str(),
+                            &receiver,
+                        )?
+                    } else {
+                        self.get_prop_with_accessors(&object, member.property.name.as_str())?
+                    };
+                    Ok((callee, receiver, false))
+                }
+                ChainElement::ComputedMemberExpression(member) => {
+                    let object = self.eval_expr(&member.object, e.clone())?;
+                    if object.is_null() || object.is_undefined() {
+                        if member.optional
+                            || (chain_continues
+                                && Self::optional_chain_continues(&member.object))
+                        {
+                            return Ok((Value::Undefined, Value::Undefined, true));
+                        }
+                        return Err(JsError::Throw(type_error(
+                            self,
+                            "cannot call property of nullish value",
+                        )));
+                    }
+                    let key_value = self.eval_expr(&member.expression, e.clone())?;
+                    let key = self.to_property_key(key_value)?;
+                    let receiver = if matches!(&member.object, Expression::Super(_)) {
+                        Environment::get(&e, "this").unwrap_or(Value::Undefined)
+                    } else {
+                        object.clone()
+                    };
+                    let callee = if matches!(&member.object, Expression::Super(_)) {
+                        self.get_prop_with_receiver(&object, &key, &receiver)?
+                    } else {
+                        self.get_prop_with_accessors(&object, &key)?
+                    };
+                    Ok((callee, receiver, false))
+                }
+                _ => Ok((self.eval_expr(expression, e)?, Value::Undefined, false)),
+            },
+            Expression::ParenthesizedExpression(parenthesized) => {
+                let (callee, receiver, _) =
+                    self.eval_call_reference(&parenthesized.expression, e, false)?;
+                Ok((callee, receiver, false))
+            }
+            Expression::StaticMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                if object.is_null() || object.is_undefined() {
+                    if member.optional
+                        || (chain_continues && Self::optional_chain_continues(&member.object))
+                    {
+                        return Ok((Value::Undefined, Value::Undefined, true));
+                    }
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot call property of nullish value",
+                    )));
+                }
+                let receiver = if matches!(&member.object, Expression::Super(_)) {
+                    Environment::get(&e, "this").unwrap_or(Value::Undefined)
+                } else {
+                    object.clone()
+                };
+                let callee = if matches!(&member.object, Expression::Super(_)) {
+                    self.get_prop_with_receiver(&object, member.property.name.as_str(), &receiver)?
+                } else {
+                    self.get_prop_with_accessors(&object, member.property.name.as_str())?
+                };
+                Ok((callee, receiver, false))
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                if object.is_null() || object.is_undefined() {
+                    if member.optional
+                        || (chain_continues && Self::optional_chain_continues(&member.object))
+                    {
+                        return Ok((Value::Undefined, Value::Undefined, true));
+                    }
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot call property of nullish value",
+                    )));
+                }
+                let key_value = self.eval_expr(&member.expression, e.clone())?;
+                let key = self.to_property_key(key_value)?;
+                let receiver = if matches!(&member.object, Expression::Super(_)) {
+                    Environment::get(&e, "this").unwrap_or(Value::Undefined)
+                } else {
+                    object.clone()
+                };
+                let callee = if matches!(&member.object, Expression::Super(_)) {
+                    self.get_prop_with_receiver(&object, &key, &receiver)?
+                } else {
+                    self.get_prop_with_accessors(&object, &key)?
+                };
+                Ok((callee, receiver, false))
+            }
+            Expression::PrivateFieldExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                if object.is_null() || object.is_undefined() {
+                    if member.optional
+                        || (chain_continues && Self::optional_chain_continues(&member.object))
+                    {
+                        return Ok((Value::Undefined, Value::Undefined, true));
+                    }
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot call private property of nullish value",
+                    )));
+                }
+                let key = self.private_key(member.field.name.as_str(), &e);
+                if !self.has_private_brand(&object, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot read private member #{}", member.field.name),
+                    )));
+                }
+                let callee = self.get_prop_with_accessors(&object, &key)?;
+                Ok((callee, object, false))
+            }
+            Expression::Identifier(identifier) => {
+                let (callee, receiver) =
+                    self.resolve_identifier_call(&e, identifier.name.as_str())?;
+                Ok((callee, receiver.unwrap_or(Value::Undefined), false))
+            }
+            _ => Ok((
+                self.eval_expr(expression, e)?,
+                Value::Undefined,
+                false,
+            )),
+        }
+    }
+
+    fn eval_chain_element<'a>(&mut self, chain: &ChainElement<'a>, e: Env) -> JsResult<Value> {
+        fn optional_object(expression: &Expression<'_>) -> bool {
+            Vm::optional_chain_continues(expression)
+        }
+        let nullish = |value: &Value| value.is_null() || value.is_undefined();
+        match chain {
+            ChainElement::StaticMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                if nullish(&object) {
+                    if matches!(&member.object, Expression::Super(_)) {
+                        return Ok(Value::Undefined);
+                    }
+                    if member.optional || optional_object(&member.object) {
+                        return Ok(Value::Undefined);
+                    }
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot read property of nullish value",
+                    )));
+                }
+                if matches!(&member.object, Expression::Super(_)) {
+                    let receiver = Environment::get(&e, "this").unwrap_or(Value::Undefined);
+                    let result = self.get_prop_with_receiver(
+                        &object,
+                        member.property.name.as_str(),
+                        &receiver,
+                    )?;
+                    Ok(result)
+                } else {
+                    let result = self.get_prop_with_accessors(&object, member.property.name.as_str())?;
+                    Ok(result)
+                }
+            }
+            ChainElement::ComputedMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                if nullish(&object) {
+                    if matches!(&member.object, Expression::Super(_)) {
+                        return Ok(Value::Undefined);
+                    }
+                    if member.optional || optional_object(&member.object) {
+                        return Ok(Value::Undefined);
+                    }
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot read property of nullish value",
+                    )));
+                }
+                let key_value = self.eval_expr(&member.expression, e.clone())?;
+                let key = self.to_property_key(key_value)?;
+                if matches!(&member.object, Expression::Super(_)) {
+                    let receiver = Environment::get(&e, "this").unwrap_or(Value::Undefined);
+                    self.get_prop_with_receiver(&object, &key, &receiver)
+                } else {
+                    self.get_prop_with_accessors(&object, &key)
+                }
+            }
+            ChainElement::PrivateFieldExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                if nullish(&object) {
+                    if optional_object(&member.object) {
+                        return Ok(Value::Undefined);
+                    }
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot read private property of nullish value",
+                    )));
+                }
+                let key = self.private_key(member.field.name.as_str(), &e);
+                if !self.has_private_brand(&object, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot read private member #{}", member.field.name),
+                    )));
+                }
+                self.get_prop_with_accessors(&object, &key)
+            }
+            ChainElement::CallExpression(call) => {
+                let (callee, receiver, short_circuited) =
+                    self.eval_call_reference(&call.callee, e.clone(), true)?;
+                if short_circuited || (callee.is_null() || callee.is_undefined()) && call.optional {
+                    return Ok(Value::Undefined);
+                }
+                if !callee.is_function() {
+                    return Err(JsError::Throw(type_error(self, "value is not callable")));
+                }
+                let args = self.eval_args(&call.arguments, e)?;
+                let result = self.call(callee, receiver, args)?;
+                Ok(result)
+            }
+            ChainElement::TSNonNullExpression(expression) => {
+                self.eval_expr(&expression.expression, e)
+            }
+        }
+    }
+
     fn eval_expr<'a>(&mut self, x: &Expression<'a>, e: Env) -> JsResult<Value> {
         self.coverage_hit(x.span(), expression_kind(x));
         use Expression::*;
@@ -15857,6 +16150,7 @@ impl Vm {
                 }
                 Ok(z)
             }
+            ChainExpression(chain) => self.eval_chain_element(&chain.expression, e),
             UnaryExpression(v) => {
                 if v.operator == oxc_syntax::operator::UnaryOperator::Delete {
                     return self.delete_expression(&v.argument, e);
@@ -16143,18 +16437,32 @@ impl Vm {
                 })
             }
             StaticMemberExpression(m) => {
-                let o = self.eval_expr(&m.object, e)?;
+                let o = self.eval_expr(&m.object, e.clone())?;
                 if o.is_null() || o.is_undefined() {
+                    if matches!(&m.object, Expression::Super(_)) {
+                        return Ok(Value::Undefined);
+                    }
+                    if m.optional || Self::optional_chain_continues(&m.object) {
+                        return Ok(Value::Undefined);
+                    }
                     return Err(JsError::Throw(type_error(
                         self,
                         &format!("cannot read property {}", m.property.name),
                     )));
                 }
-                self.get_prop_with_accessors(&o, m.property.name.as_str())
+                if matches!(&m.object, Expression::Super(_)) {
+                    let receiver = Environment::get(&e, "this").unwrap_or(Value::Undefined);
+                    self.get_prop_with_receiver(&o, m.property.name.as_str(), &receiver)
+                } else {
+                    self.get_prop_with_accessors(&o, m.property.name.as_str())
+                }
             }
             PrivateFieldExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
                 if o.is_null() || o.is_undefined() {
+                    if matches!(&m.object, Expression::Super(_)) {
+                        return Ok(Value::Undefined);
+                    }
                     return Err(JsError::Throw(type_error(
                         self,
                         &format!("cannot read private property #{}", m.field.name),
@@ -16172,15 +16480,23 @@ impl Vm {
             }
             ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
-                let key_value = self.eval_expr(&m.expression, e)?;
-                let k = self.to_property_key(key_value)?;
                 if o.is_null() || o.is_undefined() {
+                    if m.optional || Self::optional_chain_continues(&m.object) {
+                        return Ok(Value::Undefined);
+                    }
                     return Err(JsError::Throw(type_error(
                         self,
                         "cannot read property of nullish value",
                     )));
                 }
-                self.get_prop_with_accessors(&o, &k)
+                let key_value = self.eval_expr(&m.expression, e.clone())?;
+                let k = self.to_property_key(key_value)?;
+                if matches!(&m.object, Expression::Super(_)) {
+                    let receiver = Environment::get(&e, "this").unwrap_or(Value::Undefined);
+                    self.get_prop_with_receiver(&o, &k, &receiver)
+                } else {
+                    self.get_prop_with_accessors(&o, &k)
+                }
             }
             CallExpression(v) => {
                 if matches!(&v.callee, Expression::Super(_)) {
@@ -16213,47 +16529,15 @@ impl Vm {
                     }
                     return Ok(result);
                 }
-                let (t, c) = if let Some(m) = v.callee.as_member_expression() {
-                    let (o, k) = self.member_parts(m, e.clone())?;
-                    let receiver = if matches!(
-                        m,
-                        MemberExpression::StaticMemberExpression(member)
-                            if matches!(&member.object, Expression::Super(_))
-                    ) || matches!(
-                        m,
-                        MemberExpression::ComputedMemberExpression(member)
-                            if matches!(&member.object, Expression::Super(_))
-                    ) {
-                        Environment::get(&e, "this").unwrap_or(Value::Undefined)
-                    } else {
-                        o.clone()
-                    };
-                    (
-                        receiver.clone(),
-                        if matches!(
-                            m,
-                            MemberExpression::StaticMemberExpression(member)
-                                if matches!(&member.object, Expression::Super(_))
-                        ) || matches!(
-                            m,
-                            MemberExpression::ComputedMemberExpression(member)
-                                if matches!(&member.object, Expression::Super(_))
-                        ) {
-                            self.get_prop_with_receiver(&o, &k, &receiver)?
-                        } else {
-                            self.get_prop_with_accessors(&o, &k)?
-                        },
-                    )
-                } else {
-                    if let Expression::Identifier(identifier) = &v.callee {
-                        let (callee, receiver) =
-                            self.resolve_identifier_call(&e, identifier.name.as_str())?;
-                        (receiver.unwrap_or(Value::Undefined), callee)
-                    } else {
-                        (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
-                    }
-                };
+                let (c, t, short_circuited) =
+                    self.eval_call_reference(&v.callee, e.clone(), true)?;
+                if short_circuited {
+                    return Ok(Value::Undefined);
+                }
                 let args = self.eval_args(&v.arguments, e.clone())?;
+                if v.optional && (c.is_null() || c.is_undefined()) {
+                    return Ok(Value::Undefined);
+                }
                 if c.as_function_ref().is_some_and(|function| {
                     matches!(
                         function.kind,
@@ -16764,6 +17048,7 @@ impl Vm {
                 }
                 if self.is_global_environment(&e)
                     && let Some(global) = self.global_object_for_environment(&e)
+                    && !e.borrow().names.contains_key(&name)
                     && !self.has_property_with_proxy(&global, &name)?
                     && self.strict_mode
                 {
