@@ -19165,14 +19165,17 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
                 || matches!(property.kind, PropertyKind::Get | PropertyKind::Set))
                 && let Expression::FunctionExpression(function) = &property.value
             {
-                self.check_parameters(
-                    &function.params,
-                    true,
-                    false,
-                    true,
-                    function.generator,
-                    function.r#async,
-                );
+                let mut names = Vec::new();
+                for parameter in &function.params.items {
+                    pattern_bound_names(&parameter.pattern, &mut names);
+                }
+                if let Some(rest) = &function.params.rest {
+                    pattern_bound_names(&rest.rest.argument, &mut names);
+                }
+                let mut seen = HashSet::new();
+                if names.iter().any(|name| !seen.insert(name.clone())) {
+                    self.invalid = true;
+                }
             }
             ast_walk::walk_object_property(self, property);
         }
