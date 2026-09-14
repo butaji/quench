@@ -30153,8 +30153,9 @@ fn has_invalid_private_name_reference(program: &Program<'_>) -> bool {
         fn visit_private_field_expression(&mut self, expression: &PrivateFieldExpression<'a>) {
             if !self
                 .private_scopes
-                .last()
-                .is_some_and(|names| names.contains(expression.field.name.as_str()))
+                .iter()
+                .rev()
+                .any(|names| names.contains(expression.field.name.as_str()))
             {
                 self.invalid = true;
             }
@@ -30164,8 +30165,9 @@ fn has_invalid_private_name_reference(program: &Program<'_>) -> bool {
         fn visit_private_in_expression(&mut self, expression: &PrivateInExpression<'a>) {
             if !self
                 .private_scopes
-                .last()
-                .is_some_and(|names| names.contains(expression.left.name.as_str()))
+                .iter()
+                .rev()
+                .any(|names| names.contains(expression.left.name.as_str()))
             {
                 self.invalid = true;
             }
