@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use quench_runtime::ops::RealmId;
 use quench_runtime::value::Value;
-use quench_runtime::vm::{execute_code_with_context, OutputSink, VmContext, VmError};
+use quench_runtime::vm::OutputSink;
+use quench_runtime::vm::{execute_code_with_context, VmContext, VmError};
 
 /// One `node <script>` run: the resolved process exit code plus an
 /// optional rendered error for stderr.
@@ -68,130 +69,30 @@ pub fn run_script_with_exec_argv(
     source: &str,
     sink: OutputSink,
 ) -> RunOutcome {
-    // All file-backed JavaScript now enters the runtime-owned stencil VM.
-    // The legacy host dispatcher below is retained only while its Node host
-    // surfaces are being lowered into the new VM; it is unreachable for file
-    // execution and must not be reinstated as a fallback.
-    if script.exists() {
-        let mut argv = vec![
-            "quench-node".to_string(),
-            script.to_string_lossy().into_owned(),
-        ];
-        argv.extend(script_args.iter().cloned());
-        let vm_sink = Arc::clone(&sink);
-        return match quench_runtime::vm_core::run_source_with_argv_and_output_status(
-            script,
-            source,
-            argv,
-            exec_argv.to_vec(),
-            move |chunk| vm_sink(chunk),
-        ) {
-            Ok(exit_code) if exit_code == 0 => RunOutcome::success(),
-            Ok(exit_code) => RunOutcome::ok(exit_code),
-            Err(error) => RunOutcome::fail(1, error),
-        };
-    }
-    // Compatibility tests model the Node executable, not the test harness
-    // binary that happens to host it.
-    let exec = "quench-node".to_string();
-    let script_str = script.to_string_lossy().into_owned();
-    let mut argv = vec![exec, script_str.clone()];
+    let mut argv = vec!["quench-node".to_string(), script.to_string_lossy().into_owned()];
     argv.extend(script_args.iter().cloned());
-    let title = source
-        .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix("// Flags:")?
-                .split_whitespace()
-                .find_map(|flag| flag.strip_prefix("--title=").map(str::to_owned))
-        })
-        .unwrap_or_else(|| "quench-node".into());
-    let mut fixture_flags = source
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("// Flags:"))
-        .flat_map(str::split_whitespace)
-        .filter(|flag| flag.starts_with('-'))
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    fixture_flags.extend(exec_argv.iter().cloned());
-    let (host, context) = crate::host::install_with_argv_and_title_and_exec_argv(
-        RealmId::ROOT,
-        sink,
+    run_core_source(script, source, argv, exec_argv, sink)
+}
+
+fn run_core_source(
+    path: &Path,
+    source: &str,
+    argv: Vec<String>,
+    exec_argv: &[String],
+    sink: OutputSink,
+) -> RunOutcome {
+    let vm_sink = Arc::clone(&sink);
+    match quench_runtime::vm_core::run_source_with_argv_and_output_status(
+        path,
+        source,
         argv,
-        &title,
-        &fixture_flags,
-    );
-    // The upstream Node runner treats `// Flags:` as invocation metadata,
-    // not as script arguments.  Keep that distinction in the canonical
-    // runner: flags belong to `process.execArgv`, while `process.argv`
-    // remains `[execPath, script, ...args]`.  This also lets gated built-ins
-    // (for example `stream/iter`) observe the same fact as their Node oracle.
-    let context = context
-        .with_source_text(source.to_owned())
-        .with_source_name(script_str.clone());
-    if let Some(dir) = script.parent() {
-        host.set_main_dir(dir.to_string_lossy().into_owned());
+        exec_argv.to_vec(),
+        move |chunk| vm_sink(chunk),
+    ) {
+        Ok(0) => RunOutcome::success(),
+        Ok(exit_code) => RunOutcome::ok(exit_code),
+        Err(error) => RunOutcome::fail(1, error),
     }
-    let wrapped = crate::modules::require::wrap_cjs(&host.state(), &script_str, source);
-    let url_pattern_surface =
-        crate::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
-    let globals_surface = crate::polyfills::bootstrap::lookup("globals-extra").unwrap_or("");
-    let fetch_surface = crate::polyfills::bootstrap::lookup("fetch").unwrap_or("");
-    let externalizable_surface = source
-        .contains("Externalizable")
-        .then(|| crate::polyfills::bootstrap::lookup("externalizable-strings").unwrap_or(""))
-        .unwrap_or("");
-    let web_streams_surface = crate::polyfills::bootstrap::lookup("web-streams").unwrap_or("");
-    let report_surface = crate::polyfills::bootstrap::lookup("report").unwrap_or("");
-    let punycode_surface = crate::polyfills::bootstrap::lookup("punycode").unwrap_or("");
-    let async_resource_surface =
-        crate::polyfills::bootstrap::lookup("async-resource").unwrap_or("");
-    let webcrypto_surface = crate::polyfills::bootstrap::lookup("webcrypto-global").unwrap_or("");
-    let vfs_enabled = source.contains("--experimental-vfs");
-    let vfs_head_surface = vfs_enabled
-        .then(|| crate::polyfills::bootstrap::lookup("vfs-head").unwrap_or(""))
-        .unwrap_or("");
-    let vfs_surface = vfs_enabled
-        .then(|| crate::polyfills::bootstrap::lookup("vfs").unwrap_or(""))
-        .unwrap_or("");
-    let vfs_stream_setup = vfs_enabled
-        .then_some("Object.defineProperty(globalThis, '__nodeStream', { configurable: true, writable: true, value: require('stream') });")
-        .unwrap_or("");
-    let performance_surface = crate::polyfills::bootstrap::lookup("performance").unwrap_or("");
-    let persistent_globals = crate::registry::PERSISTENT_GLOBALS
-        .iter()
-        .map(|spec| {
-            let name = spec.name.rsplit([':', '.']).next().unwrap_or(spec.name);
-            format!("globalThis[{name:?}] = globalThis[{name:?}];")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let bootstrap_surface = format!(
-        "{web_streams_surface}\n{globals_surface}\n{fetch_surface}\nconst fetch = globalThis.fetch;\n{externalizable_surface}\n{report_surface}\n{async_resource_surface}\n{webcrypto_surface}\nconst crypto = globalThis.crypto;\nfor (const __name of ['MessageChannel','MessagePort','worker_threads','TypeMismatchError','QuotaExceededError','__nodeCurrentAsyncResource','__nodeCallChecks']) if (__name in globalThis) Object.defineProperty(globalThis, __name, {{ configurable: true, enumerable: false, writable: true, value: globalThis[__name] }});"
-    );
-    let wrapped = format!(
-        "{bootstrap_surface}\n{punycode_surface}\n{vfs_head_surface}\n{vfs_surface}\n{vfs_stream_setup}\nObject.defineProperty(globalThis, '__nodePath', {{ value: __nodePath, configurable: true, enumerable: false }}); Object.defineProperty(globalThis, '__quench_fs_mkdir', {{ value: __quench_fs_mkdir, configurable: true, enumerable: false }}); globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{performance_surface}\n{url_pattern_surface}\nObject.defineProperty(globalThis, '__quenchURLPattern', {{ value: globalThis.__quenchURLPatternFactory?.(), configurable: true }}); delete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter;\n{wrapped}\n// Materialize persistent host globals after module setup and before the pump.\n{persistent_globals}"
-    );
-    let context = context.with_compiled_source_text(wrapped.clone());
-    let ops = match reduce(&wrapped) {
-        Ok(ops) => ops,
-        Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
-    };
-    let result = quench_runtime::vm::with_current_context(&context, || {
-        execute_code_with_context(ops.code(), &context)
-            .and_then(|_| drive(&context, "__quench_run_loop__();"))
-    });
-    let result = route_uncaught(&host, &context, result);
-    let result = match result {
-        Err(error) => match drive(&context, "__quench_run_exit__();") {
-            Ok(_) => Err(error),
-            Err(exit_error) => Err(exit_error),
-        },
-        ok => ok.map(|_| ()),
-    };
-    crate::modules::process::flush_trace_events(&host.state());
-    sync_process_exit_code(&host);
-    classify(result, host.exit_code())
 }
 
 /// Run eval source directly in the canonical installed Node context.
@@ -220,6 +121,16 @@ pub fn eval_script_with_exec_argv(
     module_mode: bool,
     exec_argv: &[String],
 ) -> RunOutcome {
+    let executable = std::env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "quench-node".to_string());
+    let argv = vec![executable, "<eval>".to_string()];
+    let path = if module_mode {
+        Path::new("<eval>.mjs")
+    } else {
+        Path::new("<eval>.js")
+    };
+    return run_core_source(path, source, argv, exec_argv, sink);
     let argv = vec![
         std::env::current_exe()
             .map(|p| p.to_string_lossy().into_owned())
