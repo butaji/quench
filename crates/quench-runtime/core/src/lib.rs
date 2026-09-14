@@ -8892,18 +8892,15 @@ impl Vm {
         let prototype = self.get_prop(&constructor, "prototype");
         self.set_prop(&prototype, "constructor", constructor.clone());
         set_property_attributes(&prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
-        for (name, native, length) in [
-            ("use", native_async_disposable_stack_use as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>, 1),
-            ("adopt", native_async_disposable_stack_adopt as _, 2),
-            ("defer", native_async_disposable_stack_defer as _, 1),
-            ("move", native_async_disposable_stack_move as _, 0),
-            ("disposeAsync", native_async_disposable_stack_dispose_async as _, 0),
-        ] {
-            let method = self.native_named(native, name, length);
-            self.mark_nonconstructable(&method);
-            self.set_prop(&prototype, name, method);
-            set_property_attributes(&prototype, name, PropertyAttributes::BUILTIN_METHOD);
-        }
+        install_native_methods!(
+            self,
+            prototype.clone(),
+            "use" => native_async_disposable_stack_use / 1,
+            "adopt" => native_async_disposable_stack_adopt / 2,
+            "defer" => native_async_disposable_stack_defer / 1,
+            "move" => native_async_disposable_stack_move / 0,
+            "disposeAsync" => native_async_disposable_stack_dispose_async / 0,
+        );
         let disposed = self.native_named(native_async_disposable_stack_disposed_getter, "get disposed", 0);
         self.mark_nonconstructable(&disposed);
         self.define_accessor_slot(&prototype, "disposed", Some(disposed), None, PropertyAttributes { writable: false, enumerable: false, configurable: true });
