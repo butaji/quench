@@ -9041,6 +9041,7 @@ impl Vm {
                 "WeakMap",
                 "WeakRef",
                 "WeakSet",
+                "FinalizationRegistry",
                 "Float64Array",
                 "Float32Array",
                 "Int32Array",
@@ -25227,7 +25228,7 @@ fn native_shared_array_buffer_constructor(
         ARRAY_BUFFER_DATA,
         vm.array_from_values(vec![Value::Number(0.0); length as usize]),
     );
-    Ok(this)
+    Ok(Value::Undefined)
 }
 
 fn shared_array_buffer_receiver(vm: &mut Vm, this: &Value) -> JsResult<Value> {
@@ -27436,14 +27437,25 @@ fn native_finalization_registry_register(vm: &mut Vm, this: Value, args: &[Value
         return Err(JsError::Throw(type_error(vm, "incompatible FinalizationRegistry receiver")));
     }
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    if !target.is_object_like() {
+    let registered_symbol = vm.symbol_registry.values().any(|symbol| symbol.same_bits(&target));
+    if registered_symbol || (!target.is_object_like() && !is_symbol_carrier(&target)) {
         return Err(JsError::Throw(type_error(vm, "target cannot be held weakly")));
     }
     let held = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if held.same_bits(&target) {
+        return Err(JsError::Throw(type_error(vm, "target and holdings must not be the same")));
+    }
+    if let Some(token) = args.get(2)
+        && !token.is_undefined()
+        && (vm.symbol_registry.values().any(|symbol| symbol.same_bits(token))
+            || (!token.is_object_like() && !is_symbol_carrier(token)))
+    {
+        return Err(JsError::Throw(type_error(vm, "unregister token cannot be held weakly")));
+    }
     let cells = vm.get_prop(&this, "\0finalization-registry-cells");
     let length = array_value_length(&cells);
     vm.set_prop(&cells, &length.to_string(), vm.array_from_values(vec![target, held, args.get(2).cloned().unwrap_or(Value::Undefined)]));
-    Ok(this)
+    Ok(Value::Undefined)
 }
 
 fn native_finalization_registry_unregister(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -27452,7 +27464,8 @@ fn native_finalization_registry_unregister(vm: &mut Vm, this: Value, args: &[Val
         return Err(JsError::Throw(type_error(vm, "incompatible FinalizationRegistry receiver")));
     }
     let token = args.first().cloned().unwrap_or(Value::Undefined);
-    if !token.is_object_like() {
+    let registered_symbol = vm.symbol_registry.values().any(|symbol| symbol.same_bits(&token));
+    if registered_symbol || (!token.is_object_like() && !is_symbol_carrier(&token)) {
         return Err(JsError::Throw(type_error(vm, "unregister token cannot be held weakly")));
     }
     let cells = vm.get_prop(&this, "\0finalization-registry-cells");
@@ -36654,6 +36667,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                                     .then_some("AsyncDisposableStack")
                             })
                             .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_finalization_registry_constructor))
+                                    .then_some("FinalizationRegistry")
+                            })
+                            .or_else(|| {
                                 matches!(function.kind, FunctionKind::Builtin(BuiltinId::BooleanConstructor))
                                     .then_some("Boolean")
                             })
@@ -36822,7 +36839,7 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     if let Some(proxy) = Environment::get(&vm.global, "Proxy") {
         vm.set_prop(&global, "Proxy", proxy);
     }
-    for name in ["ArrayBuffer", "DataView", "SharedArrayBuffer", "WeakMap", "WeakRef", "WeakSet", "Map", "Set"] {
+    for name in ["ArrayBuffer", "DataView", "SharedArrayBuffer", "WeakMap", "WeakRef", "WeakSet", "FinalizationRegistry", "Map", "Set"] {
         if let Some(value) = Environment::get(&vm.global, name) {
             vm.set_prop(&global, name, value);
         }
