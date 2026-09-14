@@ -5517,6 +5517,8 @@ struct Vm {
     sync_generator_continuations: HashMap<*const ObjectCell, SyncGeneratorContinuation>,
     sync_generator_yielding: bool,
     sync_generator_iterators: Vec<Value>,
+    sync_generator_pending_yield: Option<SyncGeneratorPendingYield>,
+    sync_generator_replay_value: Option<Value>,
     mapped_arguments: RefCell<Vec<(ObjectHandle, Env, Vec<String>)>>,
     // Synchronous bridge for thenable assimilation at an await expression.
     // The full async-module scheduler can suspend stencils later; keeping the
@@ -5551,6 +5553,28 @@ struct SyncGeneratorContinuation {
     async_generator: bool,
     mapped_arguments_object: Option<ObjectHandle>,
     pending_iterators: Vec<Value>,
+    pending_yield: Option<SyncGeneratorPendingYield>,
+}
+
+enum SyncGeneratorPendingYield {
+    AssignmentDefault {
+        binding: &'static AssignmentTarget<'static>,
+        environment: Env,
+        statement: usize,
+    },
+    PreparedDefault {
+        target: LValue,
+        statement: usize,
+    },
+    DeferredProperty {
+        object: Value,
+        key_expression: &'static Expression<'static>,
+        value: Value,
+        statement: usize,
+    },
+    Replay {
+        statement: usize,
+    },
 }
 
 const SYNC_GENERATOR_INSTANCE_PROP: &str = "\0quench:sync-generator-instance";
@@ -5621,6 +5645,8 @@ impl Vm {
             sync_generator_continuations: HashMap::new(),
             sync_generator_yielding: false,
             sync_generator_iterators: Vec::new(),
+            sync_generator_pending_yield: None,
+            sync_generator_replay_value: None,
             mapped_arguments: RefCell::new(Vec::new()),
             await_result: None,
             async_module_continuations: Vec::new(),
@@ -9455,6 +9481,7 @@ impl Vm {
             async_generator: false,
             mapped_arguments_object: None,
             pending_iterators: Vec::new(),
+            pending_yield: None,
         })
     }
 
@@ -9496,7 +9523,7 @@ impl Vm {
         Ok(iterator)
     }
 
-    fn resume_sync_generator(&mut self, iterator: &Value) -> JsResult<Value> {
+    fn resume_sync_generator(&mut self, iterator: &Value, resume_value: Value) -> JsResult<Value> {
         let key = iterator
             .as_object()
             .ok_or_else(|| JsError::Throw(type_error(self, "invalid generator receiver")))?
@@ -9515,6 +9542,16 @@ impl Vm {
         self.strict_mode = continuation.strict;
         self.sync_generator_yielding = true;
         self.sync_generator_iterators = std::mem::take(&mut continuation.pending_iterators);
+        if let Some(pending) = continuation.pending_yield.take() {
+            continuation.next_statement = match &pending {
+                SyncGeneratorPendingYield::AssignmentDefault { statement, .. }
+                | SyncGeneratorPendingYield::PreparedDefault { statement, .. }
+                | SyncGeneratorPendingYield::DeferredProperty { statement, .. }
+                | SyncGeneratorPendingYield::Replay { statement } => *statement,
+            };
+            self.sync_generator_replay_value = Some(resume_value.clone());
+            self.sync_generator_pending_yield = Some(pending);
+        }
         if let Some(source_id) = continuation.source_id {
             self.source_ids.push(source_id);
         }
@@ -9531,6 +9568,26 @@ impl Vm {
                     continuation.body_environment.clone(),
                 ) {
                     Err(JsError::Yield(value)) => {
+                        if let Some(pending) = self.sync_generator_pending_yield.as_mut() {
+                            match pending {
+                                SyncGeneratorPendingYield::AssignmentDefault {
+                                    statement, ..
+                                }
+                                | SyncGeneratorPendingYield::PreparedDefault {
+                                    statement, ..
+                                } => {
+                                    *statement = index;
+                                }
+                                SyncGeneratorPendingYield::DeferredProperty {
+                                    statement, ..
+                                } => {
+                                    *statement = index;
+                                }
+                                SyncGeneratorPendingYield::Replay { statement } => {
+                                    *statement = index;
+                                }
+                            }
+                        }
                         return Ok(generator_result(self, value, false));
                     }
                     Err(error) => {
@@ -9555,6 +9612,8 @@ impl Vm {
             self.source_ids.pop();
         }
         continuation.pending_iterators = std::mem::take(&mut self.sync_generator_iterators);
+        continuation.pending_yield = self.sync_generator_pending_yield.take();
+        self.sync_generator_replay_value = None;
         self.sync_generator_yielding = false;
         self.strict_mode = previous_strict_mode;
         self.sync_generator_continuations.insert(key, continuation);
@@ -14763,6 +14822,9 @@ impl Vm {
                 Ok(Value::Bool(self.has_own_property_key(&object, &key)))
             }
             YieldExpression(yield_expression) => {
+                if let Some(value) = self.sync_generator_replay_value.take() {
+                    return Ok(value);
+                }
                 let value = yield_expression
                     .argument
                     .as_ref()
@@ -15825,9 +15887,20 @@ impl Vm {
                             match element {
                                 AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(
                                     default,
-                                ) => iterator_try!(
-                                    self.evaluate_destructuring_default(default, e.clone())
-                                ),
+                                ) => {
+                                    match self.evaluate_destructuring_default(default, e.clone()) {
+                                        Ok(value) => value,
+                                        Err(JsError::Yield(value)) => {
+                                            self.sync_generator_pending_yield =
+                                                Some(SyncGeneratorPendingYield::PreparedDefault {
+                                                    target,
+                                                    statement: 0,
+                                                });
+                                            return Err(JsError::Yield(value));
+                                        }
+                                        Err(error) => iterator_try!(Err(error)),
+                                    }
+                                }
                                 _ => element_value,
                             }
                         } else {
@@ -15867,12 +15940,23 @@ impl Vm {
                             let key = property.binding.name.as_str();
                             let value = self.get_prop_with_accessors(&v, key)?;
                             let value = if value.is_undefined() {
-                                property
+                                match property
                                     .init
                                     .as_ref()
                                     .map(|init| self.eval_expr(init, e.clone()))
-                                    .transpose()?
-                                    .unwrap_or(value)
+                                    .transpose()
+                                {
+                                    Ok(Some(initialized)) => initialized,
+                                    Ok(None) => value,
+                                    Err(JsError::Yield(value)) => {
+                                        self.sync_generator_pending_yield =
+                                            Some(SyncGeneratorPendingYield::Replay {
+                                                statement: 0,
+                                            });
+                                        return Err(JsError::Yield(value));
+                                    }
+                                    Err(error) => return Err(error),
+                                }
                             } else {
                                 value
                             };
@@ -15892,7 +15976,19 @@ impl Vm {
                                     match &property.binding {
                                         AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(
                                             default,
-                                        ) => self.evaluate_destructuring_default(default, e.clone())?,
+                                        ) => match self.evaluate_destructuring_default(default, e.clone()) {
+                                            Ok(value) => value,
+                                            Err(JsError::Yield(value)) => {
+                                                self.sync_generator_pending_yield = Some(
+                                                    SyncGeneratorPendingYield::PreparedDefault {
+                                                        target,
+                                                        statement: 0,
+                                                    },
+                                                );
+                                                return Err(JsError::Yield(value));
+                                            }
+                                            Err(error) => return Err(error),
+                                        },
                                         _ => value,
                                     }
                                 } else {
@@ -15932,7 +16028,25 @@ impl Vm {
         match target {
             AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
                 let value = if value.is_undefined() {
-                    self.eval_expr(&default.init, e.clone())?
+                    match self.eval_expr(&default.init, e.clone()) {
+                        Ok(value) => value,
+                        Err(JsError::Yield(value)) => {
+                            let binding = unsafe {
+                                std::mem::transmute::<
+                                    &AssignmentTarget<'a>,
+                                    &'static AssignmentTarget<'static>,
+                                >(&default.binding)
+                            };
+                            self.sync_generator_pending_yield =
+                                Some(SyncGeneratorPendingYield::AssignmentDefault {
+                                    binding,
+                                    environment: e.clone(),
+                                    statement: 0,
+                                });
+                            return Err(JsError::Yield(value));
+                        }
+                        Err(error) => return Err(error),
+                    }
                 } else {
                     value
                 };
@@ -15973,7 +16087,25 @@ impl Vm {
             }
             AssignmentTarget::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
-                let key = self.eval_expr(&member.expression, e)?;
+                let key = match self.eval_expr(&member.expression, e) {
+                    Ok(key) => key,
+                    Err(JsError::Yield(value)) => {
+                        let key_expression = unsafe {
+                            std::mem::transmute::<&Expression<'a>, &'static Expression<'static>>(
+                                &member.expression,
+                            )
+                        };
+                        self.sync_generator_pending_yield =
+                            Some(SyncGeneratorPendingYield::DeferredProperty {
+                                object,
+                                key_expression,
+                                value: Value::Undefined,
+                                statement: 0,
+                            });
+                        return Err(JsError::Yield(value));
+                    }
+                    Err(error) => return Err(error),
+                };
                 Some(LValue::DeferredProp { object, key })
             }
             _ => None,
@@ -16017,7 +16149,25 @@ impl Vm {
             }
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
-                let key_value = self.eval_expr(&m.expression, e)?;
+                let key_value = match self.eval_expr(&m.expression, e) {
+                    Ok(value) => value,
+                    Err(JsError::Yield(value)) => {
+                        let key_expression = unsafe {
+                            std::mem::transmute::<&Expression<'a>, &'static Expression<'static>>(
+                                &m.expression,
+                            )
+                        };
+                        self.sync_generator_pending_yield =
+                            Some(SyncGeneratorPendingYield::DeferredProperty {
+                                object: o,
+                                key_expression,
+                                value: v,
+                                statement: 0,
+                            });
+                        return Err(JsError::Yield(value));
+                    }
+                    Err(error) => return Err(error),
+                };
                 let k = self.to_property_key(key_value)?;
                 self.set_prop_with_accessors(&o, &k, v)
             }
@@ -20605,7 +20755,7 @@ fn generator_result(vm: &mut Vm, value: Value, done: bool) -> Value {
     result
 }
 
-fn native_sync_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_sync_generator_next(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm
         .get_prop(&this, SYNC_GENERATOR_INSTANCE_PROP)
         .is_undefined()
@@ -20622,7 +20772,7 @@ fn native_sync_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult
         )));
     }
     vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
-    let result = vm.resume_sync_generator(&this);
+    let result = vm.resume_sync_generator(&this, args.first().cloned().unwrap_or(Value::Undefined));
     vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
     result
 }
@@ -20679,7 +20829,7 @@ fn native_sync_generator_throw(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     ))
 }
 
-fn native_async_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+fn native_async_generator_next(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm
         .get_prop(&this, ASYNC_GENERATOR_INSTANCE_PROP)
         .is_undefined()
@@ -20702,7 +20852,8 @@ fn native_async_generator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
             return Ok(promise);
         }
         vm.set_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
-        let result = vm.resume_sync_generator(&this);
+        let result =
+            vm.resume_sync_generator(&this, args.first().cloned().unwrap_or(Value::Undefined));
         vm.set_prop(&this, ASYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
         vm.settle_promise(&promise, result);
         return Ok(promise);
