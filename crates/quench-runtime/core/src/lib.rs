@@ -9088,6 +9088,31 @@ impl Vm {
         Ok(self.delete_prop(o, k))
     }
 
+    /// Canonical DeleteProperty evaluation for both interpreter and stencil
+    /// execution.  The operation owns nullish coercion and strict-mode
+    /// completion so the two tiers cannot drift on the same reference shape.
+    pub(crate) fn delete_member_with_vm(
+        &mut self,
+        object: &Value,
+        key: &str,
+        strict: bool,
+    ) -> JsResult<Value> {
+        if object.is_null() || object.is_undefined() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "cannot delete property of nullish value",
+            )));
+        }
+        let deleted = self.delete_prop_with_vm(object, key)?;
+        if strict && !deleted {
+            return Err(JsError::Throw(type_error(
+                self,
+                "property is not configurable",
+            )));
+        }
+        Ok(Value::Bool(deleted))
+    }
+
     fn delete_prop(&self, o: &Value, k: &str) -> bool {
         if let Some(regexp) = o.as_regexp_ref() {
             let mut regexp = regexp.borrow_mut();
@@ -9204,58 +9229,121 @@ impl Vm {
         match x {
             Expression::StaticMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e)?;
-                let deleted = self.delete_prop_with_vm(&object, member.property.name.as_str())?;
-                if !deleted && self.strict_mode {
-                    return Err(JsError::Throw(type_error(
+                if matches!(&member.object, Expression::Super(_)) {
+                    return Err(JsError::Throw(reference_error(
                         self,
-                        "cannot delete a property in strict mode",
+                        "cannot delete a super property",
                     )));
                 }
-                Ok(Value::Bool(deleted))
+                if object.is_null() || object.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot delete property of nullish value",
+                    )));
+                }
+                self.delete_member_with_vm(
+                    &object,
+                    member.property.name.as_str(),
+                    self.strict_mode,
+                )
             }
             Expression::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 let key_value = self.eval_expr(&member.expression, e)?;
                 let key = self.to_property_key(key_value)?;
-                let deleted = self.delete_prop_with_vm(&object, &key)?;
-                if !deleted && self.strict_mode {
-                    return Err(JsError::Throw(type_error(
+                if matches!(&member.object, Expression::Super(_)) {
+                    return Err(JsError::Throw(reference_error(
                         self,
-                        "cannot delete a property in strict mode",
+                        "cannot delete a super property",
                     )));
                 }
-                Ok(Value::Bool(deleted))
+                if object.is_null() || object.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot delete property of nullish value",
+                    )));
+                }
+                self.delete_member_with_vm(&object, &key, self.strict_mode)
             }
             Expression::Identifier(identifier) => {
-                let name = identifier.name.as_str();
-                let Some(binding) = Environment::binding_environment(&e, name) else {
-                    return Ok(Value::Bool(true));
-                };
-                if self.readonly_global_binding(&e, name) {
-                    if self.strict_mode {
-                        return Err(JsError::Throw(type_error(
-                            self,
-                            "cannot delete a binding in strict mode",
-                        )));
-                    }
-                    return Ok(Value::Bool(false));
-                }
-                let deleted = binding.borrow_mut().delete_local(name);
-                if deleted && self.is_global_environment(&binding) {
-                    if let Some(global_this) = self.global_object_for_environment(&binding) {
-                        return Ok(Value::Bool(self.delete_prop(&global_this, name)));
-                    }
-                }
-                if !deleted && self.strict_mode {
-                    return Err(JsError::Throw(type_error(
-                        self,
-                        "cannot delete a binding in strict mode",
-                    )));
-                }
-                Ok(Value::Bool(deleted))
+                self.delete_name_with_vm(&e, identifier.name.as_str(), self.strict_mode)
             }
             _ => Ok(Value::Bool(true)),
         }
+    }
+
+    pub(crate) fn delete_name_with_vm(
+        &mut self,
+        environment: &Env,
+        name: &str,
+        strict: bool,
+    ) -> JsResult<Value> {
+        // A `with` environment is resolved dynamically through [[HasProperty]]
+        // before lexical bindings.  Keep that effect at the operation edge so
+        // stencil and interpreter deletes share proxy/ordinary behavior.
+        let mut current = Some(environment.clone());
+        while let Some(candidate) = current {
+            let (with_object, parent) = {
+                let borrowed = candidate.borrow();
+                (borrowed.with_object.clone(), borrowed.parent.clone())
+            };
+            if let Some(object) = with_object
+                && self.has_property_with_proxy(&object, name)?
+            {
+                return self.delete_member_with_vm(&object, name, strict);
+            }
+            current = parent;
+        }
+        let Some(binding) = Environment::binding_environment(environment, name) else {
+            return Ok(Value::Bool(true));
+        };
+        if self.readonly_global_binding(environment, name) {
+            if strict {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "cannot delete a binding in strict mode",
+                )));
+            }
+            return Ok(Value::Bool(false));
+        }
+        let deleted = binding.borrow_mut().delete_local(name);
+        if deleted && self.is_global_environment(&binding) {
+            if let Some(global_this) = self.global_object_for_environment(&binding) {
+                return Ok(Value::Bool(self.delete_prop(&global_this, name)));
+            }
+        }
+        // Sloppy unresolved assignment creates a configurable global-object
+        // property and mirrors it in the root environment. It is deletable
+        // even though it is not an eval-created declarative binding.
+        if !deleted
+            && self.is_global_environment(&binding)
+            && let Some(global_this) = self.global_object_for_environment(&binding)
+            && global_this
+                .as_object_ref()
+                .is_some_and(|object| {
+                    object
+                        .borrow()
+                        .attributes
+                        .get(name)
+                        .is_some_and(|attributes| attributes.configurable)
+                })
+        {
+            {
+                let mut binding = binding.borrow_mut();
+                binding.deleted_names.insert(name.to_owned());
+                if let Some(slot) = binding.names.get(name).copied() {
+                    Value::overwrite(&mut binding.values[slot], Value::Undefined);
+                }
+            }
+            return Ok(Value::Bool(self.delete_prop(&global_this, name)));
+        }
+        if !deleted && strict {
+            return Err(JsError::Throw(type_error(
+                self,
+                "cannot delete a binding in strict mode",
+            )));
+        }
+        Ok(Value::Bool(deleted))
     }
     fn set_computed_prop(&mut self, object: &Value, key: &Value, value: Value) -> JsResult<()> {
         let key_string = self.to_property_key(key.clone())?;
@@ -12842,9 +12930,15 @@ impl Vm {
                     .collect::<Vec<_>>()
             };
             reserve_script_bindings(&variable_environment, &r.program.body);
-            variable_environment
-                .borrow_mut()
-                .mark_deletable(newly_created);
+            // Only non-strict eval introduces deletable declarative `var`
+            // bindings.  Top-level script `var` declarations project onto
+            // non-configurable global-object properties, even when the name
+            // was not present before this script.
+            if eval_code {
+                variable_environment
+                    .borrow_mut()
+                    .mark_deletable(newly_created);
+            }
         }
         if !strict_eval {
             self.materialize_script_bindings(
