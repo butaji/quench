@@ -5799,6 +5799,7 @@ struct Vm {
     realm_async_constructors: RefCell<Vec<(bool, ObjectHandle, Value)>>,
     throw_type_error: RefCell<Option<Value>>,
     pending_loop_label: Option<String>,
+    pending_inferred_class_name: Option<String>,
     current_new_target: Option<Value>,
     construct_depth: usize,
     current_constructor: Option<Value>,
@@ -5939,6 +5940,7 @@ impl Vm {
             realm_async_constructors: RefCell::new(Vec::new()),
             throw_type_error: RefCell::new(None),
             pending_loop_label: None,
+            pending_inferred_class_name: None,
             current_new_target: None,
             construct_depth: 0,
             current_constructor: None,
@@ -13298,6 +13300,7 @@ impl Vm {
             // fallback) rather than exposing a stale cached global register.
             && !contains_accessor_syntax(source)
             && !contains_async_function_constructor_probe(source)
+            && !has_inferable_binding_initializer(&r.program)
             && !has_direct_lexical_declaration(&r.program.body)
         {
             (|| {
@@ -14213,12 +14216,31 @@ impl Vm {
                 }
                 environment.tdz_names.remove(&name);
             }
+            let inferred_class_name = d
+                .init
+                .as_ref()
+                .filter(|init| {
+                    matches!(init, Expression::ClassExpression(class) if class.id.is_none())
+                })
+                .and_then(|_| pattern_name(&d.id));
+            let previous_class_name = self.pending_inferred_class_name.take();
+            self.pending_inferred_class_name = inferred_class_name;
             let value = d
                 .init
                 .as_ref()
                 .map(|init| self.eval_expr(init, e.clone()))
                 .transpose()?
                 .unwrap_or(Value::Undefined);
+            self.pending_inferred_class_name = previous_class_name;
+            if let Some(name) = pattern_name(&d.id)
+                && d
+                    .init
+                    .as_ref()
+                    .is_some_and(is_anonymous_function_definition)
+                && value.as_function_ref().is_some()
+            {
+                set_function_name(&value, &name);
+            }
             let target = if v.kind == VariableDeclarationKind::Var {
                 let catch_binding =
                     pattern_name(&d.id).is_some_and(|name| e.borrow().catch_names.contains(&name));
@@ -14983,7 +15005,13 @@ impl Vm {
                     .count()
             })
             .unwrap_or(0);
-        let name = n.id.as_ref().map_or("", |id| id.name.as_str());
+        let inferred_name = self.pending_inferred_class_name.clone();
+        let name = n
+            .id
+            .as_ref()
+            .map(|id| id.name.to_string())
+            .or(inferred_name)
+            .unwrap_or_default();
         let function = FunctionValue {
             kind: FunctionKind::Class {
                 node: unsafe { std::mem::transmute(n) },
@@ -15007,6 +15035,10 @@ impl Vm {
         {
             self.set_prop(&class, REALM_GLOBAL_PROP, global);
         }
+        // Static field initializers execute with the class constructor as
+        // their `this` binding. Keep it in the class environment so the
+        // initializer and any closures it creates share one lexical fact.
+        class_env.borrow_mut().declare("this", class.clone());
         // Static private members brand the constructor object itself before
         // any static initializer executes.
         for element in &n.body.body {
@@ -19997,6 +20029,29 @@ fn direct_super_in_expression(expression: &Expression<'_>) -> bool {
     }
     let mut scan = Scan { found: false };
     scan.visit_expression(expression);
+    scan.found
+}
+
+fn has_inferable_binding_initializer(program: &Program<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+            if declaration.declarations.iter().any(|declarator| {
+                pattern_name(&declarator.id).is_some()
+                    && declarator
+                        .init
+                        .as_ref()
+                        .is_some_and(is_anonymous_function_definition)
+            }) {
+                self.found = true;
+            }
+            ast_walk::walk_variable_declaration(self, declaration);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_program(program);
     scan.found
 }
 
