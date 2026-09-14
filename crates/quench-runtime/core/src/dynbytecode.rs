@@ -1991,6 +1991,20 @@ impl Compiler {
                 reason: "string relational comparison deferred to shared semantics",
             });
         }
+        if matches!(
+            value.operator,
+            ShiftLeft | ShiftRight | ShiftRightZeroFill | BitwiseOR | BitwiseXOR | BitwiseAnd
+        ) {
+            // Numeric bitwise stencils cannot prove that operands are
+            // Number primitives: ToNumeric may invoke user conversion or
+            // produce BigInt, and Symbols must throw a real TypeError. Keep
+            // this whole operator family on the shared coercion reducer until
+            // the stencil carries those guards explicitly.
+            return Err(CompileGap {
+                span: value.span,
+                reason: "bitwise coercion deferred to shared semantics",
+            });
+        }
         let left = self.expression(&value.left)?;
         let right = self.expression(&value.right)?;
         let dst = self.alloc()?;
