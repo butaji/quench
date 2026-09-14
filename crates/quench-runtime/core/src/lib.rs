@@ -13632,7 +13632,11 @@ impl Vm {
                         }
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
-                        let value = self.make_class(class, e)?;
+                        let previous_class_name = self.pending_inferred_class_name.take();
+                        self.pending_inferred_class_name = Some("default".to_owned());
+                        let value = self.make_class(class, e);
+                        self.pending_inferred_class_name = previous_class_name;
+                        let value = value?;
                         if value.as_function_ref().is_some_and(|_| {
                             let name = self.get_prop(&value, "name");
                             name.is_undefined()
