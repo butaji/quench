@@ -33629,10 +33629,18 @@ pub(crate) fn constructable(value: &Value) -> bool {
         FunctionKind::User { node, .. } => {
             !node.generator
                 && !node.r#async
-                && !function.props.borrow().contains_key("\0nonconstructable")
+                && !function
+                    .props
+                    .try_borrow()
+                    .map(|props| props.contains_key("\0nonconstructable"))
+                    .unwrap_or(false)
         }
         FunctionKind::Builtin(id) => id.is_constructable(),
-        FunctionKind::Native(_) => !function.props.borrow().contains_key("\0nonconstructable"),
+        FunctionKind::Native(_) => !function
+            .props
+            .try_borrow()
+            .map(|props| props.contains_key("\0nonconstructable"))
+            .unwrap_or(false),
         FunctionKind::Arrow { .. } => false,
         FunctionKind::Bound { target, .. } => constructable(target),
         FunctionKind::Class { .. } => true,
