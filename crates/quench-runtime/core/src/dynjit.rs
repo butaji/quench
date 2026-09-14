@@ -4067,20 +4067,10 @@ fn inline_opcode(op: &DynOp) -> Option<InlineOpcode> {
         DynOp::LoadLocal { .. } => Some(InlineOpcode::LoadLocal),
         DynOp::DeclareLocal { .. } | DynOp::StoreLocal { .. } => Some(InlineOpcode::StoreLocal),
         DynOp::Move { .. } => Some(InlineOpcode::Move),
-        DynOp::Binary { kind, .. } => match kind {
-            Op::Add => Some(InlineOpcode::Add),
-            Op::Sub => Some(InlineOpcode::Subtract),
-            Op::Mul => Some(InlineOpcode::Multiply),
-            Op::Div => Some(InlineOpcode::Divide),
-            // AArch64 lowers f64 remainder to an external `fmod` call. It stays
-            // at the canonical block slow path until external stencil calls
-            // are represented as explicit patch obligations.
-            Op::Rem => None,
-            // Relational operators require ToPrimitive/BigInt/Symbol
-            // semantics; raw f64 comparison is not a valid general stencil.
-            Op::Lt | Op::Le | Op::Gt | Op::Ge => None,
-            _ => None,
-        },
+        // Every binary operator performs observable ToPrimitive/ToNumeric,
+        // BigInt, Symbol, and error-ordering work. Keep the operation in the
+        // shared DynOp kernel until those guards are part of the stencil ABI.
+        DynOp::Binary { .. } => None,
         DynOp::Jump { .. } => Some(InlineOpcode::Jump),
         DynOp::JumpIfFalse { .. } => Some(InlineOpcode::JumpIfFalse),
         _ => None,
@@ -4214,35 +4204,7 @@ fn select_direct_opcode_template(op: &DynOp) -> Option<DirectOpcodeTemplate> {
             kind: UnaryKind::Not,
             ..
         } => DirectOpcodeTemplate::Next("quench_dyn_not"),
-        // Equality and relational operators require the VM conversion
-        // protocol (object identity, Symbol, BigInt, and user-defined
-        // ToPrimitive).  Their compact direct stencils only operate on raw
-        // machine words, so keep them on the shared DynOp slow kernel until
-        // those guards are represented explicitly.
-        DynOp::Binary {
-            kind: Op::Eq
-                | Op::Ne
-                | Op::StrictEq
-                | Op::StrictNe
-                | Op::Lt
-                | Op::Le
-                | Op::Gt
-                | Op::Ge,
-            ..
-        } => return None,
-        DynOp::Binary { kind, .. } => DirectOpcodeTemplate::Next(match kind {
-            Op::Add => "quench_dyn_add",
-            Op::Sub => "quench_dyn_subtract",
-            Op::Mul => "quench_dyn_multiply",
-            Op::Div => "quench_dyn_divide",
-            Op::Shl => "quench_dyn_shift_left",
-            Op::Shr => "quench_dyn_shift_right",
-            Op::Ushr => "quench_dyn_shift_right_unsigned",
-            Op::Or => "quench_dyn_bit_or",
-            Op::Xor => "quench_dyn_bit_xor",
-            Op::And => "quench_dyn_bit_and",
-            _ => return None,
-        }),
+        DynOp::Binary { .. } => return None,
         DynOp::GetStatic { .. } => DirectOpcodeTemplate::Next("quench_dyn_get_static"),
         DynOp::GetComputed { .. } => DirectOpcodeTemplate::Next("quench_dyn_get_computed_dense"),
         // Strict stores must traverse the semantic setter path so read-only
@@ -4479,6 +4441,12 @@ fn select_direct_block_template(
     end: usize,
 ) -> Option<DirectBlockTemplate> {
     let ops = &code.ops.get(start..end)?;
+    if ops
+        .iter()
+        .any(|instruction| matches!(instruction.op, DynOp::Binary { .. }))
+    {
+        return None;
+    }
     // `instanceof` observes @@hasInstance, prototype getters, proxies, and
     // callable checks.  Keep every block containing it on the shared VM
     // operation until those guards are represented in the stencil contract.
