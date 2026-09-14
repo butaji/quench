@@ -5943,6 +5943,8 @@ struct Vm {
     jit_mode: JitMode,
     array_proto: Option<ObjectHandle>,
     array_iterator_proto: Option<ObjectHandle>,
+    map_iterator_proto: Option<ObjectHandle>,
+    set_iterator_proto: Option<ObjectHandle>,
     regexp_iterator_proto: Option<ObjectHandle>,
     string_iterator_proto: Option<ObjectHandle>,
     prototype_epoch: Cell<u64>,
@@ -6131,6 +6133,8 @@ impl Vm {
             jit_mode: JitMode::from_environment(),
             array_proto: None,
             array_iterator_proto: None,
+            map_iterator_proto: None,
+            set_iterator_proto: None,
             regexp_iterator_proto: None,
             string_iterator_proto: None,
             prototype_epoch: Cell::new(INITIAL_PROTOTYPE_EPOCH),
@@ -7167,6 +7171,9 @@ impl Vm {
                         "set" => native_map_set / 2,
                         "has" => native_map_has / 1,
                         "delete" => native_map_delete / 1,
+                        "entries" => native_map_iterator / 0,
+                        "keys" => native_map_keys / 0,
+                        "values" => native_map_values / 0,
                     );
                     self.define_accessor_slot(
                         &Value::Object(prototype.clone()),
@@ -7193,6 +7200,9 @@ impl Vm {
                         "add" => native_set_add / 1,
                         "has" => native_set_has / 1,
                         "delete" => native_set_delete / 1,
+                        "values" => native_set_iterator / 0,
+                        "keys" => native_set_iterator / 0,
+                        "entries" => native_set_entries / 0,
                     );
                     self.define_accessor_slot(
                         &Value::Object(prototype.clone()),
@@ -8555,6 +8565,22 @@ impl Vm {
             }
             let unscopables_key = self.well_known_symbol_key("unscopables");
             self.set_prop(&prototype, &unscopables_key, unscopables);
+            let map_iterator_prototype = self.object(self.default_object_prototype());
+            let map_next = self.native_named(native_array_iterator_next, "next", 0);
+            self.mark_nonconstructable(&map_next);
+            self.set_prop(&map_iterator_prototype, "next", map_next);
+            self.set_prop(&map_iterator_prototype, &iterator_key, self.native(native_iterator_self));
+            self.set_prop(&map_iterator_prototype, &tag_key, Value::string_value("Map Iterator"));
+            set_property_attributes(&map_iterator_prototype, &tag_key, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+            self.map_iterator_proto = map_iterator_prototype.as_object();
+            let set_iterator_prototype = self.object(self.default_object_prototype());
+            let set_next = self.native_named(native_array_iterator_next, "next", 0);
+            self.mark_nonconstructable(&set_next);
+            self.set_prop(&set_iterator_prototype, "next", set_next);
+            self.set_prop(&set_iterator_prototype, &iterator_key, self.native(native_iterator_self));
+            self.set_prop(&set_iterator_prototype, &tag_key, Value::string_value("Set Iterator"));
+            set_property_attributes(&set_iterator_prototype, &tag_key, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+            self.set_iterator_proto = set_iterator_prototype.as_object();
         }
         let iterator = self.native_named(native_iterator_constructor, "Iterator", 0);
         let iterator_prototype = self.object(self.default_object_prototype());
@@ -27256,11 +27282,34 @@ fn native_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
 }
 
 fn native_map_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(native_array_iterator(
+    native_map_iterator_mode(vm, this, "entries")
+}
+
+fn native_map_keys(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    native_map_iterator_mode(vm, this, "keys")
+}
+
+fn native_map_values(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    native_map_iterator_mode(vm, this, "values")
+}
+
+fn native_map_iterator_mode(vm: &mut Vm, this: Value, mode: &str) -> JsResult<Value> {
+    let entries = map_entries(vm, &this);
+    let values = entries.into_iter().map(|pair| match mode {
+        "keys" => vm.get_prop(&pair, "0"),
+        "values" => vm.get_prop(&pair, "1"),
+        _ => pair,
+    }).collect::<Vec<_>>();
+    let source = vm.array_from_values(values);
+    let iterator = native_array_iterator(
         vm,
-        vm.get_prop(&this, MAP_ENTRIES_PROP),
+        source,
         &[],
-    ))?
+    )?;
+    if let Some(prototype) = vm.map_iterator_proto.clone() && let Some(object) = iterator.as_object_ref() {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    Ok(iterator)
 }
 
 fn native_set_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -27366,11 +27415,27 @@ fn native_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
 }
 
 fn native_set_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(native_array_iterator(
+    native_set_iterator_mode(vm, this, "values")
+}
+
+fn native_set_entries(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    native_set_iterator_mode(vm, this, "entries")
+}
+
+fn native_set_iterator_mode(vm: &mut Vm, this: Value, mode: &str) -> JsResult<Value> {
+    let values = set_values(vm, &this).into_iter().map(|value| {
+        if mode == "entries" { vm.array_from_values(vec![value.clone(), value]) } else { value }
+    }).collect::<Vec<_>>();
+    let source = vm.array_from_values(values);
+    let iterator = native_array_iterator(
         vm,
-        vm.get_prop(&this, SET_VALUES_PROP),
+        source,
         &[],
-    ))?
+    )?;
+    if let Some(prototype) = vm.set_iterator_proto.clone() && let Some(object) = iterator.as_object_ref() {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    Ok(iterator)
 }
 
 fn native_weak_map_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
