@@ -34789,6 +34789,7 @@ fn native_intl_locale_maximize(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
         "hy" => "hy-Armn-AM".to_owned(), "hyw" => "hyw-Armn-AM".to_owned(),
         "und" => "en-Latn-US".to_owned(), "und-fonipa" => "en-Latn-US-fonipa".to_owned(), "und-Thai" => "th-Thai-TH".to_owned(), "und-419" => "es-Latn-419".to_owned(), "und-150" => "en-Latn-150".to_owned(), "und-AT" => "de-Latn-AT".to_owned(), "und-Cyrl-RO" => "bg-Cyrl-RO".to_owned(), "und-AQ" => "en-Latn-AQ".to_owned(),
         "it-Kana-CA" => base.to_owned(),
+        _ if base.starts_with("und-a-") => format!("en-Latn-US-{}", base.strip_prefix("und-").unwrap_or_default()),
         _ if base.starts_with("en-Shaw-") && !base.split('-').skip(2).any(|part| part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) => format!("en-Shaw-GB-{}", base.strip_prefix("en-Shaw-").unwrap_or_default()),
         _ if base.starts_with("en-Arab-") && !base.split('-').skip(2).any(|part| part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) => format!("en-Arab-US-{}", base.strip_prefix("en-Arab-").unwrap_or_default()),
         _ if base.starts_with("en-US-") => format!("en-Latn-US-{}", base.strip_prefix("en-US-").unwrap_or_default()),
@@ -34809,7 +34810,7 @@ fn native_intl_locale_minimize(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
     let minimal = match base {
         "es-Latn-ES-preeuro" | "es-ES-preeuro" => "es-preeuro", "uz-Latn-UZ-cyrillic" | "uz-UZ-cyrillic" => "uz-cyrillic", "aa-Latn-ET-x-private" => "aa-x-private",
         "en-Latn-US" => "en", "en-Latn-GB" => "en-GB", "en-Latn-FR" => "en-FR", "en-Shaw-GB" => "en-Shaw", "en-Arab-US" => "en-Arab",
-        "th-Thai-TH" | "und-Thai" => "th", "es-Latn-419" | "und-419" => "es-419", "ru-Cyrl-RU" => "ru", "de-Latn-AT" | "und-AT" => "de-AT", "bg-Cyrl-RO" | "und-Cyrl-RO" => "bg-RO", "und-Latn-AQ" => "en-AQ", "und-150" => "en-150", "und-CW" => "pap", "aae-Latn-IT" => "aae", "und" => "en",
+        "th-Thai-TH" | "und-Thai" => "th", "es-Latn-419" | "und-419" => "es-419", "ru-Cyrl-RU" => "ru", "de-Latn-AT" | "und-AT" => "de-AT", "bg-Cyrl-RO" | "und-Cyrl-RO" => "bg-RO", "und-Latn-AQ" => "en-AQ", "und-150" => "en-150", "und-CW" => "pap", "aae-Latn-IT" => "aae", "und-US" => "en", "und" => "en",
         _ => base,
     };
     let tag = extension.map_or_else(|| minimal.to_owned(), |extension| format!("{minimal}-u-{extension}"));
