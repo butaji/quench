@@ -5096,6 +5096,108 @@ fn loose_eq(a: &Value, b: &Value) -> bool {
     false
 }
 
+/// ECMAScript Abstract Equality with the VM's conversion hooks.
+///
+/// Keeping this reducer separate from the numeric fast path is important:
+/// object/object equality is identity-based, while object/primitive equality
+/// performs exactly one ToPrimitive on the object.  BigInt/string and
+/// BigInt/number pairs then stay exact instead of passing through `f64`.
+fn abstract_equal_with_vm(vm: &mut Vm, left: &Value, right: &Value) -> JsResult<bool> {
+    if eq_strict(left, right) {
+        return Ok(true);
+    }
+    if is_html_dda_value(left) || is_html_dda_value(right) {
+        return Ok((is_html_dda_value(left) && (right.is_null() || right.is_undefined()))
+            || (is_html_dda_value(right) && (left.is_null() || left.is_undefined())));
+    }
+    if (left.is_null() && right.is_undefined()) || (left.is_undefined() && right.is_null()) {
+        return Ok(true);
+    }
+    if left.as_bool().is_some() {
+        return abstract_equal_with_vm(
+            vm,
+            &Value::Number(left.number()),
+            right,
+        );
+    }
+    if right.as_bool().is_some() {
+        return abstract_equal_with_vm(
+            vm,
+            left,
+            &Value::Number(right.number()),
+        );
+    }
+    if is_symbol_carrier(left) || is_symbol_carrier(right) {
+        return Ok(is_symbol_carrier(left)
+            && is_symbol_carrier(right)
+            && left.same_bits(right));
+    }
+    let left_object = left.is_object_like();
+    let right_object = right.is_object_like();
+    if left_object && right_object {
+        return Ok(left.same_bits(right));
+    }
+    if left_object {
+        let primitive = to_primitive_for_binary(vm, left, PrimitiveHint::Default)?;
+        return abstract_equal_with_vm(vm, &primitive, right);
+    }
+    if right_object {
+        let primitive = to_primitive_for_binary(vm, right, PrimitiveHint::Default)?;
+        return abstract_equal_with_vm(vm, left, &primitive);
+    }
+    if is_bigint_marker(left) || is_bigint_marker(right) {
+        if is_bigint_marker(left) && is_bigint_marker(right) {
+            return Ok(bigint_value_unchecked(left) == bigint_value_unchecked(right));
+        }
+        if is_bigint_marker(left) {
+            return Ok(bigint_equal_primitive(&bigint_value_unchecked(left), right));
+        }
+        return Ok(bigint_equal_primitive(&bigint_value_unchecked(right), left));
+    }
+    if let (Some(left), Some(right)) = (left.as_string(), right.as_number()) {
+        return Ok(to_number_with_vm(vm, &Value::String(Rc::new(left.clone())))? == right);
+    }
+    if let (Some(left), Some(right)) = (left.as_number(), right.as_string()) {
+        return Ok(left == to_number_with_vm(vm, &Value::String(Rc::new(right.clone())))?);
+    }
+    Ok(false)
+}
+
+fn bigint_value_unchecked(value: &Value) -> BigInt {
+    parse_bigint_text(value.as_string().map_or("", String::as_str))
+        .unwrap_or_else(|_| BigInt::from(0))
+}
+
+fn bigint_equal_primitive(bigint: &BigInt, other: &Value) -> bool {
+    if let Some(string) = other.as_string() {
+        return parse_bigint_text(string).is_ok_and(|value| value == *bigint);
+    }
+    if let Some(number) = other.as_number() {
+        return number_to_bigint_exact(number).is_some_and(|value| value == *bigint);
+    }
+    false
+}
+
+fn number_to_bigint_exact(number: f64) -> Option<BigInt> {
+    if !number.is_finite() || number.fract() != 0.0 {
+        return None;
+    }
+    if number == 0.0 {
+        return Some(BigInt::from(0));
+    }
+    let bits = number.abs().to_bits();
+    let exponent = i32::from(((bits >> 52) & 0x7ff) as u16) - 1023;
+    let significand = (bits & ((1_u64 << 52) - 1)) | (1_u64 << 52);
+    let integer = if exponent >= 52 {
+        BigInt::from(significand) << (exponent - 52) as usize
+    } else if exponent >= 0 {
+        BigInt::from(significand >> (52 - exponent) as u32)
+    } else {
+        return None;
+    };
+    Some(if number.is_sign_negative() { -integer } else { integer })
+}
+
 fn is_html_dda_value(value: &Value) -> bool {
     value
         .as_object_ref()
@@ -5350,6 +5452,14 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     if matches!(op, Op::StrictEq | Op::StrictNe) {
         return Ok(exec_op_ref(op, left, right));
     }
+    if matches!(op, Op::Eq | Op::Ne) {
+        let equal = abstract_equal_with_vm(vm, left, right)?;
+        return Ok(Value::Bool(if matches!(op, Op::Eq) {
+            equal
+        } else {
+            !equal
+        }));
+    }
     if matches!(op, Op::Eq | Op::Ne) && (is_html_dda_value(left) || is_html_dda_value(right)) {
         let equal = loose_eq(left, right);
         return Ok(Value::Bool(if matches!(op, Op::Eq) {
@@ -5359,6 +5469,8 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
         }));
     }
     if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge)
+        && !is_bigint_marker(left)
+        && !is_bigint_marker(right)
         && let (Some(left), Some(right)) = (left.as_string(), right.as_string())
     {
         let ordering = utf16_units(left).cmp(&utf16_units(right));
@@ -5389,6 +5501,28 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     };
     let left = to_primitive_for_binary(vm, left, hint)?;
     let right = to_primitive_for_binary(vm, right, hint)?;
+    if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge)
+        && (is_symbol_carrier(&left) || is_symbol_carrier(&right))
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a Symbol value to a number",
+        )));
+    }
+    if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge)
+        && !is_bigint_marker(&left)
+        && !is_bigint_marker(&right)
+        && let (Some(left), Some(right)) = (left.as_string(), right.as_string())
+    {
+        let ordering = utf16_units(left).cmp(&utf16_units(right));
+        return Ok(Value::Bool(match op {
+            Op::Lt => ordering.is_lt(),
+            Op::Le => !ordering.is_gt(),
+            Op::Gt => ordering.is_gt(),
+            Op::Ge => !ordering.is_lt(),
+            _ => unreachable!(),
+        }));
+    }
     if matches!(op, Op::Add)
         && ((left.is_string() && !is_bigint_marker(&left))
             || (right.is_string() && !is_bigint_marker(&right)))
@@ -5423,7 +5557,8 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
             }));
         }
         if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge) {
-            return Ok(exec_numeric_op(op, left.number(), right.number()));
+            let result = compare_bigint_mixed(op, &left, &right);
+            return Ok(result);
         }
         return Err(JsError::Throw(type_error(
             vm,
@@ -5433,6 +5568,40 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
     let left = to_number_with_vm(vm, &left)?;
     let right = to_number_with_vm(vm, &right)?;
     Ok(exec_numeric_op(op, left, right))
+}
+
+fn compare_bigint_mixed(op: Op, left: &Value, right: &Value) -> Value {
+    let (bigint, other, bigint_left) = if is_bigint_marker(left) {
+        (bigint_value_unchecked(left), right, true)
+    } else {
+        (bigint_value_unchecked(right), left, false)
+    };
+    let ordering = if let Some(string) = other.as_string() {
+        let Ok(other) = parse_bigint_text(string) else {
+            return Value::Bool(false);
+        };
+        bigint.cmp(&other)
+    } else if let Some(number) = other.as_number() {
+        if let Some(other) = number_to_bigint_exact(number) {
+            bigint.cmp(&other)
+        } else if number.is_nan() {
+            return Value::Bool(false);
+        } else {
+            bigint
+                .to_f64()
+                .map_or(std::cmp::Ordering::Equal, |value| value.total_cmp(&number))
+        }
+    } else {
+        return Value::Bool(false);
+    };
+    let ordering = if bigint_left { ordering } else { ordering.reverse() };
+    Value::Bool(match op {
+        Op::Lt => ordering.is_lt(),
+        Op::Le => !ordering.is_gt(),
+        Op::Gt => ordering.is_gt(),
+        Op::Ge => !ordering.is_lt(),
+        _ => false,
+    })
 }
 
 fn bigint_binary(op: Op, left: BigInt, right: BigInt) -> Value {
