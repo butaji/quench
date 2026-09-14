@@ -27717,10 +27717,10 @@ fn uint8array_values(vm: &mut Vm, this: &Value) -> JsResult<Vec<u8>> {
         return Err(JsError::Throw(type_error(vm, "receiver is not a Uint8Array")));
     }
     let buffer = this.as_object_ref().and_then(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned());
-    if buffer.as_ref().is_some_and(|buffer| buffer.as_object_ref().is_some_and(|object| {
-        object.borrow().props.get("\0array-buffer-detached").is_some_and(Value::truthy)
-            || object.borrow().props.get("immutable").is_some_and(Value::truthy)
-    })) {
+    if buffer.as_ref().is_some_and(|buffer| {
+        vm.get_prop(buffer, "\0array-buffer-detached").truthy()
+            || vm.get_prop(buffer, "immutable").truthy()
+    }) {
         return Err(JsError::Throw(type_error(vm, "detached ArrayBuffer")));
     }
     Ok(typed_array_values(vm, this)?
@@ -27735,23 +27735,60 @@ fn native_uint8array_to_hex(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<V
     ))
 }
 
-fn base64_encode_bytes(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+fn base64_encode_bytes(bytes: &[u8], alphabet: &str, omit_padding: bool) -> String {
+    let table = if alphabet == "base64url" {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    } else {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    };
     let mut output = String::new();
     for chunk in bytes.chunks(3) {
         let value = (u32::from(chunk[0]) << 16)
             | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
             | u32::from(*chunk.get(2).unwrap_or(&0));
-        output.push(TABLE[((value >> 18) & 63) as usize] as char);
-        output.push(TABLE[((value >> 12) & 63) as usize] as char);
-        output.push(if chunk.len() > 1 { TABLE[((value >> 6) & 63) as usize] as char } else { '=' });
-        output.push(if chunk.len() > 2 { TABLE[(value & 63) as usize] as char } else { '=' });
+        output.push(table[((value >> 18) & 63) as usize] as char);
+        output.push(table[((value >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            output.push(table[((value >> 6) & 63) as usize] as char);
+        } else if !omit_padding {
+            output.push('=');
+        }
+        if chunk.len() > 2 {
+            output.push(table[(value & 63) as usize] as char);
+        } else if !omit_padding {
+            output.push('=');
+        }
     }
     output
 }
 
-fn native_uint8array_to_base64(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(base64_encode_bytes(&uint8array_values(vm, &this)?)))
+fn native_uint8array_to_base64(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _ = uint8array_receiver_length(vm, &this)?;
+    let mut alphabet = "base64";
+    let mut omit_padding = false;
+    if let Some(options) = args.first().filter(|value| value.is_object_like()) {
+        let value = vm.get_prop_with_accessors(options, "alphabet")?;
+        if !value.is_undefined() {
+            let value = value.as_string().ok_or_else(|| {
+                JsError::Throw(type_error(vm, "alphabet must be a string"))
+            })?;
+            alphabet = match value.as_str() {
+                "base64" => "base64",
+                "base64url" => "base64url",
+                _ => return Err(JsError::Throw(type_error(vm, "invalid alphabet"))),
+            };
+        }
+        let value = vm.get_prop_with_accessors(options, "omitPadding")?;
+        if !value.is_undefined() {
+            omit_padding = value.truthy();
+        }
+    }
+    let bytes = uint8array_values(vm, &this)?;
+    Ok(Value::string_value(base64_encode_bytes(
+        &bytes,
+        alphabet,
+        omit_padding,
+    )))
 }
 
 fn hex_nibble(value: u8) -> Option<u8> {
@@ -27765,7 +27802,11 @@ fn hex_nibble(value: u8) -> Option<u8> {
 
 fn native_uint8array_from_hex(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let this = Environment::get(&vm.global, "Uint8Array").unwrap_or(this);
-    let text = to_string_with_vm(vm, &args.first().cloned().unwrap_or(Value::Undefined))?;
+    let text = args
+        .first()
+        .and_then(Value::as_string)
+        .cloned()
+        .ok_or_else(|| JsError::Throw(type_error(vm, "hex input must be a string")))?;
     let bytes = text.as_bytes();
     if bytes.len() % 2 != 0 {
         return Err(JsError::Throw(syntax_error(vm, "invalid hex string")));
@@ -27776,10 +27817,11 @@ fn native_uint8array_from_hex(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         let Some(low) = hex_nibble(pair[1]) else { return Err(JsError::Throw(syntax_error(vm, "invalid hex string"))); };
         values.push(Value::Number((high * 16 + low) as f64));
     }
-    typed_array_construct(vm, this, &[Value::Number(values.len() as f64)]).map(|result| {
-        for (index, value) in values.into_iter().enumerate() { vm.set_prop(&result, &index.to_string(), value); }
-        result
-    })
+    let result = typed_array_construct(vm, this, &[Value::Number(values.len() as f64)])?;
+    for (index, value) in values.into_iter().enumerate() {
+        vm.set_prop(&result, &index.to_string(), value);
+    }
+    Ok(result)
 }
 
 fn base64_value(value: u8) -> Option<u8> {
@@ -27793,9 +27835,40 @@ fn base64_value(value: u8) -> Option<u8> {
     }
 }
 
+fn base64_options(vm: &mut Vm, args: &[Value]) -> JsResult<(&'static str, &'static str)> {
+    let mut alphabet = "base64";
+    let mut last_chunk = "loose";
+    if let Some(options) = args.get(1).filter(|value| value.is_object_like()) {
+        let value = vm.get_prop_with_accessors(options, "alphabet")?;
+        if !value.is_undefined() {
+            let value = value.as_string().ok_or_else(|| JsError::Throw(type_error(vm, "alphabet must be a string")))?;
+            alphabet = match value.as_str() {
+                "base64" => "base64",
+                "base64url" => "base64url",
+                _ => return Err(JsError::Throw(type_error(vm, "invalid alphabet"))),
+            };
+        }
+        let value = vm.get_prop_with_accessors(options, "lastChunkHandling")?;
+        if !value.is_undefined() {
+            let value = value.as_string().ok_or_else(|| JsError::Throw(type_error(vm, "lastChunkHandling must be a string")))?;
+            last_chunk = match value.as_str() {
+                "loose" => "loose",
+                "strict" => "strict",
+                "stop-before-partial" => "stop-before-partial",
+                _ => return Err(JsError::Throw(type_error(vm, "invalid lastChunkHandling"))),
+            };
+        }
+    }
+    Ok((alphabet, last_chunk))
+}
+
 fn native_uint8array_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let this = Environment::get(&vm.global, "Uint8Array").unwrap_or(this);
-    let text = to_string_with_vm(vm, &args.first().cloned().unwrap_or(Value::Undefined))?;
+    let text = args
+        .first()
+        .and_then(Value::as_string)
+        .cloned()
+        .ok_or_else(|| JsError::Throw(type_error(vm, "base64 input must be a string")))?;
     let mut alphabet = "base64";
     let mut last_chunk = "loose";
     if let Some(options) = args.get(1).filter(|value| value.is_object_like()) {
@@ -27817,6 +27890,17 @@ fn native_uint8array_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> Js
         return Err(JsError::Throw(syntax_error(vm, "invalid base64 string")));
     }
     let mut compact = compact[..compact.len().saturating_sub(padding)].to_vec();
+    let expected_padding = match compact.len() % 4 {
+        2 => 2,
+        3 => 1,
+        _ => 0,
+    };
+    if padding > expected_padding
+        || (padding < expected_padding && padding > 0 && last_chunk != "stop-before-partial")
+        || (padding > 0 && compact.len() % 4 < 2)
+    {
+        return Err(JsError::Throw(syntax_error(vm, "invalid base64 padding")));
+    }
     if alphabet == "base64" && compact.iter().any(|byte| *byte == b'-' || *byte == b'_') {
         return Err(JsError::Throw(syntax_error(vm, "invalid base64 alphabet")));
     }
@@ -27826,8 +27910,19 @@ fn native_uint8array_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> Js
     let remainder = compact.len() % 4;
     if (remainder == 1 && last_chunk != "stop-before-partial")
         || (padding == 0 && remainder != 0 && last_chunk == "strict")
+        || (padding > 0
+            && ((padding == 1 && remainder != 3) || (padding == 2 && remainder != 2))
+            && last_chunk != "stop-before-partial")
     {
         return Err(JsError::Throw(syntax_error(vm, "invalid base64 length")));
+    }
+    if last_chunk == "strict" && remainder > 1 {
+        let last = base64_value(*compact.last().unwrap()).unwrap();
+        let invalid_bits = (remainder == 2 && last & 0x0f != 0)
+            || (remainder == 3 && last & 0x03 != 0);
+        if invalid_bits {
+            return Err(JsError::Throw(syntax_error(vm, "invalid base64 padding bits")));
+        }
     }
     if padding > 0 && (compact.len() + padding) % 4 != 0 {
         if last_chunk != "stop-before-partial" { return Err(JsError::Throw(syntax_error(vm, "invalid base64 padding"))); }
@@ -27846,58 +27941,179 @@ fn native_uint8array_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> Js
         let keep = values.len().saturating_sub(1);
         values.truncate(keep);
     }
-    typed_array_construct(vm, this, &[Value::Number(values.len() as f64)]).map(|result| {
-        for (index, value) in values.into_iter().enumerate() { vm.set_prop(&result, &index.to_string(), value); }
-        result
-    })
-}
-
-fn uint8array_set_result(vm: &mut Vm, target: &Value, source: Value, args: &[Value]) -> JsResult<Value> {
-    let target_values = uint8array_values(vm, target)?;
-    let source_values = typed_array_values(vm, &source)?;
-    let source_length = source_values.len();
-    let text = to_string_with_vm(vm, &args.first().cloned().unwrap_or(Value::Undefined))?;
-    let input_length = text.bytes().filter(|byte| !byte.is_ascii_whitespace()).count();
-    let remainder = source_length % 3;
-    let stop_partial = args.get(1).and_then(|options| {
-        options.is_object_like().then(|| vm.get_prop_with_accessors(options, "lastChunkHandling").ok())
-    }).flatten().and_then(|value| value.as_string().cloned()).is_some_and(|value| value == "stop-before-partial");
-    let complete = if stop_partial && remainder != 0 && !text.trim_end().ends_with('=') {
-        source_length - remainder
-    } else {
-        source_length
-    };
-    let count = if complete > target_values.len() {
-        (target_values.len() / 3) * 3
-    } else {
-        complete
-    };
-    let read = if count < complete {
-        (count / 3) * 4
-    } else {
-        input_length
-    };
-    for (index, value) in source_values.into_iter().take(count).enumerate() {
-        vm.set_prop(target, &index.to_string(), value);
+    let result = typed_array_construct(vm, this, &[Value::Number(values.len() as f64)])?;
+    for (index, value) in values.into_iter().enumerate() {
+        vm.set_prop(&result, &index.to_string(), value);
     }
-    let result = vm.object(None);
-    vm.set_prop(&result, "read", Value::Number(read as f64));
-    vm.set_prop(&result, "written", Value::Number(count as f64));
     Ok(result)
 }
 
 fn native_uint8array_set_from_hex(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let _ = uint8array_values(vm, &this)?;
-    let constructor = Environment::get(&vm.global, "Uint8Array").unwrap_or(Value::Undefined);
-    let source = native_uint8array_from_hex(vm, constructor, args)?;
-    uint8array_set_result(vm, &this, source, args)
+    let target_length = uint8array_values(vm, &this)?.len();
+    let text = args
+        .first()
+        .and_then(Value::as_string)
+        .cloned()
+        .ok_or_else(|| JsError::Throw(type_error(vm, "hex input must be a string")))?;
+    let bytes = text.as_bytes();
+    if bytes.len() % 2 != 0 {
+        return Err(JsError::Throw(syntax_error(vm, "invalid hex string")));
+    }
+    if target_length == 0 {
+        return Ok(uint8array_set_record(vm, 0, 0));
+    }
+    let writable = target_length.min(bytes.len() / 2);
+    for index in 0..bytes.len() / 2 {
+        let Some(high) = hex_nibble(bytes[index * 2]) else {
+            return Err(JsError::Throw(syntax_error(vm, "invalid hex string")));
+        };
+        let Some(low) = hex_nibble(bytes[index * 2 + 1]) else {
+            return Err(JsError::Throw(syntax_error(vm, "invalid hex string")));
+        };
+        if index < writable {
+            vm.set_prop(&this, &index.to_string(), Value::Number((high * 16 + low) as f64));
+        }
+    }
+    Ok(uint8array_set_record(
+        vm,
+        writable * 2,
+        writable,
+    ))
+}
+
+fn uint8array_set_record(vm: &mut Vm, read: usize, written: usize) -> Value {
+    let result = vm.object(None);
+    vm.set_prop(&result, "read", Value::Number(read as f64));
+    vm.set_prop(&result, "written", Value::Number(written as f64));
+    result
+}
+
+fn uint8array_receiver_length(vm: &mut Vm, this: &Value) -> JsResult<usize> {
+    let Some(object) = this.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "receiver is not a Uint8Array")));
+    };
+    let object = object.borrow();
+    if object.props.get(TYPED_ARRAY_BUFFER).is_none()
+        || object.props.get("\0typed-array-kind").map(Value::string).as_deref() != Some("Uint8Array")
+    {
+        return Err(JsError::Throw(type_error(vm, "receiver is not a Uint8Array")));
+    }
+    drop(object);
+    Ok(vm.get_prop(this, "length").number().max(0.0) as usize)
 }
 
 fn native_uint8array_set_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let target_length = uint8array_receiver_length(vm, &this)?;
     let _ = uint8array_values(vm, &this)?;
-    let constructor = Environment::get(&vm.global, "Uint8Array").unwrap_or(Value::Undefined);
-    let source = native_uint8array_from_base64(vm, constructor, args)?;
-    uint8array_set_result(vm, &this, source, args)
+    let text = args
+        .first()
+        .and_then(Value::as_string)
+        .cloned()
+        .ok_or_else(|| JsError::Throw(type_error(vm, "base64 input must be a string")))?;
+    let (alphabet, last_chunk) = base64_options(vm, args)?;
+    if target_length == 0 {
+        return Ok(uint8array_set_record(vm, 0, 0));
+    }
+    // Re-check after option getters: a getter is allowed to detach the target.
+    let _ = uint8array_values(vm, &this)?;
+    let compact = text
+        .bytes()
+        .enumerate()
+        .filter(|(_, byte)| !byte.is_ascii_whitespace())
+        .map(|(index, byte)| (byte, index))
+        .collect::<Vec<_>>();
+    let mut written = 0usize;
+    let mut compact_index = 0usize;
+    while compact_index + 4 <= compact.len() {
+        let chunk = &compact[compact_index..compact_index + 4];
+        if chunk.iter().any(|(byte, _)| *byte == b'=') {
+            break;
+        }
+        let mut value = 0u32;
+        for (byte, _) in chunk {
+            if (alphabet == "base64" && matches!(*byte, b'-' | b'_'))
+                || (alphabet == "base64url" && matches!(*byte, b'+' | b'/'))
+            {
+                return Err(JsError::Throw(syntax_error(vm, "invalid base64 alphabet")));
+            }
+            let Some(digit) = base64_value(*byte) else {
+                return Err(JsError::Throw(syntax_error(vm, "invalid base64 string")));
+            };
+            value = (value << 6) | u32::from(digit);
+        }
+        if written + 3 > target_length {
+            return Ok(uint8array_set_record(vm, chunk[0].1, written));
+        }
+        for offset in 0..3 {
+            vm.set_prop(&this, &written.to_string(), Value::Number(((value >> (16 - offset * 8)) & 0xff) as f64));
+            written += 1;
+        }
+        compact_index += 4;
+        if written == target_length {
+            return Ok(uint8array_set_record(vm, chunk[3].1 + 1, written));
+        }
+    }
+    let tail = &compact[compact_index..];
+    let chunk_read = if compact_index == 0 { 0 } else { compact[compact_index - 1].1 + 1 };
+    if tail.is_empty() {
+        return Ok(uint8array_set_record(vm, text.bytes().count(), written));
+    }
+    let mut symbols = Vec::new();
+    let mut padding = 0usize;
+    for (byte, _) in tail {
+        if *byte == b'=' {
+            padding += 1;
+        } else if padding != 0 {
+            return Err(JsError::Throw(syntax_error(vm, "invalid base64 padding")));
+        } else {
+            if (alphabet == "base64" && matches!(*byte, b'-' | b'_'))
+                || (alphabet == "base64url" && matches!(*byte, b'+' | b'/'))
+            {
+                return Err(JsError::Throw(syntax_error(vm, "invalid base64 alphabet")));
+            }
+            if base64_value(*byte).is_none() {
+                return Err(JsError::Throw(syntax_error(vm, "invalid base64 string")));
+            }
+            symbols.push(*byte);
+        }
+    }
+    if padding > 2 || symbols.len() < 2 || symbols.len() > 3 {
+        return Err(JsError::Throw(syntax_error(vm, "invalid base64 length")));
+    }
+    let expected_padding = if symbols.len() == 2 { 2 } else { 1 };
+    if padding != 0 && padding != expected_padding {
+        if last_chunk != "stop-before-partial" || padding > expected_padding {
+            return Err(JsError::Throw(syntax_error(vm, "invalid base64 padding")));
+        }
+    }
+    if padding == 0 && last_chunk == "strict" {
+        return Err(JsError::Throw(syntax_error(vm, "invalid base64 length")));
+    }
+    if last_chunk == "stop-before-partial" && padding < expected_padding {
+        return Ok(uint8array_set_record(vm, chunk_read, written));
+    }
+    let mut value = 0u32;
+    for byte in &symbols {
+        value = (value << 6) | u32::from(base64_value(*byte).unwrap());
+    }
+    let output = if symbols.len() == 2 { 1 } else { 2 };
+    if written + output > target_length {
+        return Ok(uint8array_set_record(vm, chunk_read, written));
+    }
+    if last_chunk == "strict" {
+        let last = base64_value(*symbols.last().unwrap()).unwrap();
+        if (symbols.len() == 2 && last & 0x0f != 0) || (symbols.len() == 3 && last & 0x03 != 0) {
+            return Err(JsError::Throw(syntax_error(vm, "invalid base64 padding bits")));
+        }
+    }
+    let first_shift = if output == 1 { 4 } else { 10 };
+    vm.set_prop(&this, &written.to_string(), Value::Number(((value >> first_shift) & 0xff) as f64));
+    written += 1;
+    if output == 2 {
+        vm.set_prop(&this, &written.to_string(), Value::Number(((value >> 2) & 0xff) as f64));
+        written += 1;
+    }
+    Ok(uint8array_set_record(vm, text.bytes().count(), written))
 }
 
 fn native_typed_array_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "map") }
