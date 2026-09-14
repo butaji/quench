@@ -8567,7 +8567,7 @@ impl Vm {
             let unscopables_key = self.well_known_symbol_key("unscopables");
             self.set_prop(&prototype, &unscopables_key, unscopables);
             let map_iterator_prototype = self.object(self.default_object_prototype());
-            let map_next = self.native_named(native_array_iterator_next, "next", 0);
+            let map_next = self.native_named(native_collection_iterator_next, "next", 0);
             self.mark_nonconstructable(&map_next);
             self.set_prop(&map_iterator_prototype, "next", map_next);
             self.set_prop(&map_iterator_prototype, &iterator_key, self.native(native_iterator_self));
@@ -8575,7 +8575,7 @@ impl Vm {
             set_property_attributes(&map_iterator_prototype, &tag_key, PropertyAttributes { writable: false, enumerable: false, configurable: true });
             self.map_iterator_proto = map_iterator_prototype.as_object();
             let set_iterator_prototype = self.object(self.default_object_prototype());
-            let set_next = self.native_named(native_array_iterator_next, "next", 0);
+            let set_next = self.native_named(native_collection_iterator_next, "next", 0);
             self.mark_nonconstructable(&set_next);
             self.set_prop(&set_iterator_prototype, "next", set_next);
             self.set_prop(&set_iterator_prototype, &iterator_key, self.native(native_iterator_self));
@@ -27298,18 +27298,13 @@ fn native_map_values(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
 }
 
 fn native_map_iterator_mode(vm: &mut Vm, this: Value, mode: &str) -> JsResult<Value> {
-    let entries = map_entries(vm, &this);
-    let values = entries.into_iter().map(|pair| match mode {
-        "keys" => vm.get_prop(&pair, "0"),
-        "values" => vm.get_prop(&pair, "1"),
-        _ => pair,
-    }).collect::<Vec<_>>();
-    let source = vm.array_from_values(values);
-    let iterator = native_array_iterator(
-        vm,
-        source,
-        &[],
-    )?;
+    if !this.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "Map iterator receiver is not object-like")));
+    }
+    let iterator = vm.object(None);
+    vm.set_prop(&iterator, COLLECTION_ITERATOR_TARGET, this);
+    vm.set_prop(&iterator, COLLECTION_ITERATOR_INDEX, Value::Number(0.0));
+    vm.set_prop(&iterator, COLLECTION_ITERATOR_KIND, Value::string_value(mode));
     if let Some(prototype) = vm.map_iterator_proto.clone() && let Some(object) = iterator.as_object_ref() {
         object.borrow_mut().prototype = Some(prototype);
     }
@@ -27427,15 +27422,13 @@ fn native_set_entries(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> 
 }
 
 fn native_set_iterator_mode(vm: &mut Vm, this: Value, mode: &str) -> JsResult<Value> {
-    let values = set_values(vm, &this).into_iter().map(|value| {
-        if mode == "entries" { vm.array_from_values(vec![value.clone(), value]) } else { value }
-    }).collect::<Vec<_>>();
-    let source = vm.array_from_values(values);
-    let iterator = native_array_iterator(
-        vm,
-        source,
-        &[],
-    )?;
+    if !this.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "Set iterator receiver is not object-like")));
+    }
+    let iterator = vm.object(None);
+    vm.set_prop(&iterator, COLLECTION_ITERATOR_TARGET, this);
+    vm.set_prop(&iterator, COLLECTION_ITERATOR_INDEX, Value::Number(0.0));
+    vm.set_prop(&iterator, COLLECTION_ITERATOR_KIND, Value::string_value(mode));
     if let Some(prototype) = vm.set_iterator_proto.clone() && let Some(object) = iterator.as_object_ref() {
         object.borrow_mut().prototype = Some(prototype);
     }
@@ -37853,6 +37846,10 @@ fn native_array(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
 const ARRAY_ITERATOR_SOURCE: &str = "\0array_iterator_source";
 const ARRAY_ITERATOR_INDEX: &str = "\0array_iterator_index";
 const ARRAY_ITERATOR_KIND: &str = "\0array_iterator_kind";
+const COLLECTION_ITERATOR_TARGET: &str = "\0collection_iterator_target";
+const COLLECTION_ITERATOR_INDEX: &str = "\0collection_iterator_index";
+const COLLECTION_ITERATOR_KIND: &str = "\0collection_iterator_kind";
+const COLLECTION_ITERATOR_LAST: &str = "\0collection_iterator_last";
 const STRING_ITERATOR_SOURCE: &str = "\0string_iterator_source";
 const STRING_ITERATOR_INDEX: &str = "\0string_iterator_index";
 const REGEXP_ITERATOR_REGEXP: &str = "\0regexp_iterator_regexp";
@@ -38318,6 +38315,69 @@ fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult
         "entries" => vm.array_from_values(vec![Value::Number(index as f64), value]),
         _ => value,
     };
+    vm.set_prop(&result, "value", value);
+    Ok(result)
+}
+
+/// Collection iterators retain the collection, rather than a snapshot.  That
+/// is the semantic distinction that makes mutation during Map/Set iteration
+/// observable (new entries are visited and deletions do not skip the next
+/// live entry).  The iterator state is the small data record above; this
+/// native is shared by both collection prototypes.
+fn native_collection_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let target = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get(COLLECTION_ITERATOR_TARGET).cloned())
+        .ok_or_else(|| JsError::Throw(type_error(vm, "Collection Iterator.prototype.next called on incompatible receiver")))?;
+    let kind = vm.get_prop(&this, COLLECTION_ITERATOR_KIND).string();
+    let raw_index = vm
+        .get_prop(&this, COLLECTION_ITERATOR_INDEX)
+        .as_number()
+        .unwrap_or(0.0);
+    if raw_index.is_sign_negative() {
+        let result = vm.object(None);
+        vm.set_prop(&result, "done", Value::Bool(true));
+        vm.set_prop(&result, "value", Value::Undefined);
+        return Ok(result);
+    }
+    let mut index = raw_index as usize;
+    let last = vm.get_prop(&this, COLLECTION_ITERATOR_LAST);
+    let is_map = target
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key(MAP_ENTRIES_PROP));
+    let entries = if is_map { map_entries(vm, &target) } else {
+        set_values(vm, &target)
+            .into_iter()
+            .map(|value| vm.array_from_values(vec![value.clone(), value]))
+            .collect()
+    };
+    // If the last yielded key/value was deleted, the current index now points
+    // at the successor (the backing list shifted left), so step back once.
+    // Otherwise locate the key again to account for deletions before it.
+    if !last.is_undefined() {
+        let last_key = if is_map { vm.get_prop(&last, "0") } else { vm.get_prop(&last, "0") };
+        if let Some(position) = entries.iter().position(|entry| vm.get_prop(entry, "0").same_bits(&last_key)) {
+            index = position.saturating_add(1);
+        } else {
+            index = index.saturating_sub(1);
+        }
+    }
+    let result = vm.object(None);
+    if index >= entries.len() {
+        vm.set_prop(&this, COLLECTION_ITERATOR_INDEX, Value::Number(-1.0));
+        vm.set_prop(&result, "done", Value::Bool(true));
+        vm.set_prop(&result, "value", Value::Undefined);
+        return Ok(result);
+    }
+    let pair = entries[index].clone();
+    let value = match kind.as_str() {
+        "keys" => vm.get_prop(&pair, "0"),
+        "values" => vm.get_prop(&pair, "1"),
+        _ => pair.clone(),
+    };
+    vm.set_prop(&this, COLLECTION_ITERATOR_INDEX, Value::Number((index + 1) as f64));
+    vm.set_prop(&this, COLLECTION_ITERATOR_LAST, pair);
+    vm.set_prop(&result, "done", Value::Bool(false));
     vm.set_prop(&result, "value", value);
     Ok(result)
 }
