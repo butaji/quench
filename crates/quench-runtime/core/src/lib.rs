@@ -9599,6 +9599,11 @@ impl Vm {
                     enumerable: !builtin_prototype,
                     ..PropertyAttributes::DEFAULT
                 });
+            let value = object.props.get(k).cloned();
+            drop(object);
+            if let Some(value) = value {
+                self.sync_global_object_binding(o, k, value);
+            }
             return;
         }
         if let Some(function) = o.as_function_ref() {
@@ -15584,6 +15589,34 @@ impl Vm {
         }
         if let Some(global_this) = self.global_object_for_environment(environment) {
             self.set_prop(&global_this, name, value);
+        }
+    }
+
+    fn sync_global_object_binding(&self, object: &Value, name: &str, value: Value) {
+        let Some(object) = object.as_object() else {
+            return;
+        };
+        if self
+            .global_object_for_environment(&self.global)
+            .and_then(|global| global.as_object())
+            .is_some_and(|global| global.as_ptr() == object.as_ptr())
+        {
+            if !self.global.borrow().lexical_names.contains(name)
+                && self.global.borrow().contains_local(name)
+            {
+                Environment::set(&self.global, name, value.clone());
+            }
+        }
+        for (global, environment) in &self.realm_globals {
+            if global.as_ptr() != object.as_ptr() {
+                continue;
+            }
+            if environment.borrow().lexical_names.contains(name)
+                || !environment.borrow().contains_local(name)
+            {
+                continue;
+            }
+            Environment::set(environment, name, value.clone());
         }
     }
 
