@@ -6080,6 +6080,8 @@ enum SyncGeneratorPendingYield {
     ForOf {
         iterator: Value,
         next: Value,
+        await_values: bool,
+        async_iterator: bool,
         body: &'static Statement<'static>,
         left: &'static ForStatementLeft<'static>,
         loop_environment: Env,
@@ -15990,6 +15992,8 @@ impl Vm {
                     if let SyncGeneratorPendingYield::ForOf {
                         iterator,
                         next,
+                        await_values,
+                        async_iterator,
                         body,
                         left,
                         loop_environment,
@@ -16012,6 +16016,8 @@ impl Vm {
                             completion,
                             iterator,
                             next,
+                            await_values,
+                            async_iterator,
                             Some(SyncGeneratorForOfBodyResume {
                                 iteration_environment,
                                 disposable_start,
@@ -16039,7 +16045,17 @@ impl Vm {
                         if declaration.kind != VariableDeclarationKind::Var
                 );
                 let iterator_key = self.well_known_symbol_key("iterator");
-                let iterator_method = self.get_prop_with_accessors(&iterable, &iterator_key)?;
+                let async_iterator_key = self.well_known_symbol_key("asyncIterator");
+                let (iterator_method, async_iterator) = if x.r#await {
+                    let async_method = self.get_prop_with_accessors(&iterable, &async_iterator_key)?;
+                    if async_method.is_function() {
+                        (async_method, true)
+                    } else {
+                        (self.get_prop_with_accessors(&iterable, &iterator_key)?, false)
+                    }
+                } else {
+                    (self.get_prop_with_accessors(&iterable, &iterator_key)?, false)
+                };
                 let Some(iterator) = iterator_method
                     .is_function()
                     .then(|| {
@@ -16089,6 +16105,8 @@ impl Vm {
                     completion,
                     iterator,
                     next,
+                    x.r#await,
+                    async_iterator,
                     None,
                 )
             }
@@ -16812,6 +16830,8 @@ impl Vm {
         &mut self,
         iterator: Value,
         next: Value,
+        await_values: bool,
+        async_iterator: bool,
         body: &Statement<'a>,
         left: &ForStatementLeft<'a>,
         loop_environment: Env,
@@ -16836,6 +16856,8 @@ impl Vm {
         self.sync_generator_pending_yield = Some(SyncGeneratorPendingYield::ForOf {
             iterator,
             next,
+            await_values,
+            async_iterator,
             body,
             left,
             loop_environment,
@@ -16861,6 +16883,8 @@ impl Vm {
         mut completion: Option<Value>,
         iterator: Value,
         next: Value,
+        await_values: bool,
+        async_iterator: bool,
         resume_body: Option<SyncGeneratorForOfBodyResume>,
     ) -> JsResult<Signal> {
         if let Some(resume) = resume_body {
@@ -16876,6 +16900,8 @@ impl Vm {
                     return self.suspend_for_of_body(
                         iterator.clone(),
                         next.clone(),
+                        await_values,
+                        async_iterator,
                         body,
                         left,
                         loop_environment.clone(),
@@ -16914,6 +16940,14 @@ impl Vm {
         }
         loop {
             let step = self.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
+            let step = if await_values {
+                match self.await_for_of_value(step) {
+                    Ok(value) => value,
+                    Err(error) => return self.iterator_close_after_error(&iterator, error),
+                }
+            } else {
+                step
+            };
             if !step.is_object_like() || is_symbol_carrier(&step) {
                 return Err(JsError::Throw(type_error(
                     self,
@@ -16924,6 +16958,14 @@ impl Vm {
                 break;
             }
             let value = self.get_prop_with_accessors(&step, "value")?;
+            let value = if await_values && !async_iterator {
+                match self.await_for_of_value(value) {
+                    Ok(value) => value,
+                    Err(error) => return self.iterator_close_after_error(&iterator, error),
+                }
+            } else {
+                value
+            };
             let iteration_environment = if lexical_iteration {
                 self.for_binding_environment(left, &loop_environment, false)
             } else {
@@ -16953,6 +16995,8 @@ impl Vm {
                     return self.suspend_for_of_body(
                         iterator.clone(),
                         next.clone(),
+                        await_values,
+                        async_iterator,
                         body,
                         left,
                         loop_environment.clone(),
@@ -16988,6 +17032,47 @@ impl Vm {
             }
         }
         Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
+    }
+
+    /// Drive the compact core's synchronous job queue through one await point.
+    /// This is the same promise/thenable state machine used by AwaitExpression,
+    /// kept as a named operation so `for await` shares one authoritative path.
+    fn await_for_of_value(&mut self, value: Value) -> JsResult<Value> {
+        if is_promise_object(&value) {
+            let state = self.get_prop(&value, PROMISE_STATE_PROP);
+            if state.as_string().is_some_and(|state| state.as_str() == "rejected") {
+                return Err(JsError::Throw(self.get_prop(&value, PROMISE_RESULT_PROP)));
+            }
+            if state.as_string().is_some_and(|state| state.as_str() == "pending") {
+                self.run_timers()?;
+            }
+            let state = self.get_prop(&value, PROMISE_STATE_PROP);
+            if state.as_string().is_some_and(|state| state.as_str() == "rejected") {
+                return Err(JsError::Throw(self.get_prop(&value, PROMISE_RESULT_PROP)));
+            }
+            if state.as_string().is_some_and(|state| state.as_str() == "fulfilled") {
+                return Ok(self.get_prop(&value, PROMISE_RESULT_PROP));
+            }
+        }
+        if value.is_object_like() {
+            let then = self.get_prop(&value, "then");
+            if then.is_function() || proxy_target(&then).is_some() {
+                let previous = self.await_result.take();
+                self.await_result = None;
+                let resolve = self.native_named(native_await_resolve, "", 1);
+                let reject = self.native_named(native_await_reject, "", 1);
+                let call_result = self.call_arguments(&then, value.clone(), &[resolve, reject][..]);
+                let settled = self.await_result.take();
+                self.await_result = previous;
+                call_result?;
+                if let Some(result) = settled {
+                    self.run_timers()?;
+                    return result.map_err(JsError::Throw);
+                }
+            }
+        }
+        self.run_timers()?;
+        Ok(value)
     }
 
     fn for_binding_environment<'a>(
@@ -43877,6 +43962,28 @@ mod tests {
         })
         .expect("destructuring and array for-of should execute");
         assert_eq!(&*output.borrow(), "42 42\n");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn for_await_sync_fallback_closes_on_rejected_value() {
+        let path = std::env::temp_dir().join(format!(
+            "quench-runtime-core-for-await-{}-{}.js",
+            std::process::id(),
+            NEXT_OBJECT_HEAP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            &path,
+            "var closed = 0; var iterable = { [Symbol.iterator]() { return { next() { return { value: Promise.reject('reject'), done: false }; }, return() { closed += 1; } }; } }; async function run() { try { for await (var value of iterable); } catch (error) { if (error !== 'reject') throw error; } if (closed !== 1) throw new Error('iterator was not closed'); } run().then(() => console.log('for-await-ok'));",
+        )
+        .unwrap();
+        let output = Rc::new(RefCell::new(String::new()));
+        let captured = Rc::clone(&output);
+        run_file_with_argv_and_output(&path, Vec::new(), Vec::new(), move |chunk| {
+            captured.borrow_mut().push_str(chunk);
+        })
+        .expect("for-await sync fallback should settle");
+        assert_eq!(&*output.borrow(), "for-await-ok\n");
         let _ = std::fs::remove_file(path);
     }
 
