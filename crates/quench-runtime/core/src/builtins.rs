@@ -354,9 +354,9 @@ builtin_catalog! {
     DateToUTCString, DatePrototype, "toUTCString", native_date_to_utc_string, Generic, MAY_ALLOCATE;
     DateToGMTString, DatePrototype, "toGMTString", native_date_to_utc_string, Generic, MAY_ALLOCATE;
     DateToTimeString, DatePrototype, "toTimeString", native_date_to_time_string, Generic, MAY_ALLOCATE;
-    DateToLocaleString, DatePrototype, "toLocaleString", native_date_to_string, Generic, MAY_ALLOCATE;
-    DateToLocaleDateString, DatePrototype, "toLocaleDateString", native_date_to_date_string, Generic, MAY_ALLOCATE;
-    DateToLocaleTimeString, DatePrototype, "toLocaleTimeString", native_date_to_time_string, Generic, MAY_ALLOCATE;
+    DateToLocaleString, DatePrototype, "toLocaleString", native_date_to_locale_string, Generic, MAY_ALLOCATE;
+    DateToLocaleDateString, DatePrototype, "toLocaleDateString", native_date_to_locale_date_string, Generic, MAY_ALLOCATE;
+    DateToLocaleTimeString, DatePrototype, "toLocaleTimeString", native_date_to_locale_time_string, Generic, MAY_ALLOCATE;
     DateGetTimezoneOffset, DatePrototype, "getTimezoneOffset", native_date_get_timezone_offset, Generic, PURE;
     DateToTemporalInstant, DatePrototype, "toTemporalInstant", native_date_to_temporal_instant, Generic, MAY_ALLOCATE;
     DateToPrimitive, DatePrototype, "Symbol(Symbol.toPrimitive)", native_date_to_primitive, Generic, MAY_ALLOCATE;
