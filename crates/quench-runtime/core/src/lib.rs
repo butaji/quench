@@ -7642,7 +7642,7 @@ impl Vm {
         }
         install_native_methods!(
             self,
-            typed_array_base_value,
+            typed_array_base_value.clone(),
             "at" => native_typed_array_at / 1,
             "copyWithin" => native_typed_array_copy_within / 2,
             "join" => native_typed_array_join / 1,
@@ -7667,6 +7667,11 @@ impl Vm {
             "reduce" => native_typed_array_reduce / 1,
             "reduceRight" => native_typed_array_reduce_right / 1,
         );
+        // Native constructor prototype assignment copies the shape. Publish
+        // the completed %TypedArray%.prototype after its accessors/methods
+        // are declared so derived constructors inherit the real surface.
+        self.set_prop(&typed_array_base, "prototype", typed_array_base_value.clone());
+        set_property_attributes(&typed_array_base, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
         for (name, bytes) in [
             ("Float64Array", 8),
             ("Float32Array", 4),
@@ -7823,6 +7828,25 @@ impl Vm {
                 set_property_attributes(&constructor, "fromHex", PropertyAttributes::BUILTIN_METHOD);
                 set_property_attributes(&constructor, "fromBase64", PropertyAttributes::BUILTIN_METHOD);
             }
+            // Keep constructor metadata and the completed prototype in the
+            // same declaration record. Typed-array constructors are length 3
+            // builtins even though the native call ABI accepts one argument.
+            self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
+            set_property_attributes(&constructor, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+            if let Some(function) = constructor.as_function_ref() {
+                // native_named seals the length descriptor before the typed
+                // array's arity is known; update its canonical value without
+                // reopening that descriptor.
+                function
+                    .props
+                    .borrow_mut()
+                    .insert("length".into(), Value::Number(3.0));
+            }
+            set_property_attributes(
+                &constructor,
+                "length",
+                PropertyAttributes { writable: false, enumerable: false, configurable: true },
+            );
             Environment::set(&g, name, constructor);
         }
         let atomics = self.object(None);
