@@ -19271,6 +19271,7 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
     impl<'a> Visit<'a> for Scan {
         fn visit_class(&mut self, class: &Class<'a>) {
             let mut private_names: HashMap<&str, u8> = HashMap::new();
+            let mut constructors = 0usize;
             for element in &class.body.body {
                 let (key, kind, expression_errors, super_error) = match element {
                     ClassElement::PropertyDefinition(field) => (
@@ -19286,6 +19287,12 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                             .is_some_and(|value| expression_has_field_error(value)),
                     ),
                     ClassElement::MethodDefinition(method) => {
+                        if method.kind == MethodDefinitionKind::Constructor {
+                            constructors += 1;
+                            if class.heritage.is_none() && direct_super_call(&method.value) {
+                                self.invalid = true;
+                            }
+                        }
                         let method_kind = match method.kind {
                             MethodDefinitionKind::Get => 2,
                             MethodDefinitionKind::Set => 4,
@@ -19327,6 +19334,9 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                     self.invalid = true;
                 }
                 *previous = merged;
+            }
+            if constructors > 1 {
+                self.invalid = true;
             }
             ast_walk::walk_class(self, class);
         }
@@ -19384,7 +19394,8 @@ fn has_strict_delete_identifier(program: &Program<'_>, inherited_strict: bool) -
         fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
             if self.strict_depth > 0
                 && expression.operator == oxc_syntax::operator::UnaryOperator::Delete
-                && matches!(expression.argument, Expression::Identifier(_))
+                && (matches!(expression.argument, Expression::Identifier(_))
+                    || expression_contains_private_reference(&expression.argument))
             {
                 self.invalid = true;
             }
@@ -19410,6 +19421,18 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             self.method_base_depth.push(self.ordinary_function_depth);
             ast_walk::walk_method_definition(self, method);
             self.method_base_depth.pop();
+        }
+
+        fn visit_object_property(&mut self, property: &ObjectProperty<'a>) {
+            let has_home_object = property.method
+                || matches!(property.kind, PropertyKind::Get | PropertyKind::Set);
+            if has_home_object {
+                self.method_base_depth.push(self.ordinary_function_depth);
+                ast_walk::walk_object_property(self, property);
+                self.method_base_depth.pop();
+            } else {
+                ast_walk::walk_object_property(self, property);
+            }
         }
 
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
@@ -28420,36 +28443,83 @@ fn has_invalid_private_name_reference(program: &Program<'_>) -> bool {
     // nested classes are intentionally accepted and validated by OXC's own
     // private-name resolver.
     struct Scan {
-        class_depth: usize,
+        private_scopes: Vec<HashSet<String>>,
         invalid: bool,
     }
     impl<'a> Visit<'a> for Scan {
         fn visit_class(&mut self, class: &Class<'a>) {
-            self.class_depth += 1;
+            if class
+                .heritage
+                .as_ref()
+                .is_some_and(|heritage| expression_contains_private_reference(&heritage.expression))
+            {
+                self.invalid = true;
+            }
+            let mut names = HashSet::new();
+            for element in &class.body.body {
+                let key = match element {
+                    ClassElement::PropertyDefinition(field) => Some(&field.key),
+                    ClassElement::MethodDefinition(method) => Some(&method.key),
+                    ClassElement::AccessorProperty(property) => Some(&property.key),
+                    _ => None,
+                };
+                if let Some(PropertyKey::PrivateIdentifier(identifier)) = key {
+                    names.insert(identifier.name.to_string());
+                }
+            }
+            self.private_scopes.push(names);
             ast_walk::walk_class(self, class);
-            self.class_depth -= 1;
+            self.private_scopes.pop();
         }
 
         fn visit_private_field_expression(&mut self, expression: &PrivateFieldExpression<'a>) {
-            if self.class_depth == 0 {
+            if !self
+                .private_scopes
+                .last()
+                .is_some_and(|names| names.contains(expression.field.name.as_str()))
+            {
                 self.invalid = true;
             }
             ast_walk::walk_private_field_expression(self, expression);
         }
 
         fn visit_private_in_expression(&mut self, expression: &PrivateInExpression<'a>) {
-            if self.class_depth == 0 {
+            if !self
+                .private_scopes
+                .last()
+                .is_some_and(|names| names.contains(expression.left.name.as_str()))
+            {
                 self.invalid = true;
             }
             ast_walk::walk_private_in_expression(self, expression);
         }
     }
     let mut scan = Scan {
-        class_depth: 0,
+        private_scopes: Vec::new(),
         invalid: false,
     };
     scan.visit_program(program);
     scan.invalid
+}
+
+fn expression_contains_private_reference(expression: &Expression<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_private_field_expression(&mut self, expression: &PrivateFieldExpression<'a>) {
+            self.found = true;
+            ast_walk::walk_private_field_expression(self, expression);
+        }
+
+        fn visit_private_in_expression(&mut self, expression: &PrivateInExpression<'a>) {
+            self.found = true;
+            ast_walk::walk_private_in_expression(self, expression);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_expression(expression);
+    scan.found
 }
 
 fn is_identifier_byte(byte: u8) -> bool {
