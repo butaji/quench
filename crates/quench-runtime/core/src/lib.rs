@@ -11587,10 +11587,12 @@ impl Vm {
             reserve_function_bindings(&body_environment, &body.statements, strict);
             let mut lexical_names = HashSet::new();
             collect_direct_lexical_names(&body.statements, &mut lexical_names);
+            let mut body_environment = body_environment.borrow_mut();
+            body_environment.reserve(lexical_names.iter().cloned());
             body_environment
-                .borrow_mut()
                 .lexical_names
-                .extend(lexical_names);
+                .extend(lexical_names.iter().cloned());
+            body_environment.tdz_names.extend(lexical_names);
         }
         let derived_constructor = callee
             .as_ref()
