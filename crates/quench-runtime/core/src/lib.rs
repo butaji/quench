@@ -8709,11 +8709,14 @@ impl Vm {
             FunctionKind::Arrow { .. }
             | FunctionKind::Bound { .. }
             | FunctionKind::Class { .. } => true,
-            FunctionKind::User { node, .. } => node.body.as_ref().is_some_and(|body| {
-                body.directives
-                    .iter()
-                    .any(|d| d.directive.as_str() == "use strict")
-            }),
+            FunctionKind::User { node, .. } => {
+                node.generator
+                    || node.body.as_ref().is_some_and(|body| {
+                        body.directives
+                            .iter()
+                            .any(|d| d.directive.as_str() == "use strict")
+                    })
+            }
             FunctionKind::Builtin(_) | FunctionKind::Native(_) => false,
         }
     }
@@ -9756,7 +9759,11 @@ impl Vm {
             }
             return self.delete_prop_with_vm(&target, k);
         }
-        Ok(self.delete_prop(o, k))
+        let deleted = self.delete_prop(o, k);
+        if deleted && let Some(index) = array_index_key(k) {
+            self.detach_mapped_argument(o, index);
+        }
+        Ok(deleted)
     }
 
     /// Canonical DeleteProperty evaluation for both interpreter and stencil
@@ -10229,6 +10236,22 @@ impl Vm {
             });
         if let Some(body) = &node.body {
             reserve_function_bindings(&body_environment, &body.statements, strict);
+            // Generator activations execute one statement at a time while
+            // suspended, so they do not pass through `exec_stmts_inner`'s
+            // declaration-instantiation prepass. Materialize direct function
+            // declarations here before the first `next()` observes them.
+            for statement in &body.statements {
+                if let Statement::FunctionDeclaration(function) = statement
+                    && let Some(identifier) = &function.id
+                {
+                    self.declare_function_binding(
+                        function,
+                        body_environment.clone(),
+                        identifier.name.as_str(),
+                        true,
+                    );
+                }
+            }
             let mut lexical_names = HashSet::new();
             collect_direct_lexical_names(&body.statements, &mut lexical_names);
             let mut environment = body_environment.borrow_mut();
@@ -10471,6 +10494,19 @@ impl Vm {
             return Ok(generator_result(self, Value::Undefined, true));
         }
         let previous_strict_mode = self.strict_mode;
+        let previous_generator_yielding = self.sync_generator_yielding;
+        // Generator resumes can nest (a `for-of` over another generator).
+        // Keep the outer coroutine's transient replay/iterator state out of
+        // the inner activation; otherwise the inner continuation consumes the
+        // outer yield replay token and the outer loop repeats its body.
+        let previous_pending_yield = self.sync_generator_pending_yield.take();
+        let previous_replay_value = self.sync_generator_replay_value.take();
+        let previous_replay_values = std::mem::take(&mut self.sync_generator_replay_values);
+        let previous_yield_index = self.sync_generator_yield_index;
+        let previous_omit_done = self.sync_generator_omit_done;
+        let previous_resume = self.sync_generator_resume.take();
+        let previous_return_value = self.sync_generator_return_value.take();
+        let previous_iterators = std::mem::take(&mut self.sync_generator_iterators);
         self.strict_mode = continuation.strict;
         self.sync_generator_return_value = None;
         self.sync_generator_yielding = true;
@@ -10608,7 +10644,15 @@ impl Vm {
         }
         self.sync_generator_replay_value = None;
         self.sync_generator_resume = None;
-        self.sync_generator_yielding = false;
+        self.sync_generator_yielding = previous_generator_yielding;
+        self.sync_generator_pending_yield = previous_pending_yield;
+        self.sync_generator_replay_value = previous_replay_value;
+        self.sync_generator_replay_values = previous_replay_values;
+        self.sync_generator_yield_index = previous_yield_index;
+        self.sync_generator_omit_done = previous_omit_done;
+        self.sync_generator_resume = previous_resume;
+        self.sync_generator_return_value = previous_return_value;
+        self.sync_generator_iterators = previous_iterators;
         self.strict_mode = previous_strict_mode;
         self.sync_generator_continuations.insert(key, continuation);
         result
@@ -11287,6 +11331,14 @@ impl Vm {
         // probes.  Keep every enclosing function on the shared evaluator so
         // a stencil cannot cache an identifier against the wrong environment.
         if function_contains_with(node) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
+        // Iteration protocol operations are shared evaluator semantics.  A
+        // compiled body must not substitute a cached `next`/`return` path for
+        // the live iterator record (especially when the body is an
+        // `assert.throws` callback).
+        if function_contains_iteration(node) {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
         }
@@ -12111,6 +12163,7 @@ impl Vm {
                     .as_object_ref()
                     .and_then(|object| object.borrow().prototype.clone());
             }
+            self.mirror_private_elements_to_proxy(&result);
             result
         } else if let Some(super_constructor) = super_constructor {
             let result = self.call_arguments(&super_constructor, this.clone(), args.as_slice())?;
@@ -12142,6 +12195,7 @@ impl Vm {
             let field_env = Environment::new(Some(env.clone()));
             field_env.borrow_mut().declare("this", result.clone());
             self.initialize_class_instance_fields(class, env.clone(), field_env, &result)?;
+            self.mirror_private_elements_to_proxy(&result);
             if let Some(regexp) = result.as_regexp_ref() {
                 regexp.borrow_mut().prototype = this
                     .as_object_ref()
@@ -14147,6 +14201,7 @@ impl Vm {
             || source.contains(".resize(")
             || source.contains("delete arguments")
             || source.contains("return")
+            || source.contains("await")
         {
             // Dynamic activation effects (including proper tail-call
             // completions) are represented by the shared evaluator until the
@@ -14196,6 +14251,7 @@ impl Vm {
             // fallback) rather than exposing a stale cached global register.
             && !contains_accessor_syntax(source)
             && !contains_async_function_constructor_probe(source)
+            && !statements_contain_await(&r.program.body)
             && !has_inferable_binding_initializer(&r.program)
             && !has_direct_lexical_declaration(&r.program.body)
             && !program_contains_for_in(&r.program)
@@ -14831,7 +14887,8 @@ impl Vm {
                     }
                     _ => e.clone(),
                 };
-                let resource_start = loop_environment.borrow().disposables.len();
+                let resource_environment = loop_environment.clone();
+                let resource_start = resource_environment.borrow().disposables.len();
                 let mut first_lexical_iteration = lexical_declaration.is_some();
                 let result = (|| {
                     if let Some(i) = &x.init {
@@ -14877,7 +14934,7 @@ impl Vm {
                     }
                     Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
                 })();
-                self.finish_disposable_scope(&loop_environment, resource_start, result)
+                self.finish_disposable_scope(&resource_environment, resource_start, result)
             }
             ForInStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
@@ -15006,7 +15063,7 @@ impl Vm {
                 }
                 loop {
                     let step = self.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
-                    if !step.is_object_like() {
+                    if !step.is_object_like() || is_symbol_carrier(&step) {
                         return Err(JsError::Throw(type_error(
                             self,
                             "iterator result is not an object",
@@ -15025,7 +15082,19 @@ impl Vm {
                     if let Err(error) =
                         self.assign_for_left(&x.left, value.clone(), iteration_environment.clone())
                     {
-                        return self.iterator_close_after_error(&iterator, error);
+                        return match error {
+                            JsError::Yield(value) => Err(JsError::Yield(value)),
+                            error => self.iterator_close_after_error(&iterator, error),
+                        };
+                    }
+                    // A generator `.return()` can resume a yield embedded in
+                    // the left-hand destructuring target.  The target has
+                    // completed its own IteratorClose; now preserve the
+                    // abrupt completion at the surrounding ForOf boundary so
+                    // the outer iterator is closed exactly once as well.
+                    if let Some(return_value) = self.sync_generator_return_value.take() {
+                        self.iterator_close(&iterator)?;
+                        return Ok(Signal::Return(return_value));
                     }
                     if let Err(error) =
                         self.register_for_of_disposable(&x.left, &value, &iteration_environment)
@@ -15038,9 +15107,10 @@ impl Vm {
                         disposable_start,
                     ) {
                         Ok(signal) => signal,
-                        Err(error) => {
-                            return self.iterator_close_after_error(&iterator, error);
-                        }
+                        Err(error) => match error {
+                            JsError::Yield(value) => return Err(JsError::Yield(value)),
+                            error => return self.iterator_close_after_error(&iterator, error),
+                        },
                     };
                     match consume_loop_signal(
                         body_signal,
@@ -15399,6 +15469,33 @@ impl Vm {
                 .and_then(|_| pattern_name(&d.id));
             let previous_class_name = self.pending_inferred_class_name.take();
             self.pending_inferred_class_name = inferred_class_name;
+            // A `var` initializer resolves its reference before evaluating
+            // the RHS.  Capture a live `with` target now so a RHS such as
+            // `delete obj.name` cannot retarget the subsequent PutValue to
+            // the variable environment.
+            let mut with_target = None;
+            if v.kind == VariableDeclarationKind::Var && d.init.is_some()
+                && let Some(name) = pattern_name(&d.id)
+            {
+                let variable_scope = variable_environment(&e);
+                let mut current = Some(e.clone());
+                while let Some(environment) = current {
+                    if Rc::ptr_eq(&environment, &variable_scope) {
+                        break;
+                    }
+                    let (object, parent) = {
+                        let borrowed = environment.borrow();
+                        (borrowed.with_object.clone(), borrowed.parent.clone())
+                    };
+                    if let Some(object) = object
+                        && self.with_binding_allowed(&object, &name)?
+                    {
+                        with_target = Some(object);
+                        break;
+                    }
+                    current = parent;
+                }
+            }
             let value = d
                 .init
                 .as_ref()
@@ -15450,28 +15547,10 @@ impl Vm {
             // uses the dynamic reference path.
             if v.kind == VariableDeclarationKind::Var
                 && d.init.is_some()
-                && let Some(name) = pattern_name(&d.id)
+                && with_target.is_some()
             {
-                let mut current = Some(e.clone());
-                let mut with_target = None;
-                let variable_scope = variable_environment(&e);
-                while let Some(environment) = current {
-                    if Rc::ptr_eq(&environment, &variable_scope) {
-                        break;
-                    }
-                    let (object, parent) = {
-                        let borrowed = environment.borrow();
-                        (borrowed.with_object.clone(), borrowed.parent.clone())
-                    };
-                    if let Some(object) = object
-                        && self.with_binding_allowed(&object, &name)?
-                    {
-                        with_target = Some(object);
-                        break;
-                    }
-                    current = parent;
-                }
                 if let Some(object) = with_target {
+                    let name = pattern_name(&d.id).unwrap_or_default();
                     set_assignment_property(self, &object, &name, value)?;
                     continue;
                 }
@@ -15833,6 +15912,21 @@ impl Vm {
 
     fn iterator_step(&mut self, record: &mut IteratorRecord) -> JsResult<Option<Value>> {
         if record.done {
+            return Ok(None);
+        }
+        // A generator return can resume a yield that occurred after
+        // GetIterator but before the first IteratorNext. Preserve that
+        // abrupt completion without probing a possibly-missing `next` method;
+        // the still-live record will be closed by the destructuring caller.
+        if self.sync_generator_return_value.is_some()
+            || (matches!(self.sync_generator_resume.as_ref(), Some(SyncGeneratorResume::Return(_)))
+                && matches!(
+                    self.sync_generator_pending_yield.as_ref(),
+                    Some(SyncGeneratorPendingYield::AssignmentDefault { .. })
+                        | Some(SyncGeneratorPendingYield::PreparedDefault { .. })
+                        | Some(SyncGeneratorPendingYield::DeferredProperty { .. })
+                ))
+        {
             return Ok(None);
         }
         let next = self.get_prop_with_accessors(&record.iterator, "next")?;
@@ -16741,6 +16835,13 @@ impl Vm {
                 continue;
             }
             if let Some(value) = local {
+                if self.is_global_environment(&environment)
+                    && !environment.borrow().lexical_names.contains(name)
+                    && let Some(global) = self.global_object_for_environment(&environment)
+                    && self.has_property_with_proxy(&global, name)?
+                {
+                    return self.get_prop_with_accessors(&global, name);
+                }
                 return self.resolve_binding_value(value);
             }
             if let Some(object) = with_object
@@ -18573,8 +18674,29 @@ impl Vm {
     }
 
     fn has_private_brand(&self, value: &Value, key: &str) -> bool {
-        let target = private_target(value);
-        self.has_own_property_key(&target, &Self::private_brand_key(key))
+        self.has_own_property_key(value, &Self::private_brand_key(key))
+    }
+
+    fn mirror_private_elements_to_proxy(&self, value: &Value) {
+        let Some(target) = proxy_target(value) else {
+            return;
+        };
+        let Some(source) = target.as_object_ref() else {
+            return;
+        };
+        let entries = source
+            .borrow()
+            .props
+            .iter()
+            .filter(|(key, _)| {
+                key.starts_with(CLASS_PRIVATE_BRAND_PREFIX)
+                    || (key.starts_with('#') && key.contains('@'))
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        for (key, element) in entries {
+            self.set_prop(value, &key, element);
+        }
     }
     fn make_template_object<'a>(&mut self, template: &TemplateLiteral<'a>) -> Value {
         let cache_key = (
@@ -18791,6 +18913,13 @@ impl Vm {
                 if Environment::is_tdz(e, name) {
                     return Err(JsError::Throw(reference_error(self, name)));
                 }
+                if self.is_global_environment(e)
+                    && !e.borrow().lexical_names.contains(name)
+                    && let Some(global) = self.global_object_for_environment(e)
+                    && self.has_property_with_proxy(&global, name)?
+                {
+                    return self.get_prop_with_accessors(&global, name);
+                }
                 Ok(Environment::get(e, name).unwrap_or(Value::Undefined))
             }
             LValue::UnresolvedVar(_, name) => Err(JsError::Throw(reference_error(self, name))),
@@ -18841,6 +18970,11 @@ impl Vm {
                     if self.strict_mode {
                         return Err(JsError::Throw(reference_error(self, &key)));
                     }
+                    // A with-reference captures the object only while the
+                    // binding exists.  If the RHS deleted that property,
+                    // sloppy PutValue is a no-op rather than recreating a
+                    // fresh own property on the environment object.
+                    return Ok(());
                 }
                 set_assignment_property(self, &object, &key, v)?;
             }
@@ -19344,6 +19478,13 @@ impl Vm {
                     // coercion deferred until PutValue.
                     let prepared =
                         iterator_try!(self.prepare_destructuring_target(element, e.clone()));
+                    if self.sync_generator_return_value.is_some() {
+                        if !record.done {
+                            self.iterator_close(&record.iterator)?;
+                            record.done = true;
+                        }
+                        return Ok(());
+                    }
                     let element_value =
                         iterator_try!(self.iterator_step(&mut record)).unwrap_or(Value::Undefined);
                     if let Some(target) = prepared {
@@ -19370,6 +19511,13 @@ impl Vm {
                         } else {
                             element_value
                         };
+                        if self.sync_generator_return_value.is_some() {
+                            if !record.done {
+                                self.iterator_close(&record.iterator)?;
+                                record.done = true;
+                            }
+                            return Ok(());
+                        }
                         iterator_try!(self.write_lvalue(target, value));
                     } else {
                         iterator_try!(self.assign_maybe_default_target(
@@ -19377,6 +19525,13 @@ impl Vm {
                             element_value,
                             e.clone()
                         ));
+                        if self.sync_generator_return_value.is_some() {
+                            if !record.done {
+                                self.iterator_close(&record.iterator)?;
+                                record.done = true;
+                            }
+                            return Ok(());
+                        }
                     }
                 }
                 if let Some(rest) = &pattern.rest {
@@ -19387,6 +19542,13 @@ impl Vm {
                     // to close on generator `.return()`.
                     let prepared_rest =
                         iterator_try!(self.prepare_rest_target(&rest.target, e.clone()));
+                    if self.sync_generator_return_value.is_some() {
+                        if !record.done {
+                            self.iterator_close(&record.iterator)?;
+                            record.done = true;
+                        }
+                        return Ok(());
+                    }
                     let mut values = Vec::new();
                     while let Some(value) = iterator_try!(self.iterator_step(&mut record)) {
                         values.push(value);
@@ -19541,6 +19703,9 @@ impl Vm {
                 } else {
                     value
                 };
+                if self.sync_generator_return_value.is_some() {
+                    return Ok(());
+                }
                 if value.is_function()
                     && is_anonymous_function_definition(&default.init)
                     && function_name_is_inferable(&value)
@@ -21229,6 +21394,25 @@ fn function_contains_with(function: &Function<'_>) -> bool {
     scan.found
 }
 
+fn function_contains_iteration(function: &Function<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_for_in_statement(&mut self, statement: &ForInStatement<'a>) {
+            self.found = true;
+            ast_walk::walk_for_in_statement(self, statement);
+        }
+        fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
+            self.found = true;
+            ast_walk::walk_for_of_statement(self, statement);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_function(function, ScopeFlags::empty());
+    scan.found
+}
+
 /// Stencil call regions currently lower ordinary calls only. A call in a
 /// return position must stay on the evaluator so `JsError::TailCall` can be
 /// consumed by the shared activation loop instead of recursively entering a
@@ -22830,6 +23014,7 @@ fn has_yield_binding_early_error(program: &Program<'_>, inherited_strict: bool) 
     struct Scan {
         strict_depth: usize,
         yield_depth: usize,
+        allow_generator_name: bool,
         invalid: bool,
     }
     impl<'a> Visit<'a> for Scan {
@@ -22841,6 +23026,7 @@ fn has_yield_binding_early_error(program: &Program<'_>, inherited_strict: bool) 
 
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
             let previous_yield_depth = self.yield_depth;
+            let previous_allow_generator_name = self.allow_generator_name;
             self.yield_depth = usize::from(function.generator && !function.r#async);
             let body_strict = function.body.as_ref().is_some_and(|body| {
                 body.directives
@@ -22850,14 +23036,27 @@ fn has_yield_binding_early_error(program: &Program<'_>, inherited_strict: bool) 
             if body_strict {
                 self.strict_depth += 1;
             }
+            self.allow_generator_name = function.generator
+                && !function.r#async
+                && !body_strict
+                && function
+                    .id
+                    .as_ref()
+                    .is_some_and(|identifier| identifier.name == "yield");
             ast_walk::walk_function(self, function, flags);
             self.yield_depth = previous_yield_depth;
+            self.allow_generator_name = previous_allow_generator_name;
             if body_strict {
                 self.strict_depth -= 1;
             }
         }
 
         fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
+            if self.allow_generator_name && identifier.name == "yield" {
+                self.allow_generator_name = false;
+                ast_walk::walk_binding_identifier(self, identifier);
+                return;
+            }
             if (self.strict_depth > 0 || self.yield_depth > 0) && identifier.name == "yield" {
                 self.invalid = true;
             }
@@ -22867,6 +23066,7 @@ fn has_yield_binding_early_error(program: &Program<'_>, inherited_strict: bool) 
     let mut scan = Scan {
         strict_depth: usize::from(inherited_strict),
         yield_depth: 0,
+        allow_generator_name: false,
         invalid: false,
     };
     scan.visit_program(program);
