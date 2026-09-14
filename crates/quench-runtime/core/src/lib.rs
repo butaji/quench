@@ -7520,6 +7520,7 @@ impl Vm {
             .expect("ArrayBuffer constructor")
             .prototype
             .clone();
+        prototype.borrow_mut().prototype = self.default_object_prototype();
         let prototype_value = Value::Object(prototype.clone());
         let byte_length = self.native_named(native_array_buffer_byte_length, "get byteLength", 0);
         let max_byte_length =
@@ -7678,6 +7679,13 @@ impl Vm {
         // are declared so derived constructors inherit the real surface.
         self.set_prop(&typed_array_base, "prototype", typed_array_base_value.clone());
         set_property_attributes(&typed_array_base, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        let typed_array_from = self.native_named(native_typed_array_from, "from", 1);
+        let typed_array_of = self.native_named(native_typed_array_of, "of", 0);
+        self.set_prop(&typed_array_base, "from", typed_array_from);
+        self.set_prop(&typed_array_base, "of", typed_array_of);
+        set_property_attributes(&typed_array_base, "from", PropertyAttributes::BUILTIN_METHOD);
+        set_property_attributes(&typed_array_base, "of", PropertyAttributes::BUILTIN_METHOD);
+        Environment::set(&g, "TypedArray", typed_array_base.clone());
         for (name, bytes) in [
             ("Float64Array", 8),
             ("Float32Array", 4),
@@ -7691,8 +7699,10 @@ impl Vm {
             ("BigInt64Array", 8),
             ("BigUint64Array", 8),
         ] {
-        let constructor = self.native_named(native_typed_array_constructor, name, 1);
+            let constructor = self.native_named(native_typed_array_constructor, name, 1);
             self.set_prop(&constructor, FUNCTION_PROTOTYPE_CHAIN_PROP, typed_array_base.clone());
+            self.set_prop(&constructor, "\0typed-array-kind", Value::string_value(name));
+            self.set_prop(&constructor, "\0typed-array-bytes", Value::Number(bytes as f64));
             self.set_prop(
                 &constructor,
                 "BYTES_PER_ELEMENT",
@@ -7708,10 +7718,7 @@ impl Vm {
                 .expect("typed array constructor")
                 .prototype
                 .clone();
-            if let Some(base_prototype) = typed_array_base
-                .as_function_ref()
-                .map(|function| function.prototype.clone())
-            {
+            if let Some(base_prototype) = typed_array_base_value.as_object() {
                 prototype.borrow_mut().prototype = Some(base_prototype);
             }
             self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
@@ -9626,6 +9633,9 @@ impl Vm {
                     );
                 }
                 if let Some(index) = array_index_key(k) {
+                    if self.get_prop(&buffer, "\0array-buffer-detached").truthy() {
+                        return Value::Undefined;
+                    }
                     let offset = offset.number().max(0.0) as usize;
                     let data = self.get_prop(&buffer, ARRAY_BUFFER_DATA);
                     if let Some(value) = data.as_object_ref().and_then(|object| {
@@ -9775,8 +9785,10 @@ impl Vm {
                 if let Some(override_value) = override_value {
                     return override_value;
                 }
+                let exposes_typed_array_prototype = matches!(&f.kind, FunctionKind::Native(native) if native_fn_matches!(*native, native_typed_array_constructor));
                 let has_prototype = !f.props.borrow().contains_key(PROXY_NO_PROTOTYPE_PROP)
-                    && !f.props.borrow().contains_key("\0nonconstructable")
+                    && (exposes_typed_array_prototype
+                        || !f.props.borrow().contains_key("\0nonconstructable"))
                     && match &f.kind {
                         FunctionKind::User { node, .. } => !node.r#async || node.generator,
                         FunctionKind::Builtin(id) => id.is_constructable(),
@@ -10071,6 +10083,24 @@ impl Vm {
         }
         if let Some(object) = value.as_object() {
             let borrowed = object.borrow();
+            if let Some(numeric_index) = typed_array_numeric_index(key)
+                .filter(|_| borrowed.props.contains_key(TYPED_ARRAY_BUFFER))
+            {
+                let buffer = borrowed.props.get(TYPED_ARRAY_BUFFER).cloned();
+                drop(borrowed);
+                if buffer
+                    .as_ref()
+                    .is_some_and(|buffer| self.get_prop(buffer, "\0array-buffer-detached").truthy())
+                {
+                    return false;
+                }
+                let length = self.get_prop(value, "length").number().max(0.0);
+                return numeric_index.is_finite()
+                    && numeric_index >= 0.0
+                    && numeric_index.fract() == 0.0
+                    && !numeric_index.is_sign_negative()
+                    && numeric_index < length;
+            }
             if let Some(array) = &borrowed.array {
                 if key == "length" && !borrowed.props.contains_key(ARGUMENTS_LENGTH_DELETED_PROP) {
                     return true;
@@ -10352,7 +10382,7 @@ impl Vm {
         if let Some(next_prototype) = object.as_object_ref().and_then(|object| {
             let object = object.borrow();
             let typed_view = object.props.contains_key(TYPED_ARRAY_BUFFER)
-                && (key == "length" || array_index_key(key).is_some());
+                && (key == "length" || typed_array_numeric_index(key).is_some());
             let own = typed_view
                 || object.props.contains_key(key)
                 || object.props.contains_key(&accessor_slot("get", key))
@@ -10366,7 +10396,13 @@ impl Vm {
         }) {
             return self.get_prop_with_receiver(&Value::Object(next_prototype), key, receiver);
         }
-        if !self.has_own_property_key(object, key)
+        let typed_indexed_key = object.as_object_ref().is_some_and(|object| {
+            let object = object.borrow();
+            object.props.contains_key(TYPED_ARRAY_BUFFER)
+                && (key == "length" || typed_array_numeric_index(key).is_some())
+        });
+        if !typed_indexed_key
+            && !self.has_own_property_key(object, key)
             && let Some((getter, _)) = self.find_accessor(object, key)
         {
             let Some(getter) = getter else {
@@ -10507,7 +10543,14 @@ impl Vm {
             }
             return Ok(());
         }
-        if let Some((_, setter)) = self.find_accessor(object, key) {
+        let typed_indexed_key = object.as_object_ref().is_some_and(|object| {
+            let object = object.borrow();
+            object.props.contains_key(TYPED_ARRAY_BUFFER)
+                && typed_array_numeric_index(key).is_some()
+        });
+        if !typed_indexed_key
+            && let Some((_, setter)) = self.find_accessor(object, key)
+        {
             let Some(setter) = setter else {
                 return Err(JsError::Throw(type_error(self, "property has no setter")));
             };
@@ -10516,7 +10559,10 @@ impl Vm {
         }
         if let Some(next_prototype) = object.as_object_ref().and_then(|object| {
             let object = object.borrow();
-            let own = object.props.contains_key(key)
+            let typed_view = object.props.contains_key(TYPED_ARRAY_BUFFER)
+                && typed_array_numeric_index(key).is_some();
+            let own = typed_view
+                || object.props.contains_key(key)
                 || object.props.contains_key(&accessor_slot("get", key))
                 || object.props.contains_key(&accessor_slot("set", key))
                 || object.array.as_ref().is_some_and(|array| {
@@ -10726,6 +10772,12 @@ impl Vm {
     fn function_prop(&self, f: &FunctionValue<'static>, k: &str) -> Value {
         if let Some(v) = f.props.borrow().get(k) {
             return v.clone();
+        }
+        if let Some(chain) = f.props.borrow().get(FUNCTION_PROTOTYPE_CHAIN_PROP).cloned() {
+            let value = self.get_prop(&chain, k);
+            if !value.is_undefined() {
+                return value;
+            }
         }
         let mut current = Environment::get(&self.global, "Function").and_then(|function| {
             function
@@ -11093,6 +11145,24 @@ impl Vm {
         }
         if let Some(object) = o.as_object_ref() {
             let mut object = object.borrow_mut();
+            if object.props.contains_key(TYPED_ARRAY_BUFFER)
+                && let Some(numeric_index) = typed_array_numeric_index(k)
+            {
+                let buffer = object.props.get(TYPED_ARRAY_BUFFER).cloned();
+                drop(object);
+                if buffer
+                    .as_ref()
+                    .is_some_and(|buffer| self.get_prop(buffer, "\0array-buffer-detached").truthy())
+                {
+                    return true;
+                }
+                let length = self.get_prop(o, "length").number().max(0.0);
+                return !(k != "-0"
+                    && numeric_index.is_finite()
+                    && numeric_index >= 0.0
+                    && numeric_index.fract() == 0.0
+                    && numeric_index < length);
+            }
             if object
                 .attributes
                 .get(k)
@@ -20927,6 +20997,13 @@ impl Vm {
                     self.ensure_deferred_namespace(value, Some(key))?;
                     return Ok(self.has_own_property_key(value, key));
                 }
+                if value.as_object_ref().is_some_and(|object| {
+                    let object = object.borrow();
+                    object.props.contains_key(TYPED_ARRAY_BUFFER)
+                        && typed_array_numeric_index(key).is_some()
+                }) {
+                    return Ok(self.has_property(value, key));
+                }
                 let own = native_object_get_own_property_descriptor(
                     self,
                     Value::Undefined,
@@ -21782,7 +21859,27 @@ pub(crate) fn dense_array_index(key: &Value) -> Option<usize> {
 
 fn array_index_key(key: &str) -> Option<usize> {
     let index = key.parse::<usize>().ok()?;
-    (index as u64 <= MAX_JS_ARRAY_INDEX).then_some(index)
+    (index.to_string() == key && index as u64 <= MAX_JS_ARRAY_INDEX).then_some(index)
+}
+
+fn typed_array_numeric_index(key: &str) -> Option<f64> {
+    if key == "-0" {
+        return Some(-0.0);
+    }
+    if key == "Infinity" {
+        return Some(f64::INFINITY);
+    }
+    if key == "-Infinity" {
+        return Some(f64::NEG_INFINITY);
+    }
+    let number = key.parse::<f64>().ok()?;
+    if number.abs() >= 1e21 && !key.contains('e') && !key.contains('E') {
+        return None;
+    }
+    if number != 0.0 && number.abs() < 1e-6 && !key.contains('e') && !key.contains('E') {
+        return None;
+    }
+    (number.to_string() == key).then_some(number)
 }
 
 fn pattern_name<'a>(p: &BindingPattern<'a>) -> Option<String> {
@@ -28686,7 +28783,26 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
     } else {
         vm.object(None)
     };
-    let (typed_array_kind, bytes) = this
+    let constructor_metadata = vm
+        .current_new_target
+        .as_ref()
+        .and_then(|target| target.as_function_ref())
+        .and_then(|function| {
+            let props = function.props.borrow();
+            props
+                .get("\0typed-array-kind")
+                .cloned()
+                .zip(props.get("\0typed-array-bytes").cloned())
+                .or_else(|| {
+                    props
+                        .get("name")
+                        .cloned()
+                        .zip(props.get("BYTES_PER_ELEMENT").cloned())
+                })
+        });
+    let (mut typed_array_kind, mut bytes) = constructor_metadata
+        .map(|(kind, bytes)| (Some(kind.string()), bytes.number()))
+        .or_else(|| this
         .as_object_ref()
         .and_then(|object| object.borrow().prototype.clone())
         .and_then(|mut prototype| {
@@ -28705,8 +28821,14 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
                 prototype = parent?;
             }
         })
-        .map(|(kind, bytes)| (Some(kind.string()), bytes.number()))
+        .map(|(kind, bytes)| (Some(kind.string()), bytes.number())))
         .unwrap_or((None, 1.0));
+    if let Some(receiver_bytes) = vm.get_prop(&this, "BYTES_PER_ELEMENT").as_number() {
+        bytes = receiver_bytes;
+    }
+    if let Some(receiver_kind) = vm.get_prop(&this, "\0typed-array-kind").as_string() {
+        typed_array_kind = Some(receiver_kind.clone());
+    }
     let source_buffer = args
         .first()
         .filter(|value| {
@@ -28719,48 +28841,118 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
                 })
         })
         .cloned();
-    let source_offset = source_buffer
-        .as_ref()
-        .map(|_| args.get(1).map_or(0.0, Value::number).max(0.0));
+    let source_offset = if source_buffer.is_some() {
+        let raw = args
+            .get(1)
+            .map(|value| to_number_with_vm(vm, value))
+            .transpose()?
+            .unwrap_or(0.0);
+        let offset = if raw.is_nan() || raw == 0.0 { 0.0 } else { raw.trunc() };
+        if offset < 0.0 || !offset.is_finite() || offset % bytes != 0.0 {
+            return Err(JsError::Throw(range_error(vm, "invalid TypedArray byte offset")));
+        }
+        Some(offset)
+    } else {
+        None
+    };
     let values = match source_buffer.as_ref() {
         Some(buffer) => {
             let byte_length = vm.get_prop(buffer, "byteLength").number().max(0.0) as usize;
             let offset = source_offset.unwrap_or(0.0) as usize;
+            if vm.get_prop(buffer, "\0array-buffer-detached").truthy() {
+                return Err(JsError::Throw(type_error(vm, "detached TypedArray buffer")));
+            }
+            if offset > byte_length {
+                return Err(JsError::Throw(range_error(vm, "invalid TypedArray buffer offset")));
+            }
             let available = byte_length.saturating_sub(offset) / bytes as usize;
-            let requested = args.get(2).map(|value| value.number().max(0.0) as usize);
-            vec![Value::Number(0.0); requested.unwrap_or(available).min(available)]
+            if args.get(2).is_none_or(Value::is_undefined)
+                && byte_length.saturating_sub(offset) % bytes as usize != 0
+            {
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "TypedArray buffer length is not aligned",
+                )));
+            }
+            let requested = args
+                .get(2)
+                .map(|value| to_number_with_vm(vm, value))
+                .transpose()?
+                .map(|value| {
+                    if value.is_nan() || value == 0.0 { 0.0 } else { value.trunc() }
+                });
+            if vm.get_prop(buffer, "\0array-buffer-detached").truthy() {
+                return Err(JsError::Throw(type_error(vm, "detached TypedArray buffer")));
+            }
+            let length = requested.unwrap_or(available as f64);
+            if length < 0.0 || !length.is_finite() || length as usize > available {
+                return Err(JsError::Throw(range_error(vm, "invalid TypedArray length")));
+            }
+            vec![Value::Number(0.0); length as usize]
         }
         None => match args.first() {
-            Some(value) if value.as_number().is_some() => {
-                let length = value.number();
-                if !length.is_finite() || length < 0.0 {
+            Some(value) if !value.is_object_like() || is_symbol_carrier(value) => {
+                let length = to_number_with_vm(vm, value)?;
+                if length.is_nan() {
+                    Vec::new()
+                } else if !length.is_finite() || length.trunc() < 0.0 {
                     return Err(JsError::Throw(range_error(vm, "invalid TypedArray length")));
+                } else if length.trunc() > MAX_MATERIALIZED_ARRAY_LENGTH as f64 {
+                    return Err(JsError::Throw(range_error(
+                        vm,
+                        "TypedArray length exceeds the runtime limit",
+                    )));
+                } else {
+                    vec![Value::Number(0.0); length.trunc() as usize]
                 }
-                vec![Value::Number(0.0); length.floor() as usize]
             }
             Some(value) => {
                 let iterator_key = vm.well_known_symbol_key("iterator");
                 let iterator_method = vm.get_prop_with_accessors(value, &iterator_key)?;
                 if iterator_method.is_function() {
                     vm.iterable_values(value)?
+                } else if !iterator_method.is_undefined() && !iterator_method.is_null() {
+                    return Err(JsError::Throw(type_error(
+                        vm,
+                        "TypedArray source iterator is not callable",
+                    )));
                 } else {
-                    let length = vm
-                        .get_prop_with_accessors(value, "length")?
-                        .number()
-                        .max(0.0)
-                        .min(9_007_199_254_740_991.0) as usize;
-                    (0..length)
-                        .map(|index| {
-                            vm.get_prop_with_accessors(value, &index.to_string())
-                                .unwrap_or(Value::Undefined)
-                        })
-                        .collect()
+                    let length_value = vm.get_prop_with_accessors(value, "length")?;
+                    let length_number = to_number_with_vm(vm, &length_value)?;
+                    if length_number.is_nan() || length_number <= 0.0 {
+                        Vec::new()
+                    } else if !length_number.is_finite() {
+                        return Err(JsError::Throw(range_error(
+                            vm,
+                            "TypedArray source length exceeds the limit",
+                        )));
+                    } else {
+                        let length = length_number
+                            .trunc()
+                            .min(9_007_199_254_740_991.0);
+                        if length > MAX_MATERIALIZED_ARRAY_LENGTH as f64 {
+                            return Err(JsError::Throw(range_error(
+                                vm,
+                                "TypedArray source length exceeds the runtime limit",
+                            )));
+                        }
+                        let length = length as usize;
+                        (0..length)
+                            .map(|index| {
+                                vm.get_prop_with_accessors(value, &index.to_string())
+                            })
+                            .collect::<JsResult<Vec<_>>>()?
+                    }
                 }
             }
             None => Vec::new(),
         },
     };
     let had_source = source_buffer.is_some();
+    let length_constructor = source_buffer.is_none()
+        && args
+            .first()
+            .is_some_and(|value| !value.is_object_like() || is_symbol_carrier(value));
     let backing = source_buffer.unwrap_or_else(|| {
         let prototype = Environment::get(&vm.global, "ArrayBuffer")
             .and_then(|value| value.as_function_ref().map(|function| function.prototype.clone()));
@@ -28811,9 +29003,30 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
     }
     if !had_source {
         for (index, value) in values.iter().cloned().enumerate() {
-            let value = typed_array_kind
-                .as_deref()
-                .map_or(value.clone(), |kind| typed_array_element_value(kind, &value));
+            let value = if let Some(kind) = typed_array_kind.as_deref() {
+                let numeric = if matches!(kind, "BigInt64Array" | "BigUint64Array") {
+                    if length_constructor {
+                        bigint_marker(BigInt::from(0))
+                    } else {
+                        let bigint = bigint_value(vm, &value)?;
+                        let modulus = BigInt::from(1u8) << 64;
+                        let unsigned = bigint_mod(&bigint, &modulus);
+                        let converted = if kind == "BigInt64Array"
+                            && unsigned >= (BigInt::from(1u8) << 63)
+                        {
+                            unsigned - &modulus
+                        } else {
+                            unsigned
+                        };
+                        bigint_marker(converted)
+                    }
+                } else {
+                    Value::Number(to_number_with_vm(vm, &value)?)
+                };
+                typed_array_element_value(kind, &numeric)
+            } else {
+                value.clone()
+            };
             vm.set_prop(&data, &index.to_string(), value);
         }
     }
@@ -29056,6 +29269,111 @@ fn typed_array_callback(vm: &mut Vm, this: &Value, args: &[Value], mode: &str) -
 fn typed_array_construct(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
     let arguments = vm.array_from_values(args.to_vec());
     native_reflect_construct(vm, Value::Undefined, &[constructor, arguments])
+}
+
+fn native_typed_array_from(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if !constructable(&this) {
+        return Err(JsError::Throw(type_error(vm, "TypedArray.from receiver is not a constructor")));
+    }
+    let source = args.first().cloned().unwrap_or(Value::Undefined);
+    if source.is_null() || source.is_undefined() {
+        return Err(JsError::Throw(type_error(vm, "TypedArray.from source is nullish")));
+    }
+    let map_fn = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !map_fn.is_undefined() && !map_fn.is_function() {
+        return Err(JsError::Throw(type_error(vm, "TypedArray.from mapFn is not callable")));
+    }
+    let iterator_method = vm
+        .get_prop_with_accessors(&source, &vm.well_known_symbol_key("iterator"))?;
+    let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let (values, result) = if iterator_method.is_function() {
+        let values = vm.iterable_values(&source)?;
+        let length = values.len();
+        let result = typed_array_construct(vm, this.clone(), &[Value::Number(length as f64)])?;
+        (values, validate_typed_array_from_result(vm, result, length)?)
+    } else {
+        let length_value = vm.get_prop_with_accessors(&source, "length")?;
+        let length_number = to_number_with_vm(vm, &length_value)?;
+        let length = if length_number.is_nan() || length_number <= 0.0 {
+            0
+        } else if !length_number.is_finite() || length_number.trunc() > MAX_MATERIALIZED_ARRAY_LENGTH as f64 {
+            return Err(JsError::Throw(range_error(vm, "TypedArray.from length exceeds the runtime limit")));
+        } else {
+            length_number.trunc() as usize
+        };
+        let result = typed_array_construct(vm, this.clone(), &[Value::Number(length as f64)])?;
+        let result = validate_typed_array_from_result(vm, result, length)?;
+        let kind = vm.get_prop(&result, "\0typed-array-kind").string();
+        for index in 0..length {
+            let value = vm.get_prop_with_accessors(&source, &index.to_string())?;
+            typed_array_from_store(vm, &result, &kind, map_fn.clone(), this_arg.clone(), index, value)?;
+        }
+        return Ok(result);
+    };
+    if values.len() > MAX_MATERIALIZED_ARRAY_LENGTH {
+        return Err(JsError::Throw(range_error(vm, "TypedArray.from exceeds the runtime limit")));
+    }
+    let kind = vm.get_prop(&result, "\0typed-array-kind").string();
+    for (index, value) in values.into_iter().enumerate() {
+        typed_array_from_store(vm, &result, &kind, map_fn.clone(), this_arg.clone(), index, value)?;
+    }
+    Ok(result)
+}
+
+fn validate_typed_array_from_result(vm: &mut Vm, result: Value, required_length: usize) -> JsResult<Value> {
+    let Some(object) = result.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "TypedArray.from constructor returned a non-TypedArray")));
+    };
+    let (buffer, is_typed_array) = {
+        let object = object.borrow();
+        (object.props.get(TYPED_ARRAY_BUFFER).cloned(), object.props.contains_key("\0typed-array-kind"))
+    };
+    let Some(buffer) = buffer.filter(|_| is_typed_array) else {
+        return Err(JsError::Throw(type_error(vm, "TypedArray.from constructor returned a non-TypedArray")));
+    };
+    if vm.get_prop(&buffer, "immutable").truthy() {
+        return Err(JsError::Throw(type_error(vm, "TypedArray.from constructor returned an immutable buffer")));
+    }
+    if vm.get_prop(&result, "length").number().max(0.0) < required_length as f64 {
+        return Err(JsError::Throw(type_error(vm, "TypedArray.from constructor returned a shorter TypedArray")));
+    }
+    Ok(result)
+}
+
+fn typed_array_from_store(
+    vm: &mut Vm,
+    result: &Value,
+    kind: &str,
+    map_fn: Value,
+    this_arg: Value,
+    index: usize,
+    value: Value,
+) -> JsResult<()> {
+    let value = if map_fn.is_function() {
+        vm.call(map_fn, this_arg, vec![value, Value::Number(index as f64)])?
+    } else {
+        value
+    };
+    let converted = if matches!(kind, "BigInt64Array" | "BigUint64Array") {
+        let bigint = bigint_value(vm, &value)?;
+        let modulus = BigInt::from(1u8) << 64;
+        let unsigned = bigint_mod(&bigint, &modulus);
+        let signed = if kind == "BigInt64Array" && unsigned >= (BigInt::from(1u8) << 63) {
+            unsigned - &modulus
+        } else {
+            unsigned
+        };
+        bigint_marker(signed)
+    } else {
+        typed_array_element_value(kind, &Value::Number(to_number_with_vm(vm, &value)?))
+    };
+    vm.set_prop(result, &index.to_string(), converted);
+    Ok(())
+}
+
+fn native_typed_array_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let source = vm.array_from_values(args.to_vec());
+    native_typed_array_from(vm, this, &[source])
 }
 
 fn uint8array_values(vm: &mut Vm, this: &Value) -> JsResult<Vec<u8>> {
@@ -37004,6 +37322,14 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
             "Promise resolver is not a function",
         )));
     }
+    if target.as_function_ref().is_some_and(|function| {
+        matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_typed_array_constructor))
+    }) && arguments
+        .first()
+        .is_some_and(|value| !value.is_object_like() || is_symbol_carrier(value) || is_bigint_marker(value))
+    {
+        let _ = to_number_with_vm(vm, arguments.first().expect("typed array argument"))?;
+    }
     let new_target = args.get(2).cloned().unwrap_or_else(|| target.clone());
     if !constructable(&new_target) {
         return Err(JsError::Throw(type_error(
@@ -37095,6 +37421,31 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                             .or_else(|| {
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_promise_constructor))
                                     .then_some("Promise")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_typed_array_constructor))
+                                    .then(|| {
+                                        function
+                                            .props
+                                            .borrow()
+                                            .get("name")
+                                            .and_then(Value::as_string)
+                                            .and_then(|name| match name.as_str() {
+                                                "Float64Array" => Some("Float64Array"),
+                                                "Float32Array" => Some("Float32Array"),
+                                                "Int32Array" => Some("Int32Array"),
+                                                "Int16Array" => Some("Int16Array"),
+                                                "Int8Array" => Some("Int8Array"),
+                                                "Uint32Array" => Some("Uint32Array"),
+                                                "Uint16Array" => Some("Uint16Array"),
+                                                "Uint8Array" => Some("Uint8Array"),
+                                                "Uint8ClampedArray" => Some("Uint8ClampedArray"),
+                                                "BigInt64Array" => Some("BigInt64Array"),
+                                                "BigUint64Array" => Some("BigUint64Array"),
+                                                _ => None,
+                                            })
+                                    })
+                                    .flatten()
                             })
                             .or_else(|| {
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_sync_generator_constructor))
@@ -38346,37 +38697,67 @@ fn typed_array_element_value(kind: &str, value: &Value) -> Value {
         };
     }
     let number = value.number();
-    let integer = if number.is_finite() { number.trunc() } else { 0.0 };
-    let modulo = |width: f64| Value::Number(integer.rem_euclid(width));
+    if kind == "Float32Array" {
+        return Value::Number((number as f32) as f64);
+    }
+    if kind == "Float16Array" {
+        return Value::Number(decode_float16(encode_float16(number)));
+    }
+    let integer = if number.is_finite() && number != 0.0 {
+        number.trunc()
+    } else {
+        0.0
+    };
+    let integer = if integer == 0.0 { 0.0 } else { integer };
+    let modulo = |width: f64| {
+        let value = integer.rem_euclid(width);
+        Value::Number(if value == 0.0 { 0.0 } else { value })
+    };
     match kind {
         "Uint8Array" | "Uint8ClampedArray" => {
             if kind == "Uint8ClampedArray" {
-                Value::Number(integer.clamp(0.0, 255.0))
+                let clamped = if number.is_nan() || number <= 0.0 {
+                    0.0
+                } else if number >= 255.0 {
+                    255.0
+                } else {
+                    let floor = number.floor();
+                    let fraction = number - floor;
+                    if fraction < 0.5 || (fraction == 0.5 && floor.rem_euclid(2.0) == 0.0) {
+                        floor
+                    } else {
+                        floor + 1.0
+                    }
+                };
+                Value::Number(clamped)
             } else {
                 modulo(256.0)
             }
         }
         "Int8Array" => {
             let wrapped = integer.rem_euclid(256.0);
-            Value::Number(if wrapped >= 128.0 { wrapped - 256.0 } else { wrapped })
+            let value = if wrapped >= 128.0 { wrapped - 256.0 } else { wrapped };
+            Value::Number(if value == 0.0 { 0.0 } else { value })
         }
         "Uint16Array" => modulo(65_536.0),
         "Int16Array" => {
             let wrapped = integer.rem_euclid(65_536.0);
-            Value::Number(if wrapped >= 32_768.0 {
+            let value = if wrapped >= 32_768.0 {
                 wrapped - 65_536.0
             } else {
                 wrapped
-            })
+            };
+            Value::Number(if value == 0.0 { 0.0 } else { value })
         }
         "Uint32Array" => modulo(4_294_967_296.0),
         "Int32Array" => {
             let wrapped = integer.rem_euclid(4_294_967_296.0);
-            Value::Number(if wrapped >= 2_147_483_648.0 {
+            let value = if wrapped >= 2_147_483_648.0 {
                 wrapped - 4_294_967_296.0
             } else {
                 wrapped
-            })
+            };
+            Value::Number(if value == 0.0 { 0.0 } else { value })
         }
         _ => value.clone(),
     }
@@ -41771,6 +42152,30 @@ fn native_object_get_own_property_descriptor(
         vm.set_prop(&descriptor, "configurable", Value::Bool(false));
         return Ok(descriptor);
     }
+    if let Some(object) = target.as_object_ref()
+        && let Some(numeric_index) = typed_array_numeric_index(&key)
+        && object.borrow().props.contains_key(TYPED_ARRAY_BUFFER)
+    {
+        let buffer = object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned();
+        let length = vm.get_prop(target, "length").number().max(0.0);
+        let valid = buffer
+            .as_ref()
+            .is_none_or(|buffer| !vm.get_prop(buffer, "\0array-buffer-detached").truthy())
+            && numeric_index.is_finite()
+            && numeric_index >= 0.0
+            && !numeric_index.is_sign_negative()
+            && numeric_index.fract() == 0.0
+            && numeric_index < length;
+        if !valid {
+            return Ok(Value::Undefined);
+        }
+        let descriptor = vm.object(None);
+        vm.set_prop(&descriptor, "value", vm.get_prop(target, &key));
+        vm.set_prop(&descriptor, "writable", Value::Bool(true));
+        vm.set_prop(&descriptor, "enumerable", Value::Bool(true));
+        vm.set_prop(&descriptor, "configurable", Value::Bool(true));
+        return Ok(descriptor);
+    }
     let error_prototype = vm
         .builtin(BuiltinId::ErrorConstructor)
         .as_function_ref()
@@ -42157,6 +42562,62 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
         }
         return Ok(target.clone());
     }
+    if target.as_object_ref().is_some_and(|object| object.borrow().props.contains_key(TYPED_ARRAY_BUFFER))
+        && let Some(numeric_index) = typed_array_numeric_index(&key)
+    {
+        let has_get = vm.has_property(&descriptor, "get");
+        let has_set = vm.has_property(&descriptor, "set");
+        if has_get || has_set {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "typed array index cannot be an accessor",
+            )));
+        }
+        let buffer = target
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned())
+            .unwrap_or(Value::Undefined);
+        if vm.get_prop(&buffer, "\0array-buffer-detached").truthy()
+            || !numeric_index.is_finite()
+            || numeric_index < 0.0
+            || (numeric_index == 0.0 && numeric_index.is_sign_negative())
+            || numeric_index.fract() != 0.0
+            || numeric_index >= vm.get_prop(target, "length").number().max(0.0)
+        {
+            return Err(JsError::Throw(type_error(vm, "typed array index is out of bounds")));
+        }
+        if vm.has_property(&descriptor, "configurable")
+            && !vm.get_prop_with_accessors(&descriptor, "configurable")?.truthy()
+            || vm.has_property(&descriptor, "enumerable")
+                && !vm.get_prop_with_accessors(&descriptor, "enumerable")?.truthy()
+            || vm.has_property(&descriptor, "writable")
+                && !vm.get_prop_with_accessors(&descriptor, "writable")?.truthy()
+        {
+            return Err(JsError::Throw(type_error(vm, "invalid typed array index descriptor")));
+        }
+        if vm.has_property(&descriptor, "value") {
+            let value = vm.get_prop_with_accessors(&descriptor, "value")?;
+            let kind = target
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get("\0typed-array-kind").map(Value::string))
+                .unwrap_or_default();
+            let value = if matches!(kind.as_str(), "BigInt64Array" | "BigUint64Array") {
+                let bigint = bigint_value(vm, &value)?;
+                let modulus = BigInt::from(1u8) << 64;
+                let unsigned = bigint_mod(&bigint, &modulus);
+                let signed = if kind == "BigInt64Array" && unsigned >= (BigInt::from(1u8) << 63) {
+                    unsigned - &modulus
+                } else {
+                    unsigned
+                };
+                bigint_marker(signed)
+            } else {
+                typed_array_element_value(&kind, &Value::Number(to_number_with_vm(vm, &value)?))
+            };
+            vm.set_prop(target, &key, value);
+        }
+        return Ok(target.clone());
+    }
     let existing_attributes = target.as_object_ref().and_then(|object| {
         let object = object.borrow();
         object.attributes.get(&key).copied().or_else(|| {
@@ -42286,6 +42747,13 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
         }
     }
     if has_get_field || has_set_field {
+        if !existing_property
+            && target
+                .as_object_ref()
+                .is_some_and(|object| !object.borrow().extensible)
+        {
+            return Err(JsError::Throw(type_error(vm, "object is not extensible")));
+        }
         if has_value || has_writable {
             return Err(JsError::Throw(type_error(
                 vm,
