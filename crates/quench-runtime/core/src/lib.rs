@@ -15234,6 +15234,12 @@ impl Vm {
             }
             current = parent;
         }
+        let realm = self.realm_environment_for_environment(e);
+        if let Some(global) = self.global_object_for_environment(&realm)
+            && self.has_property_with_proxy(&global, name)?
+        {
+            return self.get_prop_with_accessors(&global, name);
+        }
         let result = Environment::get(e, name);
         result.ok_or_else(|| JsError::Throw(reference_error(self, name)))
     }
@@ -15765,7 +15771,21 @@ impl Vm {
                     && !Environment::is_tdz(&e, identifier.name.as_str())
                     && Environment::get(&e, identifier.name.as_str()).is_none()
                 {
-                    return Ok(Value::string_value("undefined"));
+                    // An unresolved identifier may still be a global-object
+                    // property (including an accessor). `typeof` performs
+                    // GetValue for that object-environment binding; suppress
+                    // ReferenceError only after the global [[HasProperty]]
+                    // check also misses.
+                    let realm = self.realm_environment_for_environment(&e);
+                    let global_property = self
+                        .global_object_for_environment(&realm)
+                        .is_some_and(|global| {
+                            self.has_property_with_proxy(&global, identifier.name.as_str())
+                                .unwrap_or(false)
+                        });
+                    if !global_property {
+                        return Ok(Value::string_value("undefined"));
+                    }
                 }
                 let z = self.eval_expr(&v.argument, e)?;
                 use oxc_syntax::operator::UnaryOperator::*;
