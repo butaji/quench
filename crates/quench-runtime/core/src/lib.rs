@@ -7698,11 +7698,37 @@ impl Vm {
             }
             let prototype = Value::Object(prototype);
             let iterator_key = self.well_known_symbol_key("iterator");
+            let iterator = self.native_named(native_array_iterator, "values", 0);
+            self.mark_nonconstructable(&iterator);
             self.set_prop(
                 &prototype,
                 &iterator_key,
-                self.native(native_array_iterator),
+                iterator.clone(),
             );
+            self.set_prop(&prototype, "values", iterator);
+            let unscopables = self.object_value(Object::ordinary(None));
+            for key in [
+                "at",
+                "copyWithin",
+                "entries",
+                "fill",
+                "find",
+                "findIndex",
+                "findLast",
+                "findLastIndex",
+                "flat",
+                "flatMap",
+                "includes",
+                "keys",
+                "toReversed",
+                "toSorted",
+                "toSpliced",
+                "values",
+            ] {
+                self.set_prop(&unscopables, key, Value::Bool(true));
+            }
+            let unscopables_key = self.well_known_symbol_key("unscopables");
+            self.set_prop(&prototype, &unscopables_key, unscopables);
         }
         for (constructor, prototype) in [
             (BuiltinId::ObjectConstructor, BuiltinId::ObjectConstructor),
@@ -11821,6 +11847,7 @@ impl Vm {
             .map(|prototype| self.get_prop(&Value::Object(prototype.clone()), &iterator_key))
             .filter(|value| value.is_function())
             .unwrap_or_else(|| self.native(native_array_iterator));
+        self.mark_nonconstructable(&iterator);
         install_data_property!(
             self,
             av.clone(),
@@ -33045,8 +33072,13 @@ fn native_array_from_async(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Va
     Ok(vm.promise_from_result(result))
 }
 
-fn native_array_of(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
-    Ok(vm.array_from_values(a.to_vec()))
+fn native_array_of(vm: &mut Vm, this: Value, a: &[Value]) -> JsResult<Value> {
+    let target = array_from_target(vm, &this, a.len(), true)?;
+    for (index, value) in a.iter().cloned().enumerate() {
+        define_spread_property(vm, &target, index.to_string(), value)?;
+    }
+    vm.set_prop_with_accessors(&target, "length", Value::Number(a.len() as f64))?;
+    Ok(target)
 }
 fn native_string(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let value = a.first().cloned().unwrap_or(Value::Undefined);
