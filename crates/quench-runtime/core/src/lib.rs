@@ -12492,6 +12492,9 @@ impl Vm {
         let function_scope_error = function_scope_block_redeclaration(&r.program.body);
         let statement_position_error = has_statement_position_function(&r.program);
         let nested_strict_error = has_nested_strict_function_error(&r.program.body);
+        let class_early_error = has_class_element_early_error(&r.program);
+        let strict_delete_error = has_strict_delete_identifier(&r.program, effective_strict_mode);
+        let function_super_error = has_invalid_function_super(&r.program);
         // Script-only early errors (return, module declarations, and
         // top-level `super`/`new.target`) do not apply when the parser was
         // explicitly given a module source type.  Module files are executed
@@ -12540,6 +12543,9 @@ impl Vm {
             || function_scope_error
             || statement_position_error
             || nested_strict_error
+            || class_early_error
+            || strict_delete_error
+            || function_super_error
             || global_code_error
             || has_class_strict_name_error(&r.program)
             || restricted_global_lexical_error
@@ -19007,6 +19013,232 @@ fn has_class_strict_name_error(program: &Program<'_>) -> bool {
         }
     }
     let mut scan = Scan { invalid: false };
+    scan.visit_program(program);
+    scan.invalid
+}
+
+/// Class fields and computed names are evaluated in class-definition code,
+/// but their static semantics reject `arguments` and direct `super()` before
+/// any initializer can run. Private names also have one class-local namespace:
+/// a getter/setter pair may share a name, while every other duplicate is an
+/// early error. Keep these facts in one AST pass so declaration and execution
+/// never need source-text heuristics.
+fn has_class_element_early_error(program: &Program<'_>) -> bool {
+    fn direct_super_call(function: &Function<'_>) -> bool {
+        struct Scan {
+            depth: usize,
+            found: bool,
+        }
+        impl<'a> Visit<'a> for Scan {
+            fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+                self.depth += 1;
+                ast_walk::walk_function(self, function, flags);
+                self.depth -= 1;
+            }
+
+            fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+                if self.depth == 1 && matches!(call.callee, Expression::Super(_)) {
+                    self.found = true;
+                }
+                ast_walk::walk_call_expression(self, call);
+            }
+        }
+        let mut scan = Scan {
+            depth: 0,
+            found: false,
+        };
+        scan.visit_function(function, ScopeFlags::empty());
+        scan.found
+    }
+
+    fn expression_has_field_error(expression: &Expression<'_>) -> bool {
+        expression_contains_identifier(expression, "arguments")
+            || direct_super_in_expression(expression)
+    }
+
+    fn private_name_and_kind<'a>(key: &'a PropertyKey<'a>) -> Option<(&'a str, u8)> {
+        let PropertyKey::PrivateIdentifier(identifier) = key else {
+            return None;
+        };
+        Some((identifier.name.as_str(), 1))
+    }
+
+    struct Scan {
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            let mut private_names: HashMap<&str, u8> = HashMap::new();
+            for element in &class.body.body {
+                let (key, kind, expression_errors, super_error) = match element {
+                    ClassElement::PropertyDefinition(field) => (
+                        private_name_and_kind(&field.key),
+                        1,
+                        field
+                            .key
+                            .as_expression()
+                            .is_some_and(expression_has_field_error),
+                        field
+                            .value
+                            .as_ref()
+                            .is_some_and(|value| expression_has_field_error(value)),
+                    ),
+                    ClassElement::MethodDefinition(method) => {
+                        let method_kind = match method.kind {
+                            MethodDefinitionKind::Get => 2,
+                            MethodDefinitionKind::Set => 4,
+                            _ => 1,
+                        };
+                        (
+                            private_name_and_kind(&method.key),
+                            method_kind,
+                            false,
+                            method.kind != MethodDefinitionKind::Constructor
+                                && direct_super_call(&method.value),
+                        )
+                    }
+                    ClassElement::AccessorProperty(property) => (
+                        private_name_and_kind(&property.key),
+                        1,
+                        property
+                            .key
+                            .as_expression()
+                            .is_some_and(expression_has_field_error),
+                        property
+                            .value
+                            .as_ref()
+                            .is_some_and(|value| expression_has_field_error(value)),
+                    ),
+                    _ => (None, 1, false, false),
+                };
+                if expression_errors || super_error {
+                    self.invalid = true;
+                }
+                let Some((name, _)) = key else {
+                    continue;
+                };
+                let previous = private_names.entry(name).or_default();
+                let merged = *previous | kind;
+                // A private getter/setter pair is the sole duplicate form
+                // permitted by the class static semantics.
+                if *previous != 0 && merged != 6 {
+                    self.invalid = true;
+                }
+                *previous = merged;
+            }
+            ast_walk::walk_class(self, class);
+        }
+    }
+    let mut scan = Scan { invalid: false };
+    scan.visit_program(program);
+    scan.invalid
+}
+
+fn direct_super_in_expression(expression: &Expression<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            if matches!(call.callee, Expression::Super(_)) {
+                self.found = true;
+            }
+            ast_walk::walk_call_expression(self, call);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_expression(expression);
+    scan.found
+}
+
+fn has_strict_delete_identifier(program: &Program<'_>, inherited_strict: bool) -> bool {
+    struct Scan {
+        strict_depth: usize,
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.strict_depth += 1;
+            ast_walk::walk_class(self, class);
+            self.strict_depth -= 1;
+        }
+
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let body_strict = function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+            let inherited = self.strict_depth > 0;
+            if inherited || body_strict {
+                self.strict_depth += 1;
+            }
+            ast_walk::walk_function(self, function, flags);
+            if inherited || body_strict {
+                self.strict_depth -= 1;
+            }
+        }
+
+        fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
+            if self.strict_depth > 0
+                && expression.operator == oxc_syntax::operator::UnaryOperator::Delete
+                && matches!(expression.argument, Expression::Identifier(_))
+            {
+                self.invalid = true;
+            }
+            ast_walk::walk_unary_expression(self, expression);
+        }
+    }
+    let mut scan = Scan {
+        strict_depth: usize::from(inherited_strict),
+        invalid: false,
+    };
+    scan.visit_program(program);
+    scan.invalid
+}
+
+fn has_invalid_function_super(program: &Program<'_>) -> bool {
+    struct Scan {
+        function_depth: usize,
+        method_depth: usize,
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
+            self.method_depth += 1;
+            ast_walk::walk_method_definition(self, method);
+            self.method_depth -= 1;
+        }
+
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            self.function_depth += 1;
+            ast_walk::walk_function(self, function, flags);
+            self.function_depth -= 1;
+        }
+
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            self.function_depth += 1;
+            ast_walk::walk_arrow_function_expression(self, arrow);
+            self.function_depth -= 1;
+        }
+
+        fn visit_super(&mut self, super_expression: &Super) {
+            // A `super` reference is only valid in the body of the method that
+            // supplies [[HomeObject]]. Any ordinary/nested function has no
+            // such home object, even when lexically nested in a method.
+            if self.function_depth > 0 && self.method_depth == 0 {
+                self.invalid = true;
+            } else if self.function_depth > 1 {
+                self.invalid = true;
+            }
+            ast_walk::walk_super(self, super_expression);
+        }
+    }
+    let mut scan = Scan {
+        function_depth: 0,
+        method_depth: 0,
+        invalid: false,
+    };
     scan.visit_program(program);
     scan.invalid
 }
