@@ -14624,7 +14624,10 @@ impl Vm {
                         }
                         LoopAction::Continue => {}
                         LoopAction::Propagate(signal) => {
-                            if matches!(&signal, Signal::Return(_) | Signal::Break(..)) {
+                            if matches!(
+                                &signal,
+                                Signal::Return(_) | Signal::Break(..) | Signal::Continue(..)
+                            ) {
                                 self.iterator_close(&iterator)?;
                             }
                             return Ok(signal);
@@ -16900,6 +16903,30 @@ impl Vm {
                         return Err(JsError::Message(
                             "unsupported delegated generator yield".into(),
                         ));
+                    }
+                    // A generator `.return()` or `.throw()` resumes an
+                    // ordinary suspended yield as an abrupt completion. Feed
+                    // that completion back through the surrounding statement
+                    // machinery so catch/finally blocks still run.
+                    match self.sync_generator_resume.as_ref() {
+                        Some(SyncGeneratorResume::Return(_)) => {
+                            let Some(SyncGeneratorResume::Return(value)) =
+                                self.sync_generator_resume.take()
+                            else {
+                                unreachable!()
+                            };
+                            self.sync_generator_return_value = Some(value);
+                            return Ok(Value::Undefined);
+                        }
+                        Some(SyncGeneratorResume::Throw(_)) => {
+                            let Some(SyncGeneratorResume::Throw(value)) =
+                                self.sync_generator_resume.take()
+                            else {
+                                unreachable!()
+                            };
+                            return Err(JsError::Throw(value));
+                        }
+                        _ => {}
                     }
                     // Resume ordinary `yield` expressions at the same
                     // statement and feed the caller's value back into the
@@ -24181,7 +24208,7 @@ fn native_sync_generator_return(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
         .sync_generator_continuations
         .get(&key)
         .and_then(|continuation| continuation.pending_yield.as_ref())
-        .is_some_and(|pending| matches!(pending, SyncGeneratorPendingYield::Delegated { .. }))
+        .is_some()
     {
         vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
         let result = vm.resume_sync_generator_with(
