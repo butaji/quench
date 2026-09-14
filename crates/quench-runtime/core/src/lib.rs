@@ -33589,10 +33589,10 @@ fn native_intl_get_canonical_locales(
         let value = if vm.get_prop(&value, INTL_LOCALE_BRAND).truthy() {
             vm.get_prop(&value, INTL_LOCALE_TAG)
         } else {
-            if !value.is_string() {
+            if is_symbol_carrier(&value) {
                 return Err(JsError::Throw(type_error(vm, "invalid locale")));
             }
-            value
+            Value::string_value(to_string_with_vm(vm, &value)?)
         };
         let locale = canonicalize_intl_locale_string(&to_string_with_vm(vm, &value)?);
         if invalid_intl_locale_tag(&locale) {
