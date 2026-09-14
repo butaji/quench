@@ -11237,7 +11237,10 @@ impl Vm {
         strict: bool,
     ) -> JsResult<Value> {
         let is_async = node.r#async;
-        let result = self.call_user(node, env, this, args, source_id, strict, Some(callee));
+        let result = match self.call_user(node, env, this, args, source_id, strict, Some(callee)) {
+            Err(JsError::TailCall { callee, receiver, args }) => self.call(callee, receiver, args),
+            result => result,
+        };
         if is_async {
             Ok(self.promise_from_result(result))
         } else {
