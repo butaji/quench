@@ -8357,6 +8357,7 @@ impl Vm {
                                 native_map_constructor,
                                 native_set_constructor,
                                 native_subclassable_builtin,
+                                native_abstract_module_source,
                             ) =>
                         {
                             true
@@ -11189,11 +11190,20 @@ impl Vm {
         }
         let e = Environment::new(Some(outer.clone()));
         if let (Some(identifier), Some(callee)) = (n.id.as_ref(), callee.as_ref()) {
-            e.borrow_mut()
-                .declare(identifier.name.as_str(), callee.clone());
-            e.borrow_mut()
-                .named_function_names
-                .insert(identifier.name.to_string());
+            // A function declaration's name is the surrounding mutable
+            // binding; only a named function expression gets the immutable
+            // inner name environment.  The captured binding identity is the
+            // one representation that distinguishes those two AST roles at
+            // call time.
+            let declaration_binding = Environment::get(&outer, identifier.name.as_str())
+                .is_some_and(|bound| bound.same_bits(callee));
+            if !declaration_binding {
+                e.borrow_mut()
+                    .declare(identifier.name.as_str(), callee.clone());
+                e.borrow_mut()
+                    .named_function_names
+                    .insert(identifier.name.to_string());
+            }
         }
         let derived_constructor_target = callee.as_ref().and_then(|callee| {
             self.get_prop(callee, DERIVED_CONSTRUCTOR_PROP)
@@ -11434,7 +11444,7 @@ impl Vm {
                 return Err(error);
             }
         }
-        let result = (|| {
+        let mut result = (|| {
             if let Some(b) = &n.body {
                 match self.exec_stmts(&b.statements, body_environment)? {
                     Signal::Return(v) => Ok(v),
@@ -11458,6 +11468,14 @@ impl Vm {
                 .retain(|(mapped_object, _, _)| mapped_object.as_ptr() != object.as_ptr());
         }
         self.strict_mode = previous_strict_mode;
+        while let Err(JsError::TailCall {
+            callee,
+            receiver,
+            args,
+        }) = result
+        {
+            result = self.call_arguments(&callee, receiver, args.as_slice());
+        }
         result
     }
 
@@ -11808,7 +11826,7 @@ impl Vm {
                 return Err(error);
             }
         }
-        let result = (|| {
+        let mut result = (|| {
             if let Some(expression) = n.body.as_expression() {
                 return self.eval_expr(expression, e.clone());
             }
@@ -11825,6 +11843,14 @@ impl Vm {
             self.source_ids.pop();
         }
         self.strict_mode = previous_strict_mode;
+        while let Err(JsError::TailCall {
+            callee,
+            receiver,
+            args,
+        }) = result
+        {
+            result = self.call_arguments(&callee, receiver, args.as_slice());
+        }
         result
     }
     fn run_source(&mut self, p: &Path) -> JsResult<Value> {
@@ -17230,7 +17256,13 @@ impl Vm {
                     // class-field initialization.
                     if result.is_object_like() {
                         Environment::set(&e, "this", result.clone());
-                        e.borrow_mut().tdz_names.remove("this");
+                        // A rest/default parameter list has a separate body
+                        // environment.  `this` belongs to the parameter
+                        // environment, so clear the TDZ on its owning record
+                        // rather than only on the current body scope.
+                        if let Some(binding) = Environment::binding_environment(&e, "this") {
+                            binding.borrow_mut().tdz_names.remove("this");
+                        }
                     }
                     if let Some(class_environment) = class_environment
                         && let Some(class_value) = Environment::get(&class_environment, "this")
@@ -25731,6 +25763,11 @@ fn parse_bigint_text(text: &str) -> Result<BigInt, ()> {
             },
         },
     };
+    // OXC has already validated separator placement as part of the lexical
+    // grammar.  The runtime conversion only needs the mathematical digits;
+    // keeping `_` in this second parser made valid binary/octal/hex BigInt
+    // literals fail after parsing.
+    let digits = digits.replace('_', "");
     if digits.is_empty()
         || !digits.chars().all(|digit| match radix {
             2 => matches!(digit, '0' | '1'),
@@ -35886,6 +35923,20 @@ mod tests {
             result.is_err(),
             "strict assignment must reject read-only global"
         );
+    }
+
+    #[test]
+    fn top_level_await_preserves_tail_call_rejection() {
+        let mut vm = Vm::new();
+        vm.install_process(Vec::new(), Vec::new());
+        let result = vm.run_source_text(
+            Path::new("<top-level-await-rejection>.mjs"),
+            "await Promise.resolve().then(() => { return Promise.reject(new RangeError()); });",
+        );
+        assert!(matches!(
+            result,
+            Err(JsError::Throw(value)) if thrown_object_name(&value).as_deref() == Some("RangeError")
+        ));
     }
 
     #[test]
