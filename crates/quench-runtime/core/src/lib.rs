@@ -19160,21 +19160,6 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
             self.strict_stack.pop();
         }
 
-        fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
-            // Method definitions use UniqueFormalParameters even when their
-            // surrounding script is sloppy; ordinary function declarations
-            // retain Annex B's duplicate-parameter allowance.
-            self.check_parameters(
-                &method.value.params,
-                true,
-                false,
-                true,
-                method.value.generator,
-                method.value.r#async,
-            );
-            ast_walk::walk_method_definition(self, method);
-        }
-
         fn visit_object_property(&mut self, property: &ObjectProperty<'a>) {
             if (property.method
                 || matches!(property.kind, PropertyKind::Get | PropertyKind::Set))
