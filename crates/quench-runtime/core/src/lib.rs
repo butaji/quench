@@ -7651,6 +7651,31 @@ impl Vm {
                 &iterator_key,
                 PropertyAttributes::BUILTIN_METHOD,
             );
+            if name == "Uint8Array" {
+                let prototype = Value::Object(
+                    constructor
+                        .as_function_ref()
+                        .expect("typed array constructor")
+                        .prototype
+                        .clone(),
+                );
+                install_native_methods!(
+                    self,
+                    prototype,
+                    "toHex" => native_uint8array_to_hex / 0,
+                    "toBase64" => native_uint8array_to_base64 / 0,
+                    "setFromHex" => native_uint8array_set_from_hex / 1,
+                    "setFromBase64" => native_uint8array_set_from_base64 / 1,
+                );
+                let from_hex = self.native_named(native_uint8array_from_hex, "fromHex", 1);
+                let from_base64 = self.native_named(native_uint8array_from_base64, "fromBase64", 1);
+                self.set_prop(&constructor, "fromHex", from_hex);
+                self.set_prop(&constructor, "fromBase64", from_base64);
+                self.mark_nonconstructable(&self.get_prop(&constructor, "fromHex"));
+                self.mark_nonconstructable(&self.get_prop(&constructor, "fromBase64"));
+                set_property_attributes(&constructor, "fromHex", PropertyAttributes::BUILTIN_METHOD);
+                set_property_attributes(&constructor, "fromBase64", PropertyAttributes::BUILTIN_METHOD);
+            }
             Environment::set(&g, name, constructor);
         }
         // Collections are also used by the shared test harness (for cycle
@@ -27273,6 +27298,8 @@ fn native_typed_array_subarray(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     vm.set_prop(&result, TYPED_ARRAY_OFFSET, Value::Number((start * vm.get_prop(&this, "BYTES_PER_ELEMENT").number().max(1.0) as usize) as f64));
     vm.set_prop(&result, "\0typed-array-length", Value::Number(end.saturating_sub(start) as f64));
     vm.set_prop(&result, "\0typed-array-bytes", vm.get_prop(&this, "BYTES_PER_ELEMENT"));
+    vm.set_prop(&result, "\0typed-array-kind", vm.get_prop(&this, "\0typed-array-kind"));
+    vm.set_prop(&result, TYPED_ARRAY_FIXED, vm.get_prop(&this, TYPED_ARRAY_FIXED));
     Ok(result)
 }
 
@@ -27312,6 +27339,197 @@ fn typed_array_callback(vm: &mut Vm, this: &Value, args: &[Value], mode: &str) -
 fn typed_array_construct(vm: &mut Vm, constructor: Value, args: &[Value]) -> JsResult<Value> {
     let arguments = vm.array_from_values(args.to_vec());
     native_reflect_construct(vm, Value::Undefined, &[constructor, arguments])
+}
+
+fn uint8array_values(vm: &mut Vm, this: &Value) -> JsResult<Vec<u8>> {
+    if this.as_object_ref().is_none_or(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).is_none()) {
+        return Err(JsError::Throw(type_error(vm, "receiver is not a Uint8Array")));
+    }
+    let kind = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0typed-array-kind").cloned())
+        .map(|value| value.string());
+    if kind.as_deref() != Some("Uint8Array") {
+        return Err(JsError::Throw(type_error(vm, "receiver is not a Uint8Array")));
+    }
+    let buffer = this.as_object_ref().and_then(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned());
+    if buffer.as_ref().is_some_and(|buffer| buffer.as_object_ref().is_some_and(|object| {
+        object.borrow().props.get("\0array-buffer-detached").is_some_and(Value::truthy)
+            || object.borrow().props.get("immutable").is_some_and(Value::truthy)
+    })) {
+        return Err(JsError::Throw(type_error(vm, "detached ArrayBuffer")));
+    }
+    Ok(typed_array_values(vm, this)?
+        .into_iter()
+        .map(|value| value.number().clamp(0.0, 255.0) as u8)
+        .collect())
+}
+
+fn native_uint8array_to_hex(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::string_value(
+        uint8array_values(vm, &this)?.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+    ))
+}
+
+fn base64_encode_bytes(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::new();
+    for chunk in bytes.chunks(3) {
+        let value = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        output.push(TABLE[((value >> 18) & 63) as usize] as char);
+        output.push(TABLE[((value >> 12) & 63) as usize] as char);
+        output.push(if chunk.len() > 1 { TABLE[((value >> 6) & 63) as usize] as char } else { '=' });
+        output.push(if chunk.len() > 2 { TABLE[(value & 63) as usize] as char } else { '=' });
+    }
+    output
+}
+
+fn native_uint8array_to_base64(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::string_value(base64_encode_bytes(&uint8array_values(vm, &this)?)))
+}
+
+fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn native_uint8array_from_hex(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let this = Environment::get(&vm.global, "Uint8Array").unwrap_or(this);
+    let text = to_string_with_vm(vm, &args.first().cloned().unwrap_or(Value::Undefined))?;
+    let bytes = text.as_bytes();
+    if bytes.len() % 2 != 0 {
+        return Err(JsError::Throw(syntax_error(vm, "invalid hex string")));
+    }
+    let mut values = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks_exact(2) {
+        let Some(high) = hex_nibble(pair[0]) else { return Err(JsError::Throw(syntax_error(vm, "invalid hex string"))); };
+        let Some(low) = hex_nibble(pair[1]) else { return Err(JsError::Throw(syntax_error(vm, "invalid hex string"))); };
+        values.push(Value::Number((high * 16 + low) as f64));
+    }
+    typed_array_construct(vm, this, &[Value::Number(values.len() as f64)]).map(|result| {
+        for (index, value) in values.into_iter().enumerate() { vm.set_prop(&result, &index.to_string(), value); }
+        result
+    })
+}
+
+fn base64_value(value: u8) -> Option<u8> {
+    match value {
+        b'A'..=b'Z' => Some(value - b'A'),
+        b'a'..=b'z' => Some(value - b'a' + 26),
+        b'0'..=b'9' => Some(value - b'0' + 52),
+        b'+' | b'-' => Some(62),
+        b'/' | b'_' => Some(63),
+        _ => None,
+    }
+}
+
+fn native_uint8array_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let this = Environment::get(&vm.global, "Uint8Array").unwrap_or(this);
+    let text = to_string_with_vm(vm, &args.first().cloned().unwrap_or(Value::Undefined))?;
+    let mut alphabet = "base64";
+    let mut last_chunk = "loose";
+    if let Some(options) = args.get(1).filter(|value| value.is_object_like()) {
+        let value = vm.get_prop_with_accessors(options, "alphabet")?;
+        if !value.is_undefined() {
+            let value = value.as_string().ok_or_else(|| JsError::Throw(type_error(vm, "alphabet must be a string")))?;
+            alphabet = match value.as_str() { "base64url" => "base64url", "base64" => "base64", _ => return Err(JsError::Throw(type_error(vm, "invalid alphabet"))) };
+        }
+        let value = vm.get_prop_with_accessors(options, "lastChunkHandling")?;
+        if !value.is_undefined() {
+            let value = value.as_string().ok_or_else(|| JsError::Throw(type_error(vm, "lastChunkHandling must be a string")))?;
+            if !matches!(value.as_str(), "loose" | "strict" | "stop-before-partial") { return Err(JsError::Throw(type_error(vm, "invalid lastChunkHandling"))); }
+            last_chunk = match value.as_str() { "loose" => "loose", "strict" => "strict", _ => "stop-before-partial" };
+        }
+    }
+    let compact = text.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect::<Vec<_>>();
+    let padding = compact.iter().rev().take_while(|byte| **byte == b'=').count();
+    if padding > 2 || compact[..compact.len().saturating_sub(padding)].iter().any(|byte| *byte == b'=') {
+        return Err(JsError::Throw(syntax_error(vm, "invalid base64 string")));
+    }
+    let mut compact = compact[..compact.len().saturating_sub(padding)].to_vec();
+    if alphabet == "base64" && compact.iter().any(|byte| *byte == b'-' || *byte == b'_') {
+        return Err(JsError::Throw(syntax_error(vm, "invalid base64 alphabet")));
+    }
+    if alphabet == "base64url" && compact.iter().any(|byte| *byte == b'+' || *byte == b'/') {
+        return Err(JsError::Throw(syntax_error(vm, "invalid base64 alphabet")));
+    }
+    let remainder = compact.len() % 4;
+    if remainder == 1 && last_chunk != "stop-before-partial" {
+        return Err(JsError::Throw(syntax_error(vm, "invalid base64 length")));
+    }
+    if padding > 0 && (compact.len() + padding) % 4 != 0 {
+        if last_chunk != "stop-before-partial" { return Err(JsError::Throw(syntax_error(vm, "invalid base64 padding"))); }
+        compact.truncate(compact.len().saturating_sub(remainder));
+    }
+    let mut values = Vec::new();
+    let mut accumulator = 0u32;
+    let mut bits = 0u8;
+    for byte in compact {
+        let Some(value) = base64_value(byte) else { return Err(JsError::Throw(syntax_error(vm, "invalid base64 string"))); };
+        accumulator = (accumulator << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 { bits -= 8; values.push(Value::Number(((accumulator >> bits) & 0xff) as f64)); }
+    }
+    if last_chunk == "stop-before-partial" && remainder != 0 && padding == 0 {
+        let keep = values.len().saturating_sub(1);
+        values.truncate(keep);
+    }
+    typed_array_construct(vm, this, &[Value::Number(values.len() as f64)]).map(|result| {
+        for (index, value) in values.into_iter().enumerate() { vm.set_prop(&result, &index.to_string(), value); }
+        result
+    })
+}
+
+fn uint8array_set_result(vm: &mut Vm, target: &Value, source: Value, args: &[Value]) -> JsResult<Value> {
+    let target_values = uint8array_values(vm, target)?;
+    let source_values = typed_array_values(vm, &source)?;
+    let source_length = source_values.len();
+    let text = to_string_with_vm(vm, &args.first().cloned().unwrap_or(Value::Undefined))?;
+    let input_length = text.bytes().filter(|byte| !byte.is_ascii_whitespace()).count();
+    let remainder = source_length % 3;
+    let stop_partial = args.get(1).and_then(|options| {
+        options.is_object_like().then(|| vm.get_prop_with_accessors(options, "lastChunkHandling").ok())
+    }).flatten().and_then(|value| value.as_string().cloned()).is_some_and(|value| value == "stop-before-partial");
+    let complete = if stop_partial && remainder != 0 && !text.trim_end().ends_with('=') {
+        source_length - remainder
+    } else {
+        source_length
+    };
+    let count = if complete > target_values.len() {
+        (target_values.len() / 3) * 3
+    } else {
+        complete
+    };
+    let read = if count < complete {
+        (count / 3) * 4
+    } else {
+        input_length
+    };
+    for (index, value) in source_values.into_iter().take(count).enumerate() {
+        vm.set_prop(target, &index.to_string(), value);
+    }
+    let result = vm.object(None);
+    vm.set_prop(&result, "read", Value::Number(read as f64));
+    vm.set_prop(&result, "written", Value::Number(count as f64));
+    Ok(result)
+}
+
+fn native_uint8array_set_from_hex(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let constructor = Environment::get(&vm.global, "Uint8Array").unwrap_or(Value::Undefined);
+    let source = native_uint8array_from_hex(vm, constructor, args)?;
+    uint8array_set_result(vm, &this, source, args)
+}
+
+fn native_uint8array_set_from_base64(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let constructor = Environment::get(&vm.global, "Uint8Array").unwrap_or(Value::Undefined);
+    let source = native_uint8array_from_base64(vm, constructor, args)?;
+    uint8array_set_result(vm, &this, source, args)
 }
 
 fn native_typed_array_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> { typed_array_callback(vm, &this, args, "map") }
