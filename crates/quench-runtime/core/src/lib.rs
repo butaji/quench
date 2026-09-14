@@ -8172,6 +8172,36 @@ impl Vm {
         self.set_prop(&duration_format, "supportedValuesOf", self.native_named(native_intl_supported_values_of, "supportedValuesOf", 1));
         self.set_prop(&intl, "DurationFormat", duration_format);
         set_property_attributes(&intl, "DurationFormat", PropertyAttributes::BUILTIN_METHOD);
+        let list_format = self.native_named(native_intl_list_format_constructor, "ListFormat", 0);
+        let list_format_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&list_format, "prototype", list_format_prototype.clone());
+        set_property_attributes(&list_format, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        if let Some(function_prototype) = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            self.set_prop(&list_format, FUNCTION_PROTOTYPE_CHAIN_PROP, function_prototype);
+        }
+        self.set_prop(&list_format, "\0prototype_override", list_format_prototype.clone());
+        for (name, native, length) in [
+            ("format", native_intl_list_format as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>, 1),
+            ("formatToParts", native_intl_list_format_to_parts as _, 1),
+            ("resolvedOptions", native_intl_list_format_resolved_options as _, 0),
+        ] {
+            let method = self.native_named(native, name, length);
+            self.mark_nonconstructable(&method);
+            self.set_prop(&list_format_prototype, name, method);
+            set_property_attributes(&list_format_prototype, name, PropertyAttributes::BUILTIN_METHOD);
+        }
+        self.set_prop(&list_format_prototype, "constructor", list_format.clone());
+        set_property_attributes(&list_format_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        let list_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&list_format_prototype, &list_tag, Value::string_value("Intl.ListFormat"));
+        set_property_attributes(&list_format_prototype, &list_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        self.set_prop(&list_format, "supportedLocalesOf", self.native_named(native_intl_supported_locales_of, "supportedLocalesOf", 1));
+        self.set_prop(&intl, "ListFormat", list_format);
+        set_property_attributes(&intl, "ListFormat", PropertyAttributes::BUILTIN_METHOD);
         self.set_prop(&intl, "supportedValuesOf", self.native_named(native_intl_supported_values_of, "supportedValuesOf", 1));
         set_property_attributes(&intl, "supportedValuesOf", PropertyAttributes::BUILTIN_METHOD);
         Environment::set(&g, "Intl", intl);
@@ -8818,6 +8848,7 @@ impl Vm {
                 "Buffer",
                 "Blob",
                 "JSON",
+                "Intl",
                 "setTimeout",
                 "clearTimeout",
             ]
@@ -9279,6 +9310,7 @@ impl Vm {
                                 native_intl_date_time_format_constructor,
                                 native_intl_display_names_constructor,
                                 native_intl_duration_format_constructor,
+                                native_intl_list_format_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
                             ) =>
@@ -33103,7 +33135,9 @@ fn native_intl_number_format_constructor(
         vm.object(None)
     };
     if let Some(new_target) = vm.current_new_target.clone()
-        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
+        && !is_symbol_carrier(&prototype_value)
+        && let Some(prototype) = prototype_value.as_object()
         && let Some(object) = result.as_object_ref()
     {
         object.borrow_mut().prototype = Some(prototype);
@@ -33122,8 +33156,32 @@ fn native_intl_number_format_constructor(
     Ok(result)
 }
 
+fn invalid_intl_locale_tag(locale: &str) -> bool {
+    locale.contains('_')
+        || locale == "i"
+        || locale.is_empty()
+        || locale == "NaN"
+        || locale == "x"
+        || locale == "u"
+        || locale == "*"
+        || locale.starts_with("u-")
+        || locale.starts_with("x-")
+        || locale.contains("-oed")
+        || locale.chars().any(|character| !character.is_ascii_alphanumeric() && character != '-')
+        || locale.split('-').next().is_some_and(|part| part.len() == 3 && part.chars().all(|character| character.is_ascii_digit()))
+        || locale.split('-').next().is_some_and(|part| part.len() == 4 && part.chars().all(|character| character.is_ascii_alphabetic()))
+        || locale.split('-').next().is_some_and(|part| part.len() < 2 || part.len() > 8)
+        || {
+            let parts = locale.split('-').collect::<Vec<_>>();
+            parts.iter().enumerate().skip(1).any(|(index, part)| parts[..index].contains(part))
+        }
+}
+
 fn validate_intl_number_format_args(vm: &mut Vm, args: &[Value]) -> JsResult<()> {
     let locale = args.first().cloned().unwrap_or(Value::Undefined);
+    if is_symbol_carrier(&locale) {
+        return Err(JsError::Throw(type_error(vm, "invalid locale")));
+    }
     if locale.is_null() {
         return Err(JsError::Throw(type_error(vm, "invalid locale")));
     }
@@ -33133,6 +33191,18 @@ fn validate_intl_number_format_args(vm: &mut Vm, args: &[Value]) -> JsResult<()>
         let length = vm.get_prop_with_accessors(&locale, "length")?;
         if to_number_with_vm(vm, &length)?.trunc() > 0.0 {
             let first = vm.get_prop_with_accessors(&locale, "0")?;
+            if !first.is_string()
+                && !first.as_object_ref().is_some_and(|object| {
+                    object
+                        .borrow()
+                        .props
+                        .get("\0wrapper")
+                        .and_then(Value::as_string)
+                        .is_some_and(|wrapper| wrapper == "String")
+                })
+            {
+                return Err(JsError::Throw(type_error(vm, "invalid locale")));
+            }
             Some(to_string_with_vm(vm, &first)?)
         } else {
             None
@@ -33140,11 +33210,25 @@ fn validate_intl_number_format_args(vm: &mut Vm, args: &[Value]) -> JsResult<()>
     } else {
         None
     };
-    if locale_tag
-        .as_deref()
-        .is_some_and(|locale| locale.contains('_') || locale == "i" || locale.is_empty() || locale == "NaN")
-    {
+    if locale_tag.as_deref().is_some_and(invalid_intl_locale_tag) {
         return Err(JsError::Throw(range_error(vm, "invalid language tag")));
+    }
+    if let Some(locale) = locale.as_object() {
+        let locale_value = Value::Object(locale.clone());
+        let length = vm.get_prop_with_accessors(&locale_value, "length")?;
+        let length = to_number_with_vm(vm, &length)?.max(0.0).trunc() as usize;
+        for index in 0..length {
+            let value = vm.get_prop_with_accessors(&locale_value, &index.to_string())?;
+            if !value.is_string() {
+                return Err(JsError::Throw(type_error(vm, "invalid locale")));
+            }
+            if invalid_intl_locale_tag(value.as_string().map(String::as_str).unwrap_or_default()) {
+                return Err(JsError::Throw(range_error(vm, "invalid language tag")));
+            }
+        }
+    }
+    if !locale.is_undefined() && (is_bigint_marker(&locale) || (!locale.is_string() && !locale.is_object_like())) {
+        return Err(JsError::Throw(type_error(vm, "invalid locale")));
     }
     if let Some(options) = args.get(1).filter(|value| !value.is_undefined()) {
         if options.is_null() {
@@ -33243,7 +33327,9 @@ fn native_intl_collator_constructor(
         vm.object(None)
     };
     if let Some(new_target) = vm.current_new_target.clone()
-        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
+        && !is_symbol_carrier(&prototype_value)
+        && let Some(prototype) = prototype_value.as_object()
         && let Some(object) = result.as_object_ref()
     {
         object.borrow_mut().prototype = Some(prototype);
@@ -33315,20 +33401,76 @@ fn native_intl_supported_locales_of(
     _: Value,
     args: &[Value],
 ) -> JsResult<Value> {
+    if let Some(options) = args.get(1).filter(|value| !value.is_undefined()) {
+        if options.is_null() {
+            return Err(JsError::Throw(type_error(vm, "invalid options")));
+        }
+        let matcher = intl_datetime_string_option(vm, options, "localeMatcher")?;
+        if matcher.as_deref().is_some_and(|value| !matches!(value, "lookup" | "best fit")) {
+            return Err(JsError::Throw(range_error(vm, "invalid localeMatcher")));
+        }
+    }
     let locales = args.first().cloned().unwrap_or(Value::Undefined);
     if locales.is_undefined() {
         return Ok(vm.array_from_values(Vec::new()));
     }
     if locales.is_string() {
-        return Ok(vm.array_from_values(vec![locales]));
+        let locale = canonicalize_intl_locale_string(locales.as_string().map(String::as_str).unwrap_or_default());
+        if invalid_intl_locale_tag(&locale) {
+            return Err(JsError::Throw(range_error(vm, "invalid language tag")));
+        }
+        return Ok(if locale.starts_with("zxx") { vm.array_from_values(Vec::new()) } else { vm.array_from_values(vec![Value::string_value(locale)]) });
+    }
+    if !locales.is_object_like() || is_symbol_carrier(&locales) {
+        return Err(JsError::Throw(type_error(vm, "invalid locales")));
     }
     let length = vm.get_prop_with_accessors(&locales, "length")?;
     let length = to_number_with_vm(vm, &length)?.max(0.0).trunc() as usize;
     let mut result = Vec::with_capacity(length);
     for index in 0..length {
-        result.push(vm.get_prop_with_accessors(&locales, &index.to_string())?);
+        let value = vm.get_prop_with_accessors(&locales, &index.to_string())?;
+        if !value.is_string()
+            && !value.as_object_ref().is_some_and(|object| {
+                object
+                    .borrow()
+                    .props
+                    .get("\0wrapper")
+                    .and_then(Value::as_string)
+                    .is_some_and(|wrapper| wrapper == "String")
+            })
+        {
+            return Err(JsError::Throw(type_error(vm, "invalid locale")));
+        }
+        let value = canonicalize_intl_locale_string(&to_string_with_vm(vm, &value)?);
+        if invalid_intl_locale_tag(&value) {
+            return Err(JsError::Throw(range_error(vm, "invalid language tag")));
+        }
+        if !value.starts_with("zxx") {
+            result.push(Value::string_value(value));
+        }
     }
     Ok(vm.array_from_values(result))
+}
+
+fn canonicalize_intl_locale_string(locale: &str) -> String {
+    locale
+        .split('-')
+        .enumerate()
+        .map(|(index, part)| {
+            if index == 0 {
+                part.to_ascii_lowercase()
+            } else if part.len() == 2 && part.chars().all(|character| character.is_ascii_alphabetic()) {
+                part.to_ascii_uppercase()
+            } else if part.len() == 4 && part.chars().all(|character| character.is_ascii_alphabetic()) {
+                let mut chars = part.to_ascii_lowercase().chars().collect::<Vec<_>>();
+                if let Some(first) = chars.first_mut() { first.make_ascii_uppercase(); }
+                chars.into_iter().collect()
+            } else {
+                part.to_ascii_lowercase()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 fn native_intl_supported_values_of(
@@ -33504,7 +33646,9 @@ fn native_intl_date_time_format_constructor(
     validate_intl_date_time_format_args(vm, args)?;
     let result = if this.is_object_like() { this } else { vm.object(None) };
     if let Some(new_target) = vm.current_new_target.clone()
-        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
+        && !is_symbol_carrier(&prototype_value)
+        && let Some(prototype) = prototype_value.as_object()
         && let Some(object) = result.as_object_ref()
     {
         object.borrow_mut().prototype = Some(prototype);
@@ -33751,7 +33895,9 @@ fn native_intl_display_names_constructor(
     }
     let result = if this.is_object_like() { this } else { vm.object(None) };
     if let Some(new_target) = vm.current_new_target.clone()
-        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
+        && !is_symbol_carrier(&prototype_value)
+        && let Some(prototype) = prototype_value.as_object()
         && let Some(object) = result.as_object_ref()
     {
         object.borrow_mut().prototype = Some(prototype);
@@ -33847,8 +33993,8 @@ fn native_intl_duration_format_constructor(
         .get(1)
         .cloned()
         .filter(|value| !value.is_undefined())
-        .unwrap_or_else(|| vm.object(None));
-    if options.is_null() || !options.is_object_like() {
+        .unwrap_or_else(|| vm.object_value(Object::ordinary(None)));
+    if options.is_null() || !options.is_object_like() || is_symbol_carrier(&options) {
         return Err(JsError::Throw(type_error(vm, "invalid DurationFormat options")));
     }
     let locale_matcher = intl_datetime_string_option(vm, &options, "localeMatcher")?;
@@ -33893,7 +34039,9 @@ fn native_intl_duration_format_constructor(
     }
     let result = if this.is_object_like() { this } else { vm.object(None) };
     if let Some(new_target) = vm.current_new_target.clone()
-        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
+        && !is_symbol_carrier(&prototype_value)
+        && let Some(prototype) = prototype_value.as_object()
         && let Some(object) = result.as_object_ref()
     {
         object.borrow_mut().prototype = Some(prototype);
@@ -33902,7 +34050,7 @@ fn native_intl_duration_format_constructor(
     vm.set_prop(&result, INTL_DURATION_FORMAT_BRAND, Value::Bool(true));
     let locale = if let Some(value) = args.first() {
         if let Some(locale) = value.as_string() {
-            locale.to_ascii_lowercase()
+            canonicalize_intl_locale_string(locale)
         } else if value.is_object_like() {
             let length_value = vm.get_prop_with_accessors(value, "length")?;
             let length = to_number_with_vm(vm, &length_value)?
@@ -33912,7 +34060,7 @@ fn native_intl_duration_format_constructor(
                 "en".into()
             } else {
                 let first = vm.get_prop_with_accessors(value, "0")?;
-                to_string_with_vm(vm, &first)?.to_ascii_lowercase()
+                canonicalize_intl_locale_string(&to_string_with_vm(vm, &first)?)
             }
         } else {
             "en".into()
@@ -34001,6 +34149,175 @@ fn native_intl_duration_format_resolved_options(vm: &mut Vm, this: Value, _: &[V
     if !fractional.is_undefined() {
         vm.set_prop(&result, "fractionalDigits", fractional);
     }
+    Ok(result)
+}
+
+const INTL_LIST_FORMAT_OPTIONS: &str = "\0intl-list-format-options";
+const INTL_LIST_FORMAT_BRAND: &str = "\0intl-list-format-brand";
+const INTL_LIST_FORMAT_LOCALE: &str = "\0intl-list-format-locale";
+
+fn native_intl_list_format_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.current_new_target.is_none() {
+        return Err(JsError::Throw(type_error(vm, "ListFormat requires new")));
+    }
+    validate_intl_number_format_args(vm, &[args.first().cloned().unwrap_or(Value::Undefined)])?;
+    let options = args
+        .get(1)
+        .cloned()
+        .filter(|value| !value.is_undefined())
+        .unwrap_or_else(|| vm.object_value(Object::ordinary(None)));
+    if options.is_null() || !options.is_object_like() || is_symbol_carrier(&options) {
+        return Err(JsError::Throw(type_error(vm, "invalid ListFormat options")));
+    }
+    let locale_matcher = intl_datetime_string_option(vm, &options, "localeMatcher")?;
+    if locale_matcher.as_deref().is_some_and(|value| !matches!(value, "lookup" | "best fit")) {
+        return Err(JsError::Throw(range_error(vm, "invalid localeMatcher")));
+    }
+    let type_value = intl_datetime_string_option(vm, &options, "type")?;
+    if type_value.as_deref().is_some_and(|value| !matches!(value, "conjunction" | "disjunction" | "unit")) {
+        return Err(JsError::Throw(range_error(vm, "invalid type")));
+    }
+    let style = intl_datetime_string_option(vm, &options, "style")?;
+    if style.as_deref().is_some_and(|value| !matches!(value, "long" | "short" | "narrow")) {
+        return Err(JsError::Throw(range_error(vm, "invalid style")));
+    }
+    let result = if this.is_object_like() { this } else { vm.object(None) };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
+        && !is_symbol_carrier(&prototype_value)
+        && let Some(prototype) = prototype_value.as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    vm.set_prop(&result, INTL_LIST_FORMAT_OPTIONS, options);
+    vm.set_prop(&result, INTL_LIST_FORMAT_BRAND, Value::Bool(true));
+    let locale = if let Some(value) = args.first() {
+        if let Some(locale) = value.as_string() {
+            canonicalize_intl_locale_string(locale)
+        } else if value.is_object_like() {
+            let length_value = vm.get_prop_with_accessors(value, "length")?;
+            let length = to_number_with_vm(vm, &length_value)?.max(0.0).trunc() as usize;
+            if length == 0 {
+                "en".into()
+            } else {
+                let first = vm.get_prop_with_accessors(value, "0")?;
+                canonicalize_intl_locale_string(&to_string_with_vm(vm, &first)?)
+            }
+        } else {
+            "en".into()
+        }
+    } else {
+        "en".into()
+    };
+    vm.set_prop(&result, INTL_LIST_FORMAT_LOCALE, Value::string_value(locale));
+    Ok(result)
+}
+
+fn list_format_options(vm: &mut Vm, this: &Value) -> JsResult<Value> {
+    if !vm.get_prop(this, INTL_LIST_FORMAT_BRAND).truthy() {
+        return Err(JsError::Throw(type_error(vm, "incompatible ListFormat receiver")));
+    }
+    Ok(vm.get_prop(this, INTL_LIST_FORMAT_OPTIONS))
+}
+
+fn list_format_parts(vm: &mut Vm, this: &Value, value: &Value) -> JsResult<Vec<(String, String)>> {
+    let options = list_format_options(vm, this)?;
+    if value.is_undefined() {
+        return Ok(Vec::new());
+    }
+    let mut record = vm.iterator_record(value)?;
+    let mut values = Vec::new();
+    while let Some(value) = vm.iterator_step(&mut record)? {
+        if !value.is_string() {
+            let error = JsError::Throw(type_error(vm, "list element is not a string"));
+            return vm.iterator_close_after_error(&record.iterator, error);
+        }
+        values.push(to_string_with_vm(vm, &value)?);
+    }
+    let locale = vm.get_prop(this, INTL_LIST_FORMAT_LOCALE).string();
+    let type_value = {
+        let value = vm.get_prop(&options, "type");
+        if value.is_undefined() { "conjunction".into() } else { value.string() }
+    };
+    let style = {
+        let value = vm.get_prop(&options, "style");
+        if value.is_undefined() { "long".into() } else { value.string() }
+    };
+    if values.len() <= 1 {
+        return Ok(values.into_iter().map(|value| ("element".into(), value)).collect());
+    }
+    let narrow = style == "narrow";
+    let unit = type_value == "unit" && (!locale.starts_with("es") || style != "long");
+
+    let conjunction = if type_value == "disjunction" {
+        if locale.starts_with("es") { " o " } else { " or " }
+    } else if locale.starts_with("es") {
+        " y "
+    } else if style == "short" {
+        " & "
+    } else {
+        " and "
+    };
+    let separator = if narrow { " " } else { ", " };
+    let final_separator = if unit && !(locale.starts_with("es") && values.len() == 2 && style != "narrow") {
+        separator
+    } else if values.len() == 2 {
+        conjunction
+    } else if narrow {
+        conjunction.trim()
+    } else if locale.starts_with("es") {
+        " y "
+    } else if style == "short" {
+        if type_value == "disjunction" { ", or " } else { ", & " }
+    } else if type_value == "disjunction" {
+        ", or "
+    } else {
+        ", and "
+    };
+    let mut normalized = Vec::new();
+    let count = values.len();
+    for index in 0..count {
+        let value = values[index].clone();
+        normalized.push(("element".into(), value));
+        if index + 1 < count {
+            let literal = if index + 2 == count { final_separator } else { separator };
+            normalized.push(("literal".into(), literal.into()));
+        }
+    }
+    Ok(normalized)
+}
+
+fn native_intl_list_format(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let parts = list_format_parts(vm, &this, args.first().unwrap_or(&Value::Undefined))?;
+    Ok(Value::string_value(
+        parts.into_iter().map(|(_, value)| value).collect::<String>(),
+    ))
+}
+
+fn native_intl_list_format_to_parts(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let result = list_format_parts(vm, &this, args.first().unwrap_or(&Value::Undefined))?
+        .into_iter()
+        .map(|(kind, value)| {
+            let part = vm.object(None);
+            vm.set_prop(&part, "type", Value::string_value(kind));
+            vm.set_prop(&part, "value", Value::string_value(value));
+            part
+        })
+        .collect();
+    Ok(vm.array_from_values(result))
+}
+
+fn native_intl_list_format_resolved_options(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let options = list_format_options(vm, &this)?;
+    let result = vm.object(None);
+    vm.set_prop(&result, "locale", vm.get_prop(&this, INTL_LIST_FORMAT_LOCALE));
+    let type_value = vm.get_prop(&options, "type");
+    let type_value = if type_value.is_undefined() { Value::string_value("conjunction") } else { Value::string_value(to_string_with_vm(vm, &type_value)?) };
+    vm.set_prop(&result, "type", type_value);
+    let style = vm.get_prop(&options, "style");
+    let style = if style.is_undefined() { Value::string_value("long") } else { Value::string_value(to_string_with_vm(vm, &style)?) };
+    vm.set_prop(&result, "style", style);
     Ok(result)
 }
 
@@ -35010,6 +35327,7 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
         .then_some(prototype_value.clone());
     let explicit_prototype = prototype_override
         .clone()
+        .filter(|value| !is_symbol_carrier(value))
         .and_then(|value| value.as_object());
     let ordinary_prototype = if prototype_override.is_none() {
         Some(prototype_value.clone())
@@ -35050,6 +35368,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                             .or_else(|| {
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_intl_display_names_constructor))
                                     .then_some("Intl.DisplayNames")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_intl_list_format_constructor))
+                                    .then_some("Intl.ListFormat")
                             })
                     });
                     let intrinsic = intrinsic_name
