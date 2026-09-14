@@ -16845,9 +16845,6 @@ impl Vm {
             StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
                 if o.is_null() || o.is_undefined() {
-                    if matches!(&m.object, Expression::Super(_)) {
-                        return Ok(Value::Undefined);
-                    }
                     if m.optional || Self::optional_chain_continues(&m.object) {
                         return Ok(Value::Undefined);
                     }
@@ -16857,6 +16854,9 @@ impl Vm {
                     )));
                 }
                 if matches!(&m.object, Expression::Super(_)) {
+                    if Environment::is_tdz(&e, "this") {
+                        return Err(JsError::Throw(reference_error(self, "this")));
+                    }
                     let receiver = Environment::get(&e, "this").unwrap_or(Value::Undefined);
                     self.get_prop_with_receiver(&o, m.property.name.as_str(), &receiver)
                 } else {
@@ -16866,9 +16866,6 @@ impl Vm {
             PrivateFieldExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
                 if o.is_null() || o.is_undefined() {
-                    if matches!(&m.object, Expression::Super(_)) {
-                        return Ok(Value::Undefined);
-                    }
                     return Err(JsError::Throw(type_error(
                         self,
                         &format!("cannot read private property #{}", m.field.name),
@@ -16898,6 +16895,9 @@ impl Vm {
                 let key_value = self.eval_expr(&m.expression, e.clone())?;
                 let k = self.to_property_key(key_value)?;
                 if matches!(&m.object, Expression::Super(_)) {
+                    if Environment::is_tdz(&e, "this") {
+                        return Err(JsError::Throw(reference_error(self, "this")));
+                    }
                     let receiver = Environment::get(&e, "this").unwrap_or(Value::Undefined);
                     self.get_prop_with_receiver(&o, &k, &receiver)
                 } else {
