@@ -409,6 +409,7 @@ builtin_catalog! {
     ArraySlice, ArrayPrototype, "slice", native_array_slice, Generic, MAY_ALLOCATE;
     ArrayJoin, ArrayPrototype, "join", native_array_join, Generic, MAY_ALLOCATE;
     ArrayToString, ArrayPrototype, "toString", native_array_to_string, Generic, MAY_ALLOCATE;
+    ArrayToLocaleString, ArrayPrototype, "toLocaleString", native_array_to_locale_string, Generic, MAY_ALLOCATE;
     ArrayConcat, ArrayPrototype, "concat", native_array_concat, Generic, MAY_ALLOCATE;
     ArrayForEach, ArrayPrototype, "forEach", native_array_for_each, Generic, MAY_CALL_JS;
     ArrayMap, ArrayPrototype, "map", native_array_map, Generic, MAY_ALLOCATE;
@@ -494,7 +495,7 @@ builtin_catalog! {
     NumberToFixed, NumberPrototype, "toFixed", native_number_to_fixed, Generic, MAY_ALLOCATE;
     NumberToPrecision, NumberPrototype, "toPrecision", native_number_to_precision, Generic, MAY_ALLOCATE;
     NumberToExponential, NumberPrototype, "toExponential", native_number_to_exponential, Generic, MAY_ALLOCATE;
-    NumberToLocaleString, NumberPrototype, "toLocaleString", native_number_to_string, Generic, MAY_ALLOCATE;
+    NumberToLocaleString, NumberPrototype, "toLocaleString", native_number_to_locale_string, Generic, MAY_ALLOCATE;
     NumberValueOf, NumberPrototype, "valueOf", native_number_value_of, Generic, PURE;
     NumberToString, NumberPrototype, "toString", native_number_to_string, Generic, MAY_ALLOCATE;
     RegExpTest, RegExpPrototype, "test", native_regexp_test, Generic, PURE;
@@ -705,6 +706,7 @@ fn builtin_length(id: BuiltinId) -> usize {
         | BuiltinId::ArrayPop
         | BuiltinId::ArrayShift
         | BuiltinId::ArrayToString
+        | BuiltinId::ArrayToLocaleString
         | BuiltinId::StringToLowerCase
         | BuiltinId::StringToUpperCase
         | BuiltinId::StringToString
