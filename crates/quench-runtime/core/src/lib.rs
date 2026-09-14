@@ -13961,7 +13961,17 @@ impl Vm {
         for s in b {
             match self.exec_stmt(s, e.clone())? {
                 Signal::Normal(v) => {
-                    last = v;
+                    // Empty statements produce an empty completion.  The
+                    // StatementList completion algorithm carries the prior
+                    // value across a trailing `;` (notably in eval), rather
+                    // than replacing it with `undefined`.
+                    let empty_completion = matches!(
+                        s,
+                        Statement::EmptyStatement(_) | Statement::DebuggerStatement(_)
+                    ) || matches!(s, Statement::BlockStatement(block) if block.body.is_empty());
+                    if !empty_completion {
+                        last = v;
+                    }
                     // A completed delegated `yield*` carries an abrupt
                     // return completion through the expression evaluator.
                     // Bubble it through nested statement lists so code after
@@ -33817,6 +33827,19 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
             )));
         }
         return native_object_get_prototype_of(vm, Value::Undefined, &[proxy_target_value]);
+    }
+    if let Some(regexp) = target.as_regexp_ref() {
+        return Ok(regexp
+            .borrow()
+            .prototype
+            .clone()
+            .map(Value::Object)
+            .or_else(|| {
+                vm.builtin(BuiltinId::RegExpConstructor)
+                    .as_function_ref()
+                    .map(|function| Value::Object(function.prototype.clone()))
+            })
+            .unwrap_or(Value::Null));
     }
     if let Some(object) = target.as_object() {
         if let Some(prototype_function) = object.borrow().props.get("\0prototype_function").cloned()
