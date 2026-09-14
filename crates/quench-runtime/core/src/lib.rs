@@ -15259,6 +15259,7 @@ impl Vm {
                 };
                 if v.operator == Assign
                     && let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &v.left
+                    && v.span.start == identifier.span.start
                     && is_anonymous_function_definition(&v.right)
                     && function_name_is_inferable(&value)
                 {
