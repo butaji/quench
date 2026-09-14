@@ -16835,13 +16835,6 @@ impl Vm {
                 continue;
             }
             if let Some(value) = local {
-                if self.is_global_environment(&environment)
-                    && !environment.borrow().lexical_names.contains(name)
-                    && let Some(global) = self.global_object_for_environment(&environment)
-                    && self.has_property_with_proxy(&global, name)?
-                {
-                    return self.get_prop_with_accessors(&global, name);
-                }
                 return self.resolve_binding_value(value);
             }
             if let Some(object) = with_object
@@ -18912,13 +18905,6 @@ impl Vm {
             LValue::Var(e, name) => {
                 if Environment::is_tdz(e, name) {
                     return Err(JsError::Throw(reference_error(self, name)));
-                }
-                if self.is_global_environment(e)
-                    && !e.borrow().lexical_names.contains(name)
-                    && let Some(global) = self.global_object_for_environment(e)
-                    && self.has_property_with_proxy(&global, name)?
-                {
-                    return self.get_prop_with_accessors(&global, name);
                 }
                 Ok(Environment::get(e, name).unwrap_or(Value::Undefined))
             }
