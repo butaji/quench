@@ -368,12 +368,12 @@ const FUNCTION_PROTOTYPE_CHAIN_PROP: &str = "\0quench:function-prototype-chain";
 /// list as data prevents one path from silently missing a semantic operation.
 macro_rules! install_native_methods {
     ($vm:expr, $prototype:expr, $( $name:literal => $native:ident / $length:expr ),+ $(,)?) => {{
+        let prototype = $prototype;
         $(
-            $vm.set_prop(
-                &$prototype,
-                $name,
-                $vm.native_named($native, $name, $length),
-            );
+            let method = $vm.native_named($native, $name, $length);
+            $vm.set_prop(&prototype, $name, method.clone());
+            set_property_attributes(&prototype, $name, PropertyAttributes::BUILTIN_METHOD);
+            $vm.mark_nonconstructable(&method);
         )+
     }};
 }
@@ -7462,6 +7462,11 @@ impl Vm {
             .expect("TypedArray constructor")
             .prototype
             .clone();
+        self.set_prop(
+            &typed_array_base,
+            "prototype",
+            Value::Object(typed_array_base_prototype.clone()),
+        );
         let typed_array_base_value = Value::Object(typed_array_base_prototype);
         for (key, getter) in [
             ("buffer", native_typed_array_buffer as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
@@ -7529,6 +7534,7 @@ impl Vm {
             ("BigUint64Array", 8),
         ] {
         let constructor = self.native_named(native_typed_array_constructor, name, 1);
+            self.set_prop(&constructor, FUNCTION_PROTOTYPE_CHAIN_PROP, typed_array_base.clone());
             self.set_prop(
                 &constructor,
                 "BYTES_PER_ELEMENT",
