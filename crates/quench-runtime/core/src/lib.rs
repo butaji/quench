@@ -20340,6 +20340,7 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
 fn is_legacy_proto_property(property: &ObjectProperty<'_>) -> bool {
     property.kind == PropertyKind::Init
         && !property.method
+        && !property.shorthand
         && !property.computed
         && match &property.key {
             PropertyKey::StaticIdentifier(identifier) => identifier.name == "__proto__",
