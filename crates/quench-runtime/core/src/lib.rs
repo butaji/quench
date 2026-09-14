@@ -5898,6 +5898,10 @@ struct Vm {
     prototype_epoch: Cell<u64>,
     object_heap: ObjectHeap,
     host_roots: Vec<Value>,
+    // Keep active lexical chains rooted while execution can suspend or hit a
+    // collection safepoint. A suspended async frame is not reachable from
+    // the global object until its promise continuation resumes.
+    active_environments: Vec<Env>,
     builtin_functions: Box<[Value]>,
     code_arena: Rc<RefCell<CodeArena>>,
     jit_cache: HashMap<usize, Rc<dynjit::DynJitCode>>,
@@ -6043,6 +6047,7 @@ impl Vm {
             prototype_epoch: Cell::new(INITIAL_PROTOTYPE_EPOCH),
             object_heap: ObjectHeap::new(),
             host_roots: Vec::new(),
+            active_environments: Vec::new(),
             builtin_functions: Vec::new().into_boxed_slice(),
             code_arena: Rc::new(RefCell::new(CodeArena::new())),
             jit_cache: HashMap::new(),
@@ -6162,6 +6167,23 @@ impl Vm {
             timer.args.iter().for_each(|value| tracer.value(value));
         });
         self.host_roots.iter().for_each(|value| tracer.value(value));
+        self.active_environments
+            .iter()
+            .for_each(|environment| tracer.environment(environment.clone()));
+        self.sync_generator_continuations.values().for_each(|continuation| {
+            tracer.environment(continuation.environment.clone());
+            tracer.environment(continuation.body_environment.clone());
+            tracer.value(&continuation.this);
+            continuation.arguments.iter().for_each(|value| tracer.value(value));
+            continuation
+                .pending_iterators
+                .iter()
+                .for_each(|value| tracer.value(value));
+            continuation.replay_values.iter().for_each(|value| tracer.value(value));
+            if let Some(value) = &continuation.mapped_arguments_object {
+                tracer.object(*value);
+            }
+        });
         self.jit_cache
             .values()
             .for_each(|code| code.trace_object_roots(&mut tracer));
@@ -7920,6 +7942,14 @@ impl Vm {
         self.set_prop(process, "version", Value::string_value("v22.0.0"));
         self.set_prop(process, "pid", Value::Number(std::process::id() as f64));
         self.set_prop(process, "exitCode", Value::Number(0.0));
+        let stdout = self.object(None);
+        self.set_prop(
+            &stdout,
+            "write",
+            self.native(native_process_stream_write),
+        );
+        self.set_prop(process, "stdout", stdout.clone());
+        self.set_prop(process, "stderr", stdout);
         self.set_prop(process, "cwd", self.native(native_process_cwd));
         self.set_prop(
             process,
@@ -8061,7 +8091,15 @@ impl Vm {
             .or_else(|| self.microtasks.pop_front())
             .or_else(|| self.timers.pop_front())
         {
-            self.call(timer.callback, Value::Undefined, timer.args)?;
+            // A queued job is removed before invocation. Keep its callback
+            // and arguments rooted for the whole call so a collection
+            // safepoint cannot reclaim the job object between queue turns.
+            let root_base = self.host_roots.len();
+            self.host_roots.push(timer.callback.clone());
+            self.host_roots.extend(timer.args.iter().cloned());
+            let result = self.call(timer.callback, Value::Undefined, timer.args);
+            self.host_roots.truncate(root_base);
+            result?;
         }
         Ok(())
     }
@@ -11550,6 +11588,8 @@ impl Vm {
                 return Err(error);
             }
         }
+        let previous_generator_mode = self.sync_generator_yielding;
+        self.sync_generator_yielding = false;
         let mut result = (|| {
             if let Some(b) = &n.body {
                 match self.exec_stmts(&b.statements, body_environment)? {
@@ -11565,6 +11605,7 @@ impl Vm {
                 Ok(Value::Undefined)
             }
         })();
+        self.sync_generator_yielding = previous_generator_mode;
         if source_id.is_some() {
             self.source_ids.pop();
         }
@@ -11978,6 +12019,8 @@ impl Vm {
                 return Err(error);
             }
         }
+        let previous_generator_mode = self.sync_generator_yielding;
+        self.sync_generator_yielding = false;
         let mut result = (|| {
             if let Some(expression) = n.body.as_expression() {
                 return self.eval_expr(expression, e.clone());
@@ -11991,6 +12034,7 @@ impl Vm {
                 _ => Ok(Value::Undefined),
             }
         })();
+        self.sync_generator_yielding = previous_generator_mode;
         if source_id.is_some() {
             self.source_ids.pop();
         }
@@ -14097,9 +14141,12 @@ impl Vm {
     }
 
     fn exec_stmts<'a>(&mut self, b: &[Statement<'a>], e: Env) -> JsResult<Signal> {
+        self.active_environments.push(e.clone());
         let start = e.borrow().disposables.len();
         let result = self.exec_stmts_inner(b, e.clone());
-        self.finish_disposable_scope(&e, start, result)
+        let result = self.finish_disposable_scope(&e, start, result);
+        self.active_environments.pop();
+        result
     }
 
     fn exec_stmts_inner<'a>(&mut self, b: &[Statement<'a>], e: Env) -> JsResult<Signal> {
@@ -14145,7 +14192,9 @@ impl Vm {
                     // return completion through the expression evaluator.
                     // Bubble it through nested statement lists so code after
                     // the delegation does not run before `finally`.
-                    if let Some(value) = self.sync_generator_return_value.take() {
+                    if self.sync_generator_yielding
+                        && let Some(value) = self.sync_generator_return_value.take()
+                    {
                         return Ok(Signal::Return(value));
                     }
                 }
@@ -16746,6 +16795,13 @@ impl Vm {
                 }
             }
             Expression::CallExpression(call) => {
+                // A generator continuation owns the return completion. A
+                // tail-call edge would escape the generator frame and make
+                // the caller resume the callee instead of producing the
+                // generator's final result.
+                if self.sync_generator_yielding {
+                    return self.eval_expr(expression, e);
+                }
                 let (callee, receiver, short_circuited) =
                     self.eval_call_reference(&call.callee, e.clone(), true)?;
                 if short_circuited || (call.optional && (callee.is_null() || callee.is_undefined()))
@@ -29964,6 +30020,19 @@ fn native_print(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
 fn native_process_cwd(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Ok(Value::string_value(vm.cwd.to_string_lossy()))
 }
+fn native_process_stream_write(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let chunk = args
+        .first()
+        .map(|value| to_string_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or_default();
+    if let Some(output) = vm.output.as_mut() {
+        output(&chunk);
+    } else {
+        print!("{chunk}");
+    }
+    Ok(Value::Bool(true))
+}
 fn assertion_error(vm: &Vm, message: &str) -> Value {
     let error = vm.object(None);
     vm.set_prop(&error, "message", Value::string_value(message));
@@ -30138,12 +30207,95 @@ fn native_process_next_tick(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
         vm.schedule_next_tick(callback, callback_args) as f64,
     ))
 }
-fn native_json_stringify(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
-    Ok(Value::string_value(
-        args.first()
-            .map(Value::display)
-            .unwrap_or_else(|| "undefined".to_owned()),
-    ))
+fn native_json_stringify(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let mut stack = Vec::new();
+    match json_stringify_value(vm, &value, &mut stack, false)? {
+        Some(value) => Ok(Value::string_value(value)),
+        None => Ok(Value::Undefined),
+    }
+}
+
+/// Serialize the core value graph rather than using display formatting.  The
+/// latter is intentionally diagnostic (`[object Object]` for arrays/objects),
+/// while JSON.stringify is an observable protocol used by Node and async
+/// continuations.  This compact serializer keeps the recursive state explicit
+/// and shares the ordinary property/key paths with the rest of the VM.
+fn json_stringify_value(
+    vm: &mut Vm,
+    value: &Value,
+    stack: &mut Vec<usize>,
+    in_array: bool,
+) -> JsResult<Option<String>> {
+    if value.is_undefined() || value.is_function() || value.is_regexp() {
+        return Ok(in_array.then(|| "null".to_owned()));
+    }
+    if value.is_null() {
+        return Ok(Some("null".to_owned()));
+    }
+    if let Some(boolean) = value.as_bool() {
+        return Ok(Some(boolean.to_string()));
+    }
+    if let Some(number) = value.as_number() {
+        return Ok(Some(if number.is_finite() {
+            number.to_string()
+        } else {
+            "null".to_owned()
+        }));
+    }
+    if let Some(string) = value.as_string() {
+        if is_bigint_marker(value) {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "Do not know how to serialize a BigInt",
+            )));
+        }
+        return serde_json::to_string(string)
+            .map(Some)
+            .map_err(|error| JsError::Message(error.to_string()));
+    }
+    if !value.is_object() {
+        return Ok(None);
+    }
+    let identity = value
+        .as_object_ref()
+        .map(|object| object as *const ObjectCell as usize)
+        .unwrap_or_default();
+    if stack.contains(&identity) {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Converting circular structure to JSON",
+        )));
+    }
+    stack.push(identity);
+    let is_array = value
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().array.is_some());
+    let result = if is_array {
+        let length = vm.get_prop(value, "length").number().max(0.0) as usize;
+        let mut elements = Vec::with_capacity(length);
+        for index in 0..length {
+            let element = vm.get_prop_with_accessors(value, &index.to_string())?;
+            elements.push(
+                json_stringify_value(vm, &element, stack, true)?
+                    .unwrap_or_else(|| "null".to_owned()),
+            );
+        }
+        format!("[{}]", elements.join(","))
+    } else {
+        let mut members = Vec::new();
+        for key in object_own_enumerable_keys(value) {
+            let property = vm.get_prop_with_accessors(value, &key)?;
+            if let Some(serialized) = json_stringify_value(vm, &property, stack, false)? {
+                let key = serde_json::to_string(&key)
+                    .map_err(|error| JsError::Message(error.to_string()))?;
+                members.push(format!("{key}:{serialized}"));
+            }
+        }
+        format!("{{{}}}", members.join(","))
+    };
+    stack.pop();
+    Ok(Some(result))
 }
 fn native_buffer_constructor(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
     native_buffer_from(vm, Value::Undefined, args)
