@@ -5521,6 +5521,26 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
         PrimitiveHint::Number
     };
     let left = to_primitive_for_binary(vm, left, hint)?;
+    if matches!(
+        op,
+        Op::Sub
+            | Op::Mul
+            | Op::Div
+            | Op::Rem
+            | Op::Pow
+            | Op::Shl
+            | Op::Shr
+            | Op::Ushr
+            | Op::Or
+            | Op::Xor
+            | Op::And
+    ) && is_symbol_carrier(&left)
+    {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "cannot convert a Symbol value to a number",
+        )));
+    }
     let right = to_primitive_for_binary(vm, right, hint)?;
     if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge)
         && (is_symbol_carrier(&left) || is_symbol_carrier(&right))
@@ -5565,6 +5585,18 @@ fn binary_with_vm(vm: &mut Vm, op: Op, left: &Value, right: &Value) -> JsResult<
                 return Err(JsError::Throw(type_error(
                     vm,
                     "BigInts have no unsigned right shift",
+                )));
+            }
+            if matches!(op, Op::Div | Op::Rem) && right == BigInt::from(0u8) {
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "Division by zero",
+                )));
+            }
+            if matches!(op, Op::Pow) && right.sign() == Sign::Minus {
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "Exponent must be positive",
                 )));
             }
             return Ok(bigint_binary(op, left, right));
@@ -15887,20 +15919,30 @@ impl Vm {
                         v.operator,
                         LogicalOr | LogicalAnd | LogicalNullish
                     );
+                macro_rules! compound_binary {
+                    ($op:expr) => {
+                        binary_with_vm(
+                            self,
+                            $op,
+                            &old,
+                            right.as_ref().expect("compound assignment rhs"),
+                        )?
+                    };
+                }
                 let value = match v.operator {
                     Assign => right.expect("assignment evaluates its right-hand side"),
-                    Addition => exec_op(Op::Add, old, right),
-                    Subtraction => exec_op(Op::Sub, old, right),
-                    Multiplication => exec_op(Op::Mul, old, right),
-                    Division => exec_op(Op::Div, old, right),
-                    Remainder => exec_op(Op::Rem, old, right),
-                    Exponential => exec_op(Op::Pow, old, right),
-                    ShiftLeft => exec_op(Op::Shl, old, right),
-                    ShiftRight => exec_op(Op::Shr, old, right),
-                    ShiftRightZeroFill => exec_op(Op::Ushr, old, right),
-                    BitwiseOR => exec_op(Op::Or, old, right),
-                    BitwiseXOR => exec_op(Op::Xor, old, right),
-                    BitwiseAnd => exec_op(Op::And, old, right),
+                    Addition => compound_binary!(Op::Add),
+                    Subtraction => compound_binary!(Op::Sub),
+                    Multiplication => compound_binary!(Op::Mul),
+                    Division => compound_binary!(Op::Div),
+                    Remainder => compound_binary!(Op::Rem),
+                    Exponential => compound_binary!(Op::Pow),
+                    ShiftLeft => compound_binary!(Op::Shl),
+                    ShiftRight => compound_binary!(Op::Shr),
+                    ShiftRightZeroFill => compound_binary!(Op::Ushr),
+                    BitwiseOR => compound_binary!(Op::Or),
+                    BitwiseXOR => compound_binary!(Op::Xor),
+                    BitwiseAnd => compound_binary!(Op::And),
                     LogicalOr => {
                         if old.truthy() {
                             old
@@ -16570,6 +16612,13 @@ impl Vm {
             }
             LValue::Var(e, name) => {
                 if Environment::is_tdz(&e, &name) {
+                    return Err(JsError::Throw(reference_error(self, &name)));
+                }
+                if self.is_global_environment(&e)
+                    && let Some(global) = self.global_object_for_environment(&e)
+                    && !self.has_property_with_proxy(&global, &name)?
+                    && self.strict_mode
+                {
                     return Err(JsError::Throw(reference_error(self, &name)));
                 }
                 if self.strict_mode && Environment::get(&e, &name).is_none() {
