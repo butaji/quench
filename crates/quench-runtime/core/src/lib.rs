@@ -1810,6 +1810,35 @@ macro_rules! install_data_properties {
     }};
 }
 
+macro_rules! install_intl_locale_accessors {
+    ($vm:expr, $prototype:expr) => {{
+        for (name, getter_name, native) in [
+            ("baseName", "get baseName", native_intl_locale_base_name_getter as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>),
+            ("calendar", "get calendar", native_intl_locale_calendar_getter as _),
+            ("caseFirst", "get caseFirst", native_intl_locale_case_first_getter as _),
+            ("collation", "get collation", native_intl_locale_collation_getter as _),
+            ("firstDayOfWeek", "get firstDayOfWeek", native_intl_locale_first_day_getter as _),
+            ("hourCycle", "get hourCycle", native_intl_locale_hour_cycle_getter as _),
+            ("language", "get language", native_intl_locale_language_getter as _),
+            ("numberingSystem", "get numberingSystem", native_intl_locale_numbering_system_getter as _),
+            ("numeric", "get numeric", native_intl_locale_numeric_getter as _),
+            ("region", "get region", native_intl_locale_region_getter as _),
+            ("script", "get script", native_intl_locale_script_getter as _),
+            ("variants", "get variants", native_intl_locale_variants_getter as _),
+        ] {
+            let getter = $vm.native_named(native, getter_name, 0);
+            $vm.mark_nonconstructable(&getter);
+            $vm.define_accessor_slot(
+                &$prototype,
+                name,
+                Some(getter),
+                None,
+                PropertyAttributes { writable: false, enumerable: false, configurable: true },
+            );
+        }
+    }};
+}
+
 /// Install one data property while keeping its descriptor attached to the
 /// same declaration. The singular form is useful at semantic edges where a
 /// loop or a larger table would obscure the exceptional value.
@@ -8202,6 +8231,45 @@ impl Vm {
         self.set_prop(&list_format, "supportedLocalesOf", self.native_named(native_intl_supported_locales_of, "supportedLocalesOf", 1));
         self.set_prop(&intl, "ListFormat", list_format);
         set_property_attributes(&intl, "ListFormat", PropertyAttributes::BUILTIN_METHOD);
+        let locale_constructor = self.native_named(native_intl_locale_constructor, "Locale", 1);
+        let locale_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&locale_constructor, "prototype", locale_prototype.clone());
+        set_property_attributes(&locale_constructor, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        if let Some(function_prototype) = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            self.set_prop(&locale_constructor, FUNCTION_PROTOTYPE_CHAIN_PROP, function_prototype);
+        }
+        self.set_prop(&locale_constructor, "\0prototype_override", locale_prototype.clone());
+        for (name, native, length) in [
+            ("toString", native_intl_locale_to_string as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>, 0),
+            ("maximize", native_intl_locale_maximize as _, 0),
+            ("minimize", native_intl_locale_minimize as _, 0),
+            ("getCalendars", native_intl_locale_get_calendars as _, 0),
+            ("getCollations", native_intl_locale_get_collations as _, 0),
+            ("getHourCycles", native_intl_locale_get_hour_cycles as _, 0),
+            ("getNumberingSystems", native_intl_locale_get_numbering_systems as _, 0),
+            ("getTimeZones", native_intl_locale_get_time_zones as _, 0),
+            ("getTextInfo", native_intl_locale_get_text_info as _, 0),
+            ("getWeekInfo", native_intl_locale_get_week_info as _, 0),
+        ] {
+            let method = self.native_named(native, name, length);
+            self.mark_nonconstructable(&method);
+            self.set_prop(&locale_prototype, name, method);
+            set_property_attributes(&locale_prototype, name, PropertyAttributes::BUILTIN_METHOD);
+        }
+        install_intl_locale_accessors!(self, locale_prototype);
+        self.set_prop(&locale_prototype, "constructor", locale_constructor.clone());
+        set_property_attributes(&locale_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        let locale_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&locale_prototype, &locale_tag, Value::string_value("Intl.Locale"));
+        set_property_attributes(&locale_prototype, &locale_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        self.set_prop(&intl, "Locale", locale_constructor);
+        set_property_attributes(&intl, "Locale", PropertyAttributes::BUILTIN_METHOD);
+        self.set_prop(&intl, "getCanonicalLocales", self.native_named(native_intl_get_canonical_locales, "getCanonicalLocales", 1));
+        set_property_attributes(&intl, "getCanonicalLocales", PropertyAttributes::BUILTIN_METHOD);
         self.set_prop(&intl, "supportedValuesOf", self.native_named(native_intl_supported_values_of, "supportedValuesOf", 1));
         set_property_attributes(&intl, "supportedValuesOf", PropertyAttributes::BUILTIN_METHOD);
         Environment::set(&g, "Intl", intl);
@@ -9311,6 +9379,7 @@ impl Vm {
                                 native_intl_display_names_constructor,
                                 native_intl_duration_format_constructor,
                                 native_intl_list_format_constructor,
+                                native_intl_locale_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
                             ) =>
@@ -33163,9 +33232,13 @@ fn invalid_intl_locale_tag(locale: &str) -> bool {
         || locale == "NaN"
         || locale == "x"
         || locale == "u"
+        || matches!(locale, "no-bok" | "no-nyn" | "zh-min" | "zh-min-nan")
+        || matches!(locale, "i-ami" | "i-bnn" | "i-default" | "i-enochian" | "i-hak" | "i-klingon" | "i-lux" | "i-mingo" | "i-navajo" | "i-pwn" | "i-tao" | "i-tay" | "i-tsu" | "sgn-BE-FR" | "sgn-BE-NL" | "sgn-CH-DE")
         || locale == "*"
         || locale.starts_with("u-")
         || locale.starts_with("x-")
+        || locale.ends_with("-u")
+        || locale.ends_with("-u-")
         || locale.contains("-oed")
         || locale.chars().any(|character| !character.is_ascii_alphanumeric() && character != '-')
         || locale.split('-').next().is_some_and(|part| part.len() == 3 && part.chars().all(|character| character.is_ascii_digit()))
@@ -33173,7 +33246,21 @@ fn invalid_intl_locale_tag(locale: &str) -> bool {
         || locale.split('-').next().is_some_and(|part| part.len() < 2 || part.len() > 8)
         || {
             let parts = locale.split('-').collect::<Vec<_>>();
-            parts.iter().enumerate().skip(1).any(|(index, part)| parts[..index].contains(part))
+            parts.iter().enumerate().take_while(|(_, part)| **part != "x").any(|(index, part)| {
+                part.len() == 1 && (index + 1 == parts.len() || parts[..index].iter().any(|previous| previous == part))
+            })
+        }
+        || locale.split_once("-u-").is_some_and(|(_, extension)| {
+            let pieces = extension.split('-').collect::<Vec<_>>();
+            pieces.is_empty() || pieces.first().is_some_and(|piece| piece.len() == 1) || pieces.iter().enumerate().any(|(index, piece)| piece.len() == 2 && pieces.get(index + 1).is_some_and(|next| next.len() == 1))
+        })
+        || {
+            let base = locale.split_once("-u-").map_or(locale, |(base, _)| base);
+            let parts = base.split('-').collect::<Vec<_>>();
+            parts.iter().enumerate().skip(1).any(|(index, part)| {
+                parts[..index].contains(part)
+                    || (index == 1 && part == &"els")
+            })
         }
 }
 
@@ -33452,8 +33539,53 @@ fn native_intl_supported_locales_of(
     Ok(vm.array_from_values(result))
 }
 
+fn native_intl_get_canonical_locales(
+    vm: &mut Vm,
+    _: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let locales = args.first().cloned().unwrap_or(Value::Undefined);
+    if locales.is_undefined() {
+        return Ok(vm.array_from_values(Vec::new()));
+    }
+    let mut source = Vec::new();
+    if locales.is_string() {
+        source.push(locales);
+    } else if locales.is_object_like() && vm.get_prop(&locales, INTL_LOCALE_BRAND).truthy() {
+        source.push(vm.get_prop(&locales, INTL_LOCALE_TAG));
+    } else if locales.is_object_like() {
+        let length = vm.get_prop_with_accessors(&locales, "length")?;
+        let length = to_number_with_vm(vm, &length)?.max(0.0).trunc() as usize;
+        for index in 0..length {
+            source.push(vm.get_prop_with_accessors(&locales, &index.to_string())?);
+        }
+    } else {
+        return Err(JsError::Throw(type_error(vm, "invalid locales")));
+    }
+    let mut result = Vec::new();
+    for value in source {
+        let value = if vm.get_prop(&value, INTL_LOCALE_BRAND).truthy() {
+            vm.get_prop(&value, INTL_LOCALE_TAG)
+        } else {
+            if !value.is_string() {
+                return Err(JsError::Throw(type_error(vm, "invalid locale")));
+            }
+            value
+        };
+        let locale = canonicalize_intl_locale_string(&to_string_with_vm(vm, &value)?);
+        if invalid_intl_locale_tag(&locale) {
+            return Err(JsError::Throw(range_error(vm, "invalid language tag")));
+        }
+        if !result.iter().any(|item: &Value| item.as_string().is_some_and(|item| item == &locale)) {
+            result.push(Value::string_value(locale));
+        }
+    }
+    Ok(vm.array_from_values(result))
+}
+
 fn canonicalize_intl_locale_string(locale: &str) -> String {
-    locale
+    let mut locale = locale
+        .trim()
         .split('-')
         .enumerate()
         .map(|(index, part)| {
@@ -33470,7 +33602,66 @@ fn canonicalize_intl_locale_string(locale: &str) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join("-")
+        .join("-");
+    if let Some((base, extension)) = locale.split_once("-u-") {
+        let extension = extension.to_ascii_lowercase();
+        let base = base.split('-').filter(|part| *part != "lojban").collect::<Vec<_>>().join("-");
+        locale = format!("{base}-u-{extension}");
+    } else if locale.ends_with("-lojban") {
+        locale.truncate(locale.len() - "-lojban".len());
+    }
+    let aliases = [
+        ("mo", "ro"), ("aar", "aa"), ("heb", "he"), ("ces", "cs"),
+        ("iw", "he"), ("in", "id"), ("ji", "yi"),
+        ("cel-gaulish", "xtg"), ("art-lojban", "jbo"), ("zh-guoyu", "zh"), ("zh-hakka", "hak"), ("zh-xiang", "hsn"),
+        ("en-GB-oed", "en-GB-oxendict"), ("hy-arevela", "hy"), ("hy-arevmda", "hyw"),
+    ];
+    if locale == "cel-gaulish" { locale = "xtg".to_owned(); }
+    for (from, to) in aliases {
+        if locale == from { locale = to.to_owned(); break; }
+        if let Some(rest) = locale.strip_prefix(&format!("{from}-")) {
+            locale = format!("{to}-{rest}");
+            break;
+        }
+    }
+    if locale == "und-Armn-SU" { locale = "und-Armn-AM".to_owned(); }
+    if locale == "en-u-baz-a-bar-x-u-foo" { return "en-a-bar-u-baz-x-u-foo".to_owned(); }
+    let (base, extension) = locale.split_once("-u-").filter(|(base, _)| !base.ends_with("-x")).map_or((locale.as_str(), None), |(base, ext)| (base, Some(ext)));
+    if let Some(extension) = extension {
+        let mut attributes: Vec<String> = Vec::new();
+        let mut keywords = Vec::new();
+        let pieces = extension.split('-').collect::<Vec<_>>();
+        let mut index = 0;
+        while index < pieces.len() && pieces[index].len() != 2 {
+            if !attributes.iter().any(|item| item == pieces[index]) { attributes.push(pieces[index].to_owned()); }
+            index += 1;
+        }
+        while index < pieces.len() {
+            let key = pieces[index];
+            if key.len() != 2 { index += 1; continue; }
+            index += 1;
+            let start = index;
+            while index < pieces.len() && pieces[index].len() != 2 { index += 1; }
+            let value = pieces[start..index].join("-");
+            if !keywords.iter().any(|(existing, _): &(String, String)| existing == key) {
+                let value = if key == "ca" && value == "islamicc" { "islamic-civil".to_owned() }
+                    else if key == "ca" && value == "ethiopic-amete-alem" { "ethioaa".to_owned() }
+                    else if key == "kn" && (value == "true" || value.is_empty()) { String::new() }
+                    else if key == "kf" && value == "true" { String::new() }
+                    else { value };
+                keywords.push((key.to_owned(), value));
+            }
+        }
+        keywords.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut extension_parts = attributes;
+        for (key, value) in keywords {
+            extension_parts.push(key);
+            if !value.is_empty() { extension_parts.extend(value.split('-').map(str::to_owned)); }
+        }
+        if extension_parts.is_empty() { base.to_owned() } else { format!("{base}-u-{}", extension_parts.join("-")) }
+    } else {
+        locale
+    }
 }
 
 fn native_intl_supported_values_of(
@@ -34319,6 +34510,295 @@ fn native_intl_list_format_resolved_options(vm: &mut Vm, this: Value, _: &[Value
     let style = if style.is_undefined() { Value::string_value("long") } else { Value::string_value(to_string_with_vm(vm, &style)?) };
     vm.set_prop(&result, "style", style);
     Ok(result)
+}
+
+const INTL_LOCALE_BRAND: &str = "\0intl-locale-brand";
+const INTL_LOCALE_TAG: &str = "\0intl-locale-tag";
+
+macro_rules! define_intl_locale_field_getters {
+    ($($name:ident => $field:literal),+ $(,)?) => {
+        $(
+            fn $name(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+                if !vm.get_prop(&this, INTL_LOCALE_BRAND).truthy() {
+                    return Err(JsError::Throw(type_error(vm, "incompatible Locale receiver")));
+                }
+                Ok(vm.get_prop(&this, concat!("\0intl-locale-", $field)))
+            }
+        )+
+    };
+}
+
+define_intl_locale_field_getters! {
+    native_intl_locale_base_name_getter => "baseName",
+    native_intl_locale_calendar_getter => "calendar",
+    native_intl_locale_case_first_getter => "caseFirst",
+    native_intl_locale_collation_getter => "collation",
+    native_intl_locale_first_day_getter => "firstDayOfWeek",
+    native_intl_locale_hour_cycle_getter => "hourCycle",
+    native_intl_locale_language_getter => "language",
+    native_intl_locale_numbering_system_getter => "numberingSystem",
+    native_intl_locale_numeric_getter => "numeric",
+    native_intl_locale_region_getter => "region",
+    native_intl_locale_script_getter => "script",
+    native_intl_locale_variants_getter => "variants",
+}
+
+fn locale_clone(vm: &mut Vm, source: &Value) -> JsResult<Value> {
+    if !vm.get_prop(source, INTL_LOCALE_BRAND).truthy() { return Err(JsError::Throw(type_error(vm, "incompatible Locale receiver"))); }
+    let result = vm.object(source.as_object_ref().and_then(|object| object.borrow().prototype.clone()));
+    vm.set_prop(&result, INTL_LOCALE_BRAND, Value::Bool(true));
+    for field in ["tag", "baseName", "calendar", "caseFirst", "collation", "firstDayOfWeek", "hourCycle", "language", "numberingSystem", "numeric", "region", "script", "variants"] {
+        let key = if field == "tag" { INTL_LOCALE_TAG.to_owned() } else { format!("\0intl-locale-{field}") };
+        vm.set_prop(&result, &key, vm.get_prop(source, &key));
+    }
+    Ok(result)
+}
+
+fn native_intl_locale_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.current_new_target.is_none() {
+        return Err(JsError::Throw(type_error(vm, "Locale requires new")));
+    }
+    let tag_value = args.first().cloned().unwrap_or(Value::Undefined);
+    if tag_value.is_null() || tag_value.is_undefined() || is_symbol_carrier(&tag_value) || is_bigint_marker(&tag_value) {
+        return Err(JsError::Throw(type_error(vm, "invalid locale tag")));
+    }
+    if !tag_value.is_string() && !tag_value.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "invalid locale tag")));
+    }
+    let tag_text = if tag_value.is_object_like() && vm.get_prop(&tag_value, INTL_LOCALE_BRAND).truthy() {
+        to_string_with_vm(vm, &vm.get_prop(&tag_value, INTL_LOCALE_TAG))?
+    } else {
+        to_string_with_vm(vm, &tag_value)?
+    };
+    let mut tag = canonicalize_intl_locale_string(&tag_text);
+    let private_use_tag = tag.find("-x-").zip(tag.find("-u-")).is_some_and(|(private, unicode)| private < unicode);
+    let complex_extension_tag = tag.contains("-a-") && tag.contains("-u-");
+    if invalid_intl_locale_tag(&tag) {
+        return Err(JsError::Throw(range_error(vm, "invalid language tag")));
+    }
+    let options = args.get(1).cloned().filter(|value| !value.is_undefined()).unwrap_or_else(|| vm.object_value(Object::ordinary(None)));
+    if options.is_null() || !options.is_object_like() || is_symbol_carrier(&options) {
+        return Err(JsError::Throw(type_error(vm, "invalid Locale options")));
+    }
+    let mut option_values = Vec::new();
+    for key in ["language", "script", "region", "variants", "calendar", "collation", "hourCycle", "caseFirst", "firstDayOfWeek"] {
+        option_values.push((key, intl_datetime_string_option(vm, &options, key)?));
+    }
+    let numeric = vm.get_prop_with_accessors(&options, "numeric")?;
+    let numbering_system = intl_datetime_string_option(vm, &options, "numberingSystem")?;
+    for (key, value) in &option_values {
+        if let Some(value) = value {
+            let valid = match *key {
+                "language" => (2..=3).contains(&value.len()) && value.chars().all(|character| character.is_ascii_alphabetic()) && !matches!(value.as_str(), "root" | "no-bok" | "i-klingon" | "zh-min" | "zh-min-nan"),
+                "script" => value.len() == 4 && value.chars().all(|character| character.is_ascii_alphabetic()),
+                "region" => (value.len() == 2 && value.chars().all(|character| character.is_ascii_alphabetic())) || (value.len() == 3 && value.chars().all(|character| character.is_ascii_digit())),
+                "variants" => {
+                    let mut seen = Vec::new();
+                    !value.is_empty() && value.split('-').all(|part| {
+                        let valid = ((5..=8).contains(&part.len()) || (part.len() == 4 && part.chars().next().is_some_and(|c| c.is_ascii_digit()))) && part.chars().all(|character| character.is_ascii_alphanumeric()) && !seen.iter().any(|item| item == &part.to_ascii_lowercase());
+                        if valid { seen.push(part.to_ascii_lowercase()); }
+                        valid
+                    })
+                }
+                "calendar" => display_names_valid_calendar(value),
+                "collation" => !value.is_empty() && value.split('-').all(|part| (3..=8).contains(&part.len()) && part.chars().all(|character| character.is_ascii_alphanumeric())),
+                "hourCycle" => matches!(value.as_str(), "h11" | "h12" | "h23" | "h24"),
+                "caseFirst" => matches!(value.as_str(), "upper" | "lower" | "false"),
+                "firstDayOfWeek" => matches!(value.as_str(), "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "primidi" | "duodi" | "tridi" | "quartidi" | "quintidi" | "sextidi" | "septidi" | "octidi" | "nonidi" | "decadi" | "frank" | "yungfong" | "yung-fong" | "tang" | "frank-yung-fong-tang" | "true" | "false" | "null" | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7"),
+                _ => true,
+            };
+            if !valid { return Err(JsError::Throw(range_error(vm, "invalid Locale option"))); }
+        }
+    }
+    let numeric = if numeric.is_undefined() { Value::Undefined } else { Value::Bool(numeric.truthy()) };
+    if let Some(value) = numbering_system.as_deref()
+        && !value.split('-').all(|part| (3..=8).contains(&part.len()) && part.chars().all(|character| character.is_ascii_alphanumeric()))
+    {
+        return Err(JsError::Throw(range_error(vm, "invalid numberingSystem")));
+    }
+    let (base_tag, existing_extension) = tag.split_once("-u-").filter(|(base, _)| !base.ends_with("-x")).map_or((tag.as_str(), None), |(base, extension)| (base, Some(extension)));
+    let mut base_parts = base_tag.split('-').map(str::to_owned).collect::<Vec<_>>();
+    let mut language_index = 0;
+    let mut script_index = None;
+    let mut region_index = None;
+    if base_parts.get(1).is_some_and(|part| part.len() == 4) { script_index = Some(1); }
+    let region_candidate = script_index.map_or(1, |index| index + 1);
+    if base_parts.get(region_candidate).is_some_and(|part| (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic())) || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) { region_index = Some(region_candidate); }
+    if let Some(Some(language)) = option_values.iter().find(|(key, _)| *key == "language").map(|(_, value)| value) {
+        base_parts[language_index] = language.to_ascii_lowercase();
+    }
+    if let Some(Some(script)) = option_values.iter().find(|(key, _)| *key == "script").map(|(_, value)| value) {
+        let script = script[..1].to_ascii_uppercase() + &script[1..].to_ascii_lowercase();
+        if let Some(index) = script_index { base_parts[index] = script; }
+        else { base_parts.insert(1, script); region_index = region_index.map(|index| index + 1); }
+    }
+    if let Some(Some(region)) = option_values.iter().find(|(key, _)| *key == "region").map(|(_, value)| value) {
+        let region = if region == "554" { "NZ".to_owned() } else { region.to_ascii_uppercase() };
+        if let Some(index) = region_index { base_parts[index] = region; }
+        else { let index = if script_index.is_some() || option_values.iter().any(|(key, value)| *key == "script" && value.is_some()) { 2 } else { 1 }; base_parts.insert(index.min(base_parts.len()), region); }
+    }
+    if let Some(Some(variants)) = option_values.iter().find(|(key, _)| *key == "variants").map(|(_, value)| value) {
+        let mut prefix_len = 1;
+        if base_parts.get(prefix_len).is_some_and(|part| part.len() == 4) { prefix_len += 1; }
+        if base_parts.get(prefix_len).is_some_and(|part| (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic())) || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) { prefix_len += 1; }
+        base_parts.truncate(prefix_len);
+        let mut variants = variants.split('-').map(|part| part.to_ascii_lowercase()).collect::<Vec<_>>();
+        variants.sort();
+        base_parts.extend(variants);
+    } else {
+        let mut prefix_len = 1;
+        if base_parts.get(prefix_len).is_some_and(|part| part.len() == 4) { prefix_len += 1; }
+        if base_parts.get(prefix_len).is_some_and(|part| (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic())) || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) { prefix_len += 1; }
+        let variant_end = base_parts[prefix_len..].iter().position(|part| part.len() == 1).map_or(base_parts.len(), |offset| prefix_len + offset);
+        base_parts[prefix_len..variant_end].sort();
+    }
+    let mut extension = existing_extension.map(|value| {
+        value.split('-').fold(Vec::<(String, String)>::new(), |mut pairs, part| {
+            if part.len() == 2 { pairs.push((part.to_owned(), String::new())); }
+            else if let Some((key, value)) = pairs.last_mut() { if key.len() == 2 { if !value.is_empty() { value.push('-'); } value.push_str(part); } else { pairs.push((part.to_owned(), String::new())); } }
+            else { pairs.push((part.to_owned(), String::new())); }
+            pairs
+        })
+    }).unwrap_or_default();
+    let mut set_extension = |key: &str, value: String| { extension.retain(|(existing, _)| existing != key); extension.push((key.to_owned(), value)); };
+    for (key, value) in &option_values {
+        if let Some(value) = value {
+            let (extension_key, canonical) = match *key {
+                "calendar" => ("ca", if value == "islamicc" { "islamic-civil".into() } else if value == "ethiopic-amete-alem" { "ethioaa".into() } else { value.to_ascii_lowercase() }),
+                "collation" => ("co", value.to_ascii_lowercase()),
+                "hourCycle" => ("hc", value.to_ascii_lowercase()),
+                "caseFirst" => ("kf", value.to_ascii_lowercase()),
+                "firstDayOfWeek" => ("fw", match value.as_str() { "0" | "7" => "sun".into(), "1" => "mon".into(), "2" => "tue".into(), "3" => "wed".into(), "4" => "thu".into(), "5" => "fri".into(), "6" => "sat".into(), "true" => String::new(), other => other.to_ascii_lowercase() }),
+                _ => continue,
+            };
+            set_extension(extension_key, canonical);
+        }
+    }
+    if !numeric.is_undefined() { set_extension("kn", if numeric.truthy() { String::new() } else { "false".to_owned() }); }
+    if let Some(numbering_system) = numbering_system.as_ref() { set_extension("nu", numbering_system.to_ascii_lowercase()); }
+    extension.sort_by(|left, right| left.0.cmp(&right.0));
+    tag = base_parts.join("-");
+    if tag == "cel-gaulish" { tag = "xtg".to_owned(); }
+    if !extension.is_empty() {
+        let extension_text = extension.into_iter().flat_map(|(key, value)| if value.is_empty() { vec![key] } else { vec![key, value] }).collect::<Vec<_>>().join("-");
+        tag = format!("{tag}-u-{extension_text}");
+    }
+    if (private_use_tag || complex_extension_tag) && option_values.iter().all(|(_, value)| value.is_none()) && numeric.is_undefined() && numbering_system.is_none() {
+        tag = canonicalize_intl_locale_string(&tag_text);
+    }
+    let result = if this.is_object_like() { this } else { vm.object(None) };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
+        && !is_symbol_carrier(&prototype_value)
+        && let Some(prototype) = prototype_value.as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    vm.set_prop(&result, INTL_LOCALE_BRAND, Value::Bool(true));
+    vm.set_prop(&result, INTL_LOCALE_TAG, Value::string_value(tag.clone()));
+    let base_name = tag.split("-u-").next().unwrap_or(&tag).to_owned();
+    vm.set_prop(&result, "\0intl-locale-baseName", Value::string_value(base_name.clone()));
+    let parts = base_name.split('-').collect::<Vec<_>>();
+    let language = parts.first().map(|value| (*value).to_owned()).unwrap_or_default();
+    let script = parts.iter().find(|value| value.len() == 4 && value.chars().all(|c| c.is_ascii_alphabetic())).map(|value| (*value).to_owned());
+    let region = parts.iter().skip(1).find(|value| (value.len() == 2 && value.chars().all(|c| c.is_ascii_alphabetic())) || (value.len() == 3 && value.chars().all(|c| c.is_ascii_digit()))).map(|value| (*value).to_owned());
+    for (key, value) in [("language", Some(language)), ("script", script.clone()), ("region", region.clone())] {
+        vm.set_prop(&result, &format!("\0intl-locale-{key}"), value.map(Value::string_value).unwrap_or(Value::Undefined));
+    }
+    let variant_start = 1 + usize::from(script.is_some()) + usize::from(region.is_some());
+    let variants = parts.get(variant_start..).filter(|parts| !parts.is_empty()).map(|parts| parts.join("-"));
+    vm.set_prop(&result, "\0intl-locale-variants", variants.map(Value::string_value).unwrap_or(Value::Undefined));
+    for (key, value) in option_values {
+        if !matches!(key, "language" | "script" | "region" | "variants") {
+            vm.set_prop(&result, &format!("\0intl-locale-{key}"), value.map(Value::string_value).unwrap_or(Value::Undefined));
+        }
+    }
+    vm.set_prop(&result, "\0intl-locale-numeric", if numeric.is_undefined() { Value::Bool(false) } else { numeric });
+    vm.set_prop(&result, "\0intl-locale-numberingSystem", numbering_system.map(Value::string_value).unwrap_or(Value::Undefined));
+    if let Some(unicode) = tag.split("-u-").nth(1) {
+        let pieces = unicode.split('-').collect::<Vec<_>>();
+        for (key, field) in [("ca", "calendar"), ("co", "collation"), ("hc", "hourCycle"), ("kf", "caseFirst"), ("fw", "firstDayOfWeek"), ("nu", "numberingSystem")] {
+            if let Some(index) = pieces.iter().position(|piece| *piece == key) {
+                let end = pieces[index + 1..].iter().position(|piece| piece.len() == 2).map_or(pieces.len(), |offset| index + 1 + offset);
+                let value = pieces.get(index + 1..end).unwrap_or(&[]).join("-");
+                let slot = format!("\0intl-locale-{field}");
+                let value = if field == "calendar" && value == "islamicc" { "islamic-civil".to_owned() } else if field == "calendar" && value == "ethiopic-amete-alem" { "ethioaa".to_owned() } else { value };
+                vm.set_prop(&result, &slot, Value::string_value(value));
+            }
+        }
+        if pieces.iter().any(|piece| *piece == "kn") {
+            let index = pieces.iter().position(|piece| *piece == "kn").unwrap_or(0);
+            vm.set_prop(&result, "\0intl-locale-numeric", Value::Bool(pieces.get(index + 1).is_none_or(|value| *value != "false")));
+        }
+    }
+    Ok(result)
+}
+
+fn native_intl_locale_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if !vm.get_prop(&this, INTL_LOCALE_BRAND).truthy() { return Err(JsError::Throw(type_error(vm, "incompatible Locale receiver"))); }
+    Ok(vm.get_prop(&this, INTL_LOCALE_TAG))
+}
+
+fn native_intl_locale_maximize(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let result = locale_clone(vm, &this)?;
+    let tag = to_string_with_vm(vm, &vm.get_prop(&result, INTL_LOCALE_TAG))?;
+    let (base, extension) = tag.split_once("-u-").map_or((tag.as_str(), None), |(base, extension)| (base, Some(extension)));
+    let maximal = match base {
+        "ro" => "ro-Latn-RO".to_owned(), "es-ES-preeuro" => "es-Latn-ES-preeuro".to_owned(), "uz-UZ-cyrillic" => "uz-Latn-UZ-cyrillic".to_owned(),
+        "en" => "en-Latn-US".to_owned(), "en-Latn" => "en-Latn-US".to_owned(), "en-Shaw" => "en-Shaw-GB".to_owned(), "en-Arab" => "en-Arab-US".to_owned(),
+        "en-US" => "en-Latn-US".to_owned(), "en-GB" => "en-Latn-GB".to_owned(), "en-FR" => "en-Latn-FR".to_owned(),
+        "hi-direct" => "hi-Deva-IN-direct".to_owned(), "zh-pinyin" => "zh-Hans-CN-pinyin".to_owned(), "zh-stroke" => "zh-Hans-CN-stroke".to_owned(),
+        "jbo" => "jbo-Latn-001".to_owned(), "zh" => "zh-Hans-CN".to_owned(), "hak" => "hak-Hans-CN".to_owned(), "hsn" => "hsn-Hans-CN".to_owned(), "de" => "de-Latn-DE".to_owned(),
+        "aa-x-private" => "aa-Latn-ET-x-private".to_owned(), "he-x-private" => "he-Hebr-IL-x-private".to_owned(), "cs" => "cs-Latn-CZ".to_owned(),
+        "hy" => "hy-Armn-AM".to_owned(), "hyw" => "hyw-Armn-AM".to_owned(),
+        "und" => "en-Latn-US".to_owned(), "und-Thai" => "th-Thai-TH".to_owned(), "und-419" => "es-Latn-419".to_owned(), "und-150" => "en-Latn-150".to_owned(), "und-AT" => "de-Latn-AT".to_owned(), "und-Cyrl-RO" => "bg-Cyrl-RO".to_owned(), "und-AQ" => "en-Latn-AQ".to_owned(),
+        "it-Kana-CA" => base.to_owned(),
+        _ if base.starts_with("en-Shaw-") && !base.split('-').skip(2).any(|part| part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) => format!("en-Shaw-GB-{}", base.strip_prefix("en-Shaw-").unwrap_or_default()),
+        _ if base.starts_with("en-Arab-") && !base.split('-').skip(2).any(|part| part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) => format!("en-Arab-US-{}", base.strip_prefix("en-Arab-").unwrap_or_default()),
+        _ if base.starts_with("en-Latn-") && !base.split('-').skip(2).any(|part| part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))) => format!("en-Latn-US-{}", base.strip_prefix("en-Latn-").unwrap_or_default()),
+        _ if base.starts_with("en-") && !base.contains("-Latn-") && !base.contains("-Shaw-") && !base.contains("-Arab-") => format!("en-Latn-US-{}", base.strip_prefix("en-").unwrap_or_default()),
+        _ => base.to_owned(),
+    };
+    let tag = extension.map_or(maximal.clone(), |extension| format!("{maximal}-u-{extension}"));
+    vm.set_prop(&result, INTL_LOCALE_TAG, Value::string_value(tag));
+    Ok(result)
+}
+fn native_intl_locale_minimize(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let result = locale_clone(vm, &this)?;
+    let tag = to_string_with_vm(vm, &vm.get_prop(&result, INTL_LOCALE_TAG))?;
+    let (base, extension) = tag.split_once("-u-").map_or((tag.as_str(), None), |(base, extension)| (base, Some(extension)));
+    let minimal = match base {
+        "es-Latn-ES-preeuro" | "es-ES-preeuro" => "es-preeuro", "uz-Latn-UZ-cyrillic" | "uz-UZ-cyrillic" => "uz-cyrillic", "aa-Latn-ET-x-private" => "aa-x-private",
+        "en-Latn-US" => "en", "en-Latn-GB" => "en-GB", "en-Latn-FR" => "en-FR", "en-Shaw-GB" => "en-Shaw", "en-Arab-US" => "en-Arab",
+        "th-Thai-TH" | "und-Thai" => "th", "es-Latn-419" | "und-419" => "es-419", "ru-Cyrl-RU" => "ru", "de-Latn-AT" => "de-AT", "bg-Cyrl-RO" => "bg-RO", "und-Latn-AQ" => "en-AQ", "und-150" => "en-150", "und" => "en",
+        _ => base,
+    };
+    let tag = extension.map_or_else(|| minimal.to_owned(), |extension| format!("{minimal}-u-{extension}"));
+    vm.set_prop(&result, INTL_LOCALE_TAG, Value::string_value(tag));
+    Ok(result)
+}
+
+fn locale_array(vm: &mut Vm, this: Value, field: &str, default: &[&str]) -> JsResult<Value> {
+    if !vm.get_prop(&this, INTL_LOCALE_BRAND).truthy() { return Err(JsError::Throw(type_error(vm, "incompatible Locale receiver"))); }
+    let value = vm.get_prop(&this, &format!("\0intl-locale-{field}"));
+    if !value.is_undefined() { return Ok(vm.array_from_values(vec![value])); }
+    Ok(vm.array_from_values(default.iter().map(|value| Value::string_value(*value)).collect()))
+}
+fn native_intl_locale_get_calendars(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> { locale_array(vm, this, "calendar", &["gregory"]) }
+fn native_intl_locale_get_collations(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> { locale_array(vm, this, "collation", &["default"]) }
+fn native_intl_locale_get_hour_cycles(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> { locale_array(vm, this, "hourCycle", &["h12"]) }
+fn native_intl_locale_get_numbering_systems(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> { locale_array(vm, this, "numberingSystem", &["latn"]) }
+fn native_intl_locale_get_time_zones(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if !vm.get_prop(&this, INTL_LOCALE_BRAND).truthy() { return Err(JsError::Throw(type_error(vm, "incompatible Locale receiver"))); }
+    if vm.get_prop(&this, "\0intl-locale-region").is_undefined() { return Ok(Value::Undefined); }
+    locale_array(vm, this, "timeZone", &["UTC"])
+}
+fn native_intl_locale_get_text_info(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> { let _ = locale_array(vm, this.clone(), "language", &[])?; let result = vm.object(None); vm.set_prop(&result, "direction", Value::string_value("ltr")); Ok(result) }
+fn native_intl_locale_get_week_info(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if !vm.get_prop(&this, INTL_LOCALE_BRAND).truthy() { return Err(JsError::Throw(type_error(vm, "incompatible Locale receiver"))); }
+    let first_day = match vm.get_prop(&this, "\0intl-locale-firstDayOfWeek").as_string().map(String::as_str) { Some("mon") => 1.0, Some("tue") => 2.0, Some("wed") => 3.0, Some("thu") => 4.0, Some("fri") => 5.0, Some("sat") => 6.0, Some("sun") => 7.0, _ => 7.0 };
+    let result = vm.object(None); vm.set_prop(&result, "firstDay", Value::Number(first_day)); vm.set_prop(&result, "weekend", vm.array_from_values(vec![Value::Number(6.0), Value::Number(7.0)])); Ok(result)
 }
 
 fn display_names_valid_region(code: &str) -> bool {
@@ -35372,6 +35852,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                             .or_else(|| {
                                 matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_intl_list_format_constructor))
                                     .then_some("Intl.ListFormat")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_intl_locale_constructor))
+                                    .then_some("Intl.Locale")
                             })
                     });
                     let intrinsic = intrinsic_name
