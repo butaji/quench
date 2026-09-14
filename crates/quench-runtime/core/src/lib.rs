@@ -8556,6 +8556,48 @@ impl Vm {
             let unscopables_key = self.well_known_symbol_key("unscopables");
             self.set_prop(&prototype, &unscopables_key, unscopables);
         }
+        let iterator = self.native_named(native_iterator_constructor, "Iterator", 0);
+        let iterator_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&iterator, "prototype", iterator_prototype.clone());
+        set_property_attributes(&iterator, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        self.set_prop(&iterator_prototype, "constructor", iterator.clone());
+        set_property_attributes(&iterator_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        install_native_methods!(
+            self,
+            iterator_prototype.clone(),
+            "map" => native_iterator_map / 1,
+            "filter" => native_iterator_filter / 1,
+            "take" => native_iterator_take / 1,
+            "drop" => native_iterator_drop / 1,
+            "reduce" => native_iterator_reduce / 1,
+            "toArray" => native_iterator_to_array / 0,
+            "forEach" => native_iterator_for_each / 1,
+            "every" => native_iterator_every / 1,
+            "some" => native_iterator_some / 1,
+            "find" => native_iterator_find / 1,
+            "return" => native_iterator_return / 0,
+            "Symbol.dispose" => native_iterator_dispose / 0,
+        );
+        let iterator_key = self.well_known_symbol_key("iterator");
+        self.set_prop(&iterator_prototype, &iterator_key, self.native(native_iterator_self));
+        let iterator_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&iterator_prototype, &iterator_tag, Value::string_value("Iterator"));
+        set_property_attributes(&iterator_prototype, &iterator_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        for (name, native, length) in [
+            ("from", native_iterator_from as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>, 1),
+            ("concat", native_iterator_concat as _, 0),
+            ("zip", native_iterator_zip as _, 1),
+            ("zipKeyed", native_iterator_zip_keyed as _, 1),
+        ] {
+            let method = self.native_named(native, name, length);
+            self.mark_nonconstructable(&method);
+            self.set_prop(&iterator, name, method);
+            set_property_attributes(&iterator, name, PropertyAttributes::BUILTIN_METHOD);
+        }
+        Environment::set(&g, "Iterator", iterator);
+        if let Some(array_iterator_proto) = self.array_iterator_proto.as_ref() {
+            array_iterator_proto.borrow_mut().prototype = Some(iterator_prototype.as_object().expect("Iterator.prototype object"));
+        }
         for (constructor, prototype) in [
             (BuiltinId::ObjectConstructor, BuiltinId::ObjectConstructor),
             (BuiltinId::ArrayConstructor, BuiltinId::ArrayConstructor),
@@ -9103,6 +9145,7 @@ impl Vm {
                 "SuppressedError",
                 "AsyncDisposableStack",
                 "DisposableStack",
+                "Iterator",
                 "Atomics",
                 "Promise",
                 "Proxy",
@@ -37837,6 +37880,169 @@ fn array_iterator_with_kind(vm: &mut Vm, this: Value, kind: &str) -> JsResult<Va
 
 fn native_iterator_self(_: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     Ok(this)
+}
+
+fn iterator_open(vm: &mut Vm, value: &Value) -> JsResult<Value> {
+    let key = vm.well_known_symbol_key("iterator");
+    let method = vm.get_prop_with_accessors(value, &key)?;
+    if method.is_function() {
+        let iterator = vm.call(method, value.clone(), Vec::new())?;
+        if !iterator.is_object_like() {
+            return Err(JsError::Throw(type_error(vm, "iterator method did not return an object")));
+        }
+        return Ok(iterator);
+    }
+    if vm.get_prop(value, "next").is_function() {
+        return Ok(value.clone());
+    }
+    Err(JsError::Throw(type_error(vm, "value is not iterable")))
+}
+
+fn iterator_collect(vm: &mut Vm, value: &Value) -> JsResult<Vec<Value>> {
+    let iterator = iterator_open(vm, value)?;
+    let next = vm.get_prop(&iterator, "next");
+    if !next.is_function() {
+        return Err(JsError::Throw(type_error(vm, "iterator next is not callable")));
+    }
+    let mut values = Vec::new();
+    for _ in 0..1_000_000 {
+        let result = vm.call(next.clone(), iterator.clone(), Vec::new())?;
+        if !result.is_object_like() {
+            return Err(JsError::Throw(type_error(vm, "iterator result is not an object")));
+        }
+        if vm.get_prop(&result, "done").truthy() {
+            return Ok(values);
+        }
+        values.push(vm.get_prop(&result, "value"));
+    }
+    Err(JsError::Throw(range_error(vm, "iterator did not terminate")))
+}
+
+fn iterator_result(vm: &mut Vm, value: Value, done: bool) -> Value {
+    let result = vm.object(None);
+    vm.set_prop(&result, "value", value);
+    vm.set_prop(&result, "done", Value::Bool(done));
+    result
+}
+
+fn iterator_array(vm: &mut Vm, values: Vec<Value>) -> JsResult<Value> {
+    let array = vm.array_from_values(values);
+    native_array_iterator(vm, array, &[])
+}
+
+fn native_iterator_constructor(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    Err(JsError::Throw(type_error(vm, "Iterator is not constructable")))
+}
+
+fn native_iterator_from(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    iterator_open(vm, args.first().unwrap_or(&Value::Undefined))
+}
+
+fn native_iterator_concat(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let mut values = Vec::new();
+    for value in args { values.extend(iterator_collect(vm, value)?); }
+    iterator_array(vm, values)
+}
+
+fn native_iterator_zip(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    let sources = args.first().cloned().unwrap_or(Value::Undefined);
+    let inputs = iterator_collect(vm, &sources)?;
+    let columns = inputs.iter().map(|value| iterator_collect(vm, value)).collect::<JsResult<Vec<_>>>()?;
+    let length = columns.iter().map(Vec::len).min().unwrap_or(0);
+    let rows = (0..length).map(|index| vm.array_from_values(columns.iter().map(|column| column[index].clone()).collect())).collect();
+    iterator_array(vm, rows)
+}
+
+fn native_iterator_zip_keyed(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    native_iterator_zip(vm, Value::Undefined, args)
+}
+
+fn iterator_values_for_method(vm: &mut Vm, this: &Value) -> JsResult<Vec<Value>> {
+    iterator_collect(vm, this)
+}
+
+fn native_iterator_map(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    let values = iterator_values_for_method(vm, &this)?;
+    let mapped = values.iter().enumerate().map(|(index, value)| vm.call(callback.clone(), Value::Undefined, vec![value.clone(), Value::Number(index as f64)])).collect::<JsResult<Vec<_>>>()?;
+    iterator_array(vm, mapped)
+}
+
+fn native_iterator_filter(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    let values = iterator_values_for_method(vm, &this)?;
+    let mut filtered = Vec::new();
+    for (index, value) in values.into_iter().enumerate() {
+        if vm.call(callback.clone(), Value::Undefined, vec![value.clone(), Value::Number(index as f64)])?.truthy() { filtered.push(value); }
+    }
+    iterator_array(vm, filtered)
+}
+
+fn native_iterator_take(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let count = args.first().map(|value| to_number_with_vm(vm, value)).transpose()?.unwrap_or(0.0).max(0.0) as usize;
+    let values = iterator_values_for_method(vm, &this)?;
+    iterator_array(vm, values.into_iter().take(count).collect())
+}
+
+fn native_iterator_drop(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let count = args.first().map(|value| to_number_with_vm(vm, value)).transpose()?.unwrap_or(0.0).max(0.0) as usize;
+    let values = iterator_values_for_method(vm, &this)?;
+    iterator_array(vm, values.into_iter().skip(count).collect())
+}
+
+fn native_iterator_reduce(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    let values = iterator_values_for_method(vm, &this)?;
+    let mut index = 0;
+    let mut accumulator = if let Some(initial) = args.get(1) { initial.clone() } else { let Some(first) = values.first() else { return Err(JsError::Throw(type_error(vm, "reduce of empty iterator"))); }; index = 1; first.clone() };
+    for value in values.into_iter().skip(index) { accumulator = vm.call(callback.clone(), Value::Undefined, vec![accumulator, value])?; }
+    Ok(accumulator)
+}
+
+fn native_iterator_to_array(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let values = iterator_values_for_method(vm, &this)?;
+    Ok(vm.array_from_values(values))
+}
+
+fn native_iterator_for_each(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    for (index, value) in iterator_values_for_method(vm, &this)?.into_iter().enumerate() { vm.call(callback.clone(), Value::Undefined, vec![value, Value::Number(index as f64)])?; }
+    Ok(Value::Undefined)
+}
+
+fn native_iterator_some(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    for (index, value) in iterator_values_for_method(vm, &this)?.into_iter().enumerate() { if vm.call(callback.clone(), Value::Undefined, vec![value, Value::Number(index as f64)])?.truthy() { return Ok(Value::Bool(true)); } }
+    Ok(Value::Bool(false))
+}
+
+fn native_iterator_every(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    for (index, value) in iterator_values_for_method(vm, &this)?.into_iter().enumerate() { if !vm.call(callback.clone(), Value::Undefined, vec![value, Value::Number(index as f64)])?.truthy() { return Ok(Value::Bool(false)); } }
+    Ok(Value::Bool(true))
+}
+
+fn native_iterator_find(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !callback.is_function() { return Err(JsError::Throw(type_error(vm, "callback is not a function"))); }
+    for (index, value) in iterator_values_for_method(vm, &this)?.into_iter().enumerate() { if vm.call(callback.clone(), Value::Undefined, vec![value.clone(), Value::Number(index as f64)])?.truthy() { return Ok(value); } }
+    Ok(Value::Undefined)
+}
+
+fn native_iterator_return(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(iterator_result(vm, Value::Undefined, true))
+}
+
+fn native_iterator_dispose(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let return_method = vm.get_prop(&this, "return");
+    if return_method.is_function() { let _ = vm.call(return_method, this, Vec::new())?; }
+    Ok(Value::Undefined)
 }
 
 fn native_string_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
