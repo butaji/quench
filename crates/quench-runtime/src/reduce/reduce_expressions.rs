@@ -544,18 +544,11 @@ fn reduce_binary(
     let Expression::BinaryExpression(binary) = expression else {
         return None;
     };
-    // The integer stencil only accepts proven Number operands.  Object
-    // coercion, Symbol errors, BigInt mixing, and user-defined valueOf all
-    // belong to the canonical VM reducer, so leave this operator family to
-    // the shared semantic fallback until an explicit guard is present.
-    if matches!(
-        binary.operator,
-        oxc::syntax::operator::BinaryOperator::BitwiseAnd
-            | oxc::syntax::operator::BinaryOperator::BitwiseOR
-            | oxc::syntax::operator::BinaryOperator::BitwiseXOR
-    ) {
-        return None;
-    }
+    // `Op::Binary` is the shared semantic operation: its fast numeric path
+    // is guarded by the register representation and its fallback performs
+    // the full ToNumeric/BigInt/error protocol.  Keep bitwise operators in
+    // this one representation instead of rejecting an entire function body
+    // merely because it contains a bitwise expression.
     if matches!(
         binary.operator,
         oxc::syntax::operator::BinaryOperator::ShiftLeft

@@ -125,7 +125,25 @@ impl NodeRunner {
             quench_node::esm_imports::transform_esm_imports(&fixture_source)
                 .replace("await import(", "require(")
         } else {
-            quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture_source)
+            let needs_worker_globals = [
+                "worker_threads",
+                "MessageChannel",
+                "MessagePort",
+                "TypeMismatchError",
+                "QuotaExceededError",
+                "__nodeCurrentAsyncResource",
+                "__nodeCallChecks",
+            ]
+            .iter()
+            .any(|name| fixture_source.contains(name));
+            quench_node::modules::require::wrap_cjs_with_options(
+                &self.host.state(),
+                &script,
+                &fixture_source,
+                quench_node::modules::require::CjsWrapOptions {
+                    preserve_worker_globals: needs_worker_globals,
+                },
+            )
         };
         let source = if fixture.source.contains("--experimental-eventsource") {
             format!("globalThis.EventSource = globalThis.__quench_event_source;\n{source}")
@@ -151,16 +169,43 @@ impl NodeRunner {
         // Node exposes WHATWG stream constructors globally. Install the
         // shared surface before the fixture so globals and `stream/web`
         // resolve to one constructor identity.
-        let web_streams_surface = ["web-streams"]
-            .into_iter()
-            .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let url_pattern_surface =
-            quench_node::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
-        let source = format!(
-            "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\n{source}"
-        );
+        let needs_web_streams = [
+            "ReadableStream",
+            "WritableStream",
+            "TransformStream",
+            "ByteLengthQueuingStrategy",
+            "CountQueuingStrategy",
+            "stream/web",
+        ]
+        .iter()
+        .any(|name| fixture_source.contains(name));
+        let web_streams_surface = needs_web_streams
+            .then(|| {
+                ["web-streams"]
+                    .into_iter()
+                    .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        let needs_url_surface = ["URL", "URLSearchParams", "URLPattern"]
+            .iter()
+            .any(|name| fixture_source.contains(name));
+        let url_surface = if needs_url_surface {
+            let url_pattern_surface =
+                quench_node::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
+            format!(
+                "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;"
+            )
+        } else {
+            String::new()
+        };
+        let process_flags_surface = if fixture_source.contains("allowedNodeEnvironmentFlags") {
+            "if (globalThis.process) { const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf-basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }"
+        } else {
+            ""
+        };
+        let source = format!("{url_surface}\n{process_flags_surface}\n{source}");
         let source = format!("{web_streams_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
         self.host
             .state()
@@ -262,8 +307,8 @@ impl NodeRunner {
         &self,
         source: &str,
     ) -> Result<quench_runtime::value::Value, quench_runtime::vm::VmError> {
-        let program =
-            reduce_fixture(source, false).map_err(quench_runtime::vm::VmError::EvalError)?;
+        let program = quench_runtime::reduce::reduce_source(source)
+            .map_err(|errors| quench_runtime::vm::VmError::EvalError(errors.join("; ")))?;
         match quench_runtime::vm::execute_code_with_context(program.code(), &self.context) {
             // Harness driver snippets are statements; normal completion has
             // no observable value and is represented by MissingReturn.
@@ -338,9 +383,18 @@ fn rejection_mode(source: &str) -> quench_node::modules::process::UnhandledRejec
 
 fn reduce_fixture(
     source: &str,
-    _is_module: bool,
+    is_module: bool,
 ) -> Result<quench_runtime::reduce::reduce_statements::ResidualProgram, String> {
-    let result = quench_runtime::reduce::reduce_source(source);
+    // CommonJS fixtures are already wrapped by the Node host.  Reducing them
+    // as an ordinary source would add the runtime's standalone CJS wrapper a
+    // second time, producing an unsupported function-IIFE expression.  ESM
+    // fixtures are transformed to CJS-compatible source above and still use
+    // the ordinary source entry point.
+    let result = if is_module {
+        quench_runtime::reduce::reduce_source(source)
+    } else {
+        quench_runtime::reduce::reduce_global_script_source(source)
+    };
     let program = result.map_err(|errors| errors.join("; "))?;
     Ok(program)
 }
