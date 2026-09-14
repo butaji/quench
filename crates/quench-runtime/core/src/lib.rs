@@ -15984,7 +15984,10 @@ impl Vm {
             PrivateInExpression(private_in) => {
                 let object = self.eval_expr(&private_in.right, e.clone())?;
                 if !object.is_object_like() {
-                    return Ok(Value::Bool(false));
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "right-hand side of private in is not an object",
+                    )));
                 }
                 // Private names never participate in module-namespace
                 // evaluation.  The compact representation stores ordinary
