@@ -270,11 +270,13 @@ environment_keys! {
     STRICT_EVAL_ENV_NAME => "strict-eval",
     MODULE_INSTANTIATED_ENV_NAME => "module-instantiated",
     MODULE_ENVIRONMENT_NAME => "module-environment",
+    IMPORT_META_ENV_NAME => "import-meta",
     FUNCTION_ENV_NAME => "function",
     NEW_TARGET_VALUE_NAME => "new-target",
     NEW_TARGET_ALLOWED_NAME => "new-target-allowed",
     SUPER_CALLED_ENV_NAME => "super-called",
     CLASS_FIELDS_INITIALIZED_ENV_NAME => "class-fields-initialized",
+    CLASS_FIELD_INITIALIZER_ENV_NAME => "class-field-initializer",
 }
 const CLASS_FIELDS_INITIALIZED_PROP: &str = "\0quench:class-fields-initialized";
 const CLASS_FIELD_KEY_PREFIX: &str = "\0quench:class-field-key:";
@@ -5792,6 +5794,7 @@ struct Vm {
     module_errors: HashMap<PathBuf, Value>,
     module_evaluating: HashSet<PathBuf>,
     module_environments: HashMap<PathBuf, Env>,
+    import_meta_cache: HashMap<PathBuf, Value>,
     deferred_namespace_loading: bool,
     module_export_stack: Vec<HashMap<String, Value>>,
     module_export_stack_paths: Vec<PathBuf>,
@@ -5932,6 +5935,7 @@ impl Vm {
             module_errors: HashMap::new(),
             module_evaluating: HashSet::new(),
             module_environments: HashMap::new(),
+            import_meta_cache: HashMap::new(),
             deferred_namespace_loading: false,
             module_export_stack: Vec::new(),
             module_export_stack_paths: Vec::new(),
@@ -11474,6 +11478,13 @@ impl Vm {
         {
             return Ok(());
         }
+        let field_environment = Environment::new(Some(eval_env));
+        field_environment
+            .borrow_mut()
+            .declare(CLASS_FIELD_INITIALIZER_ENV_NAME, Value::Bool(true));
+        field_environment
+            .borrow_mut()
+            .declare("this", receiver.clone());
         for (index, element) in class.body.body.iter().enumerate() {
             let ClassElement::PropertyDefinition(field) = element else {
                 continue;
@@ -11488,7 +11499,7 @@ impl Vm {
             let value = field
                 .value
                 .as_ref()
-                .map(|value| self.eval_expr(value, eval_env.clone()))
+                .map(|value| self.eval_expr(value, field_environment.clone()))
                 .transpose()?
                 .unwrap_or(Value::Undefined);
             if field
@@ -11523,6 +11534,31 @@ impl Vm {
         Ok(())
     }
 
+    fn install_class_private_brands(
+        &mut self,
+        class: &Class<'static>,
+        env: &Env,
+        receiver: &Value,
+    ) {
+        for element in &class.body.body {
+            let private_name = match element {
+                ClassElement::PropertyDefinition(field) if !field.r#static => match &field.key {
+                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                    _ => None,
+                },
+                ClassElement::MethodDefinition(method) if !method.r#static => match &method.key {
+                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(private_name) = private_name {
+                let key = self.private_key(private_name, env);
+                self.set_prop(receiver, &Self::private_brand_key(&key), Value::Bool(true));
+            }
+        }
+    }
+
     fn call_class(
         &mut self,
         function: &FunctionValue<'static>,
@@ -11548,26 +11584,10 @@ impl Vm {
         {
             self.set_prop(&this, REALM_GLOBAL_PROP, global);
         }
-        // Install instance brands before running the constructor so private
-        // methods/accessors are callable from constructor code. Field values
-        // themselves are still initialized at the specified post-constructor
-        // point below.
-        for element in &class.body.body {
-            let private_name = match element {
-                ClassElement::PropertyDefinition(field) if !field.r#static => match &field.key {
-                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
-                    _ => None,
-                },
-                ClassElement::MethodDefinition(method) if !method.r#static => match &method.key {
-                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
-                    _ => None,
-                },
-                _ => None,
-            };
-            if let Some(private_name) = private_name {
-                let key = self.private_key(private_name, &env);
-                self.set_prop(&this, &Self::private_brand_key(&key), Value::Bool(true));
-            }
+        // Base instances receive private brands before their constructor body;
+        // derived instances receive them at the first successful super() call.
+        if super_constructor.is_none() {
+            self.install_class_private_brands(class, &env, &this);
         }
         let result = if let Some(constructor) = constructor {
             if super_constructor.is_none() {
@@ -11592,6 +11612,7 @@ impl Vm {
             result
         } else if let Some(super_constructor) = super_constructor {
             let result = self.call_arguments(&super_constructor, this.clone(), args.as_slice())?;
+            self.install_class_private_brands(class, &env, &result);
             let field_env = Environment::new(Some(env.clone()));
             field_env.borrow_mut().declare("this", result.clone());
             self.initialize_class_instance_fields(class, env.clone(), field_env, &result)?;
@@ -13138,6 +13159,22 @@ impl Vm {
         let src: &'static str = Box::leak(parsed_source.into_boxed_str());
         let a: &'static Allocator = Box::leak(Box::new(Allocator::default()));
         let st = SourceType::from_path(p).unwrap_or_default();
+        if Environment::get(&environment, MODULE_ENVIRONMENT_NAME).is_some()
+            && Environment::get(&environment, EVAL_CODE_ENV_NAME).is_none()
+            && !environment.borrow().contains_local(IMPORT_META_ENV_NAME)
+        {
+            let key = self.module_key(p);
+            let meta = if let Some(meta) = self.import_meta_cache.get(&key).cloned() {
+                meta
+            } else {
+                let meta = self.ordinary_object();
+                self.import_meta_cache.insert(key, meta.clone());
+                meta
+            };
+            environment
+                .borrow_mut()
+                .declare(IMPORT_META_ENV_NAME, meta);
+        }
         let r = Parser::new(&a, src, st)
             .with_options(ParseOptions {
                 parse_regular_expression: true,
@@ -13223,9 +13260,7 @@ impl Vm {
         let strict_delete_error = has_strict_delete_identifier(&r.program, effective_strict_mode);
         let strict_update_error = has_strict_update_identifier(&r.program, effective_strict_mode);
         let eval_context = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
-        let class_eval_context = Environment::get(&environment, CLASS_SUPER_CONSTRUCTOR_ENV_NAME)
-            .is_some();
-        let function_super_error = if eval_context && source.contains("super") && !class_eval_context {
+        let function_super_error = if eval_context && source.contains("super") {
             false
         } else {
             has_invalid_function_super(&r.program)
@@ -15593,43 +15628,51 @@ impl Vm {
         // before any static initializer runs.  Static values are then
         // defined in their own order, preserving intercalated key effects.
         for (index, element) in n.body.body.iter().enumerate() {
-            let ClassElement::PropertyDefinition(field) = element else {
-                continue;
-            };
-            if !field.r#static {
-                continue;
+            match element {
+                ClassElement::StaticBlock(block) => {
+                    let block_environment = Environment::new(Some(class_env.clone()));
+                    let _ = self.exec_stmts(&block.body, block_environment)?;
+                }
+                ClassElement::PropertyDefinition(field) if field.r#static => {
+                    let key = Environment::get(
+                        &class_env,
+                        &format!("{CLASS_FIELD_KEY_PREFIX}{index}"),
+                    )
+                    .and_then(|value| value.as_string().cloned())
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+                    let value = field
+                        .value
+                        .as_ref()
+                        .map(|value| self.eval_expr(value, class_env.clone()))
+                        .transpose()?
+                        .unwrap_or(Value::Undefined);
+                    if field
+                        .value
+                        .as_ref()
+                        .is_some_and(is_anonymous_function_definition)
+                    {
+                        let display_key = match &field.key {
+                            PropertyKey::PrivateIdentifier(identifier) => {
+                                format!("#{}", identifier.name)
+                            }
+                            _ => key.clone(),
+                        };
+                        set_function_name(&value, &display_key);
+                    }
+                    let descriptor = self.ordinary_object();
+                    self.set_prop(&descriptor, "value", value);
+                    self.set_prop(&descriptor, "writable", Value::Bool(true));
+                    self.set_prop(&descriptor, "enumerable", Value::Bool(true));
+                    self.set_prop(&descriptor, "configurable", Value::Bool(true));
+                    native_object_define_property(
+                        self,
+                        Value::Undefined,
+                        &[class.clone(), Value::string_value(key), descriptor],
+                    )?;
+                }
+                _ => {}
             }
-            let key = Environment::get(&class_env, &format!("{CLASS_FIELD_KEY_PREFIX}{index}"))
-                .and_then(|value| value.as_string().cloned())
-                .map(|value| value.to_string())
-                .unwrap_or_default();
-            let value = field
-                .value
-                .as_ref()
-                .map(|value| self.eval_expr(value, class_env.clone()))
-                .transpose()?
-                .unwrap_or(Value::Undefined);
-            if field
-                .value
-                .as_ref()
-                .is_some_and(is_anonymous_function_definition)
-            {
-                let display_key = match &field.key {
-                    PropertyKey::PrivateIdentifier(identifier) => format!("#{}", identifier.name),
-                    _ => key.clone(),
-                };
-                set_function_name(&value, &display_key);
-            }
-            let descriptor = self.ordinary_object();
-            self.set_prop(&descriptor, "value", value);
-            self.set_prop(&descriptor, "writable", Value::Bool(true));
-            self.set_prop(&descriptor, "enumerable", Value::Bool(true));
-            self.set_prop(&descriptor, "configurable", Value::Bool(true));
-            native_object_define_property(
-                self,
-                Value::Undefined,
-                &[class.clone(), Value::string_value(key), descriptor],
-            )?;
         }
         Ok(class)
     }
@@ -15850,6 +15893,7 @@ impl Vm {
             Expression::CallExpression(call) => {
                 call.optional || Self::optional_chain_continues(&call.callee)
             }
+            Expression::TaggedTemplateExpression(_) => true,
             _ => false,
         }
     }
@@ -16028,16 +16072,7 @@ impl Vm {
             ChainElement::StaticMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 if nullish(&object) {
-                    if matches!(&member.object, Expression::Super(_)) {
-                        return Ok(Value::Undefined);
-                    }
-                    if member.optional || optional_object(&member.object) {
-                        return Ok(Value::Undefined);
-                    }
-                    return Err(JsError::Throw(type_error(
-                        self,
-                        "cannot read property of nullish value",
-                    )));
+                    return Ok(Value::Undefined);
                 }
                 if matches!(&member.object, Expression::Super(_)) {
                     let receiver = Environment::get(&e, "this").unwrap_or(Value::Undefined);
@@ -16055,16 +16090,7 @@ impl Vm {
             ChainElement::ComputedMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 if nullish(&object) {
-                    if matches!(&member.object, Expression::Super(_)) {
-                        return Ok(Value::Undefined);
-                    }
-                    if member.optional || optional_object(&member.object) {
-                        return Ok(Value::Undefined);
-                    }
-                    return Err(JsError::Throw(type_error(
-                        self,
-                        "cannot read property of nullish value",
-                    )));
+                    return Ok(Value::Undefined);
                 }
                 let key_value = self.eval_expr(&member.expression, e.clone())?;
                 let key = self.to_property_key(key_value)?;
@@ -16138,6 +16164,18 @@ impl Vm {
                 }
                 self.resolve_identifier(&e, v.name.as_str())
             }
+            ImportMeta(_) => {
+                if Environment::get(&e, EVAL_CODE_ENV_NAME).is_some()
+                    || Environment::get(&e, MODULE_ENVIRONMENT_NAME).is_none()
+                {
+                    return Err(JsError::Throw(syntax_error(
+                        self,
+                        "import.meta is only valid in module code",
+                    )));
+                }
+                Ok(Environment::get(&e, IMPORT_META_ENV_NAME)
+                    .unwrap_or_else(|| self.ordinary_object()))
+            }
             ThisExpression(_) => {
                 if Environment::is_tdz(&e, "this") {
                     return Err(JsError::Throw(reference_error(self, "this")));
@@ -16153,6 +16191,11 @@ impl Vm {
                 // constructor.  Keeping the namespace materialization here
                 // data-driven avoids a second evaluator or module registry.
                 let request = self.eval_expr(&import.source, e.clone())?;
+                let options = import
+                    .options
+                    .as_ref()
+                    .map(|options| self.eval_expr(options, e.clone()))
+                    .transpose()?;
                 let request = request
                     .as_string()
                     .map(|value| value.to_string())
@@ -16166,6 +16209,44 @@ impl Vm {
                 let promise_constructor =
                     Environment::get(&self.global, "Promise").unwrap_or(Value::Undefined);
                 let (promise, resolve, reject) = new_promise_capability(self, promise_constructor)?;
+                let assertions = options
+                    .filter(|options| !options.is_undefined())
+                    .map(|options| -> JsResult<Option<Value>> {
+                        if !options.is_object_like() {
+                            return Err(JsError::Throw(type_error(
+                                self,
+                                "dynamic import options must be an object",
+                            )));
+                        }
+                        let assertions = self.get_prop_with_accessors(&options, "with")?;
+                        let assertions = if assertions.is_undefined() {
+                            self.get_prop_with_accessors(&options, "assert")?
+                        } else {
+                            assertions
+                        };
+                        if assertions.is_undefined() {
+                            return Ok(None);
+                        }
+                        if !assertions.is_object_like() {
+                            return Err(JsError::Throw(type_error(
+                                self,
+                                "dynamic import attributes must be an object",
+                            )));
+                        }
+                        for key in proxy_own_enumerable_keys(self, &assertions)? {
+                            let _ = self.get_prop_with_accessors(&assertions, &key)?;
+                        }
+                        Ok(Some(assertions))
+                    })
+                    .transpose();
+                if let Err(error) = assertions {
+                    let reason = match error {
+                        JsError::Throw(value) | JsError::Yield(value) => value,
+                        JsError::Message(message) => Value::string_value(message),
+                    };
+                    self.call(reject, Value::Undefined, vec![reason])?;
+                    return Ok(promise);
+                }
                 match self.load_module_exports(&target) {
                     Ok(exports) => {
                         let namespace = self.module_namespace(
@@ -16983,6 +17064,7 @@ impl Vm {
                         && let Some(function) = class_value.as_function_ref()
                         && let FunctionKind::Class { node, .. } = &function.kind
                     {
+                        self.install_class_private_brands(node, &class_environment, &result);
                         self.initialize_class_instance_fields(
                             node,
                             class_environment,
@@ -17013,7 +17095,8 @@ impl Vm {
                         "Proxy constructor must be called with new",
                     )));
                 }
-                if matches!(&v.callee, Expression::Identifier(identifier) if identifier.name == "eval")
+                if !v.optional
+                    && matches!(&v.callee, Expression::Identifier(identifier) if identifier.name == "eval")
                     && matches!(
                         c.as_function_ref().map(|function| &function.kind),
                         Some(FunctionKind::Builtin(BuiltinId::Eval))
@@ -18339,7 +18422,10 @@ impl Vm {
                 value.clone(),
                 &[Value::string_value("string")][..],
             )?;
-            if !primitive.is_object_like() {
+            if !primitive.is_object_like() || is_symbol_carrier(&primitive) {
+                if is_symbol_carrier(&primitive) {
+                    return self.to_property_key(primitive);
+                }
                 return to_string_with_vm(self, &primitive);
             }
             return Err(JsError::Throw(type_error(
@@ -18353,7 +18439,10 @@ impl Vm {
                 continue;
             }
             let primitive = self.call_arguments(&method, value.clone(), &[] as &[Value])?;
-            if !primitive.is_object() && !primitive.is_function() {
+            if (!primitive.is_object() && !primitive.is_function()) || is_symbol_carrier(&primitive) {
+                if is_symbol_carrier(&primitive) {
+                    return self.to_property_key(primitive);
+                }
                 return to_string_with_vm(self, &primitive);
             }
         }
@@ -19303,6 +19392,48 @@ fn expression_contains_identifier(expression: &Expression<'_>, name: &str) -> bo
     scan.found
 }
 
+fn source_contains_identifier(source: &str, name: &str) -> bool {
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+    program_contains_identifier(&parsed.program, name)
+}
+
+fn program_contains_identifier(program: &Program<'_>, name: &str) -> bool {
+    let mut scan = IdentifierScan { name, found: false };
+    scan.visit_program(program);
+    scan.found
+}
+
+fn source_contains_import_meta(source: &str) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_import_meta(&mut self, _: &ImportMeta) {
+            self.found = true;
+        }
+    }
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+    let mut scan = Scan { found: false };
+    scan.visit_program(&parsed.program);
+    scan.found
+}
+
+struct IdentifierScan<'a> {
+    name: &'a str,
+    found: bool,
+}
+
+impl<'ast, 'name> Visit<'ast> for IdentifierScan<'name> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'ast>) {
+        if identifier.name == self.name {
+            self.found = true;
+        }
+        ast_walk::walk_identifier_reference(self, identifier);
+    }
+}
+
 /// Return whether an assignment target binds a strict-mode reserved name.
 ///
 /// Assignment patterns are represented separately from binding patterns in
@@ -19490,8 +19621,7 @@ fn has_function_early_error(program: &Program<'_>, inherited_strict: bool) -> bo
                 && names.iter().any(|name| {
                     matches!(
                         name.as_str(),
-                        "await"
-                            | "enum"
+                        "enum"
                             | "implements"
                             | "interface"
                             | "let"
@@ -19640,6 +19770,9 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
 /// module declarations) before any `$DONOTEVALUATE` body can run.
 fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool) -> bool {
     if has_invalid_private_name_reference(program) {
+        return true;
+    }
+    if strict && program_contains_identifier(program, "yield") {
         return true;
     }
     fn direct_meta(expression: &Expression<'_>) -> bool {
@@ -20655,8 +20788,7 @@ fn has_strict_reserved_binding(program: &Program<'_>) -> bool {
     names.iter().any(|name| {
         matches!(
             name.as_str(),
-            "await"
-                | "enum"
+            "enum"
                 | "implements"
                 | "interface"
                 | "let"
@@ -21455,6 +21587,15 @@ fn native_eval_in_environment(
     } else {
         source.clone()
     };
+    if nearest_local_binding(&environment, CLASS_FIELD_INITIALIZER_ENV_NAME).is_some()
+        && !eval_arguments_conflict(&environment)
+        && source_contains_identifier(&eval_source, "arguments")
+    {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "arguments is not permitted in a class field initializer eval",
+        )));
+    }
     if eval_code {
         Environment::set(&environment, EVAL_CODE_ENV_NAME, Value::Bool(true));
         if script_eval {
@@ -29957,6 +30098,12 @@ fn dynamic_function_constructor(
         )));
     }
     let source = format!("{prefix} anonymous({parameters}) {{{body}\n}}");
+    if source_contains_import_meta(&source) {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "import.meta is not permitted in Function constructor code",
+        )));
+    }
     // The dynamic Function grammar applies strict-mode early errors after
     // concatenating the parameter strings and body.  Keep this check beside
     // source construction so the stencil path observes the same errors as
