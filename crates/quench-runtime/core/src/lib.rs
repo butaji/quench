@@ -13459,7 +13459,7 @@ impl Vm {
                 "for-in statement initializer is not permitted",
             )));
         }
-        if has_for_of_early_error(&r.program, st.is_module()) {
+        if has_for_binding_early_error(&r.program, st.is_module()) {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "invalid for-of declaration",
@@ -14528,30 +14528,15 @@ impl Vm {
                     let value = self.eval_expr(initializer, e.clone())?;
                     self.bind_pattern(&declarator.id, value, e.clone())?;
                 }
-                let o = self.eval_expr(&x.right, e.clone())?;
                 let loop_environment = match &x.left {
                     ForStatementLeft::VariableDeclaration(declaration)
                         if declaration.kind != VariableDeclarationKind::Var =>
                     {
-                        let environment = Environment::new(Some(e.clone()));
-                        if let Some(declarator) = declaration.declarations.first() {
-                            let mut names = Vec::new();
-                            pattern_bound_names(&declarator.id, &mut names);
-                            let mut environment = environment.borrow_mut();
-                            environment.lexical_names.extend(names.iter().cloned());
-                            if matches!(
-                                declaration.kind,
-                                VariableDeclarationKind::Const
-                                    | VariableDeclarationKind::Using
-                                    | VariableDeclarationKind::AwaitUsing
-                            ) {
-                                environment.immutable_names.extend(names);
-                            }
-                        }
-                        environment
+                        self.for_binding_environment(&x.left, &e, true)
                     }
                     _ => e.clone(),
                 };
+                let o = self.eval_expr(&x.right, loop_environment.clone())?;
                 let lexical_iteration = matches!(
                     &x.left,
                     ForStatementLeft::VariableDeclaration(declaration)
@@ -14571,16 +14556,7 @@ impl Vm {
                         let _ = self.get_prop_with_accessors(&o, &k)?;
                     }
                     let iteration_environment = if lexical_iteration {
-                        let environment = Environment::new(Some(e.clone()));
-                        if let ForStatementLeft::VariableDeclaration(declaration) = &x.left
-                            && let Some(name) = declaration
-                                .declarations
-                                .first()
-                                .and_then(|declarator| pattern_name(&declarator.id))
-                        {
-                            environment.borrow_mut().lexical_names.insert(name);
-                        }
-                        environment
+                        self.for_binding_environment(&x.left, &e, false)
                     } else {
                         loop_environment.clone()
                     };
@@ -14608,7 +14584,7 @@ impl Vm {
                     ForStatementLeft::VariableDeclaration(declaration)
                         if declaration.kind != VariableDeclarationKind::Var =>
                     {
-                        self.for_of_binding_environment(&x.left, &e, true)
+                        self.for_binding_environment(&x.left, &e, true)
                     }
                     _ => e.clone(),
                 };
@@ -14630,7 +14606,7 @@ impl Vm {
                     let values = self.iterable_values(&iterable)?;
                     for value in values {
                         let iteration_environment = if lexical_iteration {
-                            self.for_of_binding_environment(&x.left, &e, false)
+                            self.for_binding_environment(&x.left, &e, false)
                         } else {
                             loop_environment.clone()
                         };
@@ -14669,7 +14645,7 @@ impl Vm {
                     }
                     let value = self.get_prop_with_accessors(&step, "value")?;
                     let iteration_environment = if lexical_iteration {
-                        self.for_of_binding_environment(&x.left, &e, false)
+                        self.for_binding_environment(&x.left, &e, false)
                     } else {
                         loop_environment.clone()
                     };
@@ -15342,7 +15318,7 @@ impl Vm {
         self.finish_disposable_scope(&environment, start, result)
     }
 
-    fn for_of_binding_environment<'a>(
+    fn for_binding_environment<'a>(
         &self,
         left: &ForStatementLeft<'a>,
         parent: &Env,
@@ -20581,45 +20557,50 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
 /// grammar errors. Keep the complete set of head/body facts in this one
 /// structural pass so the evaluator never has to guess whether a binding was
 /// legal after it has already started iterating.
-fn has_for_of_early_error(program: &Program<'_>, module: bool) -> bool {
+fn has_for_binding_early_error(program: &Program<'_>, module: bool) -> bool {
+    fn check_head(
+        left: &ForStatementLeft<'_>,
+        body: &Statement<'_>,
+        module: bool,
+        for_of: bool,
+    ) -> bool {
+        let ForStatementLeft::VariableDeclaration(declaration) = left else {
+            return labelled_function_statement(body);
+        };
+        let mut names = Vec::new();
+        let mut invalid = false;
+        for declarator in &declaration.declarations {
+            if for_of && declarator.init.is_some() {
+                invalid = true;
+            }
+            pattern_bound_names(&declarator.id, &mut names);
+        }
+        let mut unique = HashSet::new();
+        invalid |= names.iter().any(|name| !unique.insert(name.clone()));
+        invalid |= names
+            .iter()
+            .any(|name| name == "let" || (module && name == "await"));
+        let mut var_names = Vec::new();
+        collect_strict_eval_var_names(std::slice::from_ref(body), &mut var_names, false);
+        invalid |= names
+            .iter()
+            .any(|name| var_names.iter().any(|var_name| var_name == name));
+        invalid || labelled_function_statement(body)
+    }
+
     struct Scan {
         module: bool,
         invalid: bool,
     }
 
     impl<'a> Visit<'a> for Scan {
+        fn visit_for_in_statement(&mut self, statement: &ForInStatement<'a>) {
+            self.invalid |= check_head(&statement.left, &statement.body, self.module, false);
+            ast_walk::walk_for_in_statement(self, statement);
+        }
+
         fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
-            if let ForStatementLeft::VariableDeclaration(declaration) = &statement.left {
-                let mut names = Vec::new();
-                for declarator in &declaration.declarations {
-                    if declarator.init.is_some() {
-                        self.invalid = true;
-                    }
-                    pattern_bound_names(&declarator.id, &mut names);
-                }
-                let mut unique = HashSet::new();
-                if names.iter().any(|name| !unique.insert(name.clone())) {
-                    self.invalid = true;
-                }
-                // `let` is a contextual keyword in a ForDeclaration even in
-                // sloppy scripts.  `await` is likewise reserved for module
-                // heads (and the parser already rejects it elsewhere).
-                if names.iter().any(|name| name == "let" || (self.module && name == "await")) {
-                    self.invalid = true;
-                }
-                let mut var_names = Vec::new();
-                collect_strict_eval_var_names(
-                    std::slice::from_ref(&statement.body),
-                    &mut var_names,
-                    false,
-                );
-                if names.iter().any(|name| var_names.iter().any(|var_name| var_name == name)) {
-                    self.invalid = true;
-                }
-            }
-            if labelled_function_statement(&statement.body) {
-                self.invalid = true;
-            }
+            self.invalid |= check_head(&statement.left, &statement.body, self.module, true);
             ast_walk::walk_for_of_statement(self, statement);
         }
     }
@@ -22308,6 +22289,16 @@ fn for_in_error_in_statement(statement: &Statement<'_>, strict: bool) -> bool {
                                 || !matches!(declarator.id, BindingPattern::BindingIdentifier(_)))
                     })
                 }
+                _ if strict => statement
+                    .left
+                    .as_assignment_target()
+                    .is_some_and(|target| {
+                        matches!(
+                            target,
+                            AssignmentTarget::ArrayAssignmentTarget(_)
+                                | AssignmentTarget::ObjectAssignmentTarget(_)
+                        )
+                    }),
                 _ => false,
             };
             invalid || for_in_error_in_statement(&statement.body, strict)
