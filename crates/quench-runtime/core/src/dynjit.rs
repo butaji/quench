@@ -3051,6 +3051,12 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
         DynOp::In { dst, left, right } => {
             let left_value = get_ref(frame, *left).clone();
             let right_value = get_ref(frame, *right).clone();
+            if !right_value.is_object_like() || super::is_symbol_carrier(&right_value) {
+                return Err(JsError::Throw(super::type_error(
+                    vm(frame),
+                    "right-hand side of in is not an object",
+                )));
+            }
             let key = vm(frame).to_property_key(left_value)?;
             let value = Value::Bool(vm(frame).has_property_with_proxy(&right_value, &key)?);
             put(frame, dst, value);
