@@ -2142,6 +2142,16 @@ struct Environment {
     // Keep the object as a semantic edge so identifier resolution can invoke
     // Proxy [[HasProperty]] dynamically in the canonical VM.
     with_object: Option<Value>,
+    // Explicit-resource declarations attach disposal records to their
+    // lexical environment. The enclosing statement-list boundary drains
+    // this vector exactly once, including abrupt completions.
+    disposables: Vec<DisposableRecord>,
+}
+
+struct DisposableRecord {
+    value: Value,
+    method: Value,
+    asynchronous: bool,
 }
 
 struct IteratorRecord {
@@ -2177,6 +2187,7 @@ impl Environment {
             arguments_object: None,
             arguments_map: HashMap::new(),
             with_object: None,
+            disposables: Vec::new(),
         };
         environment.publish_access();
         Rc::new(RefCell::new(environment))
@@ -10296,7 +10307,7 @@ impl Vm {
         if let Some(source_id) = continuation.source_id {
             self.source_ids.push(source_id);
         }
-        let result = (|| {
+        let mut result = (|| {
             let Some(body) = &continuation.function.body else {
                 continuation.done = true;
                 return Ok(generator_result(self, Value::Undefined, true));
@@ -10364,6 +10375,24 @@ impl Vm {
             continuation.done = true;
             Ok(generator_result(self, Value::Undefined, true))
         })();
+        if continuation.done {
+            let completion = match result {
+                Ok(value) => Ok(Signal::Normal(value)),
+                Err(error) => Err(error),
+            };
+            result = match self.finish_disposable_scope(
+                &continuation.body_environment,
+                0,
+                completion,
+            ) {
+                Ok(Signal::Normal(value) | Signal::Return(value)) => Ok(value),
+                Ok(Signal::Empty) => Ok(generator_result(self, Value::Undefined, true)),
+                Ok(Signal::Break(..) | Signal::Continue(..)) => {
+                    Ok(generator_result(self, Value::Undefined, true))
+                }
+                Err(error) => Err(error),
+            };
+        }
         if continuation.source_id.is_some() {
             self.source_ids.pop();
         }
@@ -13483,6 +13512,7 @@ impl Vm {
         // used for modules must run before `$DONOTEVALUATE` can be reached.
         let script_control_flow_error =
             !st.is_module() && has_invalid_module_control_flow(&r.program);
+        let top_level_using_error = !st.is_module() && has_top_level_using(&r.program.body);
         let restricted_global_lexical_error = if Environment::get(&environment, EVAL_CODE_ENV_NAME)
             .is_none()
             && self.is_global_environment(&environment)
@@ -13524,6 +13554,8 @@ impl Vm {
             || function_super_error
             || global_code_error
             || script_control_flow_error
+            || top_level_using_error
+            || has_using_var_redeclaration(&r.program)
             || has_class_strict_name_error(&r.program)
             || restricted_global_lexical_error
             || strict_assignment_error
@@ -14059,6 +14091,12 @@ impl Vm {
     }
 
     fn exec_stmts<'a>(&mut self, b: &[Statement<'a>], e: Env) -> JsResult<Signal> {
+        let start = e.borrow().disposables.len();
+        let result = self.exec_stmts_inner(b, e.clone());
+        self.finish_disposable_scope(&e, start, result)
+    }
+
+    fn exec_stmts_inner<'a>(&mut self, b: &[Statement<'a>], e: Env) -> JsResult<Signal> {
         let annex_b_allowed = !b.iter().any(|statement| {
             direct_lexical_binding_name(statement).is_some_and(|name| {
                 b.iter().any(|candidate| {
@@ -14420,44 +14458,55 @@ impl Vm {
                         if declaration.kind != VariableDeclarationKind::Var =>
                     {
                         let environment = Environment::new(Some(e.clone()));
-                        if let Some(name) = declaration
-                            .declarations
-                            .first()
-                            .and_then(|declarator| pattern_name(&declarator.id))
-                        {
-                            environment.borrow_mut().lexical_names.insert(name);
+                        if let Some(declarator) = declaration.declarations.first() {
+                            let mut names = Vec::new();
+                            pattern_bound_names(&declarator.id, &mut names);
+                            let mut environment = environment.borrow_mut();
+                            environment.lexical_names.extend(names.iter().cloned());
+                            if matches!(
+                                declaration.kind,
+                                VariableDeclarationKind::Const
+                                    | VariableDeclarationKind::Using
+                                    | VariableDeclarationKind::AwaitUsing
+                            ) {
+                                environment.immutable_names.extend(names);
+                            }
                         }
                         environment
                     }
                     _ => e.clone(),
                 };
-                if let Some(i) = &x.init {
-                    if let Some(z) = i.as_expression() {
-                        self.eval_expr(z, loop_environment.clone())?;
-                    } else if let ForStatementInit::VariableDeclaration(v) = i {
-                        self.exec_var(v, loop_environment.clone())?
-                    }
-                }
-                loop {
-                    if let Some(t) = &x.test {
-                        if !self.eval_expr(t, loop_environment.clone())?.truthy() {
-                            break;
+                let resource_start = loop_environment.borrow().disposables.len();
+                let result = (|| {
+                    if let Some(i) = &x.init {
+                        if let Some(z) = i.as_expression() {
+                            self.eval_expr(z, loop_environment.clone())?;
+                        } else if let ForStatementInit::VariableDeclaration(v) = i {
+                            self.exec_var(v, loop_environment.clone())?
                         }
                     }
-                    match consume_loop_signal(
-                        self.exec_stmt(&x.body, loop_environment.clone())?,
-                        loop_label.as_deref(),
-                        &mut completion,
-                    ) {
-                        LoopAction::Break => break,
-                        LoopAction::Continue => {}
-                        LoopAction::Propagate(signal) => return Ok(signal),
+                    loop {
+                        if let Some(t) = &x.test {
+                            if !self.eval_expr(t, loop_environment.clone())?.truthy() {
+                                break;
+                            }
+                        }
+                        match consume_loop_signal(
+                            self.exec_stmt(&x.body, loop_environment.clone())?,
+                            loop_label.as_deref(),
+                            &mut completion,
+                        ) {
+                            LoopAction::Break => break,
+                            LoopAction::Continue => {}
+                            LoopAction::Propagate(signal) => return Ok(signal),
+                        }
+                        if let Some(u) = &x.update {
+                            self.eval_expr(u, loop_environment.clone())?;
+                        }
                     }
-                    if let Some(u) = &x.update {
-                        self.eval_expr(u, loop_environment.clone())?;
-                    }
-                }
-                Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
+                    Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
+                })();
+                self.finish_disposable_scope(&loop_environment, resource_start, result)
             }
             ForInStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
@@ -14479,12 +14528,19 @@ impl Vm {
                         if declaration.kind != VariableDeclarationKind::Var =>
                     {
                         let environment = Environment::new(Some(e.clone()));
-                        if let Some(name) = declaration
-                            .declarations
-                            .first()
-                            .and_then(|declarator| pattern_name(&declarator.id))
-                        {
-                            environment.borrow_mut().lexical_names.insert(name);
+                        if let Some(declarator) = declaration.declarations.first() {
+                            let mut names = Vec::new();
+                            pattern_bound_names(&declarator.id, &mut names);
+                            let mut environment = environment.borrow_mut();
+                            environment.lexical_names.extend(names.iter().cloned());
+                            if matches!(
+                                declaration.kind,
+                                VariableDeclarationKind::Const
+                                    | VariableDeclarationKind::Using
+                                    | VariableDeclarationKind::AwaitUsing
+                            ) {
+                                environment.immutable_names.extend(names);
+                            }
                         }
                         environment
                     }
@@ -14548,12 +14604,19 @@ impl Vm {
                         if declaration.kind != VariableDeclarationKind::Var =>
                     {
                         let environment = Environment::new(Some(e.clone()));
-                        if let Some(name) = declaration
-                            .declarations
-                            .first()
-                            .and_then(|declarator| pattern_name(&declarator.id))
-                        {
-                            environment.borrow_mut().lexical_names.insert(name);
+                        if let Some(declarator) = declaration.declarations.first() {
+                            let mut names = Vec::new();
+                            pattern_bound_names(&declarator.id, &mut names);
+                            let mut environment = environment.borrow_mut();
+                            environment.lexical_names.extend(names.iter().cloned());
+                            if matches!(
+                                declaration.kind,
+                                VariableDeclarationKind::Const
+                                    | VariableDeclarationKind::Using
+                                    | VariableDeclarationKind::AwaitUsing
+                            ) {
+                                environment.immutable_names.extend(names);
+                            }
                         }
                         environment
                     }
@@ -14832,6 +14895,106 @@ impl Vm {
             _ => Err(JsError::Message("unsupported declaration".into())),
         }
     }
+
+    fn finish_disposable_scope(
+        &mut self,
+        environment: &Env,
+        start: usize,
+        result: JsResult<Signal>,
+    ) -> JsResult<Signal> {
+        if matches!(result, Err(JsError::Yield(_))) {
+            return result;
+        }
+        let records = environment.borrow_mut().disposables.split_off(start);
+        let mut result = result;
+        for record in records.into_iter().rev() {
+            let disposed = self.dispose_record(record);
+            match (result, disposed) {
+                (Ok(signal), Ok(())) => result = Ok(signal),
+                (Ok(_), Err(error)) => result = Err(error),
+                (Err(JsError::Throw(previous)), Err(next)) => {
+                    result = Err(self.suppressed_disposal_error(next, previous))
+                }
+                (Err(previous), Err(_)) => result = Err(previous),
+                (Err(previous), Ok(())) => result = Err(previous),
+            }
+        }
+        result
+    }
+
+    fn register_disposable(
+        &mut self,
+        environment: &Env,
+        value: &Value,
+        asynchronous: bool,
+    ) -> JsResult<()> {
+        if value.is_null() || value.is_undefined() {
+            return Ok(());
+        }
+        if !value.is_object_like() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "using initializer is not an object",
+            )));
+        }
+        let method = if asynchronous {
+            let async_method = self.get_prop_with_accessors(
+                value,
+                &self.well_known_symbol_key("asyncDispose"),
+            )?;
+            if async_method.is_null() || async_method.is_undefined() {
+                self.get_prop_with_accessors(value, &self.well_known_symbol_key("dispose"))?
+            } else {
+                async_method
+            }
+        } else {
+            self.get_prop_with_accessors(value, &self.well_known_symbol_key("dispose"))?
+        };
+        if method.is_null() || method.is_undefined() || !method.is_function() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "disposable method is not callable",
+            )));
+        }
+        environment.borrow_mut().disposables.push(DisposableRecord {
+            value: value.clone(),
+            method,
+            asynchronous,
+        });
+        Ok(())
+    }
+
+    fn dispose_record(&mut self, record: DisposableRecord) -> JsResult<()> {
+        let result = self.call_arguments(&record.method, record.value, &[] as &[Value])?;
+        if !record.asynchronous || !result.is_object_like() {
+            return Ok(());
+        }
+        let state = self.get_prop(&result, PROMISE_STATE_PROP);
+        if state.as_string().is_some_and(|state| state.as_str() == "pending") {
+            self.run_timers()?;
+        }
+        let state = self.get_prop(&result, PROMISE_STATE_PROP);
+        if state.as_string().is_some_and(|state| state.as_str() == "rejected") {
+            return Err(JsError::Throw(self.get_prop(&result, PROMISE_RESULT_PROP)));
+        }
+        Ok(())
+    }
+
+    fn suppressed_disposal_error(&mut self, next: JsError, previous: Value) -> JsError {
+        let JsError::Throw(next) = next else {
+            return JsError::Throw(previous);
+        };
+        let constructor = self.builtin(BuiltinId::SuppressedErrorConstructor);
+        let prototype = constructor
+            .as_function_ref()
+            .map(|function| function.prototype.clone());
+        let receiver = self.object(prototype);
+        match self.call_arguments(&constructor, receiver, &[next, previous][..]) {
+            Ok(value) => JsError::Throw(value),
+            Err(error) => error,
+        }
+    }
+
     fn exec_var<'a>(&mut self, v: &VariableDeclaration<'a>, e: Env) -> JsResult<()> {
         for d in &v.declarations {
             if pattern_name(&d.id).as_deref() == Some("arguments") {}
@@ -14840,7 +15003,12 @@ impl Vm {
             {
                 let mut environment = e.borrow_mut();
                 environment.lexical_names.insert(name.clone());
-                if v.kind == VariableDeclarationKind::Const {
+                if matches!(
+                    v.kind,
+                    VariableDeclarationKind::Const
+                        | VariableDeclarationKind::Using
+                        | VariableDeclarationKind::AwaitUsing
+                ) {
                     environment.immutable_names.insert(name.clone());
                 }
                 environment.tdz_names.remove(&name);
@@ -14866,6 +15034,7 @@ impl Vm {
                     .as_ref()
                     .is_some_and(is_anonymous_function_definition)
                 && value.as_function_ref().is_some()
+                && !class_has_static_name_method(&value)
             {
                 set_function_name(&value, &name);
             }
@@ -14897,7 +15066,17 @@ impl Vm {
                 // value instead of writing undefined during statement pass.
                 continue;
             }
-            self.bind_pattern_with_eval_env(&d.id, value, target, e.clone())?;
+            self.bind_pattern_with_eval_env(&d.id, value.clone(), target, e.clone())?;
+            if matches!(
+                v.kind,
+                VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+            ) {
+                self.register_disposable(
+                    &e,
+                    &value,
+                    v.kind == VariableDeclarationKind::AwaitUsing,
+                )?;
+            }
         }
         Ok(())
     }
@@ -18859,6 +19038,23 @@ fn is_anonymous_function_definition(expression: &Expression<'_>) -> bool {
     }
 }
 
+fn class_has_static_name_method(value: &Value) -> bool {
+    let Some(function) = value.as_function_ref() else {
+        return false;
+    };
+    let FunctionKind::Class { node, .. } = &function.kind else {
+        return false;
+    };
+    node.body.body.iter().any(|element| {
+        let ClassElement::MethodDefinition(method) = element else {
+            return false;
+        };
+        method.r#static
+            && (matches!(&method.key, PropertyKey::StaticIdentifier(identifier) if identifier.name == "name")
+                || matches!(&method.key, PropertyKey::StringLiteral(string) if string.value == "name"))
+    })
+}
+
 fn eval_arguments_conflict(environment: &Env) -> bool {
     let mut current = Some(environment.clone());
     while let Some(candidate) = current {
@@ -20295,6 +20491,68 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
         .body
         .iter()
         .any(|statement| for_in_error_in_statement(statement, strict))
+}
+
+fn has_top_level_using(statements: &[Statement<'_>]) -> bool {
+    statements.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::VariableDeclaration(declaration)
+                if matches!(
+                    declaration.kind,
+                    VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+                )
+        )
+    })
+}
+
+fn has_using_var_redeclaration(program: &Program<'_>) -> bool {
+    fn conflicts(statements: &[Statement<'_>]) -> bool {
+        let mut using = HashSet::new();
+        let mut vars = HashSet::new();
+        for statement in statements {
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            let names = declaration
+                .declarations
+                .iter()
+                .filter_map(|declarator| pattern_name(&declarator.id));
+            if declaration.kind == VariableDeclarationKind::Var {
+                vars.extend(names);
+            } else if matches!(
+                declaration.kind,
+                VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+            ) {
+                using.extend(names);
+            }
+        }
+        using.iter().any(|name| vars.contains(name))
+    }
+    struct Scan {
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_program(&mut self, program: &Program<'a>) {
+            self.invalid |= conflicts(&program.body);
+            ast_walk::walk_program(self, program);
+        }
+
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            if let Some(body) = &function.body {
+                self.invalid |= conflicts(&body.statements);
+            }
+            ast_walk::walk_function(self, function, flags);
+        }
+
+        fn visit_block_statement(&mut self, block: &BlockStatement<'a>) {
+            self.invalid |= conflicts(&block.body);
+            ast_walk::walk_block_statement(self, block);
+        }
+    }
+    let mut scan = Scan { invalid: false };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn environment_has_private_names(environment: &Env) -> bool {
