@@ -2298,27 +2298,17 @@ impl Compiler {
             (receiver, callee)
         };
         if let [Argument::SpreadElement(spread)] = value.arguments.as_slice() {
-            let spread_value = self.expression(&spread.argument)?;
-            let apply = self.alloc()?;
-            self.emit(
-                DynOp::GetStatic {
-                    dst: apply,
-                    object: callee,
-                    key: "apply".to_owned(),
-                },
-                spread.span,
-            );
-            let dst = self.alloc()?;
-            self.emit(
-                DynOp::Call {
-                    dst,
-                    callee: apply,
-                    receiver: callee,
-                    args: vec![receiver, spread_value],
-                },
-                value.span,
-            );
-            return Ok(dst);
+            // Spread argument evaluation is iterator-driven, including
+            // abrupt completion and IteratorClose.  Lowering it to
+            // `Function.prototype.apply` loses those effects (and treats a
+            // generator as an array-like object), so keep this boundary on
+            // the shared evaluator until the stencil has an explicit
+            // iterator reducer.
+            let _ = (receiver, callee, spread);
+            return Err(CompileGap {
+                span: value.span,
+                reason: "spread call deferred to shared semantics",
+            });
         }
         let args = value
             .arguments
