@@ -11036,13 +11036,24 @@ impl Vm {
             parameter.initializer.is_some()
                 || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
         }) || n.params.rest.is_some();
+        // A named function expression has a private binding for its name,
+        // while a same-named `var` belongs to the body environment.  Keep
+        // those two bindings distinct even for an otherwise-simple parameter
+        // list (the ordinary function-instantiation rule).
+        let split_named_body_binding = n.id.as_ref().is_some_and(|identifier| {
+            n.body
+                .as_ref()
+                .is_some_and(|body| {
+                    dynbytecode::contains_var_named(&body.statements, identifier.name.as_str())
+                })
+        });
         if non_simple_parameters {
             e.borrow_mut().declare(
                 dynbytecode::NON_SIMPLE_ARGUMENTS_ENV_NAME,
                 Value::Bool(true),
             );
         }
-        let body_environment = if non_simple_parameters {
+        let body_environment = if non_simple_parameters || split_named_body_binding {
             let body_environment = Environment::new(Some(e.clone()));
             body_environment
                 .borrow_mut()
