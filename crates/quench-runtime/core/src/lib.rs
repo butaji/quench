@@ -10231,10 +10231,9 @@ impl Vm {
             reserve_function_bindings(&body_environment, &body.statements, strict);
             let mut lexical_names = HashSet::new();
             collect_direct_lexical_names(&body.statements, &mut lexical_names);
-            body_environment
-                .borrow_mut()
-                .lexical_names
-                .extend(lexical_names);
+            let mut environment = body_environment.borrow_mut();
+            environment.lexical_names.extend(lexical_names.iter().cloned());
+            environment.tdz_names.extend(lexical_names);
         }
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = strict;
@@ -11201,6 +11200,12 @@ impl Vm {
         }
         if let FunctionKind::User { env, .. } = &function.kind
             && environment_has_named_function_bindings(env)
+        {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
+        if let FunctionKind::User { env, .. } = &function.kind
+            && environment_has_tdz_bindings(env)
         {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
@@ -15155,7 +15160,18 @@ impl Vm {
                                 }
                                 self.bind_pattern(&p.pattern, v, ce.clone())?;
                             }
-                            self.exec_stmts(&h.body.body, ce)
+                            let block_environment = Environment::new(Some(ce));
+                            let mut lexical_names = HashSet::new();
+                            collect_direct_lexical_names(&h.body.body, &mut lexical_names);
+                            block_environment
+                                .borrow_mut()
+                                .reserve(lexical_names.iter().cloned());
+                            {
+                                let mut environment = block_environment.borrow_mut();
+                                environment.lexical_names.extend(lexical_names.iter().cloned());
+                                environment.tdz_names.extend(lexical_names);
+                            }
+                            self.exec_stmts(&h.body.body, block_environment)
                         } else {
                             Err(JsError::Throw(v))
                         }
@@ -19985,6 +20001,18 @@ fn environment_has_named_function_bindings(environment: &Env) -> bool {
     while let Some(candidate) = current {
         let borrowed = candidate.borrow();
         if !borrowed.named_function_names.is_empty() {
+            return true;
+        }
+        current = borrowed.parent.clone();
+    }
+    false
+}
+
+fn environment_has_tdz_bindings(environment: &Env) -> bool {
+    let mut current = Some(environment.clone());
+    while let Some(candidate) = current {
+        let borrowed = candidate.borrow();
+        if !borrowed.tdz_names.is_empty() {
             return true;
         }
         current = borrowed.parent.clone();
