@@ -16716,7 +16716,7 @@ impl Vm {
                     );
                 }
                 let Some(function) = c.as_function() else {
-                    return Err(JsError::Message("TypeError: not a constructor".into()));
+                    return Err(JsError::Throw(type_error(self, "not a constructor")));
                 };
                 if !constructable(&c) {
                     return Err(JsError::Throw(type_error(
@@ -28308,6 +28308,22 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     }
     if let Some(proxy) = Environment::get(&vm.global, "Proxy") {
         vm.set_prop(&global, "Proxy", proxy);
+    }
+    for name in [
+        "parseInt",
+        "parseFloat",
+        "isNaN",
+        "isFinite",
+        "decodeURI",
+        "decodeURIComponent",
+        "encodeURI",
+        "encodeURIComponent",
+        "escape",
+        "unescape",
+    ] {
+        if let Some(value) = Environment::get(&vm.global, name) {
+            vm.set_prop(&global, name, value);
+        }
     }
     vm.set_prop(&global, "globalThis", global.clone());
     let eval = native_function_bind(vm, vm.builtin(BuiltinId::Eval), &[global.clone()])?;
