@@ -7591,6 +7591,13 @@ impl Vm {
             "\0primitive",
             Value::string_value(""),
         );
+        install_data_property!(
+            self,
+            Value::Object(string_prototype),
+            "length",
+            Value::Number(0.0),
+            PropertyAttributes::BUILTIN_CONSTANT
+        );
         let object_prototype_value = Value::Object(object_prototype);
         let proto_getter = self.native_named(native_object_proto_get, "get __proto__", 0);
         let proto_setter = self.native_named(native_object_proto_set, "set __proto__", 1);
