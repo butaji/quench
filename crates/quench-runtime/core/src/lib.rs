@@ -33862,6 +33862,12 @@ fn native_intl_date_time_format_constructor(
 ) -> JsResult<Value> {
     validate_intl_date_time_format_args(vm, args)?;
     let result = if this.is_object_like() { this } else { vm.object(None) };
+    if vm.current_new_target.is_none() && result.is_object_like() {
+        let fallback = native_symbol(vm, Value::Undefined, &[Value::string_value("IntlLegacyConstructedSymbol")])?;
+        if let Some(key) = fallback.as_object_ref().and_then(|object| object.borrow().props.get("\0symbol-key").and_then(Value::as_string).cloned()) {
+            vm.set_prop(&result, &key, Value::Bool(true));
+        }
+    }
     if let Some(new_target) = vm.current_new_target.clone()
         && let Some(prototype_value) = Some(vm.get_prop(&new_target, "prototype"))
         && !is_symbol_carrier(&prototype_value)
