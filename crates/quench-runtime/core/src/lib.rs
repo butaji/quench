@@ -6481,6 +6481,23 @@ impl Vm {
             "constructor",
             constructor.clone(),
         );
+        set_property_attributes(
+            &generator_function_prototype,
+            "constructor",
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
+        set_property_attributes(
+            &generator_function_prototype,
+            "prototype",
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
+        let tag_key = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&generator_function_prototype, &tag_key, Value::string_value("GeneratorFunction"));
+        set_property_attributes(
+            &generator_function_prototype,
+            &tag_key,
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
         self.set_prop(
             &constructor,
             FUNCTION_PROTOTYPE_OVERRIDE_PROP,
@@ -6492,6 +6509,7 @@ impl Vm {
             generator_function_prototype.clone(),
         );
         self.set_prop(&constructor, "prototype", generator_function_prototype);
+        set_property_attributes(&constructor, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
         self.set_prop(
             &global,
             SYNC_GENERATOR_CONSTRUCTOR_PROP,
