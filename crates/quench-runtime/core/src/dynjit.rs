@@ -3647,7 +3647,7 @@ fn unary(vm: &mut super::Vm, kind: UnaryKind, value: &Value) -> JsResult<Value> 
                     "cannot convert a BigInt value to a number",
                 )));
             }
-            UnaryKind::Not => Value::Bool(false),
+            UnaryKind::Not => Value::Bool(bigint == num_bigint::BigInt::from(0u8)),
             UnaryKind::Void => Value::Undefined,
         });
     }
@@ -3973,6 +3973,9 @@ fn immediate_literal_truthiness(literal: &Literal) -> Option<bool> {
         Literal::Undefined | Literal::Null => Some(false),
         Literal::Bool(value) => Some(*value),
         Literal::Number(value) => Some(*value != 0.0 && !value.is_nan()),
+        Literal::String(value) if value.starts_with("\0bigint:") => {
+            Some(parse_bigint_text(value).is_ok_and(|value| value != BigInt::from(0u8)))
+        }
         Literal::String(_) => None,
     }
 }
