@@ -2995,10 +2995,70 @@ fn attach_regexp_match_metadata(vm: &Vm, result: &Value, regexp: &RegExpValue, s
     }
 }
 enum Signal {
+    /// An empty completion record (for example an empty statement or
+    /// declaration). Statement-list evaluation carries the previous value
+    /// across this record instead of confusing it with an explicit
+    /// `undefined` expression result.
+    Empty,
     Normal(Value),
     Return(Value),
-    Break(Option<String>),
-    Continue(Option<String>),
+    Break(Option<String>, Option<Value>),
+    Continue(Option<String>, Option<Value>),
+}
+
+enum LoopAction {
+    Continue,
+    Break,
+    Propagate(Signal),
+}
+
+/// Apply the statement-completion rules shared by every loop form.  Keeping
+/// this as one data-oriented transition prevents the six loop evaluators from
+/// drifting on empty completions, labels, or abrupt propagation.
+fn consume_loop_signal(
+    signal: Signal,
+    loop_label: Option<&str>,
+    completion: &mut Option<Value>,
+) -> LoopAction {
+    match signal {
+        Signal::Normal(value) => {
+            *completion = Some(value);
+            LoopAction::Continue
+        }
+        Signal::Empty | Signal::Continue(None, None) => LoopAction::Continue,
+        Signal::Continue(None, Some(value)) => {
+            *completion = Some(value);
+            LoopAction::Continue
+        }
+        Signal::Continue(Some(label), value) if loop_label == Some(label.as_str()) => {
+            if let Some(value) = value {
+                *completion = Some(value);
+            }
+            LoopAction::Continue
+        }
+        Signal::Break(None, value) => {
+            if let Some(value) = value {
+                *completion = Some(value);
+            }
+            LoopAction::Break
+        }
+        Signal::Break(Some(label), value) if loop_label == Some(label.as_str()) => {
+            if let Some(value) = value {
+                *completion = Some(value);
+            }
+            LoopAction::Break
+        }
+        signal => LoopAction::Propagate(signal),
+    }
+}
+
+fn update_empty_signal(signal: Signal) -> Signal {
+    match signal {
+        Signal::Empty => Signal::Normal(Value::Undefined),
+        Signal::Break(label, None) => Signal::Break(label, Some(Value::Undefined)),
+        Signal::Continue(label, None) => Signal::Continue(label, Some(Value::Undefined)),
+        signal => signal,
+    }
 }
 enum LValue {
     Var(Env, String),
@@ -10275,7 +10335,7 @@ impl Vm {
                         self.sync_generator_replay_values.clear();
                         return Ok(generator_result(self, value, true));
                     }
-                    Ok(Signal::Break(_) | Signal::Continue(_)) => {
+                    Ok(Signal::Break(..) | Signal::Continue(..)) => {
                         continuation.done = true;
                         self.sync_generator_pending_yield = None;
                         self.sync_generator_replay_values.clear();
@@ -10289,6 +10349,7 @@ impl Vm {
                             return Ok(generator_result(self, value, true));
                         }
                     }
+                    Ok(Signal::Empty) => {}
                 }
             }
             continuation.done = true;
@@ -13354,6 +13415,11 @@ impl Vm {
         } else {
             has_global_code_early_error(&r.program, source, effective_strict_mode)
         };
+        // Break/continue target validation is a Script early error too. OXC
+        // preserves these statements in the AST so the same structural walk
+        // used for modules must run before `$DONOTEVALUATE` can be reached.
+        let script_control_flow_error =
+            !st.is_module() && has_invalid_module_control_flow(&r.program);
         let restricted_global_lexical_error = if Environment::get(&environment, EVAL_CODE_ENV_NAME)
             .is_none()
             && self.is_global_environment(&environment)
@@ -13394,6 +13460,7 @@ impl Vm {
             || strict_update_error
             || function_super_error
             || global_code_error
+            || script_control_flow_error
             || has_class_strict_name_error(&r.program)
             || restricted_global_lexical_error
             || strict_assignment_error
@@ -13847,8 +13914,9 @@ impl Vm {
 
     fn complete_script_signal(&mut self, signal: Signal) -> JsResult<Value> {
         match signal {
+            Signal::Empty => Ok(Value::Undefined),
             Signal::Normal(value) => Ok(value),
-            Signal::Return(_) | Signal::Break(_) | Signal::Continue(_) => {
+            Signal::Return(_) | Signal::Break(..) | Signal::Continue(..) => {
                 Err(JsError::Throw(syntax_error(
                     self,
                     "break or continue is not permitted at eval script scope",
@@ -13958,20 +14026,13 @@ impl Vm {
             }
         }
         let mut last = Value::Undefined;
+        let mut has_completion = false;
         for s in b {
             match self.exec_stmt(s, e.clone())? {
+                Signal::Empty => {}
                 Signal::Normal(v) => {
-                    // Empty statements produce an empty completion.  The
-                    // StatementList completion algorithm carries the prior
-                    // value across a trailing `;` (notably in eval), rather
-                    // than replacing it with `undefined`.
-                    let empty_completion = matches!(
-                        s,
-                        Statement::EmptyStatement(_) | Statement::DebuggerStatement(_)
-                    ) || matches!(s, Statement::BlockStatement(block) if block.body.is_empty());
-                    if !empty_completion {
-                        last = v;
-                    }
+                    has_completion = true;
+                    last = v;
                     // A completed delegated `yield*` carries an abrupt
                     // return completion through the expression evaluator.
                     // Bubble it through nested statement lists so code after
@@ -13980,16 +14041,32 @@ impl Vm {
                         return Ok(Signal::Return(value));
                     }
                 }
+                Signal::Break(label, value) => {
+                    return Ok(Signal::Break(
+                        label,
+                        value.or_else(|| has_completion.then_some(last)),
+                    ));
+                }
+                Signal::Continue(label, value) => {
+                    return Ok(Signal::Continue(
+                        label,
+                        value.or_else(|| has_completion.then_some(last)),
+                    ));
+                }
                 x => return Ok(x),
             }
         }
-        Ok(Signal::Normal(last))
+        Ok(if has_completion {
+            Signal::Normal(last)
+        } else {
+            Signal::Empty
+        })
     }
     fn exec_stmt<'a>(&mut self, s: &Statement<'a>, e: Env) -> JsResult<Signal> {
         self.coverage_hit(s.span(), statement_kind(s));
         use Statement::*;
         match s {
-            EmptyStatement(_) | DebuggerStatement(_) => Ok(Signal::Normal(Value::Undefined)),
+            EmptyStatement(_) | DebuggerStatement(_) => Ok(Signal::Empty),
             ImportDeclaration(import) => {
                 // Module linking is supplied by the host for full modules;
                 // this evaluator still needs an object namespace binding for
@@ -14012,10 +14089,10 @@ impl Vm {
                         }
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             ExportDeclaration(export) => {
-                let result = self.exec_decl(&export.declaration, e.clone())?;
+                self.exec_decl(&export.declaration, e.clone())?;
                 let mut names = Vec::new();
                 declaration_names_for_early_error(&export.declaration, &mut names);
                 for name in names {
@@ -14023,7 +14100,7 @@ impl Vm {
                         self.record_module_export(name, value);
                     }
                 }
-                Ok(result)
+                Ok(Signal::Empty)
             }
             ExportDefaultDeclaration(export) => match &export.declaration {
                 ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
@@ -14033,7 +14110,7 @@ impl Vm {
                             .last()
                             .is_some_and(|exports| exports.contains_key("default"))
                     {
-                        return Ok(Signal::Normal(Value::Undefined));
+                        return Ok(Signal::Empty);
                     }
                     // Named default functions are ordinary declarations; an
                     // anonymous default function has no local binding but its
@@ -14050,7 +14127,7 @@ impl Vm {
                             );
                             self.record_module_export("default", value);
                         }
-                        Ok(Signal::Normal(Value::Undefined))
+                        Ok(Signal::Empty)
                     } else {
                         let value = self.make_user(function, e);
                         if let Some(function) = value.as_function_ref() {
@@ -14060,7 +14137,7 @@ impl Vm {
                                 .insert("name".into(), Value::string_value("default"));
                         }
                         self.record_module_export("default", value);
-                        Ok(Signal::Normal(Value::Undefined))
+                        Ok(Signal::Empty)
                     }
                 }
                 ExportDefaultDeclarationKind::ClassDeclaration(class) => {
@@ -14072,7 +14149,7 @@ impl Vm {
                             e.borrow_mut().declare(id.name.as_str(), value.clone());
                             self.record_module_export("default", value);
                         }
-                        Ok(Signal::Normal(Value::Undefined))
+                        Ok(Signal::Empty)
                     } else {
                         let previous_class_name = self.pending_inferred_class_name.take();
                         self.pending_inferred_class_name = Some("default".to_owned());
@@ -14092,7 +14169,7 @@ impl Vm {
                             }
                         }
                         self.record_module_export("default", value);
-                        Ok(Signal::Normal(Value::Undefined))
+                        Ok(Signal::Empty)
                     }
                 }
                 ExportDefaultDeclarationKind::TSInterfaceDeclaration(_) => {
@@ -14131,7 +14208,7 @@ impl Vm {
                         );
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             ExportFromDeclaration(export) => {
                 if let Some(parent) = self.source_stack.last().and_then(|path| path.parent()) {
@@ -14154,7 +14231,7 @@ impl Vm {
                         }
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             ExportAllDeclaration(export) => {
                 if let Some(parent) = self.source_stack.last().and_then(|path| path.parent()) {
@@ -14174,7 +14251,7 @@ impl Vm {
                         }
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             ExpressionStatement(x) => Ok(Signal::Normal(self.eval_expr(&x.expression, e)?)),
             BlockStatement(x) => self.exec_stmts(&x.body, Environment::new(Some(e))),
@@ -14186,8 +14263,8 @@ impl Vm {
                 let result = self.exec_stmt(&x.body, e);
                 self.pending_loop_label = previous;
                 match result? {
-                    Signal::Break(Some(label)) if label == x.label.name.as_str() => {
-                        Ok(Signal::Normal(Value::Undefined))
+                    Signal::Break(Some(label), value) if label == x.label.name.as_str() => {
+                        Ok(Signal::Normal(value.unwrap_or(Value::Undefined)))
                     }
                     // A label is transparent to completion values.  Eval's
                     // StatementList completion uses the final labelled
@@ -14206,9 +14283,11 @@ impl Vm {
             ThrowStatement(x) => Err(JsError::Throw(self.eval_expr(&x.argument, e)?)),
             BreakStatement(x) => Ok(Signal::Break(
                 x.label.as_ref().map(|label| label.name.to_string()),
+                None,
             )),
             ContinueStatement(x) => Ok(Signal::Continue(
                 x.label.as_ref().map(|label| label.name.to_string()),
+                None,
             )),
             IfStatement(x) => {
                 if self.eval_expr(&x.test, e.clone())?.truthy() {
@@ -14217,7 +14296,7 @@ impl Vm {
                         self.declare_conditional_function(&*function, branch_environment);
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
-                        self.exec_stmt(&x.consequent, e)
+                        self.exec_stmt(&x.consequent, e).map(update_empty_signal)
                     }
                 } else if let Some(a) = &x.alternate {
                     if let Statement::FunctionDeclaration(function) = a {
@@ -14225,7 +14304,7 @@ impl Vm {
                         self.declare_conditional_function(&*function, branch_environment);
                         Ok(Signal::Normal(Value::Undefined))
                     } else {
-                        self.exec_stmt(a, e)
+                        self.exec_stmt(a, e).map(update_empty_signal)
                     }
                 } else {
                     Ok(Signal::Normal(Value::Undefined))
@@ -14233,52 +14312,45 @@ impl Vm {
             }
             WhileStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
+                let mut completion = None;
                 loop {
                     if !self.eval_expr(&x.test, e.clone())?.truthy() {
                         break;
                     }
-                    match self.exec_stmt(&x.body, e.clone())? {
-                        Signal::Break(None) => break,
-                        Signal::Break(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) =>
-                        {
-                            break;
-                        }
-                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
-                        Signal::Return(v) => return Ok(Signal::Return(v)),
-                        Signal::Continue(None) | Signal::Normal(_) => {}
-                        Signal::Continue(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) => {}
-                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
+                    match consume_loop_signal(
+                        self.exec_stmt(&x.body, e.clone())?,
+                        loop_label.as_deref(),
+                        &mut completion,
+                    ) {
+                        LoopAction::Break => break,
+                        LoopAction::Continue => {}
+                        LoopAction::Propagate(signal) => return Ok(signal),
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
             }
             DoWhileStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
+                let mut completion = None;
                 loop {
-                    match self.exec_stmt(&x.body, e.clone())? {
-                        Signal::Break(None) => break,
-                        Signal::Break(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) =>
-                        {
-                            break;
-                        }
-                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
-                        Signal::Return(v) => return Ok(Signal::Return(v)),
-                        Signal::Continue(None) | Signal::Normal(_) => {}
-                        Signal::Continue(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) => {}
-                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
+                    match consume_loop_signal(
+                        self.exec_stmt(&x.body, e.clone())?,
+                        loop_label.as_deref(),
+                        &mut completion,
+                    ) {
+                        LoopAction::Break => break,
+                        LoopAction::Continue => {}
+                        LoopAction::Propagate(signal) => return Ok(signal),
                     }
                     if !self.eval_expr(&x.test, e.clone())?.truthy() {
                         break;
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
             }
             ForStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
+                let mut completion = None;
                 let loop_environment = match &x.init {
                     Some(ForStatementInit::VariableDeclaration(declaration))
                         if declaration.kind != VariableDeclarationKind::Var =>
@@ -14308,28 +14380,24 @@ impl Vm {
                             break;
                         }
                     }
-                    match self.exec_stmt(&x.body, loop_environment.clone())? {
-                        Signal::Break(None) => break,
-                        Signal::Break(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) =>
-                        {
-                            break;
-                        }
-                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
-                        Signal::Return(v) => return Ok(Signal::Return(v)),
-                        Signal::Continue(None) | Signal::Normal(_) => {}
-                        Signal::Continue(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) => {}
-                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
+                    match consume_loop_signal(
+                        self.exec_stmt(&x.body, loop_environment.clone())?,
+                        loop_label.as_deref(),
+                        &mut completion,
+                    ) {
+                        LoopAction::Break => break,
+                        LoopAction::Continue => {}
+                        LoopAction::Propagate(signal) => return Ok(signal),
                     }
                     if let Some(u) = &x.update {
                         self.eval_expr(u, loop_environment.clone())?;
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
             }
             ForInStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
+                let mut completion = None;
                 // Annex B permits a sloppy `var` identifier initializer in a
                 // `for-in` head. It runs exactly once, before evaluating the
                 // RHS, and its value remains observable when the RHS refers
@@ -14395,25 +14463,21 @@ impl Vm {
                         Value::String(Rc::new(k.into())),
                         iteration_environment.clone(),
                     )?;
-                    match self.exec_stmt(&x.body, iteration_environment)? {
-                        Signal::Break(None) => break,
-                        Signal::Break(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) =>
-                        {
-                            break;
-                        }
-                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
-                        Signal::Return(v) => return Ok(Signal::Return(v)),
-                        Signal::Continue(None) | Signal::Normal(_) => {}
-                        Signal::Continue(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) => {}
-                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
+                    match consume_loop_signal(
+                        self.exec_stmt(&x.body, iteration_environment)?,
+                        loop_label.as_deref(),
+                        &mut completion,
+                    ) {
+                        LoopAction::Break => break,
+                        LoopAction::Continue => {}
+                        LoopAction::Propagate(signal) => return Ok(signal),
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
             }
             ForOfStatement(x) => {
                 let loop_label = self.pending_loop_label.take();
+                let mut completion = None;
                 let iterable = self.eval_expr(&x.right, e.clone())?;
                 let loop_environment = match &x.left {
                     ForStatementLeft::VariableDeclaration(declaration)
@@ -14443,24 +14507,17 @@ impl Vm {
                     let values = self.iterable_values(&iterable)?;
                     for value in values {
                         self.assign_for_left(&x.left, value, loop_environment.clone())?;
-                        match self.exec_stmt(&x.body, loop_environment.clone())? {
-                            Signal::Break(None) => break,
-                            Signal::Break(Some(label))
-                                if loop_label.as_deref() == Some(label.as_str()) =>
-                            {
-                                break;
-                            }
-                            Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
-                            Signal::Return(v) => return Ok(Signal::Return(v)),
-                            Signal::Continue(None) | Signal::Normal(_) => {}
-                            Signal::Continue(Some(label))
-                                if loop_label.as_deref() == Some(label.as_str()) => {}
-                            Signal::Continue(Some(label)) => {
-                                return Ok(Signal::Continue(Some(label)));
-                            }
+                        match consume_loop_signal(
+                            self.exec_stmt(&x.body, loop_environment.clone())?,
+                            loop_label.as_deref(),
+                            &mut completion,
+                        ) {
+                            LoopAction::Break => break,
+                            LoopAction::Continue => {}
+                            LoopAction::Propagate(signal) => return Ok(signal),
                         }
                     }
-                    return Ok(Signal::Normal(Value::Undefined));
+                    return Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal));
                 };
                 loop {
                     let next = self.get_prop_with_accessors(&iterator, "next")?;
@@ -14482,29 +14539,25 @@ impl Vm {
                     }
                     let value = self.get_prop_with_accessors(&step, "value")?;
                     self.assign_for_left(&x.left, value, loop_environment.clone())?;
-                    match self.exec_stmt(&x.body, loop_environment.clone())? {
-                        Signal::Break(None) => {
+                    match consume_loop_signal(
+                        self.exec_stmt(&x.body, loop_environment.clone())?,
+                        loop_label.as_deref(),
+                        &mut completion,
+                    ) {
+                        LoopAction::Break => {
                             self.iterator_close(&iterator)?;
                             break;
                         }
-                        Signal::Break(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) =>
-                        {
-                            self.iterator_close(&iterator)?;
-                            break;
+                        LoopAction::Continue => {}
+                        LoopAction::Propagate(signal) => {
+                            if matches!(&signal, Signal::Return(_) | Signal::Break(..)) {
+                                self.iterator_close(&iterator)?;
+                            }
+                            return Ok(signal);
                         }
-                        Signal::Break(Some(label)) => return Ok(Signal::Break(Some(label))),
-                        Signal::Return(v) => {
-                            self.iterator_close(&iterator)?;
-                            return Ok(Signal::Return(v));
-                        }
-                        Signal::Continue(None) | Signal::Normal(_) => {}
-                        Signal::Continue(Some(label))
-                            if loop_label.as_deref() == Some(label.as_str()) => {}
-                        Signal::Continue(Some(label)) => return Ok(Signal::Continue(Some(label))),
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
             }
             SwitchStatement(x) => {
                 let d = self.eval_expr(&x.discriminant, e.clone())?;
@@ -14518,6 +14571,7 @@ impl Vm {
                     .lexical_names
                     .extend(switch_lexical_names);
                 let mut active = false;
+                let mut completion = None;
                 for c in &x.cases {
                     if !active {
                         active = match &c.test {
@@ -14528,21 +14582,27 @@ impl Vm {
                     if active {
                         for st in &c.consequent {
                             match self.exec_stmt(st, switch_environment.clone())? {
-                                Signal::Break(None) => return Ok(Signal::Normal(Value::Undefined)),
-                                Signal::Break(Some(label)) => {
-                                    return Ok(Signal::Break(Some(label)));
+                                Signal::Break(None, _) => {
+                                    return Ok(completion
+                                        .map_or(Signal::Normal(Value::Undefined), Signal::Normal));
+                                }
+                                Signal::Break(Some(label), value) => {
+                                    return Ok(Signal::Break(Some(label), value));
                                 }
                                 Signal::Return(v) => return Ok(Signal::Return(v)),
-                                Signal::Continue(None) => return Ok(Signal::Continue(None)),
-                                Signal::Continue(Some(label)) => {
-                                    return Ok(Signal::Continue(Some(label)));
+                                Signal::Continue(None, value) => {
+                                    return Ok(Signal::Continue(None, value));
                                 }
-                                Signal::Normal(_) => {}
+                                Signal::Continue(Some(label), value) => {
+                                    return Ok(Signal::Continue(Some(label), value));
+                                }
+                                Signal::Normal(value) => completion = Some(value),
+                                Signal::Empty => {}
                             }
                         }
                     }
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal))
             }
             TryStatement(x) => {
                 let try_environment = Environment::new(Some(e.clone()));
@@ -14608,7 +14668,7 @@ impl Vm {
             }
             VariableDeclaration(v) => {
                 self.exec_var(v, e)?;
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             FunctionDeclaration(f) => {
                 if !e.borrow().contains_local(MODULE_INSTANTIATED_ENV_NAME)
@@ -14621,7 +14681,7 @@ impl Vm {
                     };
                     self.declare_function_binding(f, function_environment, i.name.as_str(), true);
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
@@ -14630,7 +14690,7 @@ impl Vm {
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             _ => Err(JsError::Message("unsupported statement".into())),
         }
@@ -14639,7 +14699,7 @@ impl Vm {
         match d {
             Declaration::VariableDeclaration(v) => {
                 self.exec_var(v, e)?;
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             Declaration::FunctionDeclaration(f) => {
                 if !e.borrow().contains_local(MODULE_INSTANTIATED_ENV_NAME)
@@ -14647,7 +14707,7 @@ impl Vm {
                 {
                     self.declare_function_binding(f, e.clone(), i.name.as_str(), true);
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             Declaration::ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
@@ -14657,7 +14717,7 @@ impl Vm {
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
                     self.sync_global_binding(&e, id.name.as_str(), value);
                 }
-                Ok(Signal::Normal(Value::Undefined))
+                Ok(Signal::Empty)
             }
             _ => Err(JsError::Message("unsupported declaration".into())),
         }
@@ -20295,38 +20355,45 @@ fn has_nested_module_declaration(program: &Program<'_>) -> bool {
 /// data, so nested blocks share one implementation and function bodies form
 /// the natural boundary for control-flow reachability.
 fn has_invalid_module_control_flow(program: &Program<'_>) -> bool {
-    fn walk(
-        statements: &[Statement<'_>],
-        labels: &[(String, bool)],
+    struct Scan {
+        labels: Vec<(String, bool)>,
         iteration_depth: usize,
         switch_depth: usize,
-    ) -> bool {
-        for statement in statements {
+        invalid: bool,
+    }
+
+    impl<'a> Visit<'a> for Scan {
+        fn visit_statement(&mut self, statement: &Statement<'a>) {
+            if self.invalid {
+                return;
+            }
             match statement {
                 Statement::BreakStatement(statement) => {
-                    if let Some(label) = &statement.label {
-                        if !labels.iter().any(|(name, _)| name == label.name.as_str()) {
-                            return true;
-                        }
-                    } else if iteration_depth == 0 && switch_depth == 0 {
-                        return true;
-                    }
+                    self.invalid = statement.label.as_ref().map_or(
+                        self.iteration_depth == 0 && self.switch_depth == 0,
+                        |label| {
+                            !self
+                                .labels
+                                .iter()
+                                .any(|(name, _)| name == label.name.as_str())
+                        },
+                    );
                 }
                 Statement::ContinueStatement(statement) => {
-                    if let Some(label) = &statement.label {
-                        if !labels.iter().any(|(name, is_iteration)| {
-                            name == label.name.as_str() && *is_iteration
-                        }) {
-                            return true;
-                        }
-                    } else if iteration_depth == 0 {
-                        return true;
-                    }
+                    self.invalid = statement.label.as_ref().map_or(
+                        self.iteration_depth == 0,
+                        |label| {
+                            !self.labels.iter().any(|(name, iteration)| {
+                                name == label.name.as_str() && *iteration
+                            })
+                        },
+                    );
                 }
                 Statement::LabeledStatement(statement) => {
                     let name = statement.label.name.to_string();
-                    if labels.iter().any(|(label, _)| label == &name) {
-                        return true;
+                    if self.labels.iter().any(|(label, _)| label == &name) {
+                        self.invalid = true;
+                        return;
                     }
                     let is_iteration = matches!(
                         &statement.body,
@@ -20336,125 +20403,65 @@ fn has_invalid_module_control_flow(program: &Program<'_>) -> bool {
                             | Statement::ForInStatement(_)
                             | Statement::ForOfStatement(_)
                     );
-                    let mut nested = labels.to_vec();
-                    nested.push((name, is_iteration));
-                    if walk(
-                        std::slice::from_ref(&statement.body),
-                        &nested,
-                        iteration_depth,
-                        switch_depth,
-                    ) {
-                        return true;
-                    }
+                    self.labels.push((name, is_iteration));
+                    ast_walk::walk_labeled_statement(self, statement);
+                    self.labels.pop();
+                    return;
                 }
-                Statement::BlockStatement(statement) => {
-                    if walk(&statement.body, labels, iteration_depth, switch_depth) {
-                        return true;
-                    }
+                Statement::DoWhileStatement(_)
+                | Statement::WhileStatement(_)
+                | Statement::ForStatement(_)
+                | Statement::ForInStatement(_)
+                | Statement::ForOfStatement(_) => {
+                    self.iteration_depth += 1;
+                    ast_walk::walk_statement(self, statement);
+                    self.iteration_depth -= 1;
+                    return;
                 }
-                Statement::IfStatement(statement) => {
-                    if walk(
-                        std::slice::from_ref(&statement.consequent),
-                        labels,
-                        iteration_depth,
-                        switch_depth,
-                    ) || statement.alternate.as_ref().is_some_and(|alternate| {
-                        walk(
-                            std::slice::from_ref(alternate),
-                            labels,
-                            iteration_depth,
-                            switch_depth,
-                        )
-                    }) {
-                        return true;
-                    }
-                }
-                Statement::DoWhileStatement(statement) => {
-                    if walk(
-                        std::slice::from_ref(&statement.body),
-                        labels,
-                        iteration_depth + 1,
-                        switch_depth,
-                    ) {
-                        return true;
-                    }
-                }
-                Statement::WhileStatement(statement) => {
-                    if walk(
-                        std::slice::from_ref(&statement.body),
-                        labels,
-                        iteration_depth + 1,
-                        switch_depth,
-                    ) {
-                        return true;
-                    }
-                }
-                Statement::ForStatement(statement) => {
-                    if walk(
-                        std::slice::from_ref(&statement.body),
-                        labels,
-                        iteration_depth + 1,
-                        switch_depth,
-                    ) {
-                        return true;
-                    }
-                }
-                Statement::ForInStatement(statement) => {
-                    if walk(
-                        std::slice::from_ref(&statement.body),
-                        labels,
-                        iteration_depth + 1,
-                        switch_depth,
-                    ) {
-                        return true;
-                    }
-                }
-                Statement::ForOfStatement(statement) => {
-                    if walk(
-                        std::slice::from_ref(&statement.body),
-                        labels,
-                        iteration_depth + 1,
-                        switch_depth,
-                    ) {
-                        return true;
-                    }
-                }
-                Statement::SwitchStatement(statement) => {
-                    if statement.cases.iter().any(|case| {
-                        walk(&case.consequent, labels, iteration_depth, switch_depth + 1)
-                    }) {
-                        return true;
-                    }
-                }
-                Statement::TryStatement(statement) => {
-                    if walk(&statement.block.body, labels, iteration_depth, switch_depth)
-                        || statement.handler.as_ref().is_some_and(|handler| {
-                            walk(&handler.body.body, labels, iteration_depth, switch_depth)
-                        })
-                        || statement.finalizer.as_ref().is_some_and(|finalizer| {
-                            walk(&finalizer.body, labels, iteration_depth, switch_depth)
-                        })
-                    {
-                        return true;
-                    }
-                }
-                Statement::WithStatement(statement) => {
-                    if walk(
-                        std::slice::from_ref(&statement.body),
-                        labels,
-                        iteration_depth,
-                        switch_depth,
-                    ) {
-                        return true;
-                    }
+                Statement::SwitchStatement(_) => {
+                    self.switch_depth += 1;
+                    ast_walk::walk_statement(self, statement);
+                    self.switch_depth -= 1;
+                    return;
                 }
                 _ => {}
             }
+            ast_walk::walk_statement(self, statement);
         }
-        false
+
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let saved = (
+                std::mem::take(&mut self.labels),
+                self.iteration_depth,
+                self.switch_depth,
+            );
+            self.iteration_depth = 0;
+            self.switch_depth = 0;
+            ast_walk::walk_function(self, function, flags);
+            (self.labels, self.iteration_depth, self.switch_depth) = saved;
+        }
+
+        fn visit_static_block(&mut self, block: &StaticBlock<'a>) {
+            let saved = (
+                std::mem::take(&mut self.labels),
+                self.iteration_depth,
+                self.switch_depth,
+            );
+            self.iteration_depth = 0;
+            self.switch_depth = 0;
+            ast_walk::walk_static_block(self, block);
+            (self.labels, self.iteration_depth, self.switch_depth) = saved;
+        }
     }
 
-    walk(&program.body, &[], 0, 0)
+    let mut scan = Scan {
+        labels: Vec::new(),
+        iteration_depth: 0,
+        switch_depth: 0,
+        invalid: false,
+    };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn module_export_name_for_early_error(name: &ModuleExportName<'_>) -> String {
