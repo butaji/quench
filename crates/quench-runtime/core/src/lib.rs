@@ -7142,7 +7142,7 @@ impl Vm {
         let bigint_prototype_value = Value::Object(bigint_prototype);
         let bigint_to_string = self.native_named(native_bigint_to_string, "toString", 0);
         let bigint_to_locale_string =
-            self.native_named(native_bigint_to_string, "toLocaleString", 0);
+            self.native_named(native_bigint_to_locale_string, "toLocaleString", 0);
         let bigint_value_of = self.native_named(native_bigint_value_of, "valueOf", 0);
         for method in [
             &bigint_to_string,
@@ -8005,6 +8005,29 @@ impl Vm {
         let json = self.object(None);
         self.set_prop(&json, "stringify", self.native(native_json_stringify));
         Environment::set(&g, "JSON", json);
+        // Intl.NumberFormat is the shared formatting boundary used by the
+        // BigInt and Array locale methods.  Keep the constructor and format
+        // operation in this catalog-owned VM so locale conversion never
+        // falls back to a second execution core.
+        let intl = self.object(None);
+        let number_format = self.native_named(
+            native_intl_number_format_constructor,
+            "NumberFormat",
+            0,
+        );
+        let number_format_prototype = self.object(self.default_object_prototype());
+        self.set_prop(
+            &number_format,
+            "prototype",
+            number_format_prototype.clone(),
+        );
+        self.set_prop(
+            &number_format_prototype,
+            "format",
+            self.native_named(native_intl_number_format_format, "get format", 1),
+        );
+        self.set_prop(&intl, "NumberFormat", number_format);
+        Environment::set(&g, "Intl", intl);
         for recipe in builtins::BUILTIN_RECIPES {
             let value = self.builtin(recipe.id);
             let property_key = recipe
@@ -25336,6 +25359,40 @@ fn native_array_to_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Val
     }
     native_array_join(vm, this, &[])
 }
+
+/// Locale conversion is an element protocol, not an alias for `join`.
+/// Keep the traversal in the core so holes/nullish values and user supplied
+/// element methods all observe the same property/call boundary.
+fn native_array_to_locale_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let target = array_like_target(vm, &this)?;
+    let length = array_like_length(vm, &target)?;
+    let locale_args = [
+        args.first().cloned().unwrap_or(Value::Undefined),
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+    ];
+    let mut output = String::new();
+    for index in 0..length {
+        if index != 0 {
+            output.push(',');
+        }
+        let Some(element) = array_like_value(vm, &target, index)? else {
+            continue;
+        };
+        if element.is_null() || element.is_undefined() {
+            continue;
+        }
+        let method = vm.get_prop_with_accessors(&element, "toLocaleString")?;
+        if !method.is_function() {
+            return Err(JsError::Throw(type_error(
+                vm,
+                "element.toLocaleString is not a function",
+            )));
+        }
+        let value = vm.call_arguments(&method, element, &locale_args[..])?;
+        output.push_str(&to_string_with_vm(vm, &value)?);
+    }
+    Ok(Value::string_value(output))
+}
 fn native_array_concat(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let mut out = match array_this(this) {
         Some(o) => o
@@ -30616,6 +30673,93 @@ fn native_bigint_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
     )))
 }
 
+fn native_bigint_to_locale_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    validate_intl_number_format_args(vm, args)?;
+    let value = native_bigint_value_of(vm, this, &[])?;
+    let number = bigint_value(vm, &value)?;
+    Ok(Value::string_value(format_bigint_locale(vm, number, args)?))
+}
+
+fn format_bigint_locale(vm: &mut Vm, number: BigInt, args: &[Value]) -> JsResult<String> {
+    let mut digits = format_bigint_radix(number, 10);
+    let locale = args
+        .first()
+        .filter(|value| value.is_string())
+        .map(Value::string)
+        .unwrap_or_default();
+    let options = args.get(1).filter(|value| value.is_object_like());
+    let style = options
+        .and_then(|options| vm.get_prop_with_accessors(options, "style").ok())
+        .filter(|value| !value.is_undefined())
+        .map(|value| value.string())
+        .unwrap_or_default();
+    if style == "percent" {
+        let negative = digits.starts_with('-');
+        let magnitude = digits.trim_start_matches('-');
+        digits = format!("{}{}00", if negative { "-" } else { "" }, magnitude);
+    }
+    if let Some(limit) = options
+        .and_then(|options| vm.get_prop_with_accessors(options, "maximumSignificantDigits").ok())
+        .filter(|value| !value.is_undefined())
+        .and_then(|value| to_number_with_vm(vm, &value).ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| value as usize)
+    {
+        let negative = digits.starts_with('-');
+        let sign = if negative { "-" } else { "" };
+        let magnitude = digits.trim_start_matches('-');
+        if magnitude.len() > limit {
+            let mut kept = magnitude.as_bytes()[..limit].to_vec();
+            if magnitude.as_bytes()[limit] >= b'5' {
+                for digit in kept.iter_mut().rev() {
+                    if *digit < b'9' {
+                        *digit += 1;
+                        break;
+                    }
+                    *digit = b'0';
+                }
+            }
+            digits = format!(
+                "{sign}{}{}",
+                String::from_utf8_lossy(&kept),
+                "0".repeat(magnitude.len() - limit)
+            );
+        }
+    }
+    let negative = digits.starts_with('-');
+    let sign = if negative { "-" } else { "" };
+    let magnitude = digits.trim_start_matches('-');
+    let separator = if locale.starts_with("de") || locale.starts_with("es") {
+        '.'
+    } else {
+        ','
+    };
+    let mut grouped = String::with_capacity(magnitude.len() + magnitude.len() / 3);
+    for (index, digit) in magnitude.chars().enumerate() {
+        if index > 0 && (magnitude.len() - index) % 3 == 0 {
+            grouped.push(separator);
+        }
+        grouped.push(digit);
+    }
+    let mut result = format!("{sign}{grouped}");
+    if let Some(fraction_digits) = options
+        .and_then(|options| vm.get_prop_with_accessors(options, "minimumFractionDigits").ok())
+        .filter(|value| !value.is_undefined())
+        .and_then(|value| to_number_with_vm(vm, &value).ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map(|value| value as usize)
+    {
+        if fraction_digits != 0 {
+            result.push(if locale.starts_with("de") { ',' } else { '.' });
+            result.extend(std::iter::repeat('0').take(fraction_digits));
+        }
+    }
+    if style == "percent" {
+        result.push_str(if locale.starts_with("de") { "\u{a0}%" } else { "%" });
+    }
+    Ok(result)
+}
+
 fn format_bigint_radix(mut value: BigInt, radix: u32) -> String {
     if value == BigInt::from(0) {
         return "0".into();
@@ -32778,6 +32922,124 @@ fn native_number_to_string(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         return Ok(Value::string_value(out.chars().rev().collect::<String>()));
     }
     Ok(Value::string_value(n.to_string()))
+}
+
+fn native_number_to_locale_string(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::string_value(js_number_to_string(number_this_value(
+        vm, &this,
+    )?)))
+}
+
+const INTL_NUMBER_FORMAT_LOCALE: &str = "\0intl-number-format-locale";
+const INTL_NUMBER_FORMAT_OPTIONS: &str = "\0intl-number-format-options";
+
+fn native_intl_number_format_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    validate_intl_number_format_args(vm, args)?;
+    let locale = args.first().cloned().unwrap_or(Value::Undefined);
+    let result = if this.is_object_like() {
+        this
+    } else {
+        vm.object(None)
+    };
+    vm.set_prop(&result, INTL_NUMBER_FORMAT_LOCALE, locale);
+    vm.set_prop(
+        &result,
+        INTL_NUMBER_FORMAT_OPTIONS,
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+    );
+    vm.set_prop(
+        &result,
+        "format",
+        vm.native_named(native_intl_number_format_format, "format", 1),
+    );
+    Ok(result)
+}
+
+fn validate_intl_number_format_args(vm: &mut Vm, args: &[Value]) -> JsResult<()> {
+    let locale = args.first().cloned().unwrap_or(Value::Undefined);
+    if locale.is_null() {
+        return Err(JsError::Throw(type_error(vm, "invalid locale")));
+    }
+    let locale_tag = if let Some(locale) = locale.as_string() {
+        Some(locale.to_owned())
+    } else if locale.is_object_like() {
+        let length = vm.get_prop_with_accessors(&locale, "length")?;
+        if to_number_with_vm(vm, &length)?.trunc() > 0.0 {
+            let first = vm.get_prop_with_accessors(&locale, "0")?;
+            Some(to_string_with_vm(vm, &first)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if locale_tag
+        .as_deref()
+        .is_some_and(|locale| locale.contains('_') || locale == "i" || locale.is_empty() || locale == "NaN")
+    {
+        return Err(JsError::Throw(range_error(vm, "invalid language tag")));
+    }
+    if let Some(options) = args.get(1).filter(|value| !value.is_undefined()) {
+        if options.is_null() {
+            return Err(JsError::Throw(type_error(vm, "invalid options")));
+        }
+        let locale_matcher = vm.get_prop_with_accessors(options, "localeMatcher")?;
+        if locale_matcher.is_null() {
+            return Err(JsError::Throw(range_error(vm, "invalid localeMatcher")));
+        }
+        let style = vm.get_prop_with_accessors(options, "style")?;
+        if let Some(style) = style.as_string()
+            && !matches!(style.as_str(), "decimal" | "percent" | "currency")
+        {
+            return Err(JsError::Throw(range_error(vm, "invalid style")));
+        }
+        if style.as_string().is_some_and(|style| style == "currency") {
+            let currency = vm.get_prop_with_accessors(options, "currency")?;
+            let valid = currency.as_string().is_some_and(|currency| {
+                currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_alphabetic())
+            });
+            if !valid {
+                return Err(JsError::Throw(range_error(vm, "invalid currency")));
+            }
+        }
+        let maximum_significant_digits =
+            vm.get_prop_with_accessors(options, "maximumSignificantDigits")?;
+        if !maximum_significant_digits.is_undefined() {
+            let digits = to_number_with_vm(vm, &maximum_significant_digits)?;
+            if !digits.is_finite() || digits < 1.0 {
+                return Err(JsError::Throw(range_error(
+                    vm,
+                    "invalid maximumSignificantDigits",
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn native_intl_number_format_format(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let locale = vm.get_prop(&this, INTL_NUMBER_FORMAT_LOCALE);
+    let options = vm.get_prop(&this, INTL_NUMBER_FORMAT_OPTIONS);
+    let format_args = [locale, options];
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if is_bigint_marker(&value) {
+        let number = bigint_value(vm, &value)?;
+        return Ok(Value::string_value(format_bigint_locale(
+            vm,
+            number,
+            &format_args,
+        )?));
+    }
+    let number = to_number_with_vm(vm, &value)?;
+    Ok(Value::string_value(js_number_to_string(number)))
 }
 fn native_boolean(_: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     Ok(Value::Bool(a.first().is_some_and(Value::truthy)))
