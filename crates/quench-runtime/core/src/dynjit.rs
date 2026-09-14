@@ -3812,6 +3812,9 @@ fn construct(
                     super::native_typed_array_constructor,
                     super::native_map_constructor,
                     super::native_set_constructor,
+                    super::native_weak_map_constructor,
+                    super::native_weak_set_constructor,
+                    super::native_dataview_constructor,
                 ),
                 _ => false,
             };
@@ -3833,10 +3836,30 @@ fn construct(
                 vm(frame).object(Some(prototype))
             })
     } else if let Some(function) = callee.as_function_ref() {
-        let prototype = Some(function.prototype);
+        let prototype_value = vm(frame)
+            .get_prop_with_accessors(&callee, "prototype")
+            .unwrap_or(Value::Undefined);
+        let prototype = prototype_value
+            .as_object()
+            .or_else(|| Some(function.prototype.clone()));
+        let prototype_function = prototype_value
+            .is_function()
+            .then_some(prototype_value.clone());
         match constructor_shape {
-            Some(shape) => vm(frame).object_with_shape(prototype, shape),
-            None => vm(frame).object(prototype),
+            Some(shape) => {
+                let object = vm(frame).object_with_shape(prototype, shape);
+                if let Some(prototype_function) = prototype_function {
+                    vm(frame).set_prop(&object, "\0prototype_function", prototype_function);
+                }
+                object
+            }
+            None => {
+                let object = vm(frame).object(prototype);
+                if let Some(prototype_function) = prototype_function {
+                    vm(frame).set_prop(&object, "\0prototype_function", prototype_function);
+                }
+                object
+            }
         }
     } else {
         vm(frame).object(None)
