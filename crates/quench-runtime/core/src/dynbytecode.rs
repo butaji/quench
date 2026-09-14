@@ -669,6 +669,20 @@ impl Compiler {
             span: function.span,
             reason: "function has no body",
         })?;
+        if function
+            .id
+            .as_ref()
+            .is_some_and(|id| contains_var_named(&body.statements, id.name.as_str()))
+        {
+            // The function name is bound in the outer environment while a
+            // same-named `var` belongs to the function body environment.
+            // Keep this lexical distinction on the shared evaluator until
+            // the stencil frame carries both bindings explicitly.
+            return Err(CompileGap {
+                span: function.span,
+                reason: "named function/body var collision deferred to shared semantics",
+            });
+        }
         if contains_nested_lexical_declaration(&body.statements, false) {
             return Err(CompileGap {
                 span: function.span,
@@ -2927,7 +2941,7 @@ fn binding_pattern_name(pattern: &BindingPattern<'static>) -> Option<String> {
     }
 }
 
-fn contains_var_named(statements: &[Statement<'static>], name: &str) -> bool {
+pub(crate) fn contains_var_named(statements: &[Statement<'static>], name: &str) -> bool {
     statements.iter().any(|statement| match statement {
         Statement::VariableDeclaration(declaration)
             if declaration.kind == VariableDeclarationKind::Var =>
