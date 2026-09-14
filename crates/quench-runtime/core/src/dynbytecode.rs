@@ -2015,7 +2015,7 @@ impl Compiler {
                 // intentionally suppresses a ReferenceError. Let the shared
                 // evaluator perform that environment-sensitive lookup until
                 // the stencil carries an explicit unresolvable-name result.
-                if let Expression::Identifier(identifier) = &value.argument
+                if let Expression::Identifier(identifier) = Self::unwrap_parenthesized(&value.argument)
                     && !self.known_names.contains(identifier.name.as_str())
                 {
                     return Err(CompileGap {
@@ -2030,6 +2030,15 @@ impl Compiler {
         };
         self.emit(DynOp::Unary { dst, src, kind }, value.span);
         Ok(dst)
+    }
+
+    fn unwrap_parenthesized<'a>(
+        mut expression: &'a Expression<'static>,
+    ) -> &'a Expression<'static> {
+        while let Expression::ParenthesizedExpression(parenthesized) = expression {
+            expression = &parenthesized.expression;
+        }
+        expression
     }
 
     fn binary_expression(

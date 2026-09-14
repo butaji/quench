@@ -9522,6 +9522,9 @@ impl Vm {
     }
     fn delete_expression<'a>(&mut self, x: &Expression<'a>, e: Env) -> JsResult<Value> {
         match x {
+            Expression::ParenthesizedExpression(parenthesized) => {
+                self.delete_expression(&parenthesized.expression, e)
+            }
             Expression::StaticMemberExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 if matches!(&member.object, Expression::Super(_)) {
