@@ -15913,13 +15913,23 @@ impl Vm {
                     self.assign_simple_target(&v.argument, next.clone(), e)?;
                     return Ok(if v.prefix { next } else { old });
                 }
-                let n = if v.operator == oxc_syntax::operator::UpdateOperator::Increment {
-                    old.number() + 1.0
+                let primitive = if old.is_object_like() {
+                    to_primitive_for_binary(self, &old, PrimitiveHint::Number)?
                 } else {
-                    old.number() - 1.0
+                    old.clone()
+                };
+                let numeric = to_number_with_vm(self, &primitive)?;
+                let n = if v.operator == oxc_syntax::operator::UpdateOperator::Increment {
+                    numeric + 1.0
+                } else {
+                    numeric - 1.0
                 };
                 self.assign_simple_target(&v.argument, Value::Number(n), e)?;
-                Ok(if v.prefix { Value::Number(n) } else { old })
+                Ok(if v.prefix {
+                    Value::Number(n)
+                } else {
+                    Value::Number(numeric)
+                })
             }
             StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
@@ -16354,17 +16364,21 @@ impl Vm {
             SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                 let base = self.eval_expr(&m.object, e.clone())?;
                 let key_value = self.eval_expr(&m.expression, e.clone())?;
+                if base.is_null() || base.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot access computed property of nullish value",
+                    )));
+                }
+                let key = self.to_property_key(key_value)?;
                 if matches!(&m.object, Expression::Super(_)) {
-                    return Ok(LValue::DeferredSuperProp {
+                    return Ok(LValue::SuperProp {
                         base,
                         receiver: Environment::get(&e, "this").unwrap_or(Value::Undefined),
-                        key: key_value,
+                        key,
                     });
                 }
-                Ok(LValue::DeferredProp {
-                    object: base,
-                    key: key_value,
-                })
+                Ok(LValue::Prop(base, key))
             }
             SimpleAssignmentTarget::PrivateFieldExpression(m) => {
                 let base = self.eval_expr(&m.object, e.clone())?;

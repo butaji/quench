@@ -2317,19 +2317,14 @@ impl Compiler {
         &mut self,
         value: &UpdateExpression<'static>,
     ) -> Result<Register, CompileGap> {
-        let target = self.lvalue(&value.argument)?;
-        let old = self.load(&target, value.span)?;
-        let updated = self.alloc()?;
-        self.emit(
-            DynOp::Update {
-                dst: updated,
-                src: old,
-                increment: value.operator == oxc_syntax::operator::UpdateOperator::Increment,
-            },
-            value.span,
-        );
-        self.store(target, updated, value.span)?;
-        Ok(if value.prefix { updated } else { old })
+        // Prefix/postfix results differ for booleans, strings, objects, and
+        // BigInts. Until the stencil carries the original numeric value and
+        // the updated value as separate semantic outputs, defer the whole
+        // operation to the canonical evaluator.
+        return Err(CompileGap {
+            span: value.span,
+            reason: "update expression requires shared numeric coercion",
+        });
     }
 
     fn call_expression(&mut self, value: &CallExpression<'static>) -> Result<Register, CompileGap> {
