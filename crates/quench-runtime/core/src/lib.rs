@@ -15362,14 +15362,17 @@ impl Vm {
         );
         class_env.borrow_mut().declare(
             CLASS_SUPER_PROTOTYPE_ENV_NAME,
-            super_constructor
-                .as_ref()
-                .and_then(|constructor| {
-                    constructor
-                        .as_function_ref()
-                        .map(|function| Value::Object(function.prototype.clone()))
-                })
-                .unwrap_or(Value::Undefined),
+            match super_constructor.as_ref() {
+                None => self
+                    .default_object_prototype()
+                    .map(Value::Object)
+                    .unwrap_or(Value::Undefined),
+                Some(constructor) if constructor.is_null() => Value::Null,
+                Some(constructor) => constructor
+                    .as_function_ref()
+                    .map(|function| Value::Object(function.prototype.clone()))
+                    .unwrap_or(Value::Undefined),
+            },
         );
         class_env
             .borrow_mut()
@@ -19420,6 +19423,25 @@ fn source_contains_import_meta(source: &str) -> bool {
     scan.found
 }
 
+fn source_contains_direct_super_call(source: &str) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            if matches!(call.callee, Expression::Super(_)) {
+                self.found = true;
+            }
+            ast_walk::walk_call_expression(self, call);
+        }
+    }
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+    let mut scan = Scan { found: false };
+    scan.visit_program(&parsed.program);
+    scan.found
+}
+
 struct IdentifierScan<'a> {
     name: &'a str,
     found: bool,
@@ -19770,6 +19792,22 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
 /// module declarations) before any `$DONOTEVALUATE` body can run.
 fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool) -> bool {
     if has_invalid_private_name_reference(program) {
+        return true;
+    }
+    struct PrivateInYieldScan {
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for PrivateInYieldScan {
+        fn visit_private_in_expression(&mut self, expression: &PrivateInExpression<'a>) {
+            if matches!(&expression.right, Expression::Identifier(identifier) if identifier.name == "yield") {
+                self.invalid = true;
+            }
+            ast_walk::walk_private_in_expression(self, expression);
+        }
+    }
+    let mut private_in_yield = PrivateInYieldScan { invalid: false };
+    private_in_yield.visit_program(program);
+    if private_in_yield.invalid {
         return true;
     }
     if strict && program_contains_identifier(program, "yield") {
@@ -21211,6 +21249,7 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
     struct Scan {
         ordinary_function_depth: usize,
         method_base_depth: Vec<(usize, bool)>,
+        field_initializer_depth: usize,
         invalid: bool,
     }
     impl<'a> Visit<'a> for Scan {
@@ -21238,6 +21277,12 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             }
         }
 
+        fn visit_property_definition(&mut self, field: &PropertyDefinition<'a>) {
+            self.field_initializer_depth += 1;
+            ast_walk::walk_property_definition(self, field);
+            self.field_initializer_depth -= 1;
+        }
+
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
             self.ordinary_function_depth += 1;
             ast_walk::walk_function(self, function, flags);
@@ -21248,7 +21293,8 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             // A `super` reference is valid in the method function itself and
             // lexical arrows nested there. Any ordinary/nested function has
             // no [[HomeObject]], even when lexically nested in a method.
-            let method_function = self
+            let method_function = self.field_initializer_depth > 0
+                || self
                 .method_base_depth
                 .last()
                 .is_some_and(|(base, _)| self.ordinary_function_depth == *base + 1);
@@ -21275,6 +21321,7 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
     let mut scan = Scan {
         ordinary_function_depth: 0,
         method_base_depth: Vec::new(),
+        field_initializer_depth: 0,
         invalid: false,
     };
     scan.visit_program(program);
@@ -21594,6 +21641,14 @@ fn native_eval_in_environment(
         return Err(JsError::Throw(syntax_error(
             vm,
             "arguments is not permitted in a class field initializer eval",
+        )));
+    }
+    if nearest_local_binding(&environment, CLASS_FIELD_INITIALIZER_ENV_NAME).is_some()
+        && source_contains_direct_super_call(&eval_source)
+    {
+        return Err(JsError::Throw(syntax_error(
+            vm,
+            "super call is not permitted in a class field initializer eval",
         )));
     }
     if eval_code {
