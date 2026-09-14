@@ -1829,6 +1829,20 @@ impl Compiler {
         &mut self,
         value: &ObjectExpression<'static>,
     ) -> Result<Register, CompileGap> {
+        if value.properties.iter().any(|property| {
+            let ObjectPropertyKind::ObjectProperty(property) = property else {
+                return false;
+            };
+            expression_contains_super(&property.value)
+        }) {
+            // Object-literal methods carry [[HomeObject]] in the enclosing
+            // object construction.  The compact stencil store has no home
+            // object edge, so retain this shape on the canonical evaluator.
+            return Err(CompileGap {
+                span: value.span,
+                reason: "object method home object deferred to shared semantics",
+            });
+        }
         // Legacy `__proto__` has creation-time prototype semantics that are
         // not represented by a property store. Keep this whole literal on
         // the shared semantic evaluator until the stencil IR carries that
@@ -2931,6 +2945,21 @@ fn contains_annex_b_catch_var_redeclaration(statements: &[Statement<'static>]) -
         }
         _ => false,
     })
+}
+
+fn expression_contains_super(expression: &Expression<'static>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_super(&mut self, expression: &Super) {
+            self.found = true;
+            ast_walk::walk_super(self, expression);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_expression(expression);
+    scan.found
 }
 
 fn binding_pattern_name(pattern: &BindingPattern<'static>) -> Option<String> {
