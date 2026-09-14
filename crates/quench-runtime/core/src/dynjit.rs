@@ -2973,9 +2973,10 @@ fn execute(frame: &mut DynFrame, op: &DynOp, next: usize) -> JsResult<usize> {
             let environment = frame.environment.clone();
             let node = unsafe { &**function };
             let closure = vm(frame).make_user(node, environment);
-            if let Some(function) = closure.as_function_ref() {
-                vm(frame).compile_user_function(function, node)?;
-            }
+            // Defer compilation until the first call. Object/class method
+            // installation attaches home-object and constructability facts
+            // immediately after closure creation; eager lowering would miss
+            // those semantic facts.
             put(frame, dst, closure);
         }
         DynOp::MakeArrow { dst, function } => {
