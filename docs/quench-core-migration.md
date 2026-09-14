@@ -83,6 +83,9 @@ Verification completed:
   arrow-function slice remains 55/55 after preserving parameter/body
   environments, lexical `new.target`/`super`, direct-eval conflicts, and
   `Symbol.unscopables`
+- the async-arrow-function expression partition is now fully green at 60/60;
+  async arrows return Promise instances with the `%AsyncFunction.prototype%`
+  chain and share the canonical arrow call path
 - canonical stencil Test262 stage 11 (`language/function-code`) is fully green
   at 217/217; this confirms the same source-boundary early-error and function
   environment machinery across the next language partition
