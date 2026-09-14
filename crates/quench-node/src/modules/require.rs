@@ -1986,11 +1986,38 @@ fn module_syntax_error(filename: &str, source: &str, errors: &[String]) -> VmErr
     VmError::Thrown(error)
 }
 
+/// Optional host capabilities materialized inside a CJS wrapper.
+///
+/// The wrapper itself is one semantic representation; capabilities are data
+/// selected at the host boundary so a fixture that does not use worker
+/// messaging does not pay for (or execute) that setup.
+#[derive(Debug, Clone, Copy)]
+pub struct CjsWrapOptions {
+    pub preserve_worker_globals: bool,
+}
+
+impl Default for CjsWrapOptions {
+    fn default() -> Self {
+        Self {
+            preserve_worker_globals: true,
+        }
+    }
+}
+
 /// Prepare `source` as a CJS module: records the pending module
 /// record and returns the wrapped source. The caller reduces and
 /// executes the result — in-place for nested `require`, in a fresh
 /// frame for the main script (see `quench-node-test`'s runner).
 pub fn wrap_cjs(state: &Rc<RefCell<HostState>>, filename: &str, source: &str) -> String {
+    wrap_cjs_with_options(state, filename, source, CjsWrapOptions::default())
+}
+
+pub fn wrap_cjs_with_options(
+    state: &Rc<RefCell<HostState>>,
+    filename: &str,
+    source: &str,
+    options: CjsWrapOptions,
+) -> String {
     let exports = host_api::object(vec![]);
     let cached_children = execute::get_property(
         &execute::get_property(&cache_object(state), filename),
@@ -2027,7 +2054,12 @@ pub fn wrap_cjs(state: &Rc<RefCell<HostState>>, filename: &str, source: &str) ->
     if has_cjs_strict_directive(source) {
         directive = "\"use strict\";\n";
     }
-    format!("__quench_cjs_wrap__(function (exports, require, module, __filename, __dirname) {{\n{directive}const __quench_worker_threads = require('worker_threads');\nconst __quench_preserved_globals = ['MessageChannel','MessagePort','worker_threads','TypeMismatchError','QuotaExceededError','__nodeCurrentAsyncResource','__nodeCallChecks'];\nfor (let __i = 0; __i < __quench_preserved_globals.length; __i++) {{ const __name = __quench_preserved_globals[__i]; if (__name in globalThis) Object.defineProperty(globalThis, __name, {{ configurable: true, enumerable: false, writable: true, value: globalThis[__name] }}); }}\nObject.defineProperty(globalThis, 'MessageChannel', {{ configurable: true, enumerable: false, writable: true, value: __quench_worker_threads.MessageChannel }});\nObject.defineProperty(globalThis, 'MessagePort', {{ configurable: true, enumerable: false, writable: true, value: __quench_worker_threads.MessagePort }});\n{source}\n}})")
+    let worker_globals = if options.preserve_worker_globals {
+        "const __quench_worker_threads = require('worker_threads');\nconst __quench_preserved_globals = ['MessageChannel','MessagePort','worker_threads','TypeMismatchError','QuotaExceededError','__nodeCurrentAsyncResource','__nodeCallChecks'];\nfor (let __i = 0; __i < __quench_preserved_globals.length; __i++) {{ const __name = __quench_preserved_globals[__i]; if (__name in globalThis) Object.defineProperty(globalThis, __name, {{ configurable: true, enumerable: false, writable: true, value: globalThis[__name] }}); }}\nObject.defineProperty(globalThis, 'MessageChannel', {{ configurable: true, enumerable: false, writable: true, value: __quench_worker_threads.MessageChannel }});\nObject.defineProperty(globalThis, 'MessagePort', {{ configurable: true, enumerable: false, writable: true, value: __quench_worker_threads.MessagePort }});\n"
+    } else {
+        ""
+    };
+    format!("__quench_cjs_wrap__(function (exports, require, module, __filename, __dirname) {{\n{directive}{worker_globals}{source}\n}})")
 }
 
 fn has_cjs_strict_directive(source: &str) -> bool {
