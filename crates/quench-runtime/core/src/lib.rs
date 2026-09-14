@@ -15156,14 +15156,32 @@ impl Vm {
             }
             StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
+                if o.is_null() || o.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        &format!("cannot read property {}", m.property.name),
+                    )));
+                }
                 self.get_prop_with_accessors(&o, m.property.name.as_str())
             }
             PrivateFieldExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
+                if o.is_null() || o.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        &format!("cannot read private property #{}", m.field.name),
+                    )));
+                }
                 self.get_prop_with_accessors(&o, &format!("#{}", m.field.name))
             }
             ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
+                if o.is_null() || o.is_undefined() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot read property of nullish value",
+                    )));
+                }
                 let key_value = self.eval_expr(&m.expression, e)?;
                 let k = self.to_property_key(key_value)?;
                 self.get_prop_with_accessors(&o, &k)
@@ -15510,36 +15528,7 @@ impl Vm {
         };
         match s {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(i) => {
-                let name = i.name.to_string();
-                let mut current = Some(e.clone());
-                while let Some(environment) = current {
-                    let (with_object, has_local, parent) = {
-                        let borrowed = environment.borrow();
-                        (
-                            borrowed.with_object.clone(),
-                            borrowed.names.contains_key(&name)
-                                && !borrowed.deleted_names.contains(&name),
-                            borrowed.parent.clone(),
-                        )
-                    };
-                    if let Some(object) = with_object {
-                        if self.with_binding_allowed(&object, &name)? {
-                            return Ok(LValue::WithProp(object, name));
-                        }
-                        current = parent;
-                        continue;
-                    }
-                    if has_local {
-                        return Ok(LValue::Var(environment, name));
-                    }
-                    current = parent;
-                }
-                // A Reference captures its resolved environment at evaluation
-                // time.  Direct eval may add a `var` binding later, but that
-                // declaration must not retarget an already-created lvalue.
-                // Store the concrete binding environment rather than the
-                // lookup origin so PutValue remains stable across eval.
-                Ok(LValue::UnresolvedVar(e, name))
+                self.resolve_identifier_target(&e, i.name.as_str())
             }
             SimpleAssignmentTarget::StaticMemberExpression(m) => {
                 let base = self.eval_expr(&m.object, e.clone())?;
@@ -15567,6 +15556,35 @@ impl Vm {
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
+    }
+
+    fn resolve_identifier_target(&mut self, e: &Env, name: &str) -> JsResult<LValue> {
+        let mut current = Some(e.clone());
+        while let Some(environment) = current {
+            let (with_object, has_local, parent) = {
+                let borrowed = environment.borrow();
+                (
+                    borrowed.with_object.clone(),
+                    borrowed.names.contains_key(name) && !borrowed.deleted_names.contains(name),
+                    borrowed.parent.clone(),
+                )
+            };
+            if let Some(object) = with_object {
+                if self.with_binding_allowed(&object, name)? {
+                    return Ok(LValue::WithProp(object, name.to_owned()));
+                }
+                current = parent;
+                continue;
+            }
+            if has_local {
+                return Ok(LValue::Var(environment, name.to_owned()));
+            }
+            current = parent;
+        }
+        // A Reference captures its resolved environment at evaluation time.
+        // Direct eval may add a `var` binding later, but that declaration must
+        // not retarget an already-created lvalue.
+        Ok(LValue::UnresolvedVar(e.clone(), name.to_owned()))
     }
     fn read_lvalue(&mut self, target: &LValue) -> JsResult<Value> {
         match target {
@@ -15847,6 +15865,32 @@ impl Vm {
             _ => Err(JsError::Message("target unsupported".into())),
         }
     }
+
+    /// Implement CopyDataProperties for object-rest assignment. Source key
+    /// order, enumerability, accessor reads, and target descriptors all stay
+    /// on the ordinary object protocol rather than being reconstructed by
+    /// each destructuring branch.
+    fn copy_data_properties_for_rest(
+        &mut self,
+        source: &Value,
+        excluded: &[String],
+    ) -> JsResult<Value> {
+        let target = self.ordinary_object();
+        let keys = if proxy_target(source).is_some() {
+            proxy_own_enumerable_keys(self, source)?
+        } else {
+            object_own_enumerable_keys_with_symbols(source)
+        };
+        for key in keys {
+            if excluded.iter().any(|excluded| excluded == &key) {
+                continue;
+            }
+            let value = self.get_prop_with_accessors(source, &key)?;
+            define_spread_property(self, &target, key, value)?;
+        }
+        Ok(target)
+    }
+
     fn assign_target<'a>(&mut self, t: &AssignmentTarget<'a>, v: Value, e: Env) -> JsResult<()> {
         match t {
             AssignmentTarget::ArrayAssignmentTarget(pattern) => {
@@ -15916,11 +15960,23 @@ impl Vm {
                     }
                 }
                 if let Some(rest) = &pattern.rest {
+                    // The rest target reference is evaluated before pulling
+                    // any values from the iterator. This ordering is
+                    // observable when the target throws or contains a
+                    // `yield`, and it also gives IteratorClose a live record
+                    // to close on generator `.return()`.
+                    let prepared_rest =
+                        iterator_try!(self.prepare_rest_target(&rest.target, e.clone()));
                     let mut values = Vec::new();
                     while let Some(value) = iterator_try!(self.iterator_step(&mut record)) {
                         values.push(value);
                     }
-                    self.assign_target(&rest.target, self.array_from_values(values), e)?;
+                    let values = self.array_from_values(values);
+                    if let Some(target) = prepared_rest {
+                        iterator_try!(self.write_lvalue(target, values));
+                    } else {
+                        iterator_try!(self.assign_target(&rest.target, values, e));
+                    }
                 } else if !record.done {
                     self.iterator_close(&record.iterator)?;
                 }
@@ -15934,10 +15990,12 @@ impl Vm {
                         "cannot destructure nullish value",
                     )));
                 }
+                let mut excluded = Vec::new();
                 for property in &pattern.properties {
                     match property {
                         AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
                             let key = property.binding.name.as_str();
+                            excluded.push(key.to_owned());
                             let value = self.get_prop_with_accessors(&v, key)?;
                             let value = if value.is_undefined() {
                                 match property
@@ -15960,10 +16018,24 @@ impl Vm {
                             } else {
                                 value
                             };
-                            Environment::set(&e, key, value);
+                            // Assignment-pattern defaults participate in
+                            // SetFunctionName just like declarations and
+                            // parameter initializers.  Keep this inference
+                            // at the single property-identifier boundary so
+                            // every target form shares the same rule.
+                            if value.is_function()
+                                && let Some(init) = property.init.as_ref()
+                                && is_anonymous_function_definition(init)
+                                && function_name_is_inferable(&value)
+                            {
+                                set_function_name(&value, key);
+                            }
+                            let target = self.resolve_identifier_target(&e, key)?;
+                            self.write_lvalue(target, value)?;
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
                             let key = self.eval_property_key(&property.name, e.clone())?;
+                            excluded.push(key.clone());
                             // Evaluate the assignment target reference before
                             // fetching the source property.  Computed keys
                             // are evaluated now, but ToPropertyKey remains a
@@ -16006,15 +16078,14 @@ impl Vm {
                     }
                 }
                 if let Some(rest) = &pattern.rest {
-                    self.assign_target(&rest.target, self.ordinary_object(), e)?;
+                    let rest_value = self.copy_data_properties_for_rest(&v, &excluded)?;
+                    self.assign_target(&rest.target, rest_value, e)?;
                 }
                 Ok(())
             }
             _ => {
-                let Some(s) = t.as_simple_assignment_target() else {
-                    return Err(JsError::Message("target unsupported".into()));
-                };
-                self.assign_simple_target(s, v, e)
+                let target = self.resolve_target(t, e)?;
+                self.write_lvalue(target, v)
             }
         }
     }
@@ -16111,6 +16182,46 @@ impl Vm {
             _ => None,
         };
         Ok(lvalue)
+    }
+
+    fn prepare_rest_target<'a>(
+        &mut self,
+        target: &AssignmentTarget<'a>,
+        e: Env,
+    ) -> JsResult<Option<LValue>> {
+        match target {
+            AssignmentTarget::AssignmentTargetIdentifier(_) => {
+                Ok(Some(self.resolve_target(target, e)?))
+            }
+            AssignmentTarget::StaticMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e)?;
+                Ok(Some(LValue::Prop(object, member.property.name.to_string())))
+            }
+            AssignmentTarget::ComputedMemberExpression(member) => {
+                let object = self.eval_expr(&member.object, e.clone())?;
+                let key = match self.eval_expr(&member.expression, e) {
+                    Ok(key) => key,
+                    Err(JsError::Yield(value)) => {
+                        let key_expression = unsafe {
+                            std::mem::transmute::<&Expression<'a>, &'static Expression<'static>>(
+                                &member.expression,
+                            )
+                        };
+                        self.sync_generator_pending_yield =
+                            Some(SyncGeneratorPendingYield::DeferredProperty {
+                                object,
+                                key_expression,
+                                value: Value::Undefined,
+                                statement: 0,
+                            });
+                        return Err(JsError::Yield(value));
+                    }
+                    Err(error) => return Err(error),
+                };
+                Ok(Some(LValue::DeferredProp { object, key }))
+            }
+            _ => Ok(None),
+        }
     }
 
     fn evaluate_destructuring_default<'a>(
