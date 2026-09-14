@@ -12930,6 +12930,12 @@ impl Vm {
                 "invalid strict-mode declaration or with statement",
             )));
         }
+        if has_strict_reserved_shorthand(&r.program, effective_strict_mode) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "reserved word used as an object shorthand in strict mode",
+            )));
+        }
         if has_for_in_initializer_early_error(&r.program, effective_strict_mode) {
             return Err(JsError::Throw(syntax_error(
                 self,
@@ -20174,6 +20180,63 @@ fn has_strict_reserved_binding(program: &Program<'_>) -> bool {
                 | "static"
         )
     })
+}
+
+fn has_strict_reserved_shorthand(program: &Program<'_>, inherited_strict: bool) -> bool {
+    const RESERVED: [&str; 9] = [
+        "implements",
+        "interface",
+        "let",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "static",
+        "yield",
+    ];
+    struct Scan {
+        strict_depth: usize,
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.strict_depth += 1;
+            ast_walk::walk_class(self, class);
+            self.strict_depth -= 1;
+        }
+
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let body_strict = function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+            });
+            if body_strict {
+                self.strict_depth += 1;
+            }
+            ast_walk::walk_function(self, function, flags);
+            if body_strict {
+                self.strict_depth -= 1;
+            }
+        }
+
+        fn visit_object_property(&mut self, property: &ObjectProperty<'a>) {
+            if self.strict_depth > 0
+                && property.shorthand
+                && matches!(&property.key, PropertyKey::StaticIdentifier(identifier)
+                    if RESERVED.contains(&identifier.name.as_str()))
+            {
+                self.invalid = true;
+            }
+            ast_walk::walk_object_property(self, property);
+        }
+    }
+    let mut scan = Scan {
+        strict_depth: usize::from(inherited_strict),
+        invalid: false,
+    };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn has_class_strict_name_error(program: &Program<'_>) -> bool {
