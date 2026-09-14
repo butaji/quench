@@ -4081,10 +4081,9 @@ fn inline_opcode(op: &DynOp) -> Option<InlineOpcode> {
             // at the canonical block slow path until external stencil calls
             // are represented as explicit patch obligations.
             Op::Rem => None,
-            Op::Lt => Some(InlineOpcode::Less),
-            Op::Le => Some(InlineOpcode::LessEqual),
-            Op::Gt => Some(InlineOpcode::Greater),
-            Op::Ge => Some(InlineOpcode::GreaterEqual),
+            // Relational operators require ToPrimitive/BigInt/Symbol
+            // semantics; raw f64 comparison is not a valid general stencil.
+            Op::Lt | Op::Le | Op::Gt | Op::Ge => None,
             _ => None,
         },
         DynOp::Jump { .. } => Some(InlineOpcode::Jump),
@@ -4220,19 +4219,27 @@ fn select_direct_opcode_template(op: &DynOp) -> Option<DirectOpcodeTemplate> {
             kind: UnaryKind::Not,
             ..
         } => DirectOpcodeTemplate::Next("quench_dyn_not"),
+        // Equality and relational operators require the VM conversion
+        // protocol (object identity, Symbol, BigInt, and user-defined
+        // ToPrimitive).  Their compact direct stencils only operate on raw
+        // machine words, so keep them on the shared DynOp slow kernel until
+        // those guards are represented explicitly.
+        DynOp::Binary {
+            kind: Op::Eq
+                | Op::Ne
+                | Op::StrictEq
+                | Op::StrictNe
+                | Op::Lt
+                | Op::Le
+                | Op::Gt
+                | Op::Ge,
+            ..
+        } => return None,
         DynOp::Binary { kind, .. } => DirectOpcodeTemplate::Next(match kind {
             Op::Add => "quench_dyn_add",
             Op::Sub => "quench_dyn_subtract",
             Op::Mul => "quench_dyn_multiply",
             Op::Div => "quench_dyn_divide",
-            Op::Lt => "quench_dyn_less",
-            Op::Le => "quench_dyn_less_equal",
-            Op::Gt => "quench_dyn_greater",
-            Op::Ge => "quench_dyn_greater_equal",
-            Op::Eq => "quench_dyn_equal",
-            Op::Ne => "quench_dyn_not_equal",
-            Op::StrictEq => "quench_dyn_strict_equal",
-            Op::StrictNe => "quench_dyn_strict_not_equal",
             Op::Shl => "quench_dyn_shift_left",
             Op::Shr => "quench_dyn_shift_right",
             Op::Ushr => "quench_dyn_shift_right_unsigned",
