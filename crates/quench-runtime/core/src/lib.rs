@@ -362,6 +362,21 @@ const MODULE_IMPORT_REF_NAME_PROP: &str = "\0quench:module-import-name";
 const REALM_GLOBAL_PROP: &str = "\0quench:realm-global";
 const FUNCTION_PROTOTYPE_OVERRIDE_PROP: &str = "\0quench:function-prototype-override";
 const FUNCTION_PROTOTYPE_CHAIN_PROP: &str = "\0quench:function-prototype-chain";
+
+/// Declare the data-method portion of a builtin prototype once.  The
+/// bootstrap has two realm paths (full and reduced), so keeping the method
+/// list as data prevents one path from silently missing a semantic operation.
+macro_rules! install_native_methods {
+    ($vm:expr, $prototype:expr, $( $name:literal => $native:ident / $length:expr ),+ $(,)?) => {{
+        $(
+            $vm.set_prop(
+                &$prototype,
+                $name,
+                $vm.native_named($native, $name, $length),
+            );
+        )+
+    }};
+}
 const PROXY_TARGET_PROP: &str = "\0quench:proxy-target";
 const PROXY_HANDLER_PROP: &str = "\0quench:proxy-handler";
 const PROXY_REVOKED_PROP: &str = "\0quench:proxy-revoked";
@@ -6387,6 +6402,11 @@ impl Vm {
             generator_prototype,
         );
         self.set_prop(
+            &generator_function_prototype,
+            "constructor",
+            constructor.clone(),
+        );
+        self.set_prop(
             &constructor,
             FUNCTION_PROTOTYPE_OVERRIDE_PROP,
             generator_function_prototype.clone(),
@@ -6992,20 +7012,14 @@ impl Vm {
                     .clone();
                 self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
                 if name == "Map" {
-                    self.set_prop(
-                        &Value::Object(prototype.clone()),
-                        "get",
-                        self.native_named(native_map_get, "get", 1),
-                    );
-                    self.set_prop(
-                        &Value::Object(prototype.clone()),
-                        "set",
-                        self.native_named(native_map_set, "set", 2),
-                    );
-                    self.set_prop(
-                        &Value::Object(prototype.clone()),
-                        "has",
-                        self.native_named(native_map_has, "has", 1),
+                    let prototype_value = Value::Object(prototype.clone());
+                    install_native_methods!(
+                        self,
+                        prototype_value,
+                        "get" => native_map_get / 1,
+                        "set" => native_map_set / 2,
+                        "has" => native_map_has / 1,
+                        "delete" => native_map_delete / 1,
                     );
                     self.define_accessor_slot(
                         &Value::Object(prototype.clone()),
@@ -7025,15 +7039,13 @@ impl Vm {
                         self.native_named(native_map_iterator, "entries", 0),
                     );
                 } else {
-                    self.set_prop(
-                        &Value::Object(prototype.clone()),
-                        "add",
-                        self.native_named(native_set_add, "add", 1),
-                    );
-                    self.set_prop(
-                        &Value::Object(prototype.clone()),
-                        "has",
-                        self.native_named(native_set_has, "has", 1),
+                    let prototype_value = Value::Object(prototype.clone());
+                    install_native_methods!(
+                        self,
+                        prototype_value,
+                        "add" => native_set_add / 1,
+                        "has" => native_set_has / 1,
+                        "delete" => native_set_delete / 1,
                     );
                     self.define_accessor_slot(
                         &Value::Object(prototype.clone()),
@@ -7286,14 +7298,19 @@ impl Vm {
             .map(|function| function.prototype.clone())
         {
             self.set_prop(&array_buffer, "prototype", Value::Object(prototype));
-            let prototype = array_buffer
-                .as_function_ref()
-                .expect("ArrayBuffer constructor")
-                .prototype
-                .clone();
-            self.set_prop(
-                &Value::Object(prototype),
-                "resize",
+        let prototype = array_buffer
+            .as_function_ref()
+            .expect("ArrayBuffer constructor")
+            .prototype
+            .clone();
+        self.set_prop(
+            &Value::Object(prototype.clone()),
+            "slice",
+            self.native_named(native_array_buffer_slice, "slice", 2),
+        );
+        self.set_prop(
+            &Value::Object(prototype),
+            "resize",
                 self.native_named(native_array_buffer_resize, "resize", 1),
             );
         }
@@ -7319,16 +7336,17 @@ impl Vm {
                 "BYTES_PER_ELEMENT",
                 Value::Number(bytes as f64),
             );
-            self.set_prop(
-                &constructor,
-                FUNCTION_PROTOTYPE_OVERRIDE_PROP,
-                typed_array_base.clone(),
-            );
             let prototype = constructor
                 .as_function_ref()
                 .expect("typed array constructor")
                 .prototype
                 .clone();
+            if let Some(base_prototype) = typed_array_base
+                .as_function_ref()
+                .map(|function| function.prototype.clone())
+            {
+                prototype.borrow_mut().prototype = Some(base_prototype);
+            }
             self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
             self.set_prop(
                 &Value::Object(prototype.clone()),
@@ -7394,20 +7412,14 @@ impl Vm {
                 .prototype
                 .clone();
             self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
-            self.set_prop(
-                &Value::Object(prototype.clone()),
-                "get",
-                self.native_named(native_map_get, "get", 1),
-            );
-            self.set_prop(
-                &Value::Object(prototype.clone()),
-                "set",
-                self.native_named(native_map_set, "set", 2),
-            );
-            self.set_prop(
-                &Value::Object(prototype),
-                "has",
-                self.native_named(native_map_has, "has", 1),
+            let prototype_value = Value::Object(prototype.clone());
+            install_native_methods!(
+                self,
+                prototype_value,
+                "get" => native_map_get / 1,
+                "set" => native_map_set / 2,
+                "has" => native_map_has / 1,
+                "delete" => native_map_delete / 1,
             );
             let iterator = self.well_known_symbol_key("iterator");
             self.set_prop(
@@ -7425,15 +7437,13 @@ impl Vm {
                 .prototype
                 .clone();
             self.set_prop(&constructor, "prototype", Value::Object(prototype.clone()));
-            self.set_prop(
-                &Value::Object(prototype.clone()),
-                "add",
-                self.native_named(native_set_add, "add", 1),
-            );
-            self.set_prop(
-                &Value::Object(prototype),
-                "has",
-                self.native_named(native_set_has, "has", 1),
+            let prototype_value = Value::Object(prototype.clone());
+            install_native_methods!(
+                self,
+                prototype_value,
+                "add" => native_set_add / 1,
+                "has" => native_set_has / 1,
+                "delete" => native_set_delete / 1,
             );
             let iterator = self.well_known_symbol_key("iterator");
             self.set_prop(
@@ -7453,7 +7463,13 @@ impl Vm {
             "WeakRef",
             "WeakSet",
         ] {
-            let constructor = self.native_named(native_subclassable_builtin, name, 1);
+            let native = match name {
+                "DataView" => native_dataview_constructor,
+                "WeakMap" => native_weak_map_constructor,
+                "WeakSet" => native_weak_set_constructor,
+                _ => native_subclassable_builtin,
+            };
+            let constructor = self.native_named(native, name, 1);
             let prototype = constructor
                 .as_function_ref()
                 .expect("subclassable builtin")
@@ -7465,6 +7481,38 @@ impl Vm {
                 "constructor",
                 constructor.clone(),
             );
+            match name {
+                "WeakMap" => {
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "get",
+                        self.native_named(native_weak_map_get, "get", 1),
+                    );
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "set",
+                        self.native_named(native_weak_map_set, "set", 2),
+                    );
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "has",
+                        self.native_named(native_weak_map_has, "has", 1),
+                    );
+                }
+                "WeakSet" => {
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "add",
+                        self.native_named(native_weak_set_add, "add", 1),
+                    );
+                    self.set_prop(
+                        &Value::Object(prototype.clone()),
+                        "has",
+                        self.native_named(native_weak_set_has, "has", 1),
+                    );
+                }
+                _ => {}
+            }
             Environment::set(&g, name, constructor);
         }
         let json = self.object(None);
@@ -8448,7 +8496,18 @@ impl Vm {
         }
         if let Some(f) = o.as_function_ref() {
             return if k == "prototype" {
-                let override_value = f.props.borrow().get("\0prototype_override").cloned();
+                let override_value = {
+                    let props = f.props.borrow();
+                    props
+                        .get("\0prototype_override")
+                        .cloned()
+                        .or_else(|| props.get(FUNCTION_PROTOTYPE_OVERRIDE_PROP).cloned())
+                        .or_else(|| {
+                            matches!(f.kind, FunctionKind::Bound { .. })
+                                .then(|| props.get("prototype").cloned())
+                                .flatten()
+                        })
+                };
                 if let Some(override_value) = override_value {
                     return override_value;
                 }
@@ -8468,6 +8527,9 @@ impl Vm {
                                 native_typed_array_constructor,
                                 native_map_constructor,
                                 native_set_constructor,
+                                native_weak_map_constructor,
+                                native_weak_set_constructor,
+                                native_dataview_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
                             ) =>
@@ -9483,6 +9545,36 @@ impl Vm {
                 return;
             }
             if k == "prototype" {
+                if matches!(&function.kind, FunctionKind::Bound { .. }) {
+                    // Bound functions are constructable when their target is,
+                    // but they do not have the ordinary internal prototype
+                    // slot.  An assignment therefore creates an ordinary own
+                    // `prototype` property, which GetPrototypeFromConstructor
+                    // must be able to observe for subclassing.
+                    function.props.borrow_mut().insert(k.into(), v);
+                    function
+                        .attributes
+                        .borrow_mut()
+                        .entry(k.into())
+                        .or_insert(PropertyAttributes::DEFAULT);
+                    return;
+                }
+                if matches!(
+                    &function.kind,
+                    FunctionKind::Builtin(_) | FunctionKind::Native(_)
+                ) {
+                    if let Some(source) = v.as_object() {
+                        let source_data = source.borrow().clone();
+                        *function.prototype.borrow_mut() = source_data;
+                        self.invalidate_prototype_membership();
+                    } else {
+                        function
+                            .props
+                            .borrow_mut()
+                            .insert("\0prototype_override".into(), v);
+                    }
+                    return;
+                }
                 if !matches!(&function.kind, FunctionKind::User { .. }) {
                     return;
                 }
@@ -10584,7 +10676,27 @@ impl Vm {
         t: Value,
         a: &A,
     ) -> JsResult<Value> {
-        self.call_arguments_with_ic(c, t, a, None)
+        // Keep proper-tail calls as data and consume the chain at one VM
+        // boundary. Re-entering `call_arguments` from a function activation
+        // would otherwise grow the Rust stack even though the guest call is
+        // semantically tail-positioned.
+        let mut callee = c.clone();
+        let mut receiver = t;
+        let mut args = a.materialize();
+        loop {
+            match self.call_arguments_with_ic(&callee, receiver, args.as_slice(), None) {
+                Err(JsError::TailCall {
+                    callee: next_callee,
+                    receiver: next_receiver,
+                    args: next_args,
+                }) => {
+                    callee = next_callee;
+                    receiver = next_receiver;
+                    args = next_args;
+                }
+                result => return result,
+            }
+        }
     }
 
     fn call_arguments_with_ic<A: CallArguments + ?Sized>(
@@ -11094,6 +11206,10 @@ impl Vm {
         // prototype chain.  Numeric lowering has neither reference, so keep
         // every super-bearing user function on the shared evaluator.
         if function_contains_super(node) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
+        if function_contains_return_call(node) {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
         }
@@ -11617,14 +11733,6 @@ impl Vm {
                 .retain(|(mapped_object, _, _)| mapped_object.as_ptr() != object.as_ptr());
         }
         self.strict_mode = previous_strict_mode;
-        while let Err(JsError::TailCall {
-            callee,
-            receiver,
-            args,
-        }) = result
-        {
-            result = self.call_arguments(&callee, receiver, args.as_slice());
-        }
         result
     }
 
@@ -11688,19 +11796,6 @@ impl Vm {
         if !has_instance_fields {
             return Ok(());
         }
-        // A derived instance contains one field set per class in its chain.
-        // Key the completion marker by the class environment so a base
-        // constructor cannot suppress the derived class's fields.
-        let initialized_key = format!(
-            "{CLASS_FIELDS_INITIALIZED_PROP}:{:x}",
-            Rc::as_ptr(&class_env) as usize
-        );
-        if self
-            .get_prop(receiver, &initialized_key)
-            .truthy()
-        {
-            return Ok(());
-        }
         let field_environment = Environment::new(Some(eval_env));
         field_environment
             .borrow_mut()
@@ -11753,7 +11848,6 @@ impl Vm {
                 &[receiver.clone(), Value::string_value(key), descriptor],
             )?;
         }
-        self.set_prop(receiver, &initialized_key, Value::Bool(true));
         Ok(())
     }
 
@@ -11883,6 +11977,12 @@ impl Vm {
                 this.clone()
             };
             let result = self.call_arguments(&constructor, constructor_this, args.as_slice())?;
+            if is_derived && !result.is_object_like() && !result.is_undefined() {
+                return Err(JsError::Throw(type_error(
+                    self,
+                    "derived constructor must return an object or undefined",
+                )));
+            }
             if super_constructor.is_some()
                 && !result.is_object_like()
                 && !Environment::get(&env, CLASS_CONSTRUCTOR_ENV_NAME)
@@ -11901,6 +12001,25 @@ impl Vm {
             result
         } else if let Some(super_constructor) = super_constructor {
             let result = self.call_arguments(&super_constructor, this.clone(), args.as_slice())?;
+            let result = match super_constructor.as_function_ref().map(|f| &f.kind) {
+                Some(FunctionKind::Builtin(BuiltinId::BooleanConstructor)) => {
+                    self.set_prop(&this, "\0primitive", result);
+                    self.set_prop(&this, "\0wrapper", Value::string_value("Boolean"));
+                    this.clone()
+                }
+                Some(FunctionKind::Builtin(BuiltinId::NumberConstructor)) => {
+                    self.set_prop(&this, "\0primitive", result);
+                    self.set_prop(&this, "\0wrapper", Value::string_value("Number"));
+                    this.clone()
+                }
+                Some(FunctionKind::Builtin(BuiltinId::StringConstructor)) => {
+                    self.set_prop(&this, "\0primitive", result.clone());
+                    self.set_prop(&this, "\0wrapper", Value::string_value("String"));
+                    initialize_string_wrapper(self, &this, &result);
+                    this.clone()
+                }
+                _ => result,
+            };
             self.install_class_private_brands(class, &env, &result)?;
             let field_env = Environment::new(Some(env.clone()));
             field_env.borrow_mut().declare("this", result.clone());
@@ -12071,14 +12190,6 @@ impl Vm {
             self.source_ids.pop();
         }
         self.strict_mode = previous_strict_mode;
-        while let Err(JsError::TailCall {
-            callee,
-            receiver,
-            args,
-        }) = result
-        {
-            result = self.call_arguments(&callee, receiver, args.as_slice());
-        }
         result
     }
     fn run_source(&mut self, p: &Path) -> JsResult<Value> {
@@ -14446,7 +14557,20 @@ impl Vm {
                 Ok(Signal::Empty)
             }
             ExpressionStatement(x) => Ok(Signal::Normal(self.eval_expr(&x.expression, e)?)),
-            BlockStatement(x) => self.exec_stmts(&x.body, Environment::new(Some(e))),
+            BlockStatement(x) => {
+                let block_environment = Environment::new(Some(e));
+                let mut lexical_names = HashSet::new();
+                collect_direct_lexical_names(&x.body, &mut lexical_names);
+                block_environment
+                    .borrow_mut()
+                    .reserve(lexical_names.iter().cloned());
+                {
+                    let mut environment = block_environment.borrow_mut();
+                    environment.lexical_names.extend(lexical_names.iter().cloned());
+                    environment.tdz_names.extend(lexical_names);
+                }
+                self.exec_stmts(&x.body, block_environment)
+            }
             // Labels do not introduce a scope. Re-enter the labeled body when
             // a matching continue signal returns from its loop, and consume a
             // matching break. Other control signals continue outward.
@@ -14709,14 +14833,18 @@ impl Vm {
                     }
                     return Ok(completion.map_or(Signal::Normal(Value::Undefined), Signal::Normal));
                 };
+                // GetIterator obtains the `next` method once for the record;
+                // each iteration invokes that same callable. Re-reading the
+                // property here would expose mutations that the spec does
+                // not observe and can trigger user getters repeatedly.
+                let next = self.get_prop_with_accessors(&iterator, "next")?;
+                if !next.is_function() {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "iterator next method is not callable",
+                    )));
+                }
                 loop {
-                    let next = self.get_prop_with_accessors(&iterator, "next")?;
-                    if !next.is_function() {
-                        return Err(JsError::Throw(type_error(
-                            self,
-                            "iterator next method is not callable",
-                        )));
-                    }
                     let step = self.call_arguments(&next, iterator.clone(), &[] as &[Value])?;
                     if !step.is_object_like() {
                         return Err(JsError::Throw(type_error(
@@ -14917,6 +15045,7 @@ impl Vm {
             FunctionDeclaration(f) => {
                 if !e.borrow().contains_local(MODULE_INSTANTIATED_ENV_NAME)
                     && let Some(i) = &f.id
+                    && !e.borrow().contains_local(i.name.as_str())
                 {
                     let function_environment = if e.borrow().contains_local(EVAL_CODE_ENV_NAME) {
                         variable_environment(&e)
@@ -14937,7 +15066,6 @@ impl Vm {
             ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
                     e.borrow_mut().lexical_names.insert(id.name.to_string());
-                    e.borrow_mut().immutable_names.insert(id.name.to_string());
                     e.borrow_mut().tdz_names.remove(id.name.as_str());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
@@ -14964,7 +15092,6 @@ impl Vm {
             Declaration::ClassDeclaration(class) => {
                 if let Some(id) = &class.id {
                     e.borrow_mut().lexical_names.insert(id.name.to_string());
-                    e.borrow_mut().immutable_names.insert(id.name.to_string());
                     e.borrow_mut().tdz_names.remove(id.name.as_str());
                     let value = self.make_class(class, e.clone())?;
                     e.borrow_mut().declare(id.name.as_str(), value.clone());
@@ -15091,7 +15218,6 @@ impl Vm {
                 ) {
                     environment.immutable_names.insert(name.clone());
                 }
-                environment.tdz_names.remove(&name);
             }
             let inferred_class_name = d
                 .init
@@ -15145,6 +15271,44 @@ impl Vm {
                 // hoisted function declaration). Preserve that existing
                 // value instead of writing undefined during statement pass.
                 continue;
+            }
+            // A `var x = value` executed inside `with (object)` performs the
+            // initializer write through the object environment when `x` is an
+            // existing, non-unscopable property. The var binding is still
+            // hoisted in the variable environment; only this initialization
+            // uses the dynamic reference path.
+            if v.kind == VariableDeclarationKind::Var
+                && d.init.is_some()
+                && let Some(name) = pattern_name(&d.id)
+            {
+                let mut current = Some(e.clone());
+                let mut with_target = None;
+                let variable_scope = variable_environment(&e);
+                while let Some(environment) = current {
+                    if Rc::ptr_eq(&environment, &variable_scope) {
+                        break;
+                    }
+                    let (object, parent) = {
+                        let borrowed = environment.borrow();
+                        (borrowed.with_object.clone(), borrowed.parent.clone())
+                    };
+                    if let Some(object) = object
+                        && self.with_binding_allowed(&object, &name)?
+                    {
+                        with_target = Some(object);
+                        break;
+                    }
+                    current = parent;
+                }
+                if let Some(object) = with_target {
+                    set_assignment_property(self, &object, &name, value)?;
+                    continue;
+                }
+            }
+            if v.kind != VariableDeclarationKind::Var
+                && let Some(name) = pattern_name(&d.id)
+            {
+                e.borrow_mut().tdz_names.remove(&name);
             }
             self.bind_pattern_with_eval_env(&d.id, value.clone(), target, e.clone())?;
             if matches!(
@@ -15579,8 +15743,10 @@ impl Vm {
         iterator: &Value,
         original: JsError,
     ) -> JsResult<T> {
+        let suppress_close_error = matches!(&original, JsError::Throw(_));
         match self.iterator_close(iterator) {
-            Err(close_error) => Err(close_error),
+            Err(close_error) if !suppress_close_error => Err(close_error),
+            Err(_) => Err(original),
             Ok(()) => Err(original),
         }
     }
@@ -15833,6 +15999,9 @@ impl Vm {
         let v = Value::Function(Rc::new(f));
         if !n.generator {
             p.borrow_mut().props.insert("constructor", v.clone());
+            p.borrow_mut()
+                .attributes
+                .insert("constructor".into(), PropertyAttributes::BUILTIN_METHOD);
         }
         if n.r#async {
             if let Some(function) = v.as_function_ref() {
@@ -15897,6 +16066,13 @@ impl Vm {
         // observe the class binding while it is still in its TDZ, then the
         // completed class value, without leaking the outer binding.
         let class_env = Environment::new(Some(outer.clone()));
+        // The class definition's heritage expression is evaluated in the
+        // class's strict lexical context.  Mark it before evaluating the
+        // superclass so function expressions created there acquire strict
+        // restricted `arguments`/`caller` access as required.
+        class_env
+            .borrow_mut()
+            .declare(CLASS_METHOD_STRICT_ENV_NAME, Value::Bool(true));
         if let Some(id) = &n.id {
             let name = id.name.as_str();
             class_env.borrow_mut().lexical_names.insert(name.to_owned());
@@ -15966,9 +16142,6 @@ impl Vm {
         let prototype_handle = prototype
             .as_object()
             .expect("class prototype is an ordinary object");
-        class_env
-            .borrow_mut()
-            .declare(CLASS_METHOD_STRICT_ENV_NAME, Value::Bool(true));
         class_env.borrow_mut().declare(
             CLASS_SUPER_CONSTRUCTOR_ENV_NAME,
             super_constructor.clone().unwrap_or(Value::Undefined),
@@ -16033,12 +16206,19 @@ impl Vm {
         class_env
             .borrow_mut()
             .declare(CLASS_CONSTRUCTOR_ENV_NAME, class.clone());
-        let class_prototype = super_constructor.clone().unwrap_or_else(|| {
-            self.builtin(BuiltinId::FunctionConstructor)
+        let class_prototype = match super_constructor.as_ref() {
+            Some(super_constructor) if super_constructor.is_null() => self
+                .builtin(BuiltinId::FunctionConstructor)
                 .as_function_ref()
                 .map(|function| Value::Object(function.prototype.clone()))
-                .unwrap_or(Value::Null)
-        });
+                .unwrap_or(Value::Null),
+            Some(super_constructor) => super_constructor.clone(),
+            None => self
+                .builtin(BuiltinId::FunctionConstructor)
+                .as_function_ref()
+                .map(|function| Value::Object(function.prototype.clone()))
+                .unwrap_or(Value::Null),
+        };
         self.set_prop(&class, FUNCTION_PROTOTYPE_CHAIN_PROP, class_prototype);
         if let Some(global) =
             self.global_object_for_environment(&self.realm_environment_for_environment(&class_env))
@@ -16271,6 +16451,12 @@ impl Vm {
                     block_environment
                         .borrow_mut()
                         .declare(STATIC_BLOCK_ENV_NAME, Value::Bool(true));
+                    // Static blocks have the class constructor as their home
+                    // object, so `super.x` resolves through its prototype
+                    // (the parent constructor) just like a static method.
+                    block_environment
+                        .borrow_mut()
+                        .declare(CLASS_HOME_OBJECT_ENV_NAME, class.clone());
                     let _ = self.exec_stmts(&block.body, block_environment)?;
                 }
                 ClassElement::PropertyDefinition(field) if field.r#static => {
@@ -17289,6 +17475,9 @@ impl Vm {
             }
             Super(_) => {
                 if let Some(home) = Environment::get(&e, CLASS_HOME_OBJECT_ENV_NAME) {
+                    if home.is_function() {
+                        return Ok(self.get_prop(&home, FUNCTION_PROTOTYPE_CHAIN_PROP));
+                    }
                     return native_object_get_prototype_of(self, Value::Undefined, &[home]);
                 }
                 Ok(
@@ -17821,9 +18010,45 @@ impl Vm {
                     let result = if let Some(function) = callee.as_function_ref()
                         && matches!(function.kind, FunctionKind::Class { .. })
                     {
-                        self.call_class(function, super_this, args)?
+                        self.call_class(function, super_this.clone(), args)?
                     } else {
-                        self.call(callee, super_this, args)?
+                        self.call(callee.clone(), super_this.clone(), args)?
+                    };
+                    // Native primitive constructors are also valid class
+                    // super-constructor targets. Their ordinary call result
+                    // is a primitive, but a `super()` call must initialize
+                    // the already allocated receiver with that primitive's
+                    // wrapper state and continue with the receiver object.
+                    let result = match callee.as_function_ref().map(|f| &f.kind) {
+                        Some(FunctionKind::Builtin(BuiltinId::BooleanConstructor)) => {
+                            self.set_prop(&super_this, "\0primitive", result);
+                            self.set_prop(
+                                &super_this,
+                                "\0wrapper",
+                                Value::string_value("Boolean"),
+                            );
+                            super_this.clone()
+                        }
+                        Some(FunctionKind::Builtin(BuiltinId::NumberConstructor)) => {
+                            self.set_prop(&super_this, "\0primitive", result);
+                            self.set_prop(
+                                &super_this,
+                                "\0wrapper",
+                                Value::string_value("Number"),
+                            );
+                            super_this.clone()
+                        }
+                        Some(FunctionKind::Builtin(BuiltinId::StringConstructor)) => {
+                            self.set_prop(&super_this, "\0primitive", result.clone());
+                            self.set_prop(
+                                &super_this,
+                                "\0wrapper",
+                                Value::string_value("String"),
+                            );
+                            initialize_string_wrapper(self, &super_this, &result);
+                            super_this.clone()
+                        }
+                        _ => result,
                     };
                     // A derived constructor's fields run immediately after
                     // the first successful `super()` and before the next
@@ -17977,10 +18202,12 @@ impl Vm {
                 } else {
                     &c
                 };
-                let prototype = self
-                    .get_prop_with_accessors(prototype_source, "prototype")?
-                    .as_object();
+                let prototype_value = self.get_prop_with_accessors(prototype_source, "prototype")?;
+                let prototype = prototype_value.as_object();
                 let o = self.object(prototype);
+                if prototype_value.is_function() {
+                    self.set_prop(&o, "\0prototype_function", prototype_value);
+                }
                 if matches!(
                     function.kind,
                     FunctionKind::Builtin(BuiltinId::StringConstructor)
@@ -18411,6 +18638,12 @@ impl Vm {
             LValue::PrivateProp(object, key) => {
                 // Private methods/fields never use the sloppy [[Set]]
                 // suppression applied to ordinary properties.
+                if !self.has_own_property_key(&private_target(&object), &Self::private_brand_key(&key)) {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "Cannot write private member",
+                    )));
+                }
                 self.set_prop_with_accessors(&object, &key, v)?;
             }
             LValue::Var(e, name) if self.named_function_binding(&e, &name) => {
@@ -18446,6 +18679,7 @@ impl Vm {
                     return Err(JsError::Throw(reference_error(self, &name)));
                 }
                 Environment::set(&e, &name, v.clone());
+                self.sync_global_binding(&e, &name, v.clone());
                 self.sync_mapped_argument(&e, &name, v);
             }
             LValue::Prop(o, k) => {
@@ -19046,13 +19280,9 @@ impl Vm {
             AssignmentTarget::PrivateFieldExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 let key = self.private_key(member.field.name.as_str(), &e);
-                if !self.has_private_brand(&object, &key) {
-                    return Err(JsError::Throw(type_error_for_environment(
-                        self,
-                        &e,
-                        &format!("Cannot write private member #{}", member.field.name),
-                    )));
-                }
+                // The destructuring source is evaluated before PutValue. A
+                // private-brand check here would incorrectly preempt a
+                // throwing source getter; defer it to write_lvalue.
                 Some(LValue::PrivateProp(object, key))
             }
             _ => None,
@@ -19099,13 +19329,8 @@ impl Vm {
             AssignmentTarget::PrivateFieldExpression(member) => {
                 let object = self.eval_expr(&member.object, e.clone())?;
                 let key = self.private_key(member.field.name.as_str(), &e);
-                if !self.has_private_brand(&object, &key) {
-                    return Err(JsError::Throw(type_error_for_environment(
-                        self,
-                        &e,
-                        &format!("Cannot write private member #{}", member.field.name),
-                    )));
-                }
+                // Validate the private name only when the rest value is
+                // finally written, after the iterator/source completes.
                 Ok(Some(LValue::PrivateProp(object, key)))
             }
             _ => Ok(None),
@@ -20371,6 +20596,63 @@ fn statements_contain_yield(statements: &[Statement<'_>]) -> bool {
     scan.found
 }
 
+/// `ContainsArguments`, `ContainsAwait`, and `ContainsYield` for a class
+/// static block stop at nested function/class boundaries. Keep those three
+/// syntax facts in one small structural scan instead of making each caller
+/// rediscover the same scope rule.
+fn static_block_contains_restricted_syntax(
+    statements: &[Statement<'_>],
+) -> (bool, bool, bool, bool) {
+    struct Scan<'a> {
+        identifier: &'a str,
+        has_identifier: bool,
+        has_yield_identifier: bool,
+        has_await: bool,
+        has_yield: bool,
+    }
+    impl<'a, 'b> Visit<'a> for Scan<'b> {
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            if identifier.name == self.identifier {
+                self.has_identifier = true;
+            }
+            if identifier.name == "yield" {
+                self.has_yield_identifier = true;
+            }
+            ast_walk::walk_identifier_reference(self, identifier);
+        }
+
+        fn visit_await_expression(&mut self, _: &AwaitExpression<'a>) {
+            self.has_await = true;
+        }
+
+        fn visit_yield_expression(&mut self, _: &YieldExpression<'a>) {
+            self.has_yield = true;
+        }
+
+        // Nested executable/class bodies have their own grammar parameter;
+        // their `arguments`, `await`, and `yield` do not belong to the static
+        // block's Contains* computation.
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
+    }
+    let mut scan = Scan {
+        identifier: "arguments",
+        has_identifier: false,
+        has_yield_identifier: false,
+        has_await: false,
+        has_yield: false,
+    };
+    for statement in statements {
+        scan.visit_statement(statement);
+    }
+    (
+        scan.has_identifier,
+        scan.has_await,
+        scan.has_yield,
+        scan.has_yield_identifier,
+    )
+}
+
 fn source_contains_identifier(source: &str, name: &str) -> bool {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
@@ -20531,6 +20813,41 @@ fn function_contains_super(function: &Function<'_>) -> bool {
         fn visit_super(&mut self, expression: &Super) {
             self.found = true;
             ast_walk::walk_super(self, expression);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit_function(function, ScopeFlags::empty());
+    scan.found
+}
+
+/// Stencil call regions currently lower ordinary calls only. A call in a
+/// return position must stay on the evaluator so `JsError::TailCall` can be
+/// consumed by the shared activation loop instead of recursively entering a
+/// compiled frame. This is a semantic capability check, not a benchmark
+/// carve-out: any return-call shape gets the same correct fallback.
+fn function_contains_return_call(function: &Function<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+            if statement.argument.as_ref().is_some_and(|argument| {
+                struct Calls {
+                    found: bool,
+                }
+                impl<'a> Visit<'a> for Calls {
+                    fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+                        self.found = true;
+                        ast_walk::walk_call_expression(self, expression);
+                    }
+                }
+                let mut calls = Calls { found: false };
+                calls.visit_expression(argument);
+                calls.found
+            }) {
+                self.found = true;
+            }
+            ast_walk::walk_return_statement(self, statement);
         }
     }
     let mut scan = Scan { found: false };
@@ -22052,6 +22369,8 @@ fn has_yield_binding_early_error(program: &Program<'_>, inherited_strict: bool) 
         }
 
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            let previous_yield_depth = self.yield_depth;
+            self.yield_depth = usize::from(function.generator && !function.r#async);
             let body_strict = function.body.as_ref().is_some_and(|body| {
                 body.directives
                     .iter()
@@ -22060,13 +22379,8 @@ fn has_yield_binding_early_error(program: &Program<'_>, inherited_strict: bool) 
             if body_strict {
                 self.strict_depth += 1;
             }
-            if function.generator {
-                self.yield_depth += 1;
-            }
             ast_walk::walk_function(self, function, flags);
-            if function.generator {
-                self.yield_depth -= 1;
-            }
+            self.yield_depth = previous_yield_depth;
             if body_strict {
                 self.strict_depth -= 1;
             }
@@ -22328,14 +22642,17 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                             .as_ref()
                             .is_some_and(|value| expression_has_field_error(value)),
                     ),
-                    ClassElement::StaticBlock(block) => (
+                    ClassElement::StaticBlock(block) => {
+                        let (contains_arguments, contains_await, contains_yield, contains_yield_identifier) =
+                            static_block_contains_restricted_syntax(&block.body);
+                        (
                         None,
                         true,
                         1,
-                        statements_contain_identifier(&block.body, "arguments")
-                            || statements_contain_await(&block.body)
-                            || statements_contain_yield(&block.body)
-                            || statements_contain_identifier(&block.body, "yield")
+                        contains_arguments
+                            || contains_await
+                            || contains_yield
+                            || contains_yield_identifier
                             || {
                                 let mut lexical = Vec::new();
                                 for statement in &block.body {
@@ -22363,7 +22680,7 @@ fn has_class_element_early_error(program: &Program<'_>) -> bool {
                                     || lexical.iter().any(|name| vars.iter().any(|var| var == name))
                             },
                         false,
-                    ),
+                    )},
                     _ => (None, false, 1, false, false),
                 };
                 if expression_errors || super_error {
@@ -22588,6 +22905,7 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
         ordinary_function_depth: usize,
         method_base_depth: Vec<(usize, bool)>,
         field_initializer_depth: usize,
+        static_block_depth: usize,
         invalid: bool,
     }
     impl<'a> Visit<'a> for Scan {
@@ -22621,6 +22939,12 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             self.field_initializer_depth -= 1;
         }
 
+        fn visit_static_block(&mut self, block: &StaticBlock<'a>) {
+            self.static_block_depth += 1;
+            ast_walk::walk_static_block(self, block);
+            self.static_block_depth -= 1;
+        }
+
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
             self.ordinary_function_depth += 1;
             ast_walk::walk_function(self, function, flags);
@@ -22631,7 +22955,8 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             // A `super` reference is valid in the method function itself and
             // lexical arrows nested there. Any ordinary/nested function has
             // no [[HomeObject]], even when lexically nested in a method.
-            let method_function = self.field_initializer_depth > 0
+            let method_function = (self.static_block_depth > 0 && self.ordinary_function_depth == 0)
+                || self.field_initializer_depth > 0
                 || self
                     .method_base_depth
                     .last()
@@ -22643,6 +22968,9 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
         }
 
         fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+            if self.static_block_depth > 0 && matches!(expression.callee, Expression::Super(_)) {
+                self.invalid = true;
+            }
             let direct_generator_super = matches!(expression.callee, Expression::Super(_))
                 && self
                     .method_base_depth
@@ -22660,6 +22988,7 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
         ordinary_function_depth: 0,
         method_base_depth: Vec::new(),
         field_initializer_depth: 0,
+        static_block_depth: 0,
         invalid: false,
     };
     scan.visit_program(program);
@@ -24486,6 +24815,8 @@ fn native_noop(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
 
 const MAP_ENTRIES_PROP: &str = "\0map-entries";
 const SET_VALUES_PROP: &str = "\0set-values";
+const WEAK_MAP_ENTRIES_PROP: &str = "\0weak-map-entries";
+const WEAK_SET_VALUES_PROP: &str = "\0weak-set-values";
 
 fn native_map_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     if vm.construct_depth == 0 {
@@ -24555,6 +24886,24 @@ fn native_map_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
             .into_iter()
             .any(|pair| vm.get_prop(&pair, "0").same_bits(&key)),
     ))
+}
+
+fn native_map_delete(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let entries = vm.get_prop(&this, MAP_ENTRIES_PROP);
+    let Some(object) = entries.as_object_ref() else {
+        return Ok(Value::Bool(false));
+    };
+    let index = object
+        .borrow()
+        .array
+        .as_ref()
+        .and_then(|array| array.iter().position(|pair| vm.get_prop(pair, "0").same_bits(&key)));
+    let Some(index) = index else {
+        return Ok(Value::Bool(false));
+    };
+    object.borrow_mut().array.as_mut().expect("map entries array").remove(index);
+    Ok(Value::Bool(true))
 }
 
 fn native_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -24652,6 +25001,24 @@ fn native_set_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     ))
 }
 
+fn native_set_delete(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let values = vm.get_prop(&this, SET_VALUES_PROP);
+    let Some(object) = values.as_object_ref() else {
+        return Ok(Value::Bool(false));
+    };
+    let index = object
+        .borrow()
+        .array
+        .as_ref()
+        .and_then(|array| array.iter().position(|item| item.same_bits(&value)));
+    let Some(index) = index else {
+        return Ok(Value::Bool(false));
+    };
+    object.borrow_mut().array.as_mut().expect("set values array").remove(index);
+    Ok(Value::Bool(true))
+}
+
 fn native_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     if !set_values(vm, &this)
@@ -24681,6 +25048,103 @@ fn native_set_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value>
         vm.get_prop(&this, SET_VALUES_PROP),
         &[],
     ))?
+}
+
+fn native_weak_map_constructor(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(vm, "WeakMap constructor must be called with new")));
+    }
+    let map = if this.is_object_like() { this } else { vm.object(None) };
+    vm.set_prop(&map, WEAK_MAP_ENTRIES_PROP, vm.array_from_values(Vec::new()));
+    Ok(map)
+}
+
+fn weak_map_entries(vm: &Vm, map: &Value) -> Vec<Value> {
+    let entries = vm.get_prop(map, WEAK_MAP_ENTRIES_PROP);
+    entries
+        .as_object_ref()
+        .and_then(|object| object.borrow().array.clone())
+        .map(|array| array.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn native_weak_map_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    Ok(Value::Bool(weak_map_entries(vm, &this).into_iter().any(|pair| {
+        vm.get_prop(&pair, "0").same_bits(&key)
+    })))
+}
+
+fn native_weak_map_get(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    for pair in weak_map_entries(vm, &this) {
+        if vm.get_prop(&pair, "0").same_bits(&key) {
+            return Ok(vm.get_prop(&pair, "1"));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn native_weak_map_set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let entries = vm.get_prop(&this, WEAK_MAP_ENTRIES_PROP);
+    for pair in weak_map_entries(vm, &this) {
+        if vm.get_prop(&pair, "0").same_bits(&key) {
+            vm.set_prop(&pair, "1", value);
+            return Ok(this);
+        }
+    }
+    let length = array_value_length(&entries);
+    vm.set_prop(&entries, &length.to_string(), vm.array_from_values(vec![key, value]));
+    Ok(this)
+}
+
+fn native_weak_set_constructor(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(vm, "WeakSet constructor must be called with new")));
+    }
+    let set = if this.is_object_like() { this } else { vm.object(None) };
+    vm.set_prop(&set, WEAK_SET_VALUES_PROP, vm.array_from_values(Vec::new()));
+    Ok(set)
+}
+
+fn weak_set_values(vm: &Vm, set: &Value) -> Vec<Value> {
+    let values = vm.get_prop(set, WEAK_SET_VALUES_PROP);
+    values
+        .as_object_ref()
+        .and_then(|object| object.borrow().array.clone())
+        .map(|array| array.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn native_weak_set_has(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    Ok(Value::Bool(weak_set_values(vm, &this).into_iter().any(|item| item.same_bits(&value))))
+}
+
+fn native_weak_set_add(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if !weak_set_values(vm, &this).into_iter().any(|item| item.same_bits(&value)) {
+        let values = vm.get_prop(&this, WEAK_SET_VALUES_PROP);
+        let length = array_value_length(&values);
+        vm.set_prop(&values, &length.to_string(), value);
+    }
+    Ok(this)
+}
+
+fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(vm, "DataView constructor must be called with new")));
+    }
+    let buffer = args.first().cloned().unwrap_or(Value::Undefined);
+    if !buffer.as_object_ref().is_some_and(|object| object.borrow().props.contains_key("\0array-buffer")) {
+        return Err(JsError::Throw(type_error(vm, "DataView buffer is not an ArrayBuffer")));
+    }
+    let view = if this.is_object_like() { this } else { vm.object(None) };
+    vm.set_prop(&view, "\0dataview-buffer", buffer.clone());
+    vm.set_prop(&view, "buffer", buffer);
+    Ok(view)
 }
 
 fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -24766,6 +25230,40 @@ fn native_array_buffer_resize(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
         vm.set_prop(&data, "length", Value::Number(0.0));
     }
     Ok(Value::Undefined)
+}
+
+fn native_array_buffer_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let Some(source) = this.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    };
+    if !source.borrow().props.contains_key("\0array-buffer") {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    }
+    let length = vm.get_prop(&this, "byteLength").number().max(0.0) as usize;
+    let start = args.first().map(|value| value.number()).unwrap_or(0.0);
+    let end = args.get(1).map(|value| value.number()).unwrap_or(length as f64);
+    let normalize = |value: f64, default_end: usize| {
+        let value = if value.is_nan() { 0.0 } else { value.trunc() };
+        if value < 0.0 {
+            (default_end as f64 + value).max(0.0) as usize
+        } else {
+            value.min(default_end as f64).max(0.0) as usize
+        }
+    };
+    let first = normalize(start, length);
+    let last = normalize(end, length);
+    let count = last.saturating_sub(first);
+    let prototype = source.borrow().prototype.clone();
+    let result = vm.object(prototype);
+    let data = vm.get_prop(&this, ARRAY_BUFFER_DATA);
+    let copied = (0..count)
+        .map(|index| vm.get_prop(&data, &(first + index).to_string()))
+        .collect::<Vec<_>>();
+    vm.set_prop(&result, "byteLength", Value::Number(count as f64));
+    vm.set_prop(&result, "maxByteLength", Value::Number(count as f64));
+    vm.set_prop(&result, "\0array-buffer", Value::Bool(true));
+    vm.set_prop(&result, ARRAY_BUFFER_DATA, vm.array_from_values(copied));
+    Ok(result)
 }
 
 fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -24938,13 +25436,10 @@ fn native_typed_array_fill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
 
 fn native_sync_generator_constructor(
     vm: &mut Vm,
-    _this: Value,
-    _args: &[Value],
+    this: Value,
+    args: &[Value],
 ) -> JsResult<Value> {
-    Err(JsError::Throw(type_error(
-        vm,
-        "GeneratorFunction constructor is not directly callable",
-    )))
+    dynamic_function_constructor(vm, this, args, "function *")
 }
 
 fn generator_result(vm: &mut Vm, value: Value, done: bool) -> Value {
@@ -26615,6 +27110,12 @@ fn native_throw_type_error(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value
     )))
 }
 fn native_symbol(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.current_new_target.is_some() {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "Symbol is not a constructor",
+        )));
+    }
     let no_description = args.first().is_none_or(Value::is_undefined);
     let description = match args.first() {
         None => String::new(),
@@ -30127,15 +30628,26 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     }
     let prototype_override = new_target
         .as_function_ref()
-        .and_then(|function| function.props.borrow().get("\0prototype_override").cloned());
+        .and_then(|function| {
+            let props = function.props.borrow();
+            props
+                .get("\0prototype_override")
+                .cloned()
+                .or_else(|| props.get(FUNCTION_PROTOTYPE_OVERRIDE_PROP).cloned())
+        });
+    let prototype_value = if let Some(value) = prototype_override.clone() {
+        value
+    } else {
+        vm.get_prop_with_accessors(&new_target, "prototype")?
+    };
+    let prototype_function = prototype_value
+        .is_function()
+        .then_some(prototype_value.clone());
     let explicit_prototype = prototype_override
         .clone()
         .and_then(|value| value.as_object());
     let ordinary_prototype = if prototype_override.is_none() {
-        Some(match vm.get_prop_with_accessors(&new_target, "prototype") {
-            Ok(value) => value,
-            Err(error) => return Err(error),
-        })
+        Some(prototype_value.clone())
     } else {
         None
     };
@@ -30162,6 +30674,9 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                 .map(|function| function.prototype.clone())
         });
     let object = vm.object(prototype);
+    if let Some(prototype_function) = prototype_function {
+        vm.set_prop(&object, "\0prototype_function", prototype_function);
+    }
     let previous_new_target = vm.current_new_target.replace(new_target.clone());
     vm.construct_depth = vm.construct_depth.saturating_add(1);
     let call_result = vm.call(target.clone(), object.clone(), arguments);
@@ -31416,7 +31931,7 @@ fn native_string(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
         } else {
             to_string_with_vm(vm, &primitive)?
         }
-    }))
+        }))
 }
 
 fn symbol_display_string(value: &Value) -> String {
@@ -31700,7 +32215,9 @@ fn dynamic_function_constructor(
     if let Some(global) = constructor_realm_global.as_ref() {
         vm.set_prop(&result, REALM_GLOBAL_PROP, global.clone());
     }
-    if let Some(new_target) = vm.current_new_target.clone() {
+    if prefix != "function *"
+        && let Some(new_target) = vm.current_new_target.clone()
+    {
         let fallback_constructor = if prefix == "async function*" {
             vm.async_constructor_for_realm(true, new_target_realm_global.clone())
         } else if prefix == "async function" {
@@ -34511,6 +35028,17 @@ fn native_object_define_property(vm: &mut Vm, _: Value, args: &[Value]) -> JsRes
         };
         let getter = getter.and_then(|value| (!value.is_undefined()).then_some(value));
         let setter = setter.and_then(|value| (!value.is_undefined()).then_some(value));
+        if let Some(index) = array_index_key(&key)
+            && let Some(object) = target.as_object_ref()
+        {
+            let mut object = object.borrow_mut();
+            if let Some(array) = object.array.as_mut()
+                && index <= MAX_MATERIALIZED_ARRAY_LENGTH
+                && array.len() <= index
+            {
+                array.resize(index + 1, Value::Undefined);
+            }
+        }
         vm.define_accessor_slot(target, &key, getter, setter, attributes);
         return Ok(target.clone());
     }
@@ -36916,9 +37444,10 @@ fn native_object_property_is_enumerable(
     Ok(Value::Bool(enumerable))
 }
 fn native_object_is_prototype_of(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let Some(this_object) = this.as_object() else {
+    let this_object = this.as_object();
+    if !this.is_object_like() {
         return Ok(Value::Bool(false));
-    };
+    }
     let mut current = if let Some(target) = args.first().and_then(Value::as_object_ref) {
         target.borrow().prototype.clone()
     } else if args.first().is_some_and(Value::is_function) {
@@ -36933,13 +37462,18 @@ fn native_object_is_prototype_of(vm: &mut Vm, this: Value, args: &[Value]) -> Js
         None
     };
     while let Some(prototype) = current {
-        if prototype == this_object
+        if this_object.as_ref().is_some_and(|this_object| prototype == *this_object)
             || prototype
                 .borrow()
                 .props
                 .get("\0prototype_alias")
                 .and_then(Value::as_object)
-                == Some(this_object)
+                == this_object
+            || prototype
+                .borrow()
+                .props
+                .get("\0prototype_function")
+                .is_some_and(|value| value.same_bits(&this))
         {
             return Ok(Value::Bool(true));
         }
