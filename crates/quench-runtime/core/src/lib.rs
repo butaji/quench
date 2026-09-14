@@ -20682,10 +20682,45 @@ fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
                 Statement::ForOfStatement(statement) => {
                     block_error(std::slice::from_ref(&statement.body))
                 }
-                Statement::SwitchStatement(statement) => statement
-                    .cases
-                    .iter()
-                    .any(|case| block_error(&case.consequent)),
+                Statement::SwitchStatement(statement) => {
+                    let mut names = HashSet::new();
+                    let duplicate = statement
+                        .cases
+                        .iter()
+                        .flat_map(|case| case.consequent.iter())
+                        .filter_map(|statement| match statement {
+                            Statement::VariableDeclaration(declaration)
+                                if declaration.kind != VariableDeclarationKind::Var => Some(
+                                    declaration
+                                        .declarations
+                                        .iter()
+                                        .filter_map(|declarator| pattern_name(&declarator.id))
+                                        .collect::<Vec<_>>(),
+                                ),
+                            Statement::ClassDeclaration(class) => Some(
+                                class
+                                    .id
+                                    .as_ref()
+                                    .map(|id| vec![id.name.to_string()])
+                                    .unwrap_or_default(),
+                            ),
+                            Statement::FunctionDeclaration(function) => Some(
+                                function
+                                    .id
+                                    .as_ref()
+                                    .map(|id| vec![id.name.to_string()])
+                                    .unwrap_or_default(),
+                            ),
+                            _ => None,
+                        })
+                        .flatten()
+                        .any(|name| !names.insert(name));
+                    duplicate
+                        || statement
+                            .cases
+                            .iter()
+                            .any(|case| block_error(&case.consequent))
+                }
                 Statement::TryStatement(statement) => {
                     block_error(&statement.block.body)
                         || statement
