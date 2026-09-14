@@ -14625,7 +14625,7 @@ impl Vm {
                 // a copied local value for a `with` name: getters, Proxy
                 // [[HasProperty]], and deletes are observable at each read.
                 if self.with_binding_allowed(&object, name)? {
-                    return Ok(self.get_prop(&object, name));
+                    return Ok(self.get_prop_with_accessors(&object, name)?);
                 }
                 current = parent;
                 continue;
@@ -14662,12 +14662,25 @@ impl Vm {
             if let Some(object) = with_object
                 && self.has_property_with_proxy(&object, name)?
             {
-                return Ok(self.get_prop(&object, name));
+                return Ok(self.get_prop_with_accessors(&object, name)?);
             }
             current = parent;
         }
         let result = Environment::get(e, name);
         result.ok_or_else(|| JsError::Throw(reference_error(self, name)))
+    }
+
+    fn resolve_identifier_call(
+        &mut self,
+        environment: &Env,
+        name: &str,
+    ) -> JsResult<(Value, Option<Value>)> {
+        let target = self.resolve_identifier_target(environment, name)?;
+        if let LValue::WithProp(object, key) = target {
+            let value = self.get_prop_with_accessors(&object, &key)?;
+            return Ok((value, Some(object)));
+        }
+        Ok((self.resolve_identifier(environment, name)?, None))
     }
 
     fn with_binding_allowed(&mut self, object: &Value, name: &str) -> JsResult<bool> {
@@ -15365,7 +15378,13 @@ impl Vm {
                         },
                     )
                 } else {
-                    (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
+                    if let Expression::Identifier(identifier) = &v.callee {
+                        let (callee, receiver) =
+                            self.resolve_identifier_call(&e, identifier.name.as_str())?;
+                        (receiver.unwrap_or(Value::Undefined), callee)
+                    } else {
+                        (Value::Undefined, self.eval_expr(&v.callee, e.clone())?)
+                    }
                 };
                 let args = self.eval_args(&v.arguments, e.clone())?;
                 if c.as_function_ref().is_some_and(|function| {
