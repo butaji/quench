@@ -9949,6 +9949,33 @@ impl Vm {
                 configurable: true,
             },
         );
+        // Non-strict simple parameter lists use a mapped arguments object;
+        // generator activations must retain the same aliasing while paused,
+        // not just ordinary function calls.
+        let mapped_parameter_list = !strict
+            && node.params.rest.is_none()
+            && node.params.items.iter().all(|parameter| {
+                parameter.initializer.is_none()
+                    && matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+            });
+        if mapped_parameter_list {
+            let mut environment = e.borrow_mut();
+            environment.arguments_object = Some(av.clone());
+            let mut mapped_names = vec![String::new(); node.params.items.len()];
+            for (index, parameter) in node.params.items.iter().enumerate() {
+                if let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern {
+                    mapped_names[index] = identifier.name.to_string();
+                    environment
+                        .arguments_map
+                        .insert(identifier.name.to_string(), index);
+                }
+            }
+            if let Some(object) = av.as_object() {
+                self.mapped_arguments
+                    .borrow_mut()
+                    .push((object, e.clone(), mapped_names));
+            }
+        }
         e.borrow_mut().declare("arguments", av.clone());
         e.borrow_mut().declare(FUNCTION_ENV_NAME, Value::Bool(true));
         e.borrow_mut().declare(
@@ -10019,7 +10046,9 @@ impl Vm {
             next_statement: 0,
             done: false,
             async_generator: false,
-            mapped_arguments_object: None,
+            mapped_arguments_object: mapped_parameter_list.then(|| {
+                av.as_object().expect("arguments object must be an object")
+            }),
             pending_iterators: Vec::new(),
             pending_yield: None,
             replay_values: Vec::new(),
@@ -10032,8 +10061,20 @@ impl Vm {
         this: Value,
         args: Vec<Value>,
     ) -> JsResult<Value> {
-        let continuation = self.prepare_sync_generator_activation(function, this, args)?;
-        let iterator = self.object(None);
+        let continuation = self.prepare_sync_generator_activation(function.clone(), this, args)?;
+        // Generator instances use the constructor's current `prototype`
+        // value when it is an object, with the realm generator prototype as
+        // the fallback required by GetPrototypeFromConstructor.
+        let default_prototype = self
+            .get_prop(&self.sync_generator_constructor(), "prototype")
+            .as_object()
+            .map(|prototype| self.get_prop(&Value::Object(prototype), "prototype"))
+            .and_then(|value| value.as_object());
+        let instance_prototype = self
+            .get_prop(&function, "prototype")
+            .as_object()
+            .or(default_prototype);
+        let iterator = self.object(instance_prototype);
         self.set_prop(&iterator, SYNC_GENERATOR_INSTANCE_PROP, Value::Bool(true));
         self.set_prop(&iterator, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
         self.set_prop(
@@ -10197,6 +10238,13 @@ impl Vm {
         continuation.pending_iterators = std::mem::take(&mut self.sync_generator_iterators);
         continuation.pending_yield = self.sync_generator_pending_yield.take();
         continuation.replay_values = std::mem::take(&mut self.sync_generator_replay_values);
+        if continuation.done
+            && let Some(object) = continuation.mapped_arguments_object.take()
+        {
+            self.mapped_arguments
+                .borrow_mut()
+                .retain(|(mapped, _, _)| mapped.as_ptr() != object.as_ptr());
+        }
         self.sync_generator_replay_value = None;
         self.sync_generator_resume = None;
         self.sync_generator_yielding = false;
@@ -15068,7 +15116,9 @@ impl Vm {
             source_id: self.source_ids.last().copied(),
         };
         let v = Value::Function(Rc::new(f));
-        p.borrow_mut().props.insert("constructor", v.clone());
+        if !n.generator {
+            p.borrow_mut().props.insert("constructor", v.clone());
+        }
         if n.r#async {
             if let Some(function) = v.as_function_ref() {
                 function.props.borrow_mut().insert(
