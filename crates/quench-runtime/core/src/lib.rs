@@ -10498,7 +10498,12 @@ impl Vm {
     ) {
         if let Some(function) = object.as_function_ref() {
             let mut props = function.props.borrow_mut();
-            props.shift_remove(key);
+            // Keep the original slot when a data property becomes an
+            // accessor.  [[OwnPropertyKeys]] is chronological by creation,
+            // not by the latest descriptor shape.
+            if props.contains_key(key) {
+                props.insert(key.to_owned(), Value::Undefined);
+            }
             let get_slot = accessor_slot("get", key);
             let set_slot = accessor_slot("set", key);
             if let Some(getter) = getter {
@@ -10521,7 +10526,9 @@ impl Vm {
             let mut regexp = regexp.borrow_mut();
             let get_slot = accessor_slot("get", key);
             let set_slot = accessor_slot("set", key);
-            regexp.props.shift_remove(key);
+            if regexp.props.contains_key(key) {
+                regexp.props.insert(key.to_owned(), Value::Undefined);
+            }
             if let Some(getter) = getter {
                 regexp.props.insert(get_slot, getter);
             } else if regexp.props.contains_key(&get_slot) {
@@ -10541,10 +10548,13 @@ impl Vm {
         let mut object = object.borrow_mut();
         let get_slot = accessor_slot("get", key);
         let set_slot = accessor_slot("set", key);
-        // An accessor definition replaces an existing data property.  Keep
-        // the property table in one canonical shape so [[Get]] cannot see a
-        // stale data value before consulting the new getter.
-        object.props.shift_remove(key);
+        // An accessor definition replaces an existing data property. Keep its
+        // original slot so [[OwnPropertyKeys]] remains chronological, while
+        // clearing the value prevents raw internal reads from seeing stale
+        // data before the accessor path runs.
+        if object.props.contains_key(key) {
+            object.props.insert(key, Value::Undefined);
+        }
         if let Some(getter) = getter {
             object.props.insert(&get_slot, getter);
         } else if object.props.contains_key(&get_slot) {
