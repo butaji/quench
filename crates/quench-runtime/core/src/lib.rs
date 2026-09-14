@@ -32950,7 +32950,37 @@ fn dynamic_function_strict_early_error(parameters: &str, body: &str) -> bool {
 }
 
 fn dynamic_function_body_early_error(program: &Program<'_>) -> bool {
-    has_strict_var_or_with_early_error(program, true) || has_function_early_error(program, true)
+    let strict = program.body.iter().find_map(|statement| {
+        let Statement::FunctionDeclaration(function) = statement else {
+            return None;
+        };
+        Some(function.body.as_ref().is_some_and(|body| {
+            body.directives
+                .iter()
+                .any(|directive| directive.directive.as_str() == "use strict")
+        }))
+    }) == Some(true);
+    if !strict {
+        return false;
+    }
+    has_strict_var_or_with_early_error(program, true)
+        || dynamic_function_reserved_assignment(program)
+}
+
+fn dynamic_function_reserved_assignment(program: &Program<'_>) -> bool {
+    struct Scan {
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
+            self.invalid |= assignment_target_contains_strict_reserved(&expression.left)
+                || assignment_target_contains_strict_yield(&expression.left);
+            ast_walk::walk_assignment_expression(self, expression);
+        }
+    }
+    let mut scan = Scan { invalid: false };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn normalize_hashbang(source: &str) -> String {
