@@ -544,6 +544,18 @@ fn reduce_binary(
     let Expression::BinaryExpression(binary) = expression else {
         return None;
     };
+    // The integer stencil only accepts proven Number operands.  Object
+    // coercion, Symbol errors, BigInt mixing, and user-defined valueOf all
+    // belong to the canonical VM reducer, so leave this operator family to
+    // the shared semantic fallback until an explicit guard is present.
+    if matches!(
+        binary.operator,
+        oxc::syntax::operator::BinaryOperator::BitwiseAnd
+            | oxc::syntax::operator::BinaryOperator::BitwiseOR
+            | oxc::syntax::operator::BinaryOperator::BitwiseXOR
+    ) {
+        return None;
+    }
     if matches!(
         binary.operator,
         oxc::syntax::operator::BinaryOperator::ShiftLeft
