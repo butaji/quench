@@ -12424,6 +12424,12 @@ impl Vm {
                 "invalid function parameter list",
             )));
         }
+        if effective_strict_mode && has_strict_var_or_with_early_error(&r.program) {
+            return Err(JsError::Throw(syntax_error(
+                self,
+                "invalid strict-mode declaration or with statement",
+            )));
+        }
         if has_for_in_initializer_early_error(&r.program, effective_strict_mode) {
             return Err(JsError::Throw(syntax_error(
                 self,
@@ -16929,6 +16935,65 @@ fn collect_strict_eval_var_names(
             _ => {}
         }
     }
+}
+
+fn has_strict_var_or_with_early_error(program: &Program<'_>) -> bool {
+    let mut names = Vec::new();
+    collect_strict_eval_var_names(&program.body, &mut names, true);
+    if names
+        .iter()
+        .any(|name| strict_assignment_reserved_name!(name.as_str()) || name == "await")
+    {
+        return true;
+    }
+    fn contains_with(statements: &[Statement<'_>]) -> bool {
+        statements.iter().any(|statement| match statement {
+            Statement::WithStatement(_) => true,
+            Statement::BlockStatement(block) => contains_with(&block.body),
+            Statement::IfStatement(statement) => {
+                contains_with(std::slice::from_ref(&statement.consequent))
+                    || statement
+                        .alternate
+                        .as_ref()
+                        .is_some_and(|alternate| contains_with(std::slice::from_ref(alternate)))
+            }
+            Statement::WhileStatement(statement) => {
+                contains_with(std::slice::from_ref(&statement.body))
+            }
+            Statement::DoWhileStatement(statement) => {
+                contains_with(std::slice::from_ref(&statement.body))
+            }
+            Statement::ForStatement(statement) => {
+                contains_with(std::slice::from_ref(&statement.body))
+            }
+            Statement::ForInStatement(statement) => {
+                contains_with(std::slice::from_ref(&statement.body))
+            }
+            Statement::ForOfStatement(statement) => {
+                contains_with(std::slice::from_ref(&statement.body))
+            }
+            Statement::LabeledStatement(statement) => {
+                contains_with(std::slice::from_ref(&statement.body))
+            }
+            Statement::SwitchStatement(statement) => statement
+                .cases
+                .iter()
+                .any(|case| contains_with(&case.consequent)),
+            Statement::TryStatement(statement) => {
+                contains_with(&statement.block.body)
+                    || statement
+                        .handler
+                        .as_ref()
+                        .is_some_and(|handler| contains_with(&handler.body.body))
+                    || statement
+                        .finalizer
+                        .as_ref()
+                        .is_some_and(|finalizer| contains_with(&finalizer.body))
+            }
+            _ => false,
+        })
+    }
+    contains_with(&program.body)
 }
 
 fn collect_script_binding_names(statements: &[Statement<'_>], names: &mut Vec<String>) {
