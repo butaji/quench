@@ -1815,12 +1815,27 @@ impl Compiler {
         &mut self,
         value: &ObjectExpression<'static>,
     ) -> Result<Register, CompileGap> {
+        // Legacy `__proto__` has creation-time prototype semantics that are
+        // not represented by a property store. Keep this whole literal on
+        // the shared semantic evaluator until the stencil IR carries that
+        // declarative operation explicitly.
+        if value.properties.iter().any(|property| {
+            matches!(property, ObjectPropertyKind::ObjectProperty(property)
+                if super::is_legacy_proto_property(property))
+        }) {
+            return Err(CompileGap {
+                span: value.span,
+                reason: "legacy __proto__ object literal requires semantic evaluation",
+            });
+        }
         let aggregate_keys = value
             .properties
             .iter()
             .map(|property| match property {
                 ObjectPropertyKind::ObjectProperty(property)
-                    if property.kind == PropertyKind::Init && !property.computed =>
+                    if property.kind == PropertyKind::Init
+                        && !property.computed
+                        && !super::is_legacy_proto_property(property) =>
                 {
                     Some(prop_key(&property.key))
                 }
