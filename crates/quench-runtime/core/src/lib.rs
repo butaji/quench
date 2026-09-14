@@ -5910,6 +5910,7 @@ struct Vm {
     coverage_output: Option<PathBuf>,
     jit_mode: JitMode,
     array_proto: Option<ObjectHandle>,
+    array_iterator_proto: Option<ObjectHandle>,
     regexp_iterator_proto: Option<ObjectHandle>,
     string_iterator_proto: Option<ObjectHandle>,
     prototype_epoch: Cell<u64>,
@@ -6095,6 +6096,7 @@ impl Vm {
             coverage_output: env::var_os("QUENCH_STENCIL_COVERAGE").map(PathBuf::from),
             jit_mode: JitMode::from_environment(),
             array_proto: None,
+            array_iterator_proto: None,
             regexp_iterator_proto: None,
             string_iterator_proto: None,
             prototype_epoch: Cell::new(INITIAL_PROTOTYPE_EPOCH),
@@ -7818,6 +7820,34 @@ impl Vm {
                 iterator.clone(),
             );
             self.set_prop(&prototype, "values", iterator);
+            let array_iterator_prototype = self.object_value(Object::ordinary(None));
+            let next = self.native_named(native_array_iterator_next, "next", 0);
+            self.mark_nonconstructable(&next);
+            self.set_prop(&array_iterator_prototype, "next", next);
+            set_property_attributes(
+                &array_iterator_prototype,
+                "next",
+                PropertyAttributes::BUILTIN_METHOD,
+            );
+            let iterator_method = self.native_named(native_iterator_self, "[Symbol.iterator]", 0);
+            self.mark_nonconstructable(&iterator_method);
+            self.set_prop(&array_iterator_prototype, &iterator_key, iterator_method);
+            let tag_key = self.well_known_symbol_key("toStringTag");
+            self.set_prop(
+                &array_iterator_prototype,
+                &tag_key,
+                Value::string_value("Array Iterator"),
+            );
+            set_property_attributes(
+                &array_iterator_prototype,
+                &tag_key,
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+            self.array_iterator_proto = array_iterator_prototype.as_object();
             let unscopables = self.object_value(Object::ordinary(None));
             for key in [
                 "at",
@@ -26590,17 +26620,23 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
                 vec![Value::Number(0.0); length.floor() as usize]
             }
             Some(value) => {
-                let length = vm
-                    .get_prop_with_accessors(value, "length")
-                    .ok()
-                    .map(|v| v.number().max(0.0).min(9_007_199_254_740_991.0) as usize);
-                let length = length.unwrap_or(0);
-                (0..length)
-                    .map(|index| {
-                        vm.get_prop_with_accessors(value, &index.to_string())
-                            .unwrap_or(Value::Undefined)
-                    })
-                    .collect()
+                let iterator_key = vm.well_known_symbol_key("iterator");
+                let iterator_method = vm.get_prop_with_accessors(value, &iterator_key)?;
+                if iterator_method.is_function() {
+                    vm.iterable_values(value)?
+                } else {
+                    let length = vm
+                        .get_prop_with_accessors(value, "length")?
+                        .number()
+                        .max(0.0)
+                        .min(9_007_199_254_740_991.0) as usize;
+                    (0..length)
+                        .map(|index| {
+                            vm.get_prop_with_accessors(value, &index.to_string())
+                                .unwrap_or(Value::Undefined)
+                        })
+                        .collect()
+                }
             }
             None => Vec::new(),
         },
@@ -26645,7 +26681,11 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
         TYPED_ARRAY_OFFSET,
         Value::Number(source_offset.unwrap_or(0.0)),
     );
-    vm.set_prop(&this, TYPED_ARRAY_FIXED, Value::Bool(args.get(2).is_some()));
+    vm.set_prop(
+        &this,
+        TYPED_ARRAY_FIXED,
+        Value::Bool(!had_source || args.get(2).is_some()),
+    );
     vm.set_prop(
         &this,
         "\0typed-array-length",
@@ -32929,15 +32969,13 @@ fn native_array_iterator(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Valu
         }
     }
     let iterator = vm.object(None);
+    if let Some(prototype) = vm.array_iterator_proto.clone() {
+        if let Some(object) = iterator.as_object_ref() {
+            object.borrow_mut().prototype = Some(prototype);
+        }
+    }
     vm.set_prop(&iterator, ARRAY_ITERATOR_SOURCE, this);
     vm.set_prop(&iterator, ARRAY_ITERATOR_INDEX, Value::Number(0.0));
-    let next = vm.native(native_array_iterator_next);
-    vm.set_prop(&iterator, "next", next);
-    vm.set_prop(
-        &iterator,
-        &vm.well_known_symbol_key("iterator"),
-        vm.native(native_iterator_self),
-    );
     Ok(iterator)
 }
 
@@ -32961,15 +32999,14 @@ fn array_iterator_with_kind(vm: &mut Vm, this: Value, kind: &str) -> JsResult<Va
         )));
     }
     let iterator = vm.object(None);
+    if let Some(prototype) = vm.array_iterator_proto.clone() {
+        if let Some(object) = iterator.as_object_ref() {
+            object.borrow_mut().prototype = Some(prototype);
+        }
+    }
     vm.set_prop(&iterator, ARRAY_ITERATOR_SOURCE, this);
     vm.set_prop(&iterator, ARRAY_ITERATOR_INDEX, Value::Number(0.0));
     vm.set_prop(&iterator, ARRAY_ITERATOR_KIND, Value::string_value(kind));
-    vm.set_prop(&iterator, "next", vm.native(native_array_iterator_next));
-    vm.set_prop(
-        &iterator,
-        &vm.well_known_symbol_key("iterator"),
-        vm.native(native_iterator_self),
-    );
     Ok(iterator)
 }
 
@@ -33068,7 +33105,15 @@ fn native_string_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResul
 }
 
 fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    let source = vm.get_prop(&this, ARRAY_ITERATOR_SOURCE);
+    let source = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get(ARRAY_ITERATOR_SOURCE).cloned())
+        .ok_or_else(|| {
+            JsError::Throw(type_error(
+                vm,
+                "Array Iterator.prototype.next called on incompatible receiver",
+            ))
+        })?;
     if let Some(object) = source.as_object_ref() {
         let object = object.borrow();
         if let (Some(buffer), Some(offset), Some(bytes)) = (
@@ -33081,6 +33126,9 @@ fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult
                 .and_then(|buffer| buffer.borrow().props.get("byteLength").and_then(Value::as_number))
                 .unwrap_or(0.0)
                 .max(0.0) as usize;
+            let detached = buffer
+                .as_object_ref()
+                .is_some_and(|buffer| buffer.borrow().props.get("\0array-buffer-detached").is_some_and(Value::truthy));
             let offset = offset.number().max(0.0) as usize;
             let width = bytes.number().max(1.0) as usize;
             let declared = object
@@ -33088,15 +33136,23 @@ fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult
                 .get("\0typed-array-length")
                 .map_or(0, |value| value.number().max(0.0) as usize);
             let fixed = object.props.get(TYPED_ARRAY_FIXED).is_some_and(Value::truthy);
-            if offset > buffer_length || (fixed && declared > buffer_length.saturating_sub(offset) / width) {
+            if detached
+                || offset > buffer_length
+                || (fixed && declared > buffer_length.saturating_sub(offset) / width)
+            {
                 return Err(JsError::Throw(type_error(vm, "typed array is out of bounds")));
             }
         }
     }
-    let index = vm
+    let index_value = vm
         .get_prop(&this, ARRAY_ITERATOR_INDEX)
         .as_number()
-        .unwrap_or(0.0) as usize;
+        .unwrap_or(0.0);
+    let index = if index_value.is_sign_negative() {
+        None
+    } else {
+        Some(index_value as usize)
+    };
     let length = if source.is_object_like() {
         let value = vm.get_prop_with_accessors(&source, "length")?;
         to_number_with_vm(vm, &value)?.max(0.0).trunc() as usize
@@ -33104,11 +33160,13 @@ fn native_array_iterator_next(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult
         0
     };
     let result = vm.object(None);
-    if index >= length {
+    if index.is_none_or(|index| index >= length) {
+        vm.set_prop(&this, ARRAY_ITERATOR_INDEX, Value::Number(-1.0));
         vm.set_prop(&result, "done", Value::Bool(true));
         vm.set_prop(&result, "value", Value::Undefined);
         return Ok(result);
     }
+    let index = index.expect("checked above");
     let value = vm.get_prop_with_accessors(&source, &index.to_string())?;
     vm.set_prop(
         &this,
