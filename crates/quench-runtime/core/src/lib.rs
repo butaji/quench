@@ -750,6 +750,9 @@ impl Value {
         if is_html_dda_value(self) {
             return false;
         }
+        if is_bigint_marker(self) {
+            return bigint_value_unchecked(self) != BigInt::from(0u8);
+        }
         if self.is_undefined() || self.is_null() {
             return false;
         }
@@ -15852,6 +15855,11 @@ impl Vm {
                     LogicalNullish if !old.is_null() && !old.is_undefined() => None,
                     _ => Some(self.eval_expr(&v.right, e.clone())?),
                 };
+                let short_circuited = right.is_none()
+                    && matches!(
+                        v.operator,
+                        LogicalOr | LogicalAnd | LogicalNullish
+                    );
                 let value = match v.operator {
                     Assign => right.expect("assignment evaluates its right-hand side"),
                     Addition => exec_op(Op::Add, old, right),
@@ -15888,7 +15896,10 @@ impl Vm {
                         }
                     }
                 };
-                if v.operator == Assign
+                if matches!(
+                    v.operator,
+                    Assign | LogicalOr | LogicalAnd | LogicalNullish
+                )
                     && let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &v.left
                     && v.span.start == identifier.span.start
                     && is_anonymous_function_definition(&v.right)
@@ -15896,7 +15907,9 @@ impl Vm {
                 {
                     set_function_name(&value, identifier.name.as_str());
                 }
-                self.write_lvalue(target, value.clone())?;
+                if !short_circuited {
+                    self.write_lvalue(target, value.clone())?;
+                }
                 Ok(value)
             }
             UpdateExpression(v) => {
