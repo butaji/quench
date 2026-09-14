@@ -75,7 +75,7 @@ Verification completed:
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - the last full canonical stencil Test262 stage 10 (`language/expressions`)
-  measurement reached 9,766/11,101 fixtures; subsequent focused partitions
+  measurement reached 9,861/11,101 fixtures; subsequent focused partitions
   are tracked below. The assignment-destructuring partition is fully green
   at 368/368, strict assignment-target early errors are validated
   and synchronous/async generator activations now retain their lexical state
@@ -87,6 +87,16 @@ Verification completed:
 - the async-arrow-function expression partition is now fully green at 60/60;
   async arrows return Promise instances with the `%AsyncFunction.prototype%`
   chain and share the canonical arrow call path
+- async-generator expressions are fully green at 623/623, including realm-aware
+  prototype fallback after user mutation of `fn.prototype`
+- the focused bitwise-not partition is 16/16 and the BigInt shift partitions
+  reach 44/45 (left), 36/37 (right), and 44/45 (unsigned-right); non-finite
+  Number-to-int conversion and BigInt shift results now share the binary-op
+  table
+- call expressions reach 86/92 in the focused partition; `with` receiver
+  identity, strict-eval early errors, and iterator-driven spread abrupt
+  completion now run through shared semantics, while six tail-call fixtures
+  remain open
 - canonical stencil Test262 stage 11 (`language/function-code`) is fully green
   at 217/217; this confirms the same source-boundary early-error and function
   environment machinery across the next language partition
