@@ -789,6 +789,8 @@ fn op_reads_register(op: &DynOp, register: Register) -> bool {
         | DynOp::MakeArrow { .. }
         | DynOp::RegExp { .. }
         | DynOp::Jump { .. }
+        | DynOp::DeleteName { .. }
+        | DynOp::DeleteLocal { .. }
         | DynOp::PushHandler { .. }
         | DynOp::PopHandler
         | DynOp::Catch { .. }

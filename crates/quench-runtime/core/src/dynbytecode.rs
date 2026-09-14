@@ -42,6 +42,8 @@ impl DynOp {
             | Self::MakeArrow { .. }
             | Self::RegExp { .. }
             | Self::Jump { .. }
+            | Self::DeleteName { .. }
+            | Self::DeleteLocal { .. }
             | Self::PushHandler { .. }
             | Self::PopHandler
             | Self::Catch { .. }
@@ -125,6 +127,8 @@ impl DynOp {
             | Self::GetComputed { dst, .. }
             | Self::DeleteStatic { dst, .. }
             | Self::DeleteComputed { dst, .. }
+            | Self::DeleteName { dst, .. }
+            | Self::DeleteLocal { dst, .. }
             | Self::Call { dst, .. }
             | Self::Construct { dst, .. }
             | Self::RegExp { dst, .. }
@@ -173,6 +177,8 @@ impl DynOp {
             | Self::GetComputed { dst, .. }
             | Self::DeleteStatic { dst, .. }
             | Self::DeleteComputed { dst, .. }
+            | Self::DeleteName { dst, .. }
+            | Self::DeleteLocal { dst, .. }
             | Self::Call { dst, .. }
             | Self::Construct { dst, .. }
             | Self::RegExp { dst, .. }
@@ -357,6 +363,15 @@ pub enum DynOp {
         key: Register,
         strict: bool,
     },
+    DeleteName {
+        dst: Register,
+        name: String,
+        strict: bool,
+    },
+    DeleteLocal {
+        dst: Register,
+        strict: bool,
+    },
     Call {
         dst: Register,
         callee: Register,
@@ -476,6 +491,8 @@ define_dyn_op_metadata! {
     SetComputed: Self::SetComputed { .. } => "SetComputed", Property,
     DeleteStatic: Self::DeleteStatic { .. } => "DeleteStatic", Property,
     DeleteComputed: Self::DeleteComputed { .. } => "DeleteComputed", Property,
+    DeleteName: Self::DeleteName { .. } => "DeleteName", Local,
+    DeleteLocal: Self::DeleteLocal { .. } => "DeleteLocal", Local,
     Call: Self::Call { .. } => "Call", Call,
     Construct: Self::Construct { .. } => "Construct", Construct,
     RegExp: Self::RegExp { .. } => "RegExp", Constant,
@@ -1909,6 +1926,17 @@ impl Compiler {
                 );
                 return Ok(dst);
             }
+            if let Expression::Identifier(identifier) = &value.argument {
+                self.emit(
+                    DynOp::DeleteName {
+                        dst,
+                        name: identifier.name.to_string(),
+                        strict: self.strict,
+                    },
+                    value.span,
+                );
+                return Ok(dst);
+            }
             if let Some(member) = value.argument.as_member_expression() {
                 match self.member_lvalue(member)? {
                     Lvalue::Static { object, key } => self.emit(
@@ -2968,6 +2996,12 @@ fn lower_function_bindings(
                 dst: *dst,
                 slot: *slot,
             }),
+            DynOp::DeleteName { dst, name, strict } => slots
+                .get(name)
+                .map(|_| DynOp::DeleteLocal {
+                    dst: *dst,
+                    strict: *strict,
+                }),
             DynOp::DeclareName { name, src } => slots.get(name).map(|slot| DynOp::DeclareLocal {
                 slot: *slot,
                 src: *src,
