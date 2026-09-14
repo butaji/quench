@@ -12003,6 +12003,11 @@ impl Vm {
                     {
                         let method = self.get_prop_with_accessors(prototype, &key)?;
                         self.set_prop(&receiver, &key, method);
+                        set_property_attributes(
+                            &receiver,
+                            &key,
+                            PropertyAttributes::BUILTIN_CONSTANT,
+                        );
                     }
                     ClassElement::MethodDefinition(_) | ClassElement::AccessorProperty(_) => {
                         let (getter, setter) = self.own_accessor_slots(prototype, &key);
@@ -18839,6 +18844,43 @@ impl Vm {
                         self,
                         "Cannot write private member",
                     )));
+                }
+                let target = private_target(&object);
+                if !self.has_own_property_key(&target, &key)
+                    && self.get_prop(&target, &key).is_function()
+                {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "cannot assign to private method",
+                    )));
+                }
+                let mut owner = private_target(&object);
+                loop {
+                    let descriptor = native_object_get_own_property_descriptor(
+                        self,
+                        Value::Undefined,
+                        &[owner.clone(), Value::string_value(key.clone())],
+                    )?;
+                    if descriptor.is_object_like() {
+                        if self.has_property(&descriptor, "writable")
+                            && !self.get_prop(&descriptor, "writable").truthy()
+                        {
+                            return Err(JsError::Throw(type_error(
+                                self,
+                                "cannot assign to private method",
+                            )));
+                        }
+                        break;
+                    }
+                    let prototype = native_object_get_prototype_of(
+                        self,
+                        Value::Undefined,
+                        std::slice::from_ref(&owner),
+                    )?;
+                    if prototype.is_null() {
+                        break;
+                    }
+                    owner = prototype;
                 }
                 self.set_prop_with_accessors(&object, &key, v)?;
             }
