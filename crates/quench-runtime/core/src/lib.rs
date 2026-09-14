@@ -8823,6 +8823,11 @@ impl Vm {
             "\0primitive",
             Value::Number(0.0),
         );
+        set_property_attributes(
+            &self.builtin(BuiltinId::NumberConstructor),
+            "prototype",
+            PropertyAttributes::BUILTIN_CONSTANT,
+        );
         let boolean_prototype = self
             .builtin(BuiltinId::BooleanConstructor)
             .as_function_ref()
@@ -9665,6 +9670,7 @@ impl Vm {
                                 native_disposable_stack_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
+                                native_realm_type_error,
                             ) =>
                         {
                             true
@@ -36825,6 +36831,34 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                             .or_else(|| {
                                 matches!(function.kind, FunctionKind::Builtin(BuiltinId::AggregateErrorConstructor))
                                     .then_some("AggregateError")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::ErrorConstructor))
+                                    .then_some("Error")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::EvalErrorConstructor))
+                                    .then_some("EvalError")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::RangeErrorConstructor))
+                                    .then_some("RangeError")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::ReferenceErrorConstructor))
+                                    .then_some("ReferenceError")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::SyntaxErrorConstructor))
+                                    .then_some("SyntaxError")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::TypeErrorConstructor))
+                                    .then_some("TypeError")
+                            })
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Builtin(BuiltinId::URIErrorConstructor))
+                                    .then_some("URIError")
                             })
                     });
                     let intrinsic = intrinsic_name
