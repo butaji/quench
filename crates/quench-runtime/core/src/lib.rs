@@ -16743,7 +16743,7 @@ impl Vm {
     ) -> JsResult<Value> {
         let target = self.ordinary_object();
         let keys = if proxy_target(source).is_some() {
-            proxy_own_enumerable_keys(self, source)?
+            proxy_own_enumerable_keys_with_excluded(self, source, excluded)?
         } else {
             object_own_enumerable_keys_with_symbols(source)
         };
@@ -32426,7 +32426,12 @@ fn copy_object_spread(vm: &mut Vm, target: &Value, source: &Value) -> JsResult<(
         return Ok(());
     }
     if source.as_object_ref().is_some() || source.as_function_ref().is_some() {
-        for key in object_own_enumerable_keys_with_symbols(source) {
+        let keys = if proxy_target(source).is_some() {
+            proxy_own_enumerable_keys(vm, source)?
+        } else {
+            object_own_enumerable_keys_with_symbols(source)
+        };
+        for key in keys {
             let value = vm.get_prop_with_accessors(source, &key)?;
             define_spread_property(vm, target, key.clone(), value)?;
         }
@@ -32452,7 +32457,7 @@ fn copy_object_rest(
         return Ok(());
     }
     let keys = if proxy_target(source).is_some() {
-        proxy_own_enumerable_keys(vm, source)?
+        proxy_own_enumerable_keys_with_excluded(vm, source, excluded)?
     } else {
         object_own_enumerable_keys_with_symbols(source)
     };
@@ -32661,6 +32666,14 @@ fn validate_proxy_define_invariant(
 /// combinators.  Keeping this operation in the VM (rather than teaching each
 /// combinator about proxy traps) preserves one property-ordering pipeline.
 fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String>> {
+    proxy_own_enumerable_keys_with_excluded(vm, target, &[])
+}
+
+fn proxy_own_enumerable_keys_with_excluded(
+    vm: &mut Vm,
+    target: &Value,
+    excluded: &[String],
+) -> JsResult<Vec<String>> {
     if proxy_revoked(target) {
         return Err(JsError::Throw(type_error(vm, "revoked Proxy")));
     }
@@ -32712,6 +32725,9 @@ fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String
     let descriptor_trap = vm.get_prop_with_accessors(&handler, "getOwnPropertyDescriptor")?;
     let mut enumerable = Vec::new();
     for key in keys {
+        if excluded.iter().any(|excluded| excluded == &key) {
+            continue;
+        }
         let descriptor = if descriptor_trap.is_function() {
             vm.call(
                 descriptor_trap.clone(),
@@ -32738,7 +32754,7 @@ fn proxy_own_enumerable_keys(vm: &mut Vm, target: &Value) -> JsResult<Vec<String
             enumerable.push(key);
         }
     }
-    Ok(partition_symbol_keys(enumerable))
+    Ok(enumerable)
 }
 
 fn proxy_own_property_keys_with_vm(vm: &mut Vm, target: &Value) -> JsResult<Vec<String>> {
