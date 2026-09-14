@@ -13781,7 +13781,8 @@ impl Vm {
             )));
         }
         let block_error = has_block_redeclaration_early_error(&r.program);
-        let function_scope_error = function_scope_block_redeclaration(&r.program.body);
+        let function_scope_error = function_scope_block_redeclaration(&r.program.body)
+            || has_nested_function_scope_redeclaration(&r.program);
         let statement_position_error = has_statement_position_function(&r.program);
         let nested_strict_error = has_nested_strict_function_error(&r.program.body);
         let class_early_error = has_class_element_early_error(&r.program);
@@ -22069,7 +22070,29 @@ fn has_block_redeclaration_early_error(program: &Program<'_>) -> bool {
                     block_error(std::slice::from_ref(&statement.body))
                 }
                 Statement::ForStatement(statement) => {
-                    block_error(std::slice::from_ref(&statement.body))
+                    let head_names = match &statement.init {
+                        Some(ForStatementInit::VariableDeclaration(declaration))
+                            if declaration.kind != VariableDeclarationKind::Var => declaration
+                                .declarations
+                                .iter()
+                                .flat_map(|declarator| {
+                                    let mut names = Vec::new();
+                                    pattern_bound_names(&declarator.id, &mut names);
+                                    names
+                                })
+                                .collect::<Vec<_>>(),
+                        _ => Vec::new(),
+                    };
+                    let mut body_vars = Vec::new();
+                    collect_strict_eval_var_names(
+                        std::slice::from_ref(&statement.body),
+                        &mut body_vars,
+                        false,
+                    );
+                    head_names
+                        .iter()
+                        .any(|name| body_vars.iter().any(|candidate| candidate == name))
+                        || block_error(std::slice::from_ref(&statement.body))
                 }
                 Statement::ForInStatement(statement) => {
                     block_error(std::slice::from_ref(&statement.body))
@@ -22158,19 +22181,36 @@ fn function_scope_block_redeclaration(statements: &[Statement<'_>]) -> bool {
     fn walk(statements: &[Statement<'_>]) -> bool {
         statements.iter().any(|statement| match statement {
             Statement::BlockStatement(block) => {
-                let functions = block
+                let lexical = block
                     .body
                     .iter()
-                    .filter_map(|statement| match statement {
-                        Statement::FunctionDeclaration(function) => {
-                            function.id.as_ref().map(|id| id.name.to_string())
-                        }
-                        _ => None,
+                    .flat_map(|statement| match statement {
+                        Statement::VariableDeclaration(declaration)
+                            if declaration.kind != VariableDeclarationKind::Var => declaration
+                                .declarations
+                                .iter()
+                                .flat_map(|declarator| {
+                                    let mut names = Vec::new();
+                                    pattern_bound_names(&declarator.id, &mut names);
+                                    names
+                                })
+                                .collect::<Vec<_>>(),
+                        Statement::ClassDeclaration(class) => class
+                            .id
+                            .as_ref()
+                            .map(|id| vec![id.name.to_string()])
+                            .unwrap_or_default(),
+                        Statement::FunctionDeclaration(function) => function
+                            .id
+                            .as_ref()
+                            .map(|id| vec![id.name.to_string()])
+                            .unwrap_or_default(),
+                        _ => Vec::new(),
                     })
                     .collect::<Vec<_>>();
                 let mut vars = Vec::new();
                 collect_strict_eval_var_names(&block.body, &mut vars, false);
-                functions
+                lexical
                     .iter()
                     .any(|name| vars.iter().any(|candidate| candidate == name))
                     || walk(&block.body)
@@ -22211,6 +22251,27 @@ fn function_scope_block_redeclaration(statements: &[Statement<'_>]) -> bool {
         })
     }
     walk(statements)
+}
+
+fn has_nested_function_scope_redeclaration(program: &Program<'_>) -> bool {
+    struct Scan {
+        invalid: bool,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            if function
+                .body
+                .as_ref()
+                .is_some_and(|body| function_scope_block_redeclaration(&body.statements))
+            {
+                self.invalid = true;
+            }
+            ast_walk::walk_function(self, function, flags);
+        }
+    }
+    let mut scan = Scan { invalid: false };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn has_statement_position_function(program: &Program<'_>) -> bool {
