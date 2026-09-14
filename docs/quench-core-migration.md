@@ -70,11 +70,13 @@ interpreter would be a compatibility regression, not a migration.
 Verification completed:
 
 - `cargo check -p quench-runtime`
-- `cargo test -p quench-runtime-core --lib` (238 tests, including the core-owned Wasm substrate)
+- `cargo test -p quench-runtime-core --lib` (238 tests discovered; 221 pass, with
+  17 legacy core probes still failing)
 - `cargo test -p quench-node --lib` (18 tests)
 - `cargo test -p quench-wasm --lib` (16 tests)
 - canonical stencil Test262 stage 10 (`language/expressions`) now reaches
-  9,723/11,101 fixtures; strict assignment-target early errors are validated
+  9,766/11,101 fixtures; the assignment-destructuring partition is fully green
+  at 368/368, strict assignment-target early errors are validated
   and synchronous/async generator activations now retain their lexical state
   and statement continuations in the canonical core
   from the OXC target tree (including nested destructuring), while the focused
