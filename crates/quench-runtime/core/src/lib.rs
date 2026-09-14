@@ -12592,6 +12592,9 @@ impl Vm {
             || restricted_global_lexical_error
             || strict_assignment_error
         {
+            if source.contains("target-super-computed-reference") || source.contains("super[prop") {
+                eprintln!("EARLY class={} delete={} fn_super={} global={} stmt={} nested={}", class_early_error, strict_delete_error, function_super_error, global_code_error, statement_position_error, nested_strict_error);
+            }
             return Err(JsError::Throw(syntax_error(
                 self,
                 "invalid lexical declaration or statement-position function",
@@ -19399,15 +19402,14 @@ fn has_strict_delete_identifier(program: &Program<'_>, inherited_strict: bool) -
 fn has_invalid_function_super(program: &Program<'_>) -> bool {
     struct Scan {
         ordinary_function_depth: usize,
-        arrow_depth: usize,
-        method_depth: usize,
+        method_base_depth: Vec<usize>,
         invalid: bool,
     }
     impl<'a> Visit<'a> for Scan {
         fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
-            self.method_depth += 1;
+            self.method_base_depth.push(self.ordinary_function_depth);
             ast_walk::walk_method_definition(self, method);
-            self.method_depth -= 1;
+            self.method_base_depth.pop();
         }
 
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
@@ -19416,21 +19418,15 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
             self.ordinary_function_depth -= 1;
         }
 
-        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
-            self.arrow_depth += 1;
-            ast_walk::walk_arrow_function_expression(self, arrow);
-            self.arrow_depth -= 1;
-        }
-
         fn visit_super(&mut self, super_expression: &Super) {
-            // A `super` reference is only valid in the body of the method that
-            // supplies [[HomeObject]]. Any ordinary/nested function has no
-            // such home object, even when lexically nested in a method.
-            if self.method_depth == 0
-                && (self.ordinary_function_depth > 0 || self.arrow_depth > 0)
-            {
-                self.invalid = true;
-            } else if self.ordinary_function_depth > 1 {
+            // A `super` reference is valid in the method function itself and
+            // lexical arrows nested there. Any ordinary/nested function has
+            // no [[HomeObject]], even when lexically nested in a method.
+            let method_function = self
+                .method_base_depth
+                .last()
+                .is_some_and(|base| self.ordinary_function_depth == *base + 1);
+            if !method_function {
                 self.invalid = true;
             }
             ast_walk::walk_super(self, super_expression);
@@ -19438,8 +19434,7 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
     }
     let mut scan = Scan {
         ordinary_function_depth: 0,
-        arrow_depth: 0,
-        method_depth: 0,
+        method_base_depth: Vec::new(),
         invalid: false,
     };
     scan.visit_program(program);
