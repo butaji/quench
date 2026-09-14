@@ -276,6 +276,8 @@ environment_keys! {
     SUPER_CALLED_ENV_NAME => "super-called",
 }
 const CLASS_FIELD_KEY_PREFIX: &str = "\0quench:class-field-key:";
+const CLASS_PRIVATE_KEY_PREFIX: &str = "\0quench:class-private-key:";
+const CLASS_PRIVATE_BRAND_PREFIX: &str = "\0quench:class-private-brand:";
 // Internal object markers are semantic facts, not ad-hoc property probes.
 // Declare each marker once and derive the predicate used by every execution
 // tier.  This keeps marker spelling and object classification in one place.
@@ -10803,6 +10805,40 @@ impl Vm {
             };
             (method.kind == MethodDefinitionKind::Constructor).then_some(&*method.value)
         });
+        if let Some(global) = self
+            .global_object_for_environment(&self.realm_environment_for_environment(&env))
+        {
+            self.set_prop(&this, REALM_GLOBAL_PROP, global);
+        }
+        // Install instance brands before running the constructor so private
+        // methods/accessors are callable from constructor code. Field values
+        // themselves are still initialized at the specified post-constructor
+        // point below.
+        for element in &class.body.body {
+            let private_name = match element {
+                ClassElement::PropertyDefinition(field) if !field.r#static => {
+                    match &field.key {
+                        PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                        _ => None,
+                    }
+                }
+                ClassElement::MethodDefinition(method) if !method.r#static => {
+                    match &method.key {
+                        PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(private_name) = private_name {
+                let key = self.private_key(private_name, &env);
+                self.set_prop(
+                    &this,
+                    &Self::private_brand_key(&key),
+                    Value::Bool(true),
+                );
+            }
+        }
         let result = if let Some(constructor) = constructor {
             let constructor = self.make_user(constructor, env.clone());
             let result = self.call_arguments(&constructor, this.clone(), args.as_slice())?;
@@ -12521,7 +12557,7 @@ impl Vm {
                 "yield is reserved as an identifier in strict mode",
             )));
         }
-        if st.is_module() && has_invalid_private_name_reference(source) {
+        if st.is_module() && has_invalid_private_name_reference(&r.program) {
             return Err(JsError::Throw(syntax_error(
                 self,
                 "private name is not declared in the enclosing class",
@@ -14370,6 +14406,33 @@ impl Vm {
             class_env.borrow_mut().tdz_names.insert(name.to_owned());
             class_env.borrow_mut().declare(name, Value::Undefined);
         }
+        // Assign a stable, class-local key to every private name. The key is
+        // resolved through the lexical environment at each access, so two
+        // evaluations of the same class source cannot share a brand.
+        let class_identity = Rc::as_ptr(&class_env) as usize;
+        for element in &n.body.body {
+            let private_name = match element {
+                ClassElement::PropertyDefinition(field) => match &field.key {
+                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                    _ => None,
+                },
+                ClassElement::MethodDefinition(method) => match &method.key {
+                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some(private_name) = private_name else {
+                continue;
+            };
+            let mapping = format!("{CLASS_PRIVATE_KEY_PREFIX}{private_name}");
+            if !class_env.borrow().contains_local(&mapping) {
+                class_env.borrow_mut().declare(
+                    &mapping,
+                    Value::string_value(format!("#{private_name}@{class_identity:x}")),
+                );
+            }
+        }
         let super_constructor = n
             .heritage
             .as_ref()
@@ -14446,6 +14509,47 @@ impl Vm {
             source_id: self.source_ids.last().copied(),
         };
         let class = Value::Function(Rc::new(function));
+        if let Some(global) = self
+            .global_object_for_environment(&self.realm_environment_for_environment(&class_env))
+        {
+            self.set_prop(&class, REALM_GLOBAL_PROP, global);
+        }
+        // Static private members brand the constructor object itself before
+        // any static initializer executes.
+        for element in &n.body.body {
+            let ClassElement::MethodDefinition(method) = element else {
+                continue;
+            };
+            if !method.r#static {
+                continue;
+            }
+            let PropertyKey::PrivateIdentifier(identifier) = &method.key else {
+                continue;
+            };
+            let key = self.private_key(identifier.name.as_str(), &class_env);
+            self.set_prop(
+                &class,
+                &Self::private_brand_key(&key),
+                Value::Bool(true),
+            );
+        }
+        for element in &n.body.body {
+            let ClassElement::PropertyDefinition(field) = element else {
+                continue;
+            };
+            if !field.r#static {
+                continue;
+            }
+            let PropertyKey::PrivateIdentifier(identifier) = &field.key else {
+                continue;
+            };
+            let key = self.private_key(identifier.name.as_str(), &class_env);
+            self.set_prop(
+                &class,
+                &Self::private_brand_key(&key),
+                Value::Bool(true),
+            );
+        }
         if let Some(id) = &n.id {
             class_env.borrow_mut().tdz_names.remove(id.name.as_str());
             class_env
@@ -14913,7 +15017,7 @@ impl Vm {
                 Ok(value)
             }
             PrivateInExpression(private_in) => {
-                let object = self.eval_expr(&private_in.right, e)?;
+                let object = self.eval_expr(&private_in.right, e.clone())?;
                 if !object.is_object_like() {
                     return Ok(Value::Bool(false));
                 }
@@ -14925,8 +15029,8 @@ impl Vm {
                 if is_module_namespace(&object) {
                     return Ok(Value::Bool(false));
                 }
-                let key = format!("#{}", private_in.left.name);
-                Ok(Value::Bool(self.has_own_property_key(&object, &key)))
+                let key = self.private_key(private_in.left.name.as_str(), &e);
+                Ok(Value::Bool(self.has_private_brand(&object, &key)))
             }
             YieldExpression(yield_expression) => {
                 if let Some(value) = self.sync_generator_replay_value.take() {
@@ -15301,14 +15405,22 @@ impl Vm {
                 self.get_prop_with_accessors(&o, m.property.name.as_str())
             }
             PrivateFieldExpression(m) => {
-                let o = self.eval_expr(&m.object, e)?;
+                let o = self.eval_expr(&m.object, e.clone())?;
                 if o.is_null() || o.is_undefined() {
                     return Err(JsError::Throw(type_error(
                         self,
                         &format!("cannot read private property #{}", m.field.name),
                     )));
                 }
-                self.get_prop_with_accessors(&o, &format!("#{}", m.field.name))
+                let key = self.private_key(m.field.name.as_str(), &e);
+                if !self.has_private_brand(&o, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot read private member #{}", m.field.name),
+                    )));
+                }
+                self.get_prop_with_accessors(&o, &key)
             }
             ComputedMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e.clone())?;
@@ -15604,7 +15716,9 @@ impl Vm {
     fn eval_property_key<'a>(&mut self, key: &PropertyKey<'a>, e: Env) -> JsResult<String> {
         match key {
             PropertyKey::StaticIdentifier(identifier) => Ok(identifier.name.to_string()),
-            PropertyKey::PrivateIdentifier(identifier) => Ok(format!("#{}", identifier.name)),
+            PropertyKey::PrivateIdentifier(identifier) => {
+                Ok(self.private_key(identifier.name.as_str(), &e))
+            }
             PropertyKey::StringLiteral(string) => Ok(string.value.to_string()),
             PropertyKey::NumericLiteral(number) => Ok(js_number_to_string(number.value)),
             _ => {
@@ -15615,6 +15729,22 @@ impl Vm {
                     .and_then(|value| self.to_property_key(value))
             }
         }
+    }
+
+    fn private_key(&self, name: &str, environment: &Env) -> String {
+        let mapping = format!("{CLASS_PRIVATE_KEY_PREFIX}{name}");
+        Environment::get(environment, &mapping)
+            .and_then(|value| value.as_string().cloned())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| format!("#{name}"))
+    }
+
+    fn private_brand_key(key: &str) -> String {
+        format!("{CLASS_PRIVATE_BRAND_PREFIX}{key}")
+    }
+
+    fn has_private_brand(&self, value: &Value, key: &str) -> bool {
+        self.has_own_property_key(value, &Self::private_brand_key(key))
     }
     fn make_template_object<'a>(&mut self, template: &TemplateLiteral<'a>) -> Value {
         let cooked = self.array_from_values(
@@ -15654,7 +15784,18 @@ impl Vm {
                 let key = self.to_property_key(key_value)?;
                 Ok((object, key))
             }
-            _ => Err(JsError::Message("unsupported member".into())),
+            MemberExpression::PrivateFieldExpression(x) => {
+                let object = self.eval_expr(&x.object, e.clone())?;
+                let key = self.private_key(x.field.name.as_str(), &e);
+                if !self.has_private_brand(&object, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot read private member #{}", x.field.name),
+                    )));
+                }
+                Ok((object, key))
+            }
         }
     }
     fn eval_target<'a>(&mut self, t: &AssignmentTarget<'a>, e: Env) -> JsResult<Value> {
@@ -15697,6 +15838,18 @@ impl Vm {
                     object: base,
                     key: key_value,
                 })
+            }
+            SimpleAssignmentTarget::PrivateFieldExpression(m) => {
+                let base = self.eval_expr(&m.object, e.clone())?;
+                let key = self.private_key(m.field.name.as_str(), &e);
+                if !self.has_private_brand(&base, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot write private member #{}", m.field.name),
+                    )));
+                }
+                Ok(LValue::Prop(base, key))
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
@@ -16022,6 +16175,18 @@ impl Vm {
                 let key_value = self.eval_expr(&m.expression, e)?;
                 let k = self.to_property_key(key_value)?;
                 Ok(self.get_prop(&o, &k))
+            }
+            SimpleAssignmentTarget::PrivateFieldExpression(m) => {
+                let o = self.eval_expr(&m.object, e.clone())?;
+                let key = self.private_key(m.field.name.as_str(), &e);
+                if !self.has_private_brand(&o, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot read private member #{}", m.field.name),
+                    )));
+                }
+                Ok(self.get_prop(&o, &key))
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
@@ -16442,6 +16607,18 @@ impl Vm {
                 };
                 let k = self.to_property_key(key_value)?;
                 self.set_prop_with_accessors(&o, &k, v)
+            }
+            SimpleAssignmentTarget::PrivateFieldExpression(m) => {
+                let o = self.eval_expr(&m.object, e.clone())?;
+                let key = self.private_key(m.field.name.as_str(), &e);
+                if !self.has_private_brand(&o, &key) {
+                    return Err(JsError::Throw(type_error_for_environment(
+                        self,
+                        &e,
+                        &format!("Cannot write private member #{}", m.field.name),
+                    )));
+                }
+                self.set_prop_with_accessors(&o, &key, v)
             }
             _ => Err(JsError::Message("target unsupported".into())),
         }
@@ -17770,7 +17947,7 @@ fn has_for_in_initializer_early_error(program: &Program<'_>, strict: bool) -> bo
 /// parser intentionally leaves representable (return/super/new.target and
 /// module declarations) before any `$DONOTEVALUATE` body can run.
 fn has_global_code_early_error(program: &Program<'_>, source: &str, strict: bool) -> bool {
-    if has_invalid_private_name_reference(source) {
+    if has_invalid_private_name_reference(program) {
         return true;
     }
     fn direct_meta(expression: &Expression<'_>) -> bool {
@@ -19094,15 +19271,6 @@ fn native_eval_in_environment(
     else {
         return Ok(a.first().cloned().unwrap_or(Value::Undefined));
     };
-    // Eval has no private environment.  Reject private-member syntax at the
-    // declaration-instantiation boundary, before the stencil compiler reports
-    // it as a generic unsupported expression.
-    if source.as_bytes().windows(2).any(|pair| pair == b".#") {
-        return Err(JsError::Throw(syntax_error(
-            vm,
-            "invalid private identifier in eval",
-        )));
-    }
     if source.contains("new.target")
         && !nearest_local_binding(&environment, NEW_TARGET_ALLOWED_NAME)
             .is_some_and(|value| value.truthy())
@@ -26432,6 +26600,23 @@ fn type_error(vm: &Vm, message: &str) -> Value {
     intrinsic_error(vm, BuiltinId::TypeErrorConstructor, "TypeError", message)
 }
 
+fn type_error_for_environment(vm: &Vm, environment: &Env, message: &str) -> Value {
+    let global = vm.global_object_for_environment(&vm.realm_environment_for_environment(environment));
+    let constructor = global
+        .as_ref()
+        .map(|global| vm.get_prop(global, "TypeError"))
+        .filter(|constructor| constructor.is_function());
+    let Some(constructor) = constructor else {
+        return type_error(vm, message);
+    };
+    let prototype = vm.get_prop(&constructor, "prototype").as_object();
+    let error = vm.object(prototype);
+    vm.set_prop(&error, "message", Value::string_value(message));
+    vm.set_prop(&error, "name", Value::string_value("TypeError"));
+    vm.set_prop(&error, "constructor", constructor);
+    error
+}
+
 fn reference_error(vm: &Vm, name: &str) -> Value {
     intrinsic_error(
         vm,
@@ -27769,40 +27954,44 @@ fn top_level_await_is_dynamic_import(program: &Program<'_>) -> bool {
     })
 }
 
-fn has_invalid_private_name_reference(source: &str) -> bool {
-    // These forms are outside the class that declares the matching name;
-    // textual scope markers keep the early-error check conservative while
-    // valid nested-class references continue to use the evaluator path.
-    if source.contains("new C().#")
-        || source.contains("this.#x;\n    class D")
-        || source.contains("this.#x;\n      class D")
-    {
-        return true;
+fn has_invalid_private_name_reference(program: &Program<'_>) -> bool {
+    // Private names are lexical syntax, not text.  Walking OXC's AST keeps
+    // strings passed to eval (and comments) out of the check while still
+    // rejecting a private access at Script/Module scope where no class
+    // private environment exists.  Class bodies establish the environment;
+    // nested classes are intentionally accepted and validated by OXC's own
+    // private-name resolver.
+    struct Scan {
+        class_depth: usize,
+        invalid: bool,
     }
-    let bytes = source.as_bytes();
-    let mut index = 0;
-    while index + 2 < bytes.len() {
-        if bytes[index] == b'.' && bytes[index + 1] == b'#' {
-            let start = index + 2;
-            let mut end = start;
-            while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'$')
-            {
-                end += 1;
+    impl<'a> Visit<'a> for Scan {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.class_depth += 1;
+            ast_walk::walk_class(self, class);
+            self.class_depth -= 1;
+        }
+
+        fn visit_private_field_expression(&mut self, expression: &PrivateFieldExpression<'a>) {
+            if self.class_depth == 0 {
+                self.invalid = true;
             }
-            if end > start {
-                let name = &source[start..end];
-                let occurrences = source.match_indices(&format!("#{name}")).count();
-                if occurrences < 2 {
-                    return true;
-                }
+            ast_walk::walk_private_field_expression(self, expression);
+        }
+
+        fn visit_private_in_expression(&mut self, expression: &PrivateInExpression<'a>) {
+            if self.class_depth == 0 {
+                self.invalid = true;
             }
-            index = end;
-        } else {
-            index += 1;
+            ast_walk::walk_private_in_expression(self, expression);
         }
     }
-    false
+    let mut scan = Scan {
+        class_depth: 0,
+        invalid: false,
+    };
+    scan.visit_program(program);
+    scan.invalid
 }
 
 fn is_identifier_byte(byte: u8) -> bool {
