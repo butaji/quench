@@ -7866,6 +7866,67 @@ impl Vm {
                         "setBigUint64" => native_dataview_set_biguint64 / 2,
                     );
                 }
+                "SharedArrayBuffer" => {
+                    let prototype_value = Value::Object(prototype.clone());
+                    self.set_prop(&constructor, "prototype", prototype_value.clone());
+                    set_property_attributes(
+                        &constructor,
+                        "prototype",
+                        PropertyAttributes::BUILTIN_CONSTANT,
+                    );
+                    set_property_attributes(
+                        &prototype_value,
+                        "constructor",
+                        PropertyAttributes::BUILTIN_METHOD,
+                    );
+                    let byte_length =
+                        self.native_named(native_shared_array_buffer_byte_length, "get byteLength", 0);
+                    let max_byte_length = self.native_named(
+                        native_shared_array_buffer_max_byte_length,
+                        "get maxByteLength",
+                        0,
+                    );
+                    let growable =
+                        self.native_named(native_shared_array_buffer_growable, "get growable", 0);
+                    for (key, getter) in [
+                        ("byteLength", byte_length),
+                        ("maxByteLength", max_byte_length),
+                        ("growable", growable),
+                    ] {
+                        self.define_accessor_slot(
+                            &prototype_value,
+                            key,
+                            Some(getter),
+                            None,
+                            PropertyAttributes {
+                                writable: false,
+                                enumerable: false,
+                                configurable: true,
+                            },
+                        );
+                    }
+                    install_native_methods!(
+                        self,
+                        prototype_value.clone(),
+                        "grow" => native_shared_array_buffer_grow / 1,
+                        "slice" => native_shared_array_buffer_slice / 2,
+                    );
+                    let tag_key = self.well_known_symbol_key("toStringTag");
+                    self.set_prop(
+                        &prototype_value,
+                        &tag_key,
+                        Value::string_value("SharedArrayBuffer"),
+                    );
+                    set_property_attributes(
+                        &prototype_value,
+                        &tag_key,
+                        PropertyAttributes {
+                            writable: false,
+                            enumerable: false,
+                            configurable: true,
+                        },
+                    );
+                }
                 _ => {}
             }
             Environment::set(&g, name, constructor);
@@ -8938,6 +8999,7 @@ impl Vm {
                                 native_async_generator_constructor,
                                 native_promise_constructor,
                                 native_array_buffer_constructor,
+                                native_shared_array_buffer_constructor,
                                 native_typed_array_constructor,
                                 native_map_constructor,
                                 native_set_constructor,
@@ -24459,20 +24521,40 @@ fn native_shared_array_buffer_constructor(
         .map(|value| to_number_with_vm(vm, value))
         .transpose()?
         .unwrap_or(0.0);
-    if !length.is_finite() || length < 0.0 || length.fract() != 0.0 {
+    if !length.is_finite() || length < 0.0 {
         return Err(JsError::Throw(range_error(
             vm,
             "invalid SharedArrayBuffer length",
         )));
     }
-    if length > MAX_MATERIALIZED_ARRAY_LENGTH as f64 {
+    let length = if length == 0.0 { 0.0 } else { length.trunc() };
+    let (max_length, resizable) = if let Some(options) = args.get(1).filter(|value| value.is_object_like()) {
+        let value = vm.get_prop_with_accessors(options, "maxByteLength")?;
+        if value.is_undefined() {
+            (length, false)
+        } else {
+            let value = to_number_with_vm(vm, &value)?;
+            if !value.is_finite() || value < 0.0 {
+                return Err(JsError::Throw(range_error(vm, "invalid SharedArrayBuffer maxByteLength")));
+            }
+            let value = if value == 0.0 { 0.0 } else { value.trunc() };
+            if value < length {
+                return Err(JsError::Throw(range_error(vm, "invalid SharedArrayBuffer maxByteLength")));
+            }
+            (value, true)
+        }
+    } else {
+        (length, false)
+    };
+    if max_length > MAX_MATERIALIZED_ARRAY_LENGTH as f64 {
         return Err(JsError::Throw(range_error(
             vm,
             "SharedArrayBuffer allocation exceeds the runtime limit",
         )));
     }
     vm.set_prop(&this, "byteLength", Value::Number(length));
-    vm.set_prop(&this, "maxByteLength", Value::Number(length));
+    vm.set_prop(&this, "maxByteLength", Value::Number(max_length));
+    vm.set_prop(&this, "\0shared-array-buffer-resizable", Value::Bool(resizable));
     vm.set_prop(&this, "\0shared-array-buffer", Value::Bool(true));
     vm.set_prop(
         &this,
@@ -24480,6 +24562,70 @@ fn native_shared_array_buffer_constructor(
         vm.array_from_values(vec![Value::Number(0.0); length as usize]),
     );
     Ok(this)
+}
+
+fn shared_array_buffer_receiver(vm: &mut Vm, this: &Value) -> JsResult<Value> {
+    if !this
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0shared-array-buffer"))
+    {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    }
+    Ok(this.clone())
+}
+
+fn native_shared_array_buffer_byte_length(
+    vm: &mut Vm,
+    this: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    let this = shared_array_buffer_receiver(vm, &this)?;
+    Ok(vm.get_prop(&this, "byteLength"))
+}
+
+fn native_shared_array_buffer_max_byte_length(
+    vm: &mut Vm,
+    this: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    let this = shared_array_buffer_receiver(vm, &this)?;
+    Ok(vm.get_prop(&this, "maxByteLength"))
+}
+
+fn native_shared_array_buffer_growable(
+    vm: &mut Vm,
+    this: Value,
+    _: &[Value],
+) -> JsResult<Value> {
+    let this = shared_array_buffer_receiver(vm, &this)?;
+    Ok(vm.get_prop(&this, "\0shared-array-buffer-resizable"))
+}
+
+fn native_shared_array_buffer_grow(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let this = shared_array_buffer_receiver(vm, &this)?;
+    if !vm.get_prop(&this, "\0shared-array-buffer-resizable").truthy() {
+        return Err(JsError::Throw(type_error(vm, "SharedArrayBuffer is not growable")));
+    }
+    let next = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(f64::NAN);
+    let max = vm.get_prop(&this, "maxByteLength").number();
+    let current = vm.get_prop(&this, "byteLength").number();
+    if !next.is_finite() || next < current || next > max || next.fract() != 0.0 {
+        return Err(JsError::Throw(range_error(vm, "invalid SharedArrayBuffer length")));
+    }
+    let data = vm.get_prop(&this, ARRAY_BUFFER_DATA);
+    for index in vm.get_prop(&data, "length").number().max(0.0) as usize..next as usize {
+        vm.set_prop(&data, &index.to_string(), Value::Number(0.0));
+    }
+    vm.set_prop(&this, "byteLength", Value::Number(next));
+    Ok(Value::Undefined)
 }
 
 fn native_parse_int(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
@@ -26927,18 +27073,39 @@ fn native_test262_detach_array_buffer(
 }
 
 fn native_array_buffer_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    array_buffer_slice_impl(vm, this, args, false)
+}
+
+fn native_shared_array_buffer_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    array_buffer_slice_impl(vm, this, args, true)
+}
+
+fn array_buffer_slice_impl(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+    shared: bool,
+) -> JsResult<Value> {
     let Some(source) = this.as_object_ref() else {
         return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
     };
-    if !source.borrow().props.contains_key("\0array-buffer") {
+    let props = source.borrow().props.clone();
+    let is_shared = props.contains_key("\0shared-array-buffer");
+    let is_array_buffer = props.contains_key("\0array-buffer") && !is_shared;
+    if (shared && !is_shared) || (!shared && !is_array_buffer) {
         return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
     }
     let length = vm.get_prop(&this, "byteLength").number().max(0.0) as usize;
-    let start = args.first().map(|value| value.number()).unwrap_or(0.0);
+    let start = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
     let end = args
         .get(1)
         .filter(|value| !value.is_undefined())
-        .map(|value| value.number())
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
         .unwrap_or(length as f64);
     let normalize = |value: f64, default_end: usize| {
         let value = if value.is_nan() { 0.0 } else { value.trunc() };
@@ -26959,7 +27126,14 @@ fn native_array_buffer_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
         .collect::<Vec<_>>();
     vm.set_prop(&result, "byteLength", Value::Number(count as f64));
     vm.set_prop(&result, "maxByteLength", Value::Number(count as f64));
-    vm.set_prop(&result, "\0array-buffer", Value::Bool(true));
+    vm.set_prop(
+        &result,
+        if shared { "\0shared-array-buffer" } else { "\0array-buffer" },
+        Value::Bool(true),
+    );
+    if shared {
+        vm.set_prop(&result, "\0shared-array-buffer-resizable", Value::Bool(false));
+    }
     vm.set_prop(&result, ARRAY_BUFFER_DATA, vm.array_from_values(copied));
     Ok(result)
 }
