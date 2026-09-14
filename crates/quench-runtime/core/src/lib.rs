@@ -8773,7 +8773,7 @@ impl Vm {
         // pretending the own `prototype` slot is the internal [[Prototype]].
         if self.restricted_function_property(object, key) {
             let thrower = self.throw_type_error();
-            return self.call_arguments(&thrower, receiver.clone(), &[] as &[Value]);
+            return self.call_property_accessor(thrower, receiver.clone(), &[]);
         }
         if let Some((path, imported)) = self.module_ref_parts(object, key) {
             return self.resolve_module_ref(&path, &imported);
@@ -8795,7 +8795,7 @@ impl Vm {
                 }
                 return Ok(Value::Undefined);
             };
-            return self.call_arguments(&getter, receiver.clone(), &[] as &[Value]);
+            return self.call_property_accessor(getter, receiver.clone(), &[]);
         }
         if let Some(prototype_function) = object.as_object_ref().and_then(|object| {
             let object = object.borrow();
@@ -8837,7 +8837,7 @@ impl Vm {
                 }
                 return Ok(Value::Undefined);
             };
-            return self.call_arguments(&getter, receiver.clone(), &[] as &[Value]);
+            return self.call_property_accessor(getter, receiver.clone(), &[]);
         }
         Ok(self.get_prop(object, key))
     }
@@ -8944,7 +8944,7 @@ impl Vm {
         }
         if self.restricted_function_property(object, key) {
             let thrower = self.throw_type_error();
-            self.call_arguments(&thrower, receiver.clone(), &[value][..])?;
+            self.call_property_accessor(thrower, receiver.clone(), &[value][..])?;
             return Ok(());
         }
         // Primitive Symbols are represented by an internal object carrier.
@@ -8966,7 +8966,7 @@ impl Vm {
             let Some(setter) = setter else {
                 return Err(JsError::Throw(type_error(self, "property has no setter")));
             };
-            self.call_arguments(&setter, receiver.clone(), &[value][..])?;
+            self.call_property_accessor(setter, receiver.clone(), &[value][..])?;
             return Ok(());
         }
         if let Some(next_prototype) = object.as_object_ref().and_then(|object| {
@@ -10281,6 +10281,22 @@ impl Vm {
             let request = self.get_prop(&queue, &index.to_string());
             self.resolve_async_generator_next(iterator, &request);
         }
+    }
+
+    // Accessor invocation is an ordinary [[Call]], even when the enclosing
+    // operation is a constructor.  Hide the constructor's dynamic
+    // `new.target` while running the getter/setter, then restore it for the
+    // caller (notably a derived constructor continuing after `super()`).
+    fn call_property_accessor(
+        &mut self,
+        callee: Value,
+        receiver: Value,
+        arguments: &[Value],
+    ) -> JsResult<Value> {
+        let previous_new_target = self.current_new_target.take();
+        let result = self.call_arguments(&callee, receiver, arguments);
+        self.current_new_target = previous_new_target;
+        result
     }
 
     fn call_arguments<A: CallArguments + ?Sized>(
