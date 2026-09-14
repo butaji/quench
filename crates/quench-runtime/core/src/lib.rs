@@ -28335,11 +28335,14 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
         Value::Number(values.len() as f64),
     );
     vm.set_prop(&this, "\0typed-array-bytes", Value::Number(bytes));
-    if let Some(kind) = typed_array_kind {
+    if let Some(kind) = typed_array_kind.as_ref() {
         vm.set_prop(&this, "\0typed-array-kind", Value::string_value(kind));
     }
     if !had_source {
         for (index, value) in values.iter().cloned().enumerate() {
+            let value = typed_array_kind
+                .as_deref()
+                .map_or(value.clone(), |kind| typed_array_element_value(kind, &value));
             vm.set_prop(&data, &index.to_string(), value);
         }
     }
@@ -30693,10 +30696,10 @@ fn atomics_view(vm: &mut Vm, value: &Value, require_shared: bool) -> JsResult<(V
 
 fn atomics_index(vm: &mut Vm, view: &Value, value: &Value) -> JsResult<usize> {
     let number = to_number_with_vm(vm, value)?;
-    let index = if number.is_nan() || number == 0.0 { 0 } else if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+    let index = if number.is_nan() || number == 0.0 { 0 } else if !number.is_finite() || number.trunc() < 0.0 {
         return Err(JsError::Throw(range_error(vm, "Atomics index is out of range")));
     } else {
-        number as usize
+        number.trunc() as usize
     };
     let length = vm.get_prop(view, "length").number().max(0.0) as usize;
     if index >= length {
