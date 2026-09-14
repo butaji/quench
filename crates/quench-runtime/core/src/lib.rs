@@ -7653,6 +7653,7 @@ impl Vm {
         ] {
             let native = match name {
                 "DataView" => native_dataview_constructor,
+                "SharedArrayBuffer" => native_shared_array_buffer_constructor,
                 "WeakMap" => native_weak_map_constructor,
                 "WeakSet" => native_weak_set_constructor,
                 _ => native_subclassable_builtin,
@@ -7701,6 +7702,45 @@ impl Vm {
                 }
                 "DataView" => {
                     let prototype_value = Value::Object(prototype.clone());
+                    self.set_prop(&constructor, "prototype", prototype_value.clone());
+                    set_property_attributes(
+                        &prototype_value,
+                        "constructor",
+                        PropertyAttributes::BUILTIN_METHOD,
+                    );
+                    let buffer_getter = self.native_named(native_dataview_buffer, "get buffer", 0);
+                    let byte_length_getter =
+                        self.native_named(native_dataview_byte_length, "get byteLength", 0);
+                    let byte_offset_getter =
+                        self.native_named(native_dataview_byte_offset, "get byteOffset", 0);
+                    for (key, getter) in [
+                        ("buffer", buffer_getter),
+                        ("byteLength", byte_length_getter),
+                        ("byteOffset", byte_offset_getter),
+                    ] {
+                        self.define_accessor_slot(
+                            &prototype_value,
+                            key,
+                            Some(getter),
+                            None,
+                            PropertyAttributes {
+                                writable: false,
+                                enumerable: false,
+                                configurable: true,
+                            },
+                        );
+                    }
+                    let tag_key = self.well_known_symbol_key("toStringTag");
+                    self.set_prop(&prototype_value, &tag_key, Value::string_value("DataView"));
+                    set_property_attributes(
+                        &prototype_value,
+                        &tag_key,
+                        PropertyAttributes {
+                            writable: false,
+                            enumerable: false,
+                            configurable: true,
+                        },
+                    );
                     self.set_prop(
                         &prototype_value,
                         "getUint8",
@@ -7710,6 +7750,31 @@ impl Vm {
                         &prototype_value,
                         "getUint8",
                         PropertyAttributes::BUILTIN_METHOD,
+                    );
+                    install_native_methods!(
+                        self,
+                        prototype_value,
+                        "getInt8" => native_dataview_get_int8 / 1,
+                        "getInt16" => native_dataview_get_int16 / 1,
+                        "getUint16" => native_dataview_get_uint16 / 1,
+                        "getInt32" => native_dataview_get_int32 / 1,
+                        "getUint32" => native_dataview_get_uint32 / 1,
+                        "getFloat16" => native_dataview_get_float16 / 1,
+                        "getFloat32" => native_dataview_get_float32 / 1,
+                        "getFloat64" => native_dataview_get_float64 / 1,
+                        "getBigInt64" => native_dataview_get_bigint64 / 1,
+                        "getBigUint64" => native_dataview_get_biguint64 / 1,
+                        "setInt8" => native_dataview_set_int8 / 2,
+                        "setUint8" => native_dataview_set_uint8 / 2,
+                        "setInt16" => native_dataview_set_int16 / 2,
+                        "setUint16" => native_dataview_set_uint16 / 2,
+                        "setInt32" => native_dataview_set_int32 / 2,
+                        "setUint32" => native_dataview_set_uint32 / 2,
+                        "setFloat16" => native_dataview_set_float16 / 2,
+                        "setFloat32" => native_dataview_set_float32 / 2,
+                        "setFloat64" => native_dataview_set_float64 / 2,
+                        "setBigInt64" => native_dataview_set_bigint64 / 2,
+                        "setBigUint64" => native_dataview_set_biguint64 / 2,
                     );
                 }
                 _ => {}
@@ -24288,6 +24353,46 @@ fn native_subclassable_builtin(_: &mut Vm, receiver: Value, _: &[Value]) -> JsRe
     Ok(receiver)
 }
 
+fn native_shared_array_buffer_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(
+            vm,
+            "SharedArrayBuffer constructor must be called with new",
+        )));
+    }
+    let this = if this.is_object_like() { this } else { vm.object(None) };
+    let length = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    if !length.is_finite() || length < 0.0 || length.fract() != 0.0 {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "invalid SharedArrayBuffer length",
+        )));
+    }
+    if length > MAX_MATERIALIZED_ARRAY_LENGTH as f64 {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "SharedArrayBuffer allocation exceeds the runtime limit",
+        )));
+    }
+    vm.set_prop(&this, "byteLength", Value::Number(length));
+    vm.set_prop(&this, "maxByteLength", Value::Number(length));
+    vm.set_prop(&this, "\0shared-array-buffer", Value::Bool(true));
+    vm.set_prop(
+        &this,
+        ARRAY_BUFFER_DATA,
+        vm.array_from_values(vec![Value::Number(0.0); length as usize]),
+    );
+    Ok(this)
+}
+
 fn native_parse_int(vm: &mut Vm, _: Value, a: &[Value]) -> JsResult<Value> {
     let mut s = match a.first() {
         Some(value) => to_string_with_vm(vm, value)?,
@@ -26278,29 +26383,113 @@ fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
         return Err(JsError::Throw(type_error(vm, "DataView constructor must be called with new")));
     }
     let buffer = args.first().cloned().unwrap_or(Value::Undefined);
-    if !buffer.as_object_ref().is_some_and(|object| object.borrow().props.contains_key("\0array-buffer")) {
+    let is_buffer = buffer.as_object_ref().is_some_and(|object| {
+        let object = object.borrow();
+        object.props.contains_key("\0array-buffer")
+            || object.props.contains_key("\0shared-array-buffer")
+    });
+    if !is_buffer {
         return Err(JsError::Throw(type_error(vm, "DataView buffer is not an ArrayBuffer")));
     }
+    let buffer_length = vm.get_prop(&buffer, "byteLength").number().max(0.0);
+    let offset = args
+        .get(1)
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 {
+        return Err(JsError::Throw(range_error(vm, "invalid DataView byteOffset")));
+    }
+    if buffer
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.get("\0array-buffer-detached").is_some_and(Value::truthy))
+    {
+        return Err(JsError::Throw(type_error(vm, "detached ArrayBuffer")));
+    }
+    if offset > buffer_length {
+        return Err(JsError::Throw(range_error(vm, "DataView byteOffset is out of bounds")));
+    }
+    let byte_length = if let Some(value) = args.get(2).filter(|value| !value.is_undefined()) {
+        let value = to_number_with_vm(vm, value)?;
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+            return Err(JsError::Throw(range_error(vm, "invalid DataView byteLength")));
+        }
+        if offset + value > buffer_length {
+            return Err(JsError::Throw(range_error(vm, "DataView byteLength is out of bounds")));
+        }
+        value
+    } else {
+        buffer_length - offset
+    };
     let view = if this.is_object_like() { this } else { vm.object(None) };
     vm.set_prop(&view, "\0dataview-buffer", buffer.clone());
-    vm.set_prop(&view, "buffer", buffer);
-    vm.set_prop(&view, "byteOffset", Value::Number(0.0));
+    vm.set_prop(&view, "\0dataview-offset", Value::Number(offset));
+    vm.set_prop(&view, "\0dataview-length", Value::Number(byte_length));
     vm.set_prop(
         &view,
-        "byteLength",
-        vm.get_prop(&view, "buffer")
-            .as_object_ref()
-            .and_then(|object| object.borrow().props.get("byteLength").cloned())
-            .unwrap_or(Value::Number(0.0)),
+        "\0dataview-auto-length",
+        Value::Bool(args.get(2).is_none_or(Value::is_undefined)),
     );
     Ok(view)
 }
 
 fn native_dataview_get_uint8(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    let buffer = this
-        .as_object_ref()
-        .and_then(|object| object.borrow().props.get("\0dataview-buffer").cloned())
-        .ok_or_else(|| JsError::Throw(type_error(vm, "incompatible receiver")))?;
+    dataview_read(vm, &this, args, 1, false, false, false)
+}
+
+fn native_dataview_set_uint8(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    dataview_write(vm, &this, args, 1, false, false, false)
+}
+
+fn dataview_parts(vm: &mut Vm, this: &Value) -> JsResult<(Value, usize, usize)> {
+    let Some(object) = this.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    };
+    let (buffer, offset, length, auto_length) = {
+        let object = object.borrow();
+        let buffer = object.props.get("\0dataview-buffer").cloned();
+        let offset = object.props.get("\0dataview-offset").and_then(Value::as_number);
+        let length = object.props.get("\0dataview-length").and_then(Value::as_number);
+        let auto_length = object
+            .props
+            .get("\0dataview-auto-length")
+            .is_some_and(Value::truthy);
+        (buffer, offset, length, auto_length)
+    };
+    let Some(buffer) = buffer else {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    };
+    if buffer.as_object_ref().is_some_and(|object| {
+        object
+            .borrow()
+            .props
+            .get("\0array-buffer-detached")
+            .is_some_and(Value::truthy)
+    }) {
+        return Err(JsError::Throw(type_error(vm, "detached ArrayBuffer")));
+    }
+    let offset = offset.unwrap_or(0.0).max(0.0) as usize;
+    let length = length.unwrap_or(0.0).max(0.0) as usize;
+    let current_length = vm.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
+    if auto_length {
+        Ok((buffer, offset, current_length.saturating_sub(offset)))
+    } else if offset.saturating_add(length) > current_length {
+        Err(JsError::Throw(type_error(vm, "DataView is out of bounds")))
+    } else {
+        Ok((buffer, offset, length))
+    }
+}
+
+fn dataview_read(
+    vm: &mut Vm,
+    this: &Value,
+    args: &[Value],
+    width: usize,
+    signed: bool,
+    float: bool,
+    bigint: bool,
+) -> JsResult<Value> {
+    let (buffer, base, length) = dataview_parts(vm, this)?;
     let offset = args
         .first()
         .map(|value| to_number_with_vm(vm, value))
@@ -26309,13 +26498,140 @@ fn native_dataview_get_uint8(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
     if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 {
         return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
     }
-    let data = vm.get_prop(&buffer, ARRAY_BUFFER_DATA);
-    let index = offset as usize;
-    let length = vm.get_prop(&this, "byteLength").number().max(0.0) as usize;
-    if index >= length {
+    let offset = offset as usize;
+    if offset.checked_add(width).is_none_or(|end| end > length) {
         return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
     }
-    Ok(vm.get_prop(&data, &index.to_string()))
+    let little = args.get(1).is_some_and(Value::truthy);
+    let data = vm.get_prop(&buffer, ARRAY_BUFFER_DATA);
+    let mut bytes = [0u8; 8];
+    for index in 0..width {
+        bytes[index] = vm.get_prop(&data, &(base + offset + index).to_string()).number() as u8;
+    }
+    let mut bits = 0u64;
+    if little {
+        for index in (0..width).rev() {
+            bits = (bits << 8) | bytes[index] as u64;
+        }
+    } else {
+        for byte in bytes.iter().take(width) {
+            bits = (bits << 8) | *byte as u64;
+        }
+    }
+    if bigint {
+        let value = if signed && width == 8 {
+            bits as i64 as i128
+        } else {
+            bits as i128
+        };
+        return Ok(bigint_marker(value.into()));
+    }
+    if float {
+        let value = match width {
+            4 => f32::from_bits(bits as u32) as f64,
+            8 => f64::from_bits(bits),
+            _ => bits as f64,
+        };
+        return Ok(Value::Number(value));
+    }
+    let value = if signed {
+        let shift = 64 - width * 8;
+        ((bits << shift) as i64 >> shift) as f64
+    } else {
+        bits as f64
+    };
+    Ok(Value::Number(value))
+}
+
+fn dataview_write(
+    vm: &mut Vm,
+    this: &Value,
+    args: &[Value],
+    width: usize,
+    signed: bool,
+    float: bool,
+    bigint: bool,
+) -> JsResult<Value> {
+    let (buffer, base, length) = dataview_parts(vm, this)?;
+    let offset = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(f64::NAN);
+    if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 {
+        return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
+    }
+    let offset = offset as usize;
+    if offset.checked_add(width).is_none_or(|end| end > length) {
+        return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
+    }
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let number = if bigint { bigint_value(vm, &value)?.to_f64().unwrap_or(0.0) } else { to_number_with_vm(vm, &value)? };
+    let bits = if float {
+        match width {
+            4 => (number as f32).to_bits() as u64,
+            8 => number.to_bits(),
+            _ => number as u64,
+        }
+    } else {
+        number.trunc() as i64 as u64
+    };
+    let little = args.get(2).is_some_and(Value::truthy);
+    let data = vm.get_prop(&buffer, ARRAY_BUFFER_DATA);
+    for index in 0..width {
+        let shift = if little { index * 8 } else { (width - index - 1) * 8 };
+        vm.set_prop(&data, &(base + offset + index).to_string(), Value::Number(((bits >> shift) & 0xff) as f64));
+    }
+    let _ = signed;
+    Ok(Value::Undefined)
+}
+
+macro_rules! define_dataview_accessors {
+    ($(($get:ident, $set:ident, $width:expr, $signed:expr, $float:expr, $bigint:expr)),+ $(,)?) => {
+        $(
+            fn $get(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+                dataview_read(vm, &this, args, $width, $signed, $float, $bigint)
+            }
+            fn $set(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+                dataview_write(vm, &this, args, $width, $signed, $float, $bigint)
+            }
+        )+
+    };
+}
+
+define_dataview_accessors! {
+    (native_dataview_get_int8, native_dataview_set_int8, 1, true, false, false),
+    (native_dataview_get_int16, native_dataview_set_int16, 2, true, false, false),
+    (native_dataview_get_uint16, native_dataview_set_uint16, 2, false, false, false),
+    (native_dataview_get_int32, native_dataview_set_int32, 4, true, false, false),
+    (native_dataview_get_uint32, native_dataview_set_uint32, 4, false, false, false),
+    (native_dataview_get_float16, native_dataview_set_float16, 2, false, true, false),
+    (native_dataview_get_float32, native_dataview_set_float32, 4, false, true, false),
+    (native_dataview_get_float64, native_dataview_set_float64, 8, false, true, false),
+    (native_dataview_get_bigint64, native_dataview_set_bigint64, 8, true, false, true),
+    (native_dataview_get_biguint64, native_dataview_set_biguint64, 8, false, false, true),
+}
+
+fn native_dataview_buffer(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(object) = this.as_object_ref() else {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    };
+    object
+        .borrow()
+        .props
+        .get("\0dataview-buffer")
+        .cloned()
+        .ok_or_else(|| JsError::Throw(type_error(vm, "incompatible receiver")))
+}
+
+fn native_dataview_byte_length(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let (_, _, length) = dataview_parts(vm, &this)?;
+    Ok(Value::Number(length as f64))
+}
+
+fn native_dataview_byte_offset(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let (_, offset, _) = dataview_parts(vm, &this)?;
+    Ok(Value::Number(offset as f64))
 }
 
 fn native_array_buffer_is_view(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
