@@ -18847,7 +18847,12 @@ impl Vm {
                 // tail-call edge would escape the generator frame and make
                 // the caller resume the callee instead of producing the
                 // generator's final result.
-                if self.sync_generator_yielding {
+                // `super()` is a constructor transition, not a tail call;
+                // its special receiver/new-target bookkeeping lives in the
+                // ordinary evaluator.
+                if self.sync_generator_yielding
+                    || matches!(&call.callee, Expression::Super(_))
+                {
                     return self.eval_expr(expression, e);
                 }
                 let (callee, receiver, short_circuited) =
