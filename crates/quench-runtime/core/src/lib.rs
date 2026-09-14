@@ -7342,13 +7342,55 @@ impl Vm {
             .expect("ArrayBuffer constructor")
             .prototype
             .clone();
+        let prototype_value = Value::Object(prototype.clone());
+        let byte_length = self.native_named(native_array_buffer_byte_length, "get byteLength", 0);
+        let max_byte_length =
+            self.native_named(native_array_buffer_max_byte_length, "get maxByteLength", 0);
+        let resizable = self.native_named(native_array_buffer_resizable, "get resizable", 0);
+        let detached = self.native_named(native_array_buffer_detached, "get detached", 0);
+        for getter in [&byte_length, &max_byte_length, &resizable, &detached] {
+            self.mark_nonconstructable(getter);
+        }
+        let byte_length_key = "byteLength";
+        let max_byte_length_key = "maxByteLength";
+        let resizable_key = "resizable";
+        let detached_key = "detached";
+        for (key, getter) in [
+            (byte_length_key, byte_length),
+            (max_byte_length_key, max_byte_length),
+            (resizable_key, resizable),
+            (detached_key, detached),
+        ] {
+            self.define_accessor_slot(
+                &prototype_value,
+                key,
+                Some(getter),
+                None,
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+        let tag_key = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&prototype_value, &tag_key, Value::string_value("ArrayBuffer"));
+        set_property_attributes(
+            &prototype_value,
+            &tag_key,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         self.set_prop(
-            &Value::Object(prototype.clone()),
+            &prototype_value,
             "slice",
             self.native_named(native_array_buffer_slice, "slice", 2),
         );
         self.set_prop(
-            &Value::Object(prototype),
+            &prototype_value,
             "resize",
                 self.native_named(native_array_buffer_resize, "resize", 1),
             );
@@ -7619,6 +7661,19 @@ impl Vm {
                         &Value::Object(prototype.clone()),
                         "has",
                         self.native_named(native_weak_set_has, "has", 1),
+                    );
+                }
+                "DataView" => {
+                    let prototype_value = Value::Object(prototype.clone());
+                    self.set_prop(
+                        &prototype_value,
+                        "getUint8",
+                        self.native_named(native_dataview_get_uint8, "getUint8", 1),
+                    );
+                    set_property_attributes(
+                        &prototype_value,
+                        "getUint8",
+                        PropertyAttributes::BUILTIN_METHOD,
                     );
                 }
                 _ => {}
@@ -26160,7 +26215,38 @@ fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     let view = if this.is_object_like() { this } else { vm.object(None) };
     vm.set_prop(&view, "\0dataview-buffer", buffer.clone());
     vm.set_prop(&view, "buffer", buffer);
+    vm.set_prop(&view, "byteOffset", Value::Number(0.0));
+    vm.set_prop(
+        &view,
+        "byteLength",
+        vm.get_prop(&view, "buffer")
+            .as_object_ref()
+            .and_then(|object| object.borrow().props.get("byteLength").cloned())
+            .unwrap_or(Value::Number(0.0)),
+    );
     Ok(view)
+}
+
+fn native_dataview_get_uint8(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let buffer = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0dataview-buffer").cloned())
+        .ok_or_else(|| JsError::Throw(type_error(vm, "incompatible receiver")))?;
+    let offset = args
+        .first()
+        .map(|value| to_number_with_vm(vm, value))
+        .transpose()?
+        .unwrap_or(0.0);
+    if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 {
+        return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
+    }
+    let data = vm.get_prop(&buffer, ARRAY_BUFFER_DATA);
+    let index = offset as usize;
+    let length = vm.get_prop(&this, "byteLength").number().max(0.0) as usize;
+    if index >= length {
+        return Err(JsError::Throw(range_error(vm, "offset is out of bounds")));
+    }
+    Ok(vm.get_prop(&data, &index.to_string()))
 }
 
 fn native_array_buffer_is_view(_: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> {
@@ -26172,6 +26258,39 @@ fn native_array_buffer_is_view(_: &mut Vm, _: Value, args: &[Value]) -> JsResult
         object.props.contains_key("\0dataview-buffer")
             || object.props.contains_key(TYPED_ARRAY_BUFFER),
     ))
+}
+
+fn array_buffer_receiver(vm: &mut Vm, this: &Value) -> JsResult<Value> {
+    if !this
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key("\0array-buffer"))
+    {
+        return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
+    }
+    Ok(this.clone())
+}
+
+fn native_array_buffer_byte_length(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let this = array_buffer_receiver(vm, &this)?;
+    Ok(vm.get_prop(&this, "byteLength"))
+}
+
+fn native_array_buffer_max_byte_length(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let this = array_buffer_receiver(vm, &this)?;
+    Ok(vm.get_prop(&this, "maxByteLength"))
+}
+
+fn native_array_buffer_resizable(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let this = array_buffer_receiver(vm, &this)?;
+    Ok(Value::Bool(
+        vm.get_prop(&this, "maxByteLength").number()
+            > vm.get_prop(&this, "byteLength").number(),
+    ))
+}
+
+fn native_array_buffer_detached(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let _ = array_buffer_receiver(vm, &this)?;
+    Ok(Value::Bool(false))
 }
 
 fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -26214,10 +26333,22 @@ fn native_array_buffer_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> 
             "invalid ArrayBuffer maxByteLength",
         )));
     }
+    if length > MAX_MATERIALIZED_ARRAY_LENGTH as f64
+        || max_length > MAX_MATERIALIZED_ARRAY_LENGTH as f64
+    {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "ArrayBuffer allocation exceeds the runtime limit",
+        )));
+    }
     vm.set_prop(&this, "byteLength", Value::Number(length));
     vm.set_prop(&this, "maxByteLength", Value::Number(max_length));
     vm.set_prop(&this, "\0array-buffer", Value::Bool(true));
-    vm.set_prop(&this, ARRAY_BUFFER_DATA, vm.array_from_values(Vec::new()));
+    vm.set_prop(
+        &this,
+        ARRAY_BUFFER_DATA,
+        vm.array_from_values(vec![Value::Number(0.0); length as usize]),
+    );
     Ok(this)
 }
 
