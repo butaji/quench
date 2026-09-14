@@ -24521,13 +24521,24 @@ fn native_shared_array_buffer_constructor(
         .map(|value| to_number_with_vm(vm, value))
         .transpose()?
         .unwrap_or(0.0);
-    if !length.is_finite() || length < 0.0 {
+    if length.is_infinite() {
         return Err(JsError::Throw(range_error(
             vm,
             "invalid SharedArrayBuffer length",
         )));
     }
-    let length = if length == 0.0 { 0.0 } else { length.trunc() };
+    let length = if length.is_nan() || length == 0.0 {
+        0.0
+    } else {
+        length.trunc()
+    };
+    let length = if length == 0.0 { 0.0 } else { length };
+    if length < 0.0 {
+        return Err(JsError::Throw(range_error(
+            vm,
+            "invalid SharedArrayBuffer length",
+        )));
+    }
     let (max_length, resizable) = if let Some(options) = args.get(1).filter(|value| value.is_object_like()) {
         let value = vm.get_prop_with_accessors(options, "maxByteLength")?;
         if value.is_undefined() {
@@ -27118,23 +27129,62 @@ fn array_buffer_slice_impl(
     let first = normalize(start, length);
     let last = normalize(end, length);
     let count = last.saturating_sub(first);
-    let prototype = source.borrow().prototype.clone();
-    let result = vm.object(prototype);
     let data = vm.get_prop(&this, ARRAY_BUFFER_DATA);
     let copied = (0..count)
         .map(|index| vm.get_prop(&data, &(first + index).to_string()))
         .collect::<Vec<_>>();
-    vm.set_prop(&result, "byteLength", Value::Number(count as f64));
-    vm.set_prop(&result, "maxByteLength", Value::Number(count as f64));
-    vm.set_prop(
-        &result,
-        if shared { "\0shared-array-buffer" } else { "\0array-buffer" },
-        Value::Bool(true),
-    );
+    let result = if shared {
+        let default_constructor = Environment::get(&vm.global, "SharedArrayBuffer")
+            .unwrap_or(Value::Undefined);
+        let constructor = vm.get_prop_with_accessors(&this, "constructor")?;
+        let constructor = if constructor.is_undefined() {
+            default_constructor.clone()
+        } else {
+            if !constructor.is_object_like() || is_symbol_carrier(&constructor) {
+                return Err(JsError::Throw(type_error(vm, "SharedArrayBuffer constructor is not an object")));
+            }
+            let species = vm.get_prop_with_accessors(
+                &constructor,
+                &vm.well_known_symbol_key("species"),
+            )?;
+            if species.is_null() || species.is_undefined() {
+                default_constructor.clone()
+            } else {
+                species
+            }
+        };
+        if !constructable(&constructor) {
+            return Err(JsError::Throw(type_error(vm, "SharedArrayBuffer species is not a constructor")));
+        }
+        let result = native_reflect_construct(
+            vm,
+            Value::Undefined,
+            &[constructor, vm.array_from_values(vec![Value::Number(count as f64)])],
+        )?;
+        if result.same_bits(&this)
+            || !result.as_object_ref().is_some_and(|object| {
+                object.borrow().props.contains_key("\0shared-array-buffer")
+            })
+            || vm.get_prop(&result, "byteLength").number() < count as f64
+        {
+            return Err(JsError::Throw(type_error(vm, "SharedArrayBuffer species returned an invalid buffer")));
+        }
+        result
+    } else {
+        let prototype = source.borrow().prototype.clone();
+        let result = vm.object(prototype);
+        vm.set_prop(&result, "byteLength", Value::Number(count as f64));
+        vm.set_prop(&result, "maxByteLength", Value::Number(count as f64));
+        vm.set_prop(&result, "\0array-buffer", Value::Bool(true));
+        vm.set_prop(&result, ARRAY_BUFFER_DATA, vm.array_from_values(copied.clone()));
+        result
+    };
     if shared {
-        vm.set_prop(&result, "\0shared-array-buffer-resizable", Value::Bool(false));
+        let target_data = vm.get_prop(&result, ARRAY_BUFFER_DATA);
+        for (index, value) in copied.into_iter().enumerate() {
+            vm.set_prop(&target_data, &index.to_string(), value);
+        }
     }
-    vm.set_prop(&result, ARRAY_BUFFER_DATA, vm.array_from_values(copied));
     Ok(result)
 }
 
