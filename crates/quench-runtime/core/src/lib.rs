@@ -18989,11 +18989,9 @@ impl Vm {
                     if self.strict_mode {
                         return Err(JsError::Throw(reference_error(self, &key)));
                     }
-                    // A with-reference captures the object only while the
-                    // binding exists.  If the RHS deleted that property,
-                    // sloppy PutValue is a no-op rather than recreating a
-                    // fresh own property on the environment object.
-                    return Ok(());
+                    if object_has_typed_array_prototype(&object) {
+                        return Ok(());
+                    }
                 }
                 set_assignment_property(self, &object, &key, v)?;
             }
@@ -36895,6 +36893,18 @@ fn private_target(value: &Value) -> Value {
         current = target;
     }
     current
+}
+
+fn object_has_typed_array_prototype(value: &Value) -> bool {
+    let mut current = value.as_object_ref().and_then(|object| object.borrow().prototype.clone());
+    while let Some(prototype) = current {
+        let borrowed = prototype.borrow();
+        if borrowed.props.contains_key(TYPED_ARRAY_BUFFER) {
+            return true;
+        }
+        current = borrowed.prototype.clone();
+    }
+    false
 }
 
 fn proxy_handler(value: &Value) -> Option<Value> {
