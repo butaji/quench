@@ -5556,6 +5556,8 @@ struct Vm {
     sync_generator_iterators: Vec<Value>,
     sync_generator_pending_yield: Option<SyncGeneratorPendingYield>,
     sync_generator_replay_value: Option<Value>,
+    sync_generator_resume: Option<SyncGeneratorResume>,
+    sync_generator_return_value: Option<Value>,
     mapped_arguments: RefCell<Vec<(ObjectHandle, Env, Vec<String>)>>,
     // Synchronous bridge for thenable assimilation at an await expression.
     // The full async-module scheduler can suspend stencils later; keeping the
@@ -5593,6 +5595,12 @@ struct SyncGeneratorContinuation {
     pending_yield: Option<SyncGeneratorPendingYield>,
 }
 
+enum SyncGeneratorResume {
+    Next(Value),
+    Return(Value),
+    Throw(Value),
+}
+
 enum SyncGeneratorPendingYield {
     AssignmentDefault {
         binding: &'static AssignmentTarget<'static>,
@@ -5607,6 +5615,10 @@ enum SyncGeneratorPendingYield {
         object: Value,
         key_expression: &'static Expression<'static>,
         value: Value,
+        statement: usize,
+    },
+    Delegated {
+        iterator: Value,
         statement: usize,
     },
     Replay {
@@ -5684,6 +5696,8 @@ impl Vm {
             sync_generator_iterators: Vec::new(),
             sync_generator_pending_yield: None,
             sync_generator_replay_value: None,
+            sync_generator_resume: None,
+            sync_generator_return_value: None,
             mapped_arguments: RefCell::new(Vec::new()),
             await_result: None,
             async_module_continuations: Vec::new(),
@@ -9598,6 +9612,14 @@ impl Vm {
     }
 
     fn resume_sync_generator(&mut self, iterator: &Value, resume_value: Value) -> JsResult<Value> {
+        self.resume_sync_generator_with(iterator, SyncGeneratorResume::Next(resume_value))
+    }
+
+    fn resume_sync_generator_with(
+        &mut self,
+        iterator: &Value,
+        resume: SyncGeneratorResume,
+    ) -> JsResult<Value> {
         let key = iterator
             .as_object()
             .ok_or_else(|| JsError::Throw(type_error(self, "invalid generator receiver")))?
@@ -9614,16 +9636,26 @@ impl Vm {
         }
         let previous_strict_mode = self.strict_mode;
         self.strict_mode = continuation.strict;
+        self.sync_generator_return_value = None;
         self.sync_generator_yielding = true;
         self.sync_generator_iterators = std::mem::take(&mut continuation.pending_iterators);
+        let resume_value = match &resume {
+            SyncGeneratorResume::Next(value)
+            | SyncGeneratorResume::Return(value)
+            | SyncGeneratorResume::Throw(value) => value.clone(),
+        };
+        self.sync_generator_resume = Some(resume);
         if let Some(pending) = continuation.pending_yield.take() {
             continuation.next_statement = match &pending {
                 SyncGeneratorPendingYield::AssignmentDefault { statement, .. }
                 | SyncGeneratorPendingYield::PreparedDefault { statement, .. }
                 | SyncGeneratorPendingYield::DeferredProperty { statement, .. }
+                | SyncGeneratorPendingYield::Delegated { statement, .. }
                 | SyncGeneratorPendingYield::Replay { statement } => *statement,
             };
-            self.sync_generator_replay_value = Some(resume_value.clone());
+            if matches!(&self.sync_generator_resume, Some(SyncGeneratorResume::Next(_))) {
+                self.sync_generator_replay_value = Some(resume_value.clone());
+            }
             self.sync_generator_pending_yield = Some(pending);
         }
         if let Some(source_id) = continuation.source_id {
@@ -9657,6 +9689,9 @@ impl Vm {
                                 } => {
                                     *statement = index;
                                 }
+                                SyncGeneratorPendingYield::Delegated { statement, .. } => {
+                                    *statement = index;
+                                }
                                 SyncGeneratorPendingYield::Replay { statement } => {
                                     *statement = index;
                                 }
@@ -9676,7 +9711,12 @@ impl Vm {
                         continuation.done = true;
                         return Ok(generator_result(self, Value::Undefined, true));
                     }
-                    Ok(Signal::Normal(_)) => {}
+                    Ok(Signal::Normal(_)) => {
+                        if let Some(value) = self.sync_generator_return_value.take() {
+                            continuation.done = true;
+                            return Ok(generator_result(self, value, true));
+                        }
+                    }
                 }
             }
             continuation.done = true;
@@ -9688,6 +9728,7 @@ impl Vm {
         continuation.pending_iterators = std::mem::take(&mut self.sync_generator_iterators);
         continuation.pending_yield = self.sync_generator_pending_yield.take();
         self.sync_generator_replay_value = None;
+        self.sync_generator_resume = None;
         self.sync_generator_yielding = false;
         self.strict_mode = previous_strict_mode;
         self.sync_generator_continuations.insert(key, continuation);
@@ -14088,6 +14129,59 @@ impl Vm {
         Ok(Some(self.get_prop_with_accessors(&result, "value")?))
     }
 
+    fn iterator_next_with_input(
+        &mut self,
+        iterator: &Value,
+        input: Option<Value>,
+    ) -> JsResult<(bool, Value)> {
+        let next = self.get_prop_with_accessors(iterator, "next")?;
+        if !next.is_function() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "iterator next method is not callable",
+            )));
+        }
+        let result = match input {
+            Some(input) => self.call_arguments(&next, iterator.clone(), &[input][..])?,
+            None => self.call_arguments(&next, iterator.clone(), &[] as &[Value])?,
+        };
+        if !result.is_object_like() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "iterator result is not an object",
+            )));
+        }
+        let done = self.get_prop_with_accessors(&result, "done")?.truthy();
+        let value = if done
+            || !self
+                .has_own_property_key(&result, "done")
+            || self.find_accessor(&result, "value").is_none()
+        {
+            self.get_prop_with_accessors(&result, "value")?
+        } else {
+            Value::Undefined
+        };
+        Ok((done, value))
+    }
+
+    fn iterator_result_from_call(
+        &mut self,
+        iterator: &Value,
+        method: &Value,
+        arguments: &[Value],
+    ) -> JsResult<(bool, Value)> {
+        let result = self.call_arguments(method, iterator.clone(), arguments)?;
+        if !result.is_object_like() {
+            return Err(JsError::Throw(type_error(
+                self,
+                "iterator result is not an object",
+            )));
+        }
+        let done = self.get_prop_with_accessors(&result, "done")?.truthy();
+        let value = self.get_prop_with_accessors(&result, "value")?;
+        Ok((done, value))
+    }
+
     fn iterator_close(&mut self, iterator: &Value) -> JsResult<()> {
         let return_method = self.get_prop_with_accessors(iterator, "return")?;
         if return_method.is_null() || return_method.is_undefined() {
@@ -15039,6 +15133,111 @@ impl Vm {
                 Ok(Value::Bool(self.has_private_brand(&object, &key)))
             }
             YieldExpression(yield_expression) => {
+                if yield_expression.delegate {
+                    if let Some(SyncGeneratorPendingYield::Delegated { iterator, .. }) =
+                        self.sync_generator_pending_yield.take()
+                    {
+                        let resume = self.sync_generator_resume.take().unwrap_or_else(|| {
+                            SyncGeneratorResume::Next(
+                                self.sync_generator_replay_value
+                                    .take()
+                                .unwrap_or(Value::Undefined),
+                            )
+                        });
+                        let is_return = matches!(&resume, SyncGeneratorResume::Return(_));
+                        let (done, value) = match resume {
+                            SyncGeneratorResume::Next(input) => {
+                                self.iterator_next_with_input(&iterator, Some(input))?
+                            }
+                            SyncGeneratorResume::Throw(input) => {
+                                let throw = self.get_prop_with_accessors(&iterator, "throw")?;
+                                if throw.is_undefined() {
+                                    self.iterator_close(&iterator)?;
+                                    return Err(JsError::Throw(input));
+                                }
+                                if !throw.is_function() {
+                                    return Err(JsError::Throw(type_error(
+                                        self,
+                                        "iterator throw method is not callable",
+                                    )));
+                                }
+                                self.iterator_result_from_call(
+                                    &iterator,
+                                    &throw,
+                                    &[input][..],
+                                )?
+                            }
+                            SyncGeneratorResume::Return(input) => {
+                                let return_method =
+                                    self.get_prop_with_accessors(&iterator, "return")?;
+                                if return_method.is_undefined() {
+                                    self.sync_generator_return_value = Some(input.clone());
+                                    (true, input)
+                                } else {
+                                    if !return_method.is_function() {
+                                        return Err(JsError::Throw(type_error(
+                                            self,
+                                            "iterator return method is not callable",
+                                        )));
+                                    }
+                                    self.iterator_result_from_call(
+                                        &iterator,
+                                        &return_method,
+                                        &[input][..],
+                                    )?
+                                }
+                            }
+                        };
+                        if done {
+                            self.sync_generator_iterators.retain(|candidate| {
+                                candidate.as_object().is_none_or(|candidate| {
+                                    iterator.as_object().is_none_or(|active| {
+                                        candidate.as_ptr() != active.as_ptr()
+                                    })
+                                })
+                            });
+                            if self.sync_generator_return_value.is_none() {
+                                // A delegated `return` with a completed
+                                // iterator terminates the outer generator at
+                                // the same completion value.
+                                if is_return {
+                                    self.sync_generator_return_value = Some(value.clone());
+                                }
+                            }
+                            return Ok(value);
+                        }
+                        self.sync_generator_pending_yield = Some(
+                            SyncGeneratorPendingYield::Delegated {
+                                iterator,
+                                statement: 0,
+                            },
+                        );
+                        return Err(JsError::Yield(value));
+                    }
+                    let source = yield_expression
+                        .argument
+                        .as_ref()
+                        .map(|argument| self.eval_expr(argument, e.clone()))
+                        .transpose()?
+                        .unwrap_or(Value::Undefined);
+                    let record = self.iterator_record(&source)?;
+                    let iterator = record.iterator;
+                    let (done, value) = self
+                        .iterator_next_with_input(&iterator, Some(Value::Undefined))?;
+                    if done {
+                        return Ok(value);
+                    }
+                    if self.sync_generator_yielding {
+                        self.sync_generator_iterators.push(iterator.clone());
+                        self.sync_generator_pending_yield = Some(
+                            SyncGeneratorPendingYield::Delegated {
+                                iterator,
+                                statement: 0,
+                            },
+                        );
+                    }
+                    return Err(JsError::Yield(value));
+                }
                 if let Some(value) = self.sync_generator_replay_value.take() {
                     return Ok(value);
                 }
@@ -21525,6 +21724,20 @@ fn native_sync_generator_return(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
         .as_object()
         .expect("generator instance is an object")
         .as_ptr();
+    if vm
+        .sync_generator_continuations
+        .get(&key)
+        .and_then(|continuation| continuation.pending_yield.as_ref())
+        .is_some_and(|pending| matches!(pending, SyncGeneratorPendingYield::Delegated { .. }))
+    {
+        vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
+        let result = vm.resume_sync_generator_with(
+            &this,
+            SyncGeneratorResume::Return(args.first().cloned().unwrap_or(Value::Undefined)),
+        );
+        vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
+        return result;
+    }
     if let Some(mut continuation) = vm.sync_generator_continuations.remove(&key) {
         continuation.done = true;
         for iterator in continuation.pending_iterators.iter().rev() {
@@ -21554,6 +21767,20 @@ fn native_sync_generator_throw(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
         .as_object()
         .expect("generator instance is an object")
         .as_ptr();
+    if vm
+        .sync_generator_continuations
+        .get(&key)
+        .and_then(|continuation| continuation.pending_yield.as_ref())
+        .is_some_and(|pending| matches!(pending, SyncGeneratorPendingYield::Delegated { .. }))
+    {
+        vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(true));
+        let result = vm.resume_sync_generator_with(
+            &this,
+            SyncGeneratorResume::Throw(args.first().cloned().unwrap_or(Value::Undefined)),
+        );
+        vm.set_prop(&this, SYNC_GENERATOR_EXECUTING_PROP, Value::Bool(false));
+        return result;
+    }
     if let Some(mut continuation) = vm.sync_generator_continuations.remove(&key) {
         continuation.done = true;
         vm.sync_generator_continuations.insert(key, continuation);
