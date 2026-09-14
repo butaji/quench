@@ -9248,6 +9248,22 @@ impl Vm {
         }
     }
 
+    fn call_arrow_or_async(
+        &mut self,
+        node: &'static ArrowFunctionExpression<'static>,
+        env: Env,
+        args: Vec<Value>,
+        source_id: Option<usize>,
+        strict: bool,
+    ) -> JsResult<Value> {
+        let result = self.call_arrow(node, env, args, source_id, strict);
+        if node.r#async {
+            Ok(self.promise_from_result(result))
+        } else {
+            result
+        }
+    }
+
     /// Materialize an async-generator activation once, then expose its
     /// yielded values through the ordinary Promise/`next` protocol. This is a
     /// correctness bridge for the stencil evaluator while suspension points
@@ -9953,7 +9969,7 @@ impl Vm {
                                     f.source_id,
                                     f.strict,
                                 ),
-                                FunctionKind::Arrow { node, env } => self.call_arrow(
+                                FunctionKind::Arrow { node, env } => self.call_arrow_or_async(
                                     node,
                                     env.clone(),
                                     a.materialize(),
@@ -9985,7 +10001,7 @@ impl Vm {
                             f.source_id,
                             f.strict,
                         ),
-                        FunctionKind::Arrow { node, env } => self.call_arrow(
+                        FunctionKind::Arrow { node, env } => self.call_arrow_or_async(
                             node,
                             env.clone(),
                             a.materialize(),
@@ -10048,9 +10064,13 @@ impl Vm {
                     f.source_id,
                     f.strict,
                 ),
-                FunctionKind::Arrow { node, env } => {
-                    self.call_arrow(node, env.clone(), a.materialize(), f.source_id, f.strict)
-                }
+                FunctionKind::Arrow { node, env } => self.call_arrow_or_async(
+                    node,
+                    env.clone(),
+                    a.materialize(),
+                    f.source_id,
+                    f.strict,
+                ),
                 FunctionKind::Class { .. } => Err(JsError::Throw(type_error(
                     self,
                     "class constructor cannot be invoked without 'new'",
@@ -14241,7 +14261,17 @@ impl Vm {
         v
     }
     fn make_arrow<'a>(&self, n: &'a ArrowFunctionExpression<'a>, e: Env) -> Value {
-        let p = self.allocate_object(Object::ordinary(self.default_object_prototype()));
+        let p = if n.r#async {
+            self.async_function_constructor()
+                .as_function_ref()
+                .map(|function| function.prototype.clone())
+                .unwrap_or_else(|| {
+                    self.default_object_prototype()
+                        .expect("default Object.prototype")
+                })
+        } else {
+            self.allocate_object(Object::ordinary(self.default_object_prototype()))
+        };
         let length = n
             .params
             .items
@@ -14267,7 +14297,9 @@ impl Vm {
             source_id: self.source_ids.last().copied(),
         };
         let v = Value::Function(Rc::new(f));
-        p.borrow_mut().props.insert("constructor", v.clone());
+        if !n.r#async {
+            p.borrow_mut().props.insert("constructor", v.clone());
+        }
         v
     }
 
@@ -30745,9 +30777,14 @@ fn native_object_get_prototype_of(vm: &mut Vm, _: Value, args: &[Value]) -> JsRe
         }) {
             return Ok(override_value);
         }
-        if target.as_function_ref().is_some_and(
-            |function| matches!(&function.kind, FunctionKind::User { node, .. } if node.r#async),
-        ) {
+        if target
+            .as_function_ref()
+            .is_some_and(|function| match &function.kind {
+                FunctionKind::User { node, .. } => node.r#async,
+                FunctionKind::Arrow { node, .. } => node.r#async,
+                _ => false,
+            })
+        {
             let generator = target.as_function_ref().is_some_and(|function| {
                 matches!(&function.kind, FunctionKind::User { node, .. } if node.generator)
             });
