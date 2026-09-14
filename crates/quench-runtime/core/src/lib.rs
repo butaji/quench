@@ -7427,6 +7427,7 @@ impl Vm {
         );
         for key in ["slice", "resize", "transferToImmutable"] {
             set_property_attributes(&prototype_value, key, PropertyAttributes::BUILTIN_METHOD);
+            self.mark_nonconstructable(&self.get_prop(&prototype_value, key));
         }
         let array_buffer_is_view =
             self.native_named(native_array_buffer_is_view, "isView", 1);
@@ -8115,6 +8116,11 @@ impl Vm {
         let test262 = self.object(None);
         self.set_prop(&test262, "createRealm", self.native(native_create_realm));
         self.set_prop(&test262, "evalScript", self.native(native_eval_script));
+        self.set_prop(
+            &test262,
+            "detachArrayBuffer",
+            self.native(native_test262_detach_array_buffer),
+        );
         // Test262's IsHTMLDDA fixture is a callable host object whose call
         // result is not an iterator. Keep it VM-owned so Array.from and
         // Object.is observe the same sentinel without a second host runtime.
@@ -26303,24 +26309,37 @@ fn array_buffer_receiver(vm: &mut Vm, this: &Value) -> JsResult<Value> {
     Ok(this.clone())
 }
 
+fn array_buffer_is_detached(vm: &mut Vm, this: &Value) -> JsResult<bool> {
+    let _ = array_buffer_receiver(vm, this)?;
+    Ok(vm.get_prop(this, "\0array-buffer-detached").truthy())
+}
+
 fn native_array_buffer_byte_length(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let this = array_buffer_receiver(vm, &this)?;
+    if array_buffer_is_detached(vm, &this)? {
+        return Err(JsError::Throw(type_error(vm, "detached ArrayBuffer")));
+    }
     Ok(vm.get_prop(&this, "byteLength"))
 }
 
 fn native_array_buffer_max_byte_length(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let this = array_buffer_receiver(vm, &this)?;
+    if array_buffer_is_detached(vm, &this)? {
+        return Err(JsError::Throw(type_error(vm, "detached ArrayBuffer")));
+    }
     Ok(vm.get_prop(&this, "maxByteLength"))
 }
 
 fn native_array_buffer_resizable(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let this = array_buffer_receiver(vm, &this)?;
+    if array_buffer_is_detached(vm, &this)? {
+        return Ok(Value::Bool(false));
+    }
     Ok(Value::Bool(vm.get_prop(&this, "\0array-buffer-resizable").truthy()))
 }
 
 fn native_array_buffer_detached(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
-    let _ = array_buffer_receiver(vm, &this)?;
-    Ok(Value::Bool(false))
+    Ok(Value::Bool(array_buffer_is_detached(vm, &this)?))
 }
 
 fn native_array_buffer_immutable(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
@@ -26402,6 +26421,9 @@ fn native_array_buffer_resize(vm: &mut Vm, this: Value, args: &[Value]) -> JsRes
     {
         return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
     }
+    if array_buffer_is_detached(vm, &this)? {
+        return Err(JsError::Throw(type_error(vm, "detached ArrayBuffer")));
+    }
     if vm.get_prop(&this, "immutable").truthy() {
         return Err(JsError::Throw(type_error(
             vm,
@@ -26454,6 +26476,21 @@ fn native_array_buffer_transfer_to_immutable(
     Ok(result)
 }
 
+fn native_test262_detach_array_buffer(
+    vm: &mut Vm,
+    _: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let buffer = args.first().cloned().unwrap_or(Value::Undefined);
+    let _ = array_buffer_receiver(vm, &buffer)?;
+    vm.set_prop(&buffer, "\0array-buffer-detached", Value::Bool(true));
+    vm.set_prop(&buffer, "byteLength", Value::Number(0.0));
+    vm.set_prop(&buffer, "maxByteLength", Value::Number(0.0));
+    let data = vm.get_prop(&buffer, ARRAY_BUFFER_DATA);
+    vm.set_prop(&data, "length", Value::Number(0.0));
+    Ok(Value::Undefined)
+}
+
 fn native_array_buffer_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let Some(source) = this.as_object_ref() else {
         return Err(JsError::Throw(type_error(vm, "incompatible receiver")));
@@ -26463,7 +26500,11 @@ fn native_array_buffer_slice(vm: &mut Vm, this: Value, args: &[Value]) -> JsResu
     }
     let length = vm.get_prop(&this, "byteLength").number().max(0.0) as usize;
     let start = args.first().map(|value| value.number()).unwrap_or(0.0);
-    let end = args.get(1).map(|value| value.number()).unwrap_or(length as f64);
+    let end = args
+        .get(1)
+        .filter(|value| !value.is_undefined())
+        .map(|value| value.number())
+        .unwrap_or(length as f64);
     let normalize = |value: f64, default_end: usize| {
         let value = if value.is_nan() { 0.0 } else { value.trunc() };
         if value < 0.0 {
