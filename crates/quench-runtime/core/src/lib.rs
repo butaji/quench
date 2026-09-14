@@ -2110,6 +2110,9 @@ struct Environment {
     tdz_names: HashSet<String>,
     lexical_names: HashSet<String>,
     immutable_names: HashSet<String>,
+    // Named function expressions expose an immutable inner name binding:
+    // strict writes throw, while sloppy writes are ignored.
+    named_function_names: HashSet<String>,
     catch_names: HashSet<String>,
     catch_simple_names: HashSet<String>,
     arguments_object: Option<Value>,
@@ -2147,6 +2150,7 @@ impl Environment {
             tdz_names: HashSet::new(),
             lexical_names: HashSet::new(),
             immutable_names: HashSet::new(),
+            named_function_names: HashSet::new(),
             catch_names: HashSet::new(),
             catch_simple_names: HashSet::new(),
             arguments_object: None,
@@ -10603,6 +10607,14 @@ impl Vm {
         function: &FunctionValue<'static>,
         node: &Function<'static>,
     ) -> JsResult<()> {
+        // Named function expressions require a fresh immutable inner binding
+        // for their identifier. The stencil closure ABI currently carries
+        // the outer environment only, so keep these activations on the same
+        // VM interpreter path until that binding is represented explicitly.
+        if node.id.is_some() {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         // A closure may observe an eval-created binding after sloppy `delete`.
         // Stencil name loads use immutable layout slots, so retain the shared
         // interpreter for this dynamic environment shape until deletion is
@@ -10875,6 +10887,12 @@ impl Vm {
             self.source_ids.push(source_id);
         }
         let e = Environment::new(Some(outer.clone()));
+        if let (Some(identifier), Some(callee)) = (n.id.as_ref(), callee.as_ref()) {
+            e.borrow_mut().declare(identifier.name.as_str(), callee.clone());
+            e.borrow_mut()
+                .named_function_names
+                .insert(identifier.name.to_string());
+        }
         let non_simple_parameters = n.params.items.iter().any(|parameter| {
             parameter.initializer.is_some()
                 || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
@@ -15176,6 +15194,8 @@ impl Vm {
         Ok(class)
     }
     fn resolve_identifier(&mut self, e: &Env, name: &str) -> JsResult<Value> {
+        if name == "BindingIdentifier" {
+        }
         let mut current = Some(e.clone());
         while let Some(environment) = current {
             let (local, with_object, parent) = {
@@ -16547,6 +16567,8 @@ impl Vm {
     }
 
     fn resolve_identifier_target(&mut self, e: &Env, name: &str) -> JsResult<LValue> {
+        if name == "BindingIdentifier" {
+        }
         let mut current = Some(e.clone());
         while let Some(environment) = current {
             let (with_object, has_local, parent) = {
@@ -16644,6 +16666,15 @@ impl Vm {
                 // suppression applied to ordinary properties.
                 self.set_prop_with_accessors(&object, &key, v)?;
             }
+            LValue::Var(e, name) if self.named_function_binding(&e, &name) => {
+                if self.strict_mode {
+                    return Err(JsError::Throw(type_error(
+                        self,
+                        "Assignment to read-only function name",
+                    )));
+                }
+                return Ok(());
+            }
             LValue::Var(e, name) if self.readonly_global_binding(&e, &name) => {
                 if self.immutable_binding(&e, &name) || self.strict_mode {
                     return Err(JsError::Throw(type_error(
@@ -16710,6 +16741,18 @@ impl Vm {
                 return true;
             }
             current = candidate.borrow().parent.clone();
+        }
+        false
+    }
+
+    fn named_function_binding(&self, environment: &Env, name: &str) -> bool {
+        let mut current = Some(environment.clone());
+        while let Some(candidate) = current {
+            let borrowed = candidate.borrow();
+            if borrowed.named_function_names.contains(name) {
+                return true;
+            }
+            current = borrowed.parent.clone();
         }
         false
     }
