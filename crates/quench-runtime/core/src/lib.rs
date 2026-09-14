@@ -8141,6 +8141,39 @@ impl Vm {
         );
         self.set_prop(&intl, "DisplayNames", display_names);
         set_property_attributes(&intl, "DisplayNames", PropertyAttributes::BUILTIN_METHOD);
+        let duration_format = self.native_named(native_intl_duration_format_constructor, "DurationFormat", 0);
+        let duration_format_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&duration_format, "prototype", duration_format_prototype.clone());
+        set_property_attributes(&duration_format, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        if let Some(function_prototype) = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            self.set_prop(&duration_format, FUNCTION_PROTOTYPE_CHAIN_PROP, function_prototype);
+        }
+        self.set_prop(&duration_format, "\0prototype_override", duration_format_prototype.clone());
+        for (name, native, length) in [
+            ("format", native_intl_duration_format as fn(&mut Vm, Value, &[Value]) -> JsResult<Value>, 1),
+            ("formatToParts", native_intl_duration_format_to_parts as _, 1),
+            ("resolvedOptions", native_intl_duration_format_resolved_options as _, 0),
+        ] {
+            let method = self.native_named(native, name, length);
+            self.mark_nonconstructable(&method);
+            self.set_prop(&duration_format_prototype, name, method);
+            set_property_attributes(&duration_format_prototype, name, PropertyAttributes::BUILTIN_METHOD);
+        }
+        self.set_prop(&duration_format_prototype, "constructor", duration_format.clone());
+        set_property_attributes(&duration_format_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        let duration_tag = self.well_known_symbol_key("toStringTag");
+        self.set_prop(&duration_format_prototype, &duration_tag, Value::string_value("Intl.DurationFormat"));
+        set_property_attributes(&duration_format_prototype, &duration_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+        self.set_prop(&duration_format, "supportedLocalesOf", self.native_named(native_intl_supported_locales_of, "supportedLocalesOf", 1));
+        self.set_prop(&duration_format, "supportedValuesOf", self.native_named(native_intl_supported_values_of, "supportedValuesOf", 1));
+        self.set_prop(&intl, "DurationFormat", duration_format);
+        set_property_attributes(&intl, "DurationFormat", PropertyAttributes::BUILTIN_METHOD);
+        self.set_prop(&intl, "supportedValuesOf", self.native_named(native_intl_supported_values_of, "supportedValuesOf", 1));
+        set_property_attributes(&intl, "supportedValuesOf", PropertyAttributes::BUILTIN_METHOD);
         Environment::set(&g, "Intl", intl);
         for recipe in builtins::BUILTIN_RECIPES {
             let value = self.builtin(recipe.id);
@@ -9245,6 +9278,7 @@ impl Vm {
                                 native_intl_collator_constructor,
                                 native_intl_date_time_format_constructor,
                                 native_intl_display_names_constructor,
+                                native_intl_duration_format_constructor,
                                 native_subclassable_builtin,
                                 native_abstract_module_source,
                             ) =>
@@ -33122,7 +33156,7 @@ fn validate_intl_number_format_args(vm: &mut Vm, args: &[Value]) -> JsResult<()>
         }
         let style = vm.get_prop_with_accessors(options, "style")?;
         if let Some(style) = style.as_string()
-            && !matches!(style.as_str(), "decimal" | "percent" | "currency")
+            && !matches!(style.as_str(), "decimal" | "percent" | "currency" | "unit")
         {
             return Err(JsError::Throw(range_error(vm, "invalid style")));
         }
@@ -33134,6 +33168,13 @@ fn validate_intl_number_format_args(vm: &mut Vm, args: &[Value]) -> JsResult<()>
             if !valid {
                 return Err(JsError::Throw(range_error(vm, "invalid currency")));
             }
+        }
+        if style.as_string().is_some_and(|style| style == "unit") {
+            let unit = vm.get_prop_with_accessors(options, "unit")?;
+            if unit.is_undefined() || unit.is_null() {
+                return Err(JsError::Throw(type_error(vm, "invalid unit")));
+            }
+            let _unit_display = vm.get_prop_with_accessors(options, "unitDisplay")?;
         }
         let maximum_significant_digits =
             vm.get_prop_with_accessors(options, "maximumSignificantDigits")?;
@@ -33288,6 +33329,18 @@ fn native_intl_supported_locales_of(
         result.push(vm.get_prop_with_accessors(&locales, &index.to_string())?);
     }
     Ok(vm.array_from_values(result))
+}
+
+fn native_intl_supported_values_of(
+    vm: &mut Vm,
+    _: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    let key = to_string_with_vm(vm, args.first().unwrap_or(&Value::Undefined))?;
+    if key != "numberingSystem" {
+        return Err(JsError::Throw(range_error(vm, "invalid key")));
+    }
+    Ok(vm.array_from_values(vec![Value::string_value("latn")]))
 }
 
 const INTL_DATE_TIME_FORMAT_OPTIONS: &str = "\0intl-date-time-format-options";
@@ -33773,6 +33826,180 @@ fn native_intl_display_names_resolved_options(
             key,
             value,
         );
+    }
+    Ok(result)
+}
+
+const INTL_DURATION_FORMAT_OPTIONS: &str = "\0intl-duration-format-options";
+const INTL_DURATION_FORMAT_BRAND: &str = "\0intl-duration-format-brand";
+const INTL_DURATION_FORMAT_LOCALE: &str = "\0intl-duration-format-locale";
+
+fn native_intl_duration_format_constructor(
+    vm: &mut Vm,
+    this: Value,
+    args: &[Value],
+) -> JsResult<Value> {
+    if vm.current_new_target.is_none() {
+        return Err(JsError::Throw(type_error(vm, "DurationFormat requires new")));
+    }
+    validate_intl_number_format_args(vm, &[args.first().cloned().unwrap_or(Value::Undefined)])?;
+    let options = args
+        .get(1)
+        .cloned()
+        .filter(|value| !value.is_undefined())
+        .unwrap_or_else(|| vm.object(None));
+    if options.is_null() || !options.is_object_like() {
+        return Err(JsError::Throw(type_error(vm, "invalid DurationFormat options")));
+    }
+    let locale_matcher = intl_datetime_string_option(vm, &options, "localeMatcher")?;
+    if locale_matcher.as_deref().is_some_and(|value| !matches!(value, "lookup" | "best fit")) {
+        return Err(JsError::Throw(range_error(vm, "invalid localeMatcher")));
+    }
+    let numbering_system = intl_datetime_string_option(vm, &options, "numberingSystem")?;
+    if numbering_system.as_deref().is_some_and(|value| value.len() < 3 || value.len() > 8 || !value.chars().all(|character| character.is_ascii_alphanumeric())) {
+        return Err(JsError::Throw(range_error(vm, "invalid numberingSystem")));
+    }
+    let style = intl_datetime_string_option(vm, &options, "style")?;
+    if style.as_deref().is_some_and(|value| !matches!(value, "long" | "short" | "narrow" | "digital")) {
+        return Err(JsError::Throw(range_error(vm, "invalid style")));
+    }
+    let mut numeric_unit = false;
+    let mut previous_numeric = false;
+    for unit in ["years", "months", "weeks", "days", "hours", "minutes", "seconds", "milliseconds", "microseconds", "nanoseconds"] {
+        let value = intl_datetime_string_option(vm, &options, unit)?;
+        if value.as_deref().is_some_and(|value| !matches!(value, "long" | "short" | "narrow" | "numeric" | "2-digit")) {
+            return Err(JsError::Throw(range_error(vm, "invalid unit style")));
+        }
+        let current_numeric = value.as_deref().is_some_and(|value| matches!(value, "numeric" | "2-digit"));
+        if previous_numeric && value.as_deref().is_some_and(|value| matches!(value, "long" | "short" | "narrow")) {
+            return Err(JsError::Throw(range_error(vm, "style conflicts with numeric unit")));
+        }
+        numeric_unit |= current_numeric;
+        previous_numeric = current_numeric;
+        let display = intl_datetime_string_option(vm, &options, &format!("{unit}Display"))?;
+        if display.as_deref().is_some_and(|value| !matches!(value, "auto" | "always")) {
+            return Err(JsError::Throw(range_error(vm, "invalid unit display")));
+        }
+    }
+    if numeric_unit && style.as_deref().is_some_and(|value| matches!(value, "long" | "short" | "narrow")) {
+        return Err(JsError::Throw(range_error(vm, "style conflicts with numeric unit")));
+    }
+    let fractional_digits = vm.get_prop_with_accessors(&options, "fractionalDigits")?;
+    if !fractional_digits.is_undefined() {
+        let digits = to_number_with_vm(vm, &fractional_digits)?;
+        if !digits.is_finite() || digits.fract() != 0.0 || !(0.0..=9.0).contains(&digits) {
+            return Err(JsError::Throw(range_error(vm, "invalid fractionalDigits")));
+        }
+    }
+    let result = if this.is_object_like() { this } else { vm.object(None) };
+    if let Some(new_target) = vm.current_new_target.clone()
+        && let Some(prototype) = vm.get_prop(&new_target, "prototype").as_object()
+        && let Some(object) = result.as_object_ref()
+    {
+        object.borrow_mut().prototype = Some(prototype);
+    }
+    vm.set_prop(&result, INTL_DURATION_FORMAT_OPTIONS, options);
+    vm.set_prop(&result, INTL_DURATION_FORMAT_BRAND, Value::Bool(true));
+    let locale = if let Some(value) = args.first() {
+        if let Some(locale) = value.as_string() {
+            locale.to_ascii_lowercase()
+        } else if value.is_object_like() {
+            let length_value = vm.get_prop_with_accessors(value, "length")?;
+            let length = to_number_with_vm(vm, &length_value)?
+                .max(0.0)
+                .trunc() as usize;
+            if length == 0 {
+                "en".into()
+            } else {
+                let first = vm.get_prop_with_accessors(value, "0")?;
+                to_string_with_vm(vm, &first)?.to_ascii_lowercase()
+            }
+        } else {
+            "en".into()
+        }
+    } else {
+        "en".into()
+    };
+    vm.set_prop(&result, INTL_DURATION_FORMAT_LOCALE, Value::string_value(locale));
+    Ok(result)
+}
+
+fn duration_format_options(vm: &mut Vm, this: &Value) -> JsResult<Value> {
+    if !vm.get_prop(this, INTL_DURATION_FORMAT_BRAND).truthy() {
+        return Err(JsError::Throw(type_error(vm, "incompatible DurationFormat receiver")));
+    }
+    Ok(vm.get_prop(this, INTL_DURATION_FORMAT_OPTIONS))
+}
+
+fn native_intl_duration_format(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let _options = duration_format_options(vm, &this)?;
+    let duration = args.first().cloned().unwrap_or(Value::Undefined);
+    if duration.is_null() || duration.is_undefined() {
+        return Err(JsError::Throw(type_error(vm, "invalid duration")));
+    }
+    if let Some(string) = duration.as_string() {
+        return Ok(Value::string_value(string.to_string()));
+    }
+    let mut parts = Vec::new();
+    for (key, suffix) in [("years", "y"), ("months", "mo"), ("weeks", "w"), ("days", "d"), ("hours", "h"), ("minutes", "m"), ("seconds", "s")] {
+        let value = vm.get_prop_with_accessors(&duration, key)?;
+        if !value.is_undefined() && value.number() != 0.0 {
+            parts.push(format!("{}{}", value.string(), suffix));
+        }
+    }
+    Ok(Value::string_value(if parts.is_empty() { "0s".into() } else { parts.join(" ") }))
+}
+
+fn native_intl_duration_format_to_parts(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    let formatted = native_intl_duration_format(vm, this, args)?;
+    Ok(vm.array_from_values(vec![{
+        let part = vm.object(None);
+        vm.set_prop(&part, "type", Value::string_value("literal"));
+        vm.set_prop(&part, "value", formatted);
+        part
+    }]))
+}
+
+fn native_intl_duration_format_resolved_options(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let options = duration_format_options(vm, &this)?;
+    let result = vm.object(None);
+    vm.set_prop(&result, "locale", vm.get_prop(&this, INTL_DURATION_FORMAT_LOCALE));
+    let numbering_system = vm.get_prop(&options, "numberingSystem");
+    let numbering_system = if numbering_system.is_undefined() {
+        Value::string_value("latn")
+    } else {
+        Value::string_value(to_string_with_vm(vm, &numbering_system)?)
+    };
+    vm.set_prop(&result, "numberingSystem", numbering_system);
+    let style = vm.get_prop(&options, "style");
+    let style = if style.is_undefined() {
+        Value::string_value("short")
+    } else {
+        Value::string_value(to_string_with_vm(vm, &style)?)
+    };
+    vm.set_prop(&result, "style", style);
+    let mut previous_numeric = false;
+    for unit in ["years", "months", "weeks", "days", "hours", "minutes", "seconds", "milliseconds", "microseconds", "nanoseconds"] {
+        let configured = vm.get_prop(&options, unit);
+        let default = if previous_numeric {
+            if matches!(unit, "milliseconds" | "microseconds" | "nanoseconds") {
+                "numeric"
+            } else {
+                "2-digit"
+            }
+        } else {
+            "short"
+        };
+        let configured = if configured.is_undefined() { Value::string_value(default) } else { Value::string_value(to_string_with_vm(vm, &configured)?) };
+        previous_numeric = matches!(configured.as_string().map(String::as_str), Some("numeric" | "2-digit"));
+        vm.set_prop(&result, unit, configured);
+        let display = vm.get_prop(&options, &format!("{unit}Display"));
+        let display = if display.is_undefined() { Value::string_value("auto") } else { Value::string_value(to_string_with_vm(vm, &display)?) };
+        vm.set_prop(&result, &format!("{unit}Display"), display);
+    }
+    let fractional = vm.get_prop(&options, "fractionalDigits");
+    if !fractional.is_undefined() {
+        vm.set_prop(&result, "fractionalDigits", fractional);
     }
     Ok(result)
 }
