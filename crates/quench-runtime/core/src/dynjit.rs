@@ -3965,7 +3965,7 @@ fn construct(
 }
 
 fn enumerable_keys(value: &Value) -> Vec<String> {
-    super::object_own_enumerable_keys(value)
+    super::for_in_enumerable_keys(value)
 }
 
 fn op_name(op: &DynOp) -> &'static str {
