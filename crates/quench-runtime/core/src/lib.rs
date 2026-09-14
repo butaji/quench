@@ -12916,7 +12916,9 @@ impl Vm {
         let strict_delete_error = has_strict_delete_identifier(&r.program, effective_strict_mode);
         let strict_update_error = has_strict_update_identifier(&r.program, effective_strict_mode);
         let eval_context = Environment::get(&environment, EVAL_CODE_ENV_NAME).is_some();
-        let function_super_error = if eval_context && source.contains("super") {
+        let class_eval_context = Environment::get(&environment, CLASS_SUPER_CONSTRUCTOR_ENV_NAME)
+            .is_some();
+        let function_super_error = if eval_context && source.contains("super") && !class_eval_context {
             false
         } else {
             has_invalid_function_super(&r.program)
@@ -20419,9 +20421,13 @@ fn native_eval_in_environment(
     else {
         return Ok(a.first().cloned().unwrap_or(Value::Undefined));
     };
+    let class_eval_context = nearest_local_binding(&environment, CLASS_SUPER_PROTOTYPE_ENV_NAME)
+        .is_some()
+        || nearest_local_binding(&environment, CLASS_HOME_OBJECT_ENV_NAME).is_some();
     if source.contains("new.target")
         && !nearest_local_binding(&environment, NEW_TARGET_ALLOWED_NAME)
             .is_some_and(|value| value.truthy())
+        && !class_eval_context
     {
         return Err(JsError::Throw(syntax_error(
             vm,
