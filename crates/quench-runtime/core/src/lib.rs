@@ -16706,6 +16706,12 @@ impl Vm {
                 // a copied local value for a `with` name: getters, Proxy
                 // [[HasProperty]], and deletes are observable at each read.
                 if self.with_binding_allowed(&object, name)? {
+                    if !self.has_property_with_proxy(&object, name)? {
+                        if self.strict_mode {
+                            return Err(JsError::Throw(reference_error(self, name)));
+                        }
+                        return Ok(Value::Undefined);
+                    }
                     return Ok(self.get_prop_with_accessors(&object, name)?);
                 }
                 current = parent;
@@ -18765,9 +18771,16 @@ impl Vm {
                 Ok(Environment::get(e, name).unwrap_or(Value::Undefined))
             }
             LValue::UnresolvedVar(_, name) => Err(JsError::Throw(reference_error(self, name))),
-            LValue::WithProp(object, key) | LValue::Prop(object, key) => {
+            LValue::WithProp(object, key) => {
+                if !self.has_property_with_proxy(object, key)? {
+                    if self.strict_mode {
+                        return Err(JsError::Throw(reference_error(self, key)));
+                    }
+                    return Ok(Value::Undefined);
+                }
                 self.get_prop_with_accessors(object, key)
             }
+            LValue::Prop(object, key) => self.get_prop_with_accessors(object, key),
             LValue::PrivateProp(object, key) => self.get_prop_with_accessors(object, key),
             LValue::DeferredProp { object, key } => {
                 let key = self.to_property_key(key.clone())?;
@@ -19177,7 +19190,7 @@ impl Vm {
     ) -> JsResult<Value> {
         match t {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(i) => {
-                Ok(Environment::get(&e, i.name.as_str()).unwrap_or(Value::Undefined))
+                self.resolve_identifier(&e, i.name.as_str())
             }
             SimpleAssignmentTarget::StaticMemberExpression(m) => {
                 let o = self.eval_expr(&m.object, e)?;
@@ -30867,6 +30880,28 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             .is_some_and(|attributes| !attributes.writable)
     {
         return Ok(Value::Bool(false));
+    }
+    // OrdinarySetWithOwnDescriptor defines on a Proxy receiver after the
+    // target's data descriptor is found; routing this edge through [[Set]]
+    // again would re-enter the user trap indefinitely (Reflect.set inside a
+    // proxy set trap is the canonical reproducer).
+    if proxy_target(&receiver).is_some() {
+        let _ = native_object_get_own_property_descriptor(
+            vm,
+            Value::Undefined,
+            &[receiver.clone(), Value::string_value(key.clone())],
+        )?;
+        let descriptor = vm.object(None);
+        vm.set_prop(&descriptor, "value", value);
+        vm.set_prop(&descriptor, "writable", Value::Bool(true));
+        vm.set_prop(&descriptor, "enumerable", Value::Bool(true));
+        vm.set_prop(&descriptor, "configurable", Value::Bool(true));
+        native_object_define_property(
+            vm,
+            Value::Undefined,
+            &[receiver, Value::string_value(key), descriptor],
+        )?;
+        return Ok(Value::Bool(true));
     }
     if let Err(error @ JsError::Throw(_)) = vm.set_prop_with_accessors(&receiver, &key, value) {
         if matches!(error, JsError::Throw(ref value) if is_type_error_value(value)) {
