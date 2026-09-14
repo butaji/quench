@@ -14685,9 +14685,21 @@ impl Vm {
             // a matching continue signal returns from its loop, and consume a
             // matching break. Other control signals continue outward.
             LabeledStatement(x) => {
-                let previous = self.pending_loop_label.replace(x.label.name.to_string());
+                let labels_iteration = matches!(
+                    &x.body,
+                    Statement::DoWhileStatement(_)
+                        | Statement::WhileStatement(_)
+                        | Statement::ForStatement(_)
+                        | Statement::ForInStatement(_)
+                        | Statement::ForOfStatement(_)
+                );
+                let previous = labels_iteration
+                    .then(|| self.pending_loop_label.replace(x.label.name.to_string()))
+                    .flatten();
                 let result = self.exec_stmt(&x.body, e);
-                self.pending_loop_label = previous;
+                if labels_iteration {
+                    self.pending_loop_label = previous;
+                }
                 match result? {
                     Signal::Break(Some(label), value) if label == x.label.name.as_str() => {
                         Ok(Signal::Normal(value.unwrap_or(Value::Undefined)))
