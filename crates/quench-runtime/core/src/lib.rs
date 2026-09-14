@@ -8739,6 +8739,29 @@ impl Vm {
         self.set_prop(&test262, "IsHTMLDDA", html_dda);
         let abstract_module_source =
             self.native_named(native_abstract_module_source, "AbstractModuleSource", 0);
+        let abstract_module_source_prototype = self.object(self.default_object_prototype());
+        self.set_prop(&abstract_module_source, "prototype", abstract_module_source_prototype.clone());
+        set_property_attributes(&abstract_module_source, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
+        let abstract_module_source_prototype = self.get_prop(&abstract_module_source, "prototype");
+        if let Some(function_prototype) = self
+            .builtin(BuiltinId::FunctionConstructor)
+            .as_function_ref()
+            .map(|function| Value::Object(function.prototype.clone()))
+        {
+            self.set_prop(&abstract_module_source, FUNCTION_PROTOTYPE_CHAIN_PROP, function_prototype);
+        }
+        self.set_prop(&abstract_module_source_prototype, "constructor", abstract_module_source.clone());
+        set_property_attributes(&abstract_module_source_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+        let abstract_module_source_tag = self.native_named(native_abstract_module_source_tag_getter, "get [Symbol.toStringTag]", 0);
+        self.mark_nonconstructable(&abstract_module_source_tag);
+        let tag_key = self.well_known_symbol_key("toStringTag");
+        self.define_accessor_slot(
+            &abstract_module_source_prototype,
+            &tag_key,
+            Some(abstract_module_source_tag),
+            None,
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
+        );
         self.set_prop(&test262, "AbstractModuleSource", abstract_module_source);
         Environment::set(&g, "$262", test262);
         if let (Some(global_this), Some(test262)) = (
@@ -30465,6 +30488,9 @@ fn native_abstract_module_source(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult
         vm,
         "AbstractModuleSource is not constructable",
     )))
+}
+fn native_abstract_module_source_tag_getter(_: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
+    Ok(Value::Undefined)
 }
 fn native_throw_type_error(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     Err(JsError::Throw(type_error(
