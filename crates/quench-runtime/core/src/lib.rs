@@ -7790,8 +7790,14 @@ impl Vm {
                     );
                 }
                 "DataView" => {
+                    prototype.borrow_mut().prototype = self.default_object_prototype();
                     let prototype_value = Value::Object(prototype.clone());
                     self.set_prop(&constructor, "prototype", prototype_value.clone());
+                    set_property_attributes(
+                        &constructor,
+                        "prototype",
+                        PropertyAttributes::BUILTIN_CONSTANT,
+                    );
                     set_property_attributes(
                         &prototype_value,
                         "constructor",
@@ -7830,10 +7836,12 @@ impl Vm {
                             configurable: true,
                         },
                     );
+                    let get_uint8 = self.native_named(native_dataview_get_uint8, "getUint8", 1);
+                    self.mark_nonconstructable(&get_uint8);
                     self.set_prop(
                         &prototype_value,
                         "getUint8",
-                        self.native_named(native_dataview_get_uint8, "getUint8", 1),
+                        get_uint8,
                     );
                     set_property_attributes(
                         &prototype_value,
@@ -26658,10 +26666,7 @@ fn dataview_index(vm: &mut Vm, value: &Value, message: &str) -> JsResult<f64> {
     Ok(if number == 0.0 { 0.0 } else { number })
 }
 
-fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
-    if vm.construct_depth == 0 {
-        return Err(JsError::Throw(type_error(vm, "DataView constructor must be called with new")));
-    }
+fn dataview_constructor_dimensions(vm: &mut Vm, args: &[Value]) -> JsResult<(Value, f64, f64, bool)> {
     let buffer = args.first().cloned().unwrap_or(Value::Undefined);
     let is_buffer = buffer.as_object_ref().is_some_and(|object| {
         let object = object.borrow();
@@ -26686,15 +26691,23 @@ fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     if offset > buffer_length {
         return Err(JsError::Throw(range_error(vm, "DataView byteOffset is out of bounds")));
     }
-    let byte_length = if let Some(value) = args.get(2).filter(|value| !value.is_undefined()) {
+    let (byte_length, auto_length) = if let Some(value) = args.get(2).filter(|value| !value.is_undefined()) {
         let value = dataview_index(vm, value, "invalid DataView byteLength")?;
         if offset + value > buffer_length {
             return Err(JsError::Throw(range_error(vm, "DataView byteLength is out of bounds")));
         }
-        value
+        (value, false)
     } else {
-        buffer_length - offset
+        (buffer_length - offset, true)
     };
+    Ok((buffer, offset, byte_length, auto_length))
+}
+
+fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
+    if vm.construct_depth == 0 {
+        return Err(JsError::Throw(type_error(vm, "DataView constructor must be called with new")));
+    }
+    let (buffer, offset, byte_length, auto_length) = dataview_constructor_dimensions(vm, args)?;
     let view = if this.is_object_like() { this } else { vm.object(None) };
     vm.set_prop(&view, "\0dataview-buffer", buffer.clone());
     vm.set_prop(&view, "\0dataview-offset", Value::Number(offset));
@@ -26702,7 +26715,7 @@ fn native_dataview_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> JsRe
     vm.set_prop(
         &view,
         "\0dataview-auto-length",
-        Value::Bool(args.get(2).is_none_or(Value::is_undefined)),
+        Value::Bool(auto_length),
     );
     Ok(view)
 }
@@ -26746,7 +26759,11 @@ fn dataview_parts(vm: &mut Vm, this: &Value) -> JsResult<(Value, usize, usize)> 
     let length = length.unwrap_or(0.0).max(0.0) as usize;
     let current_length = vm.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
     if auto_length {
-        Ok((buffer, offset, current_length.saturating_sub(offset)))
+        if current_length < offset {
+            Err(JsError::Throw(type_error(vm, "DataView is out of bounds")))
+        } else {
+            Ok((buffer, offset, current_length - offset))
+        }
     } else if offset.saturating_add(length) > current_length {
         Err(JsError::Throw(type_error(vm, "DataView is out of bounds")))
     } else {
@@ -33102,6 +33119,11 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
         // newTarget.prototype (the allocation step comes later).
         let _ = shared_array_buffer_dimensions(vm, &arguments, false)?;
     }
+    if target.as_function_ref().is_some_and(|function| {
+        matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_dataview_constructor))
+    }) {
+        let _ = dataview_constructor_dimensions(vm, &arguments)?;
+    }
     // Promise validates its executor before GetPrototypeFromConstructor.  Do
     // that early here so a poisoned newTarget.prototype cannot mask the
     // required TypeError for a non-callable executor.
@@ -33138,6 +33160,10 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
     } else {
         vm.get_prop_with_accessors(&new_target, "prototype")?
     };
+    let prototype_value = prototype_value
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0prototype_alias").cloned())
+        .unwrap_or(prototype_value);
     let prototype_function = prototype_value
         .is_function()
         .then_some(prototype_value.clone());
@@ -33161,12 +33187,16 @@ fn native_reflect_construct(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<V
                 .as_function_ref()
                 .and_then(|function| function.props.borrow().get(REALM_GLOBAL_PROP).cloned())
                 .and_then(|global| {
-                    let intrinsic = target
-                        .as_function_ref()
-                        .is_some_and(|function| {
-                            matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_shared_array_buffer_constructor))
-                        })
-                        .then(|| vm.get_prop(&global, "SharedArrayBuffer"))
+                    let intrinsic_name = target.as_function_ref().and_then(|function| {
+                        matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_shared_array_buffer_constructor))
+                            .then_some("SharedArrayBuffer")
+                            .or_else(|| {
+                                matches!(function.kind, FunctionKind::Native(native) if native_fn_matches!(native, native_dataview_constructor))
+                                    .then_some("DataView")
+                            })
+                    });
+                    let intrinsic = intrinsic_name
+                        .map(|name| vm.get_prop(&global, name))
                         .filter(|value| value.is_function())
                         .unwrap_or_else(|| vm.get_prop(&global, "Object"));
                     intrinsic
