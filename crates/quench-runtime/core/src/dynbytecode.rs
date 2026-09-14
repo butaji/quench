@@ -1833,7 +1833,9 @@ impl Compiler {
             let ObjectPropertyKind::ObjectProperty(property) = property else {
                 return false;
             };
-            expression_contains_super(&property.value)
+            property.method
+                || matches!(property.kind, PropertyKind::Get | PropertyKind::Set)
+                || expression_contains_super(&property.value)
         }) {
             // Object-literal methods carry [[HomeObject]] in the enclosing
             // object construction.  The compact stencil store has no home
