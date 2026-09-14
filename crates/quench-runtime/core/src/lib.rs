@@ -7159,6 +7159,10 @@ impl Vm {
             }
         }
         let bigint = self.native_named(native_bigint, "BigInt", 1);
+        // BigInt is callable but its published prototype is an immutable
+        // intrinsic slot (unlike user constructors). Keep the descriptor in
+        // the same declaration table as the other built-in constructors.
+        set_property_attributes(&bigint, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
         let as_int_n = self.native_named(native_bigint_as_int_n, "asIntN", 2);
         let as_uint_n = self.native_named(native_bigint_as_uint_n, "asUintN", 2);
         self.mark_nonconstructable(&as_int_n);
