@@ -365,6 +365,7 @@ const FUNCTION_PROTOTYPE_CHAIN_PROP: &str = "\0quench:function-prototype-chain";
 const SHADOW_REALM_GLOBAL_PROP: &str = "\0quench:shadow-realm-global";
 const SHADOW_REALM_BRAND_PROP: &str = "\0quench:shadow-realm-brand";
 const SHADOW_REALM_CREATION_GLOBAL_PROP: &str = "\0quench:shadow-realm-creation-global";
+const SHADOW_REALM_TARGET_GLOBAL_PROP: &str = "\0quench:shadow-realm-target-global";
 
 /// Declare the data-method portion of a builtin prototype once.  The
 /// bootstrap has two realm paths (full and reduced), so keeping the method
@@ -6004,6 +6005,7 @@ struct Vm {
     current_new_target: Option<Value>,
     construct_depth: usize,
     current_constructor: Option<Value>,
+    current_native_realm_global: Option<Value>,
     async_generator_yields: Option<Vec<Value>>,
     sync_generator_continuations: HashMap<*const ObjectCell, SyncGeneratorContinuation>,
     sync_generator_yielding: bool,
@@ -6193,6 +6195,7 @@ impl Vm {
             current_new_target: None,
             construct_depth: 0,
             current_constructor: None,
+            current_native_realm_global: None,
             async_generator_yields: None,
             sync_generator_continuations: HashMap::new(),
             sync_generator_yielding: false,
@@ -9002,8 +9005,6 @@ impl Vm {
         let shadow_tag = self.well_known_symbol_key("toStringTag");
         self.set_prop(&shadow_realm_prototype, &shadow_tag, Value::string_value("ShadowRealm"));
         set_property_attributes(&shadow_realm_prototype, &shadow_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
-        // Native prototype assignment copies the current shape; publish the
-        // completed prototype after methods and the tag are installed.
         self.set_prop(&shadow_realm, "prototype", shadow_realm_prototype);
         set_property_attributes(&shadow_realm, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
         Environment::set(&g, "ShadowRealm", shadow_realm);
@@ -9012,7 +9013,12 @@ impl Vm {
             let global = self
                 .global_object_for_environment(&self.global)
                 .unwrap_or_else(|| self.object(None));
-            self.set_prop(&shadow_realm, REALM_GLOBAL_PROP, global);
+            self.set_prop(&shadow_realm, REALM_GLOBAL_PROP, global.clone());
+            let prototype = self.get_prop(&shadow_realm, "prototype");
+            for name in ["evaluate", "importValue"] {
+                let method = self.get_prop(&prototype, name);
+                self.set_prop(&method, REALM_GLOBAL_PROP, global.clone());
+            }
         }
         let test262 = self.object(None);
         self.set_prop(&test262, "createRealm", self.native(native_create_realm));
@@ -12394,7 +12400,17 @@ impl Vm {
                     self.current_constructor = previous_constructor;
                     result
                 }
-                FunctionKind::Native(native) => self.call_native_semantic(*native, t, a),
+                FunctionKind::Native(native) => {
+                    let previous_realm = self.current_native_realm_global.take();
+                    self.current_native_realm_global = f
+                        .props
+                        .borrow()
+                        .get(REALM_GLOBAL_PROP)
+                        .cloned();
+                    let result = self.call_native_semantic(*native, t, a);
+                    self.current_native_realm_global = previous_realm;
+                    result
+                }
                 FunctionKind::Bound {
                     target,
                     this_arg,
@@ -12424,6 +12440,10 @@ impl Vm {
                         .then(|| f.props.borrow().get("\0shadow-realm-error-global").cloned())
                         .flatten()
                         .unwrap_or_else(|| self.global_object_for_environment(&self.global).unwrap_or_else(|| self.object(None)));
+                    let target_global = shadow_wrapper
+                        .then(|| f.props.borrow().get(SHADOW_REALM_TARGET_GLOBAL_PROP).cloned())
+                        .flatten()
+                        .unwrap_or_else(|| error_global.clone());
                     if shadow_wrapper
                         && combined
                             .iter()
@@ -12440,7 +12460,7 @@ impl Vm {
                             .iter()
                             .map(|value| {
                                 is_callable_value(value)
-                                    .then(|| shadow_realm_wrap_function(self, value.clone(), &error_global))
+                                    .then(|| shadow_realm_wrap_function(self, value.clone(), &target_global, &target_global))
                                     .transpose()
                                     .map(|wrapped| wrapped.unwrap_or_else(|| value.clone()))
                             })
@@ -12454,7 +12474,7 @@ impl Vm {
                     }
                     match result {
                         Ok(value) if is_callable_value(&value) => {
-                            shadow_realm_wrap_function(self, value, &error_global)
+                            shadow_realm_wrap_function(self, value, &error_global, &target_global)
                         }
                         Ok(value) if value.is_object_like() && !is_symbol_carrier(&value) => {
                             Err(JsError::Throw(realm_type_error(
@@ -37286,10 +37306,23 @@ fn native_create_realm(vm: &mut Vm, _: Value, _: &[Value]) -> JsResult<Value> {
     let parent_global = vm.global.clone();
     let shadow_realm = vm.native_named(native_shadow_realm_constructor, "ShadowRealm", 0);
     vm.set_prop(&shadow_realm, REALM_GLOBAL_PROP, global.clone());
-    if let Some(parent_shadow_realm) = Environment::get(&parent_global, "ShadowRealm") {
-        let prototype = vm.get_prop(&parent_shadow_realm, "prototype");
-        vm.set_prop(&shadow_realm, "prototype", prototype);
-    }
+    let shadow_realm_prototype = vm.object(vm.default_object_prototype());
+    vm.set_prop(&shadow_realm, "prototype", shadow_realm_prototype.clone());
+    vm.set_prop(&shadow_realm_prototype, "constructor", shadow_realm.clone());
+    set_property_attributes(&shadow_realm_prototype, "constructor", PropertyAttributes::BUILTIN_METHOD);
+    let evaluate = vm.native_named(native_shadow_realm_evaluate, "evaluate", 1);
+    vm.set_prop(&evaluate, REALM_GLOBAL_PROP, global.clone());
+    vm.set_prop(&shadow_realm_prototype, "evaluate", evaluate);
+    set_property_attributes(&shadow_realm_prototype, "evaluate", PropertyAttributes::BUILTIN_METHOD);
+    let import_value = vm.native_named(native_shadow_realm_import_value, "importValue", 2);
+    vm.set_prop(&import_value, REALM_GLOBAL_PROP, global.clone());
+    vm.set_prop(&shadow_realm_prototype, "importValue", import_value);
+    set_property_attributes(&shadow_realm_prototype, "importValue", PropertyAttributes::BUILTIN_METHOD);
+    let shadow_tag = vm.well_known_symbol_key("toStringTag");
+    vm.set_prop(&shadow_realm_prototype, &shadow_tag, Value::string_value("ShadowRealm"));
+    set_property_attributes(&shadow_realm_prototype, &shadow_tag, PropertyAttributes { writable: false, enumerable: false, configurable: true });
+    vm.set_prop(&shadow_realm, "prototype", shadow_realm_prototype);
+    set_property_attributes(&shadow_realm, "prototype", PropertyAttributes::BUILTIN_CONSTANT);
     vm.set_prop(&global, "ShadowRealm", shadow_realm);
     // A realm's standard global properties are one declarative table.  Keep
     // host-only bindings out of this list: ShadowRealm must expose the
@@ -37374,7 +37407,12 @@ fn shadow_realm_receiver(vm: &Vm, receiver: &Value) -> JsResult<Value> {
         .as_object_ref()
         .is_some_and(|object| object.borrow().props.get(SHADOW_REALM_BRAND_PROP).is_some_and(Value::truthy))
     {
-        return Err(JsError::Throw(type_error(vm, "ShadowRealm method called on incompatible receiver")));
+        let error = vm
+            .current_native_realm_global
+            .as_ref()
+            .map(|global| realm_type_error(vm, global, "ShadowRealm method called on incompatible receiver"))
+            .unwrap_or_else(|| type_error(vm, "ShadowRealm method called on incompatible receiver"));
+        return Err(JsError::Throw(error));
     }
     Ok(receiver.clone())
 }
@@ -37392,7 +37430,10 @@ fn is_callable_value(value: &Value) -> bool {
 
 fn native_shadow_realm_evaluate(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
     let receiver = shadow_realm_receiver(vm, &this)?;
-    let creation_global = shadow_realm_creation_global(vm, &receiver);
+    let creation_global = vm
+        .current_native_realm_global
+        .clone()
+        .unwrap_or_else(|| shadow_realm_creation_global(vm, &receiver));
     let source = args.first().cloned().unwrap_or(Value::Undefined);
     if !source.is_string() {
         return Err(JsError::Throw(realm_type_error(
@@ -37409,10 +37450,16 @@ fn native_shadow_realm_evaluate(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
             "ShadowRealm realm is unavailable",
         )));
     };
+    let target_global = vm
+        .realm_globals
+        .iter()
+        .find(|(_, candidate)| Rc::ptr_eq(candidate, &environment))
+        .map(|(global, _)| Value::Object(global.clone()))
+        .unwrap_or_else(|| shadow_realm_creation_global(vm, &receiver));
     let result = native_eval_in_environment(vm, &[source.clone()], environment, false, false)
         .map_err(|error| shadow_realm_wrap_completion(vm, error, &source_text, &creation_global))?;
     if result.is_function() {
-        return shadow_realm_wrap_function(vm, result, &creation_global);
+        return shadow_realm_wrap_function(vm, result, &creation_global, &target_global);
     }
     if result.is_object_like() && !is_symbol_carrier(&result) {
         return Err(JsError::Throw(realm_type_error(
@@ -37424,10 +37471,16 @@ fn native_shadow_realm_evaluate(vm: &mut Vm, this: Value, args: &[Value]) -> JsR
     Ok(result)
 }
 
-fn shadow_realm_wrap_function(vm: &mut Vm, target: Value, creation_global: &Value) -> JsResult<Value> {
+fn shadow_realm_wrap_function(
+    vm: &mut Vm,
+    target: Value,
+    creation_global: &Value,
+    target_global: &Value,
+) -> JsResult<Value> {
     let wrapped = native_function_bind(vm, target.clone(), &[Value::Undefined])?;
     vm.set_prop(&wrapped, "\0shadow-realm-wrapper", Value::Bool(true));
     vm.set_prop(&wrapped, "\0shadow-realm-error-global", creation_global.clone());
+    vm.set_prop(&wrapped, SHADOW_REALM_TARGET_GLOBAL_PROP, target_global.clone());
     let function_constructor = vm.get_prop(creation_global, "Function");
     let function_prototype = vm.get_prop(&function_constructor, "prototype");
     vm.set_prop(&wrapped, FUNCTION_PROTOTYPE_OVERRIDE_PROP, function_prototype);
@@ -37436,7 +37489,8 @@ fn shadow_realm_wrap_function(vm: &mut Vm, target: Value, creation_global: &Valu
             vm,
             Value::Undefined,
             &[target.clone(), Value::string_value(key)],
-        )?;
+        )
+        .map_err(|_| JsError::Throw(realm_type_error(vm, creation_global, "cannot wrap function")))?;
     }
     let target_length = vm
         .get_prop_with_accessors(&target, "length")
