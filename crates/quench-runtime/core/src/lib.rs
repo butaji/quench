@@ -19199,7 +19199,8 @@ fn has_strict_delete_identifier(program: &Program<'_>, inherited_strict: bool) -
 
 fn has_invalid_function_super(program: &Program<'_>) -> bool {
     struct Scan {
-        function_depth: usize,
+        ordinary_function_depth: usize,
+        arrow_depth: usize,
         method_depth: usize,
         invalid: bool,
     }
@@ -19211,31 +19212,34 @@ fn has_invalid_function_super(program: &Program<'_>) -> bool {
         }
 
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
-            self.function_depth += 1;
+            self.ordinary_function_depth += 1;
             ast_walk::walk_function(self, function, flags);
-            self.function_depth -= 1;
+            self.ordinary_function_depth -= 1;
         }
 
         fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
-            self.function_depth += 1;
+            self.arrow_depth += 1;
             ast_walk::walk_arrow_function_expression(self, arrow);
-            self.function_depth -= 1;
+            self.arrow_depth -= 1;
         }
 
         fn visit_super(&mut self, super_expression: &Super) {
             // A `super` reference is only valid in the body of the method that
             // supplies [[HomeObject]]. Any ordinary/nested function has no
             // such home object, even when lexically nested in a method.
-            if self.function_depth > 0 && self.method_depth == 0 {
+            if self.method_depth == 0
+                && (self.ordinary_function_depth > 0 || self.arrow_depth > 0)
+            {
                 self.invalid = true;
-            } else if self.function_depth > 1 {
+            } else if self.ordinary_function_depth > 1 {
                 self.invalid = true;
             }
             ast_walk::walk_super(self, super_expression);
         }
     }
     let mut scan = Scan {
-        function_depth: 0,
+        ordinary_function_depth: 0,
+        arrow_depth: 0,
         method_depth: 0,
         invalid: false,
     };
