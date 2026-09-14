@@ -5365,7 +5365,7 @@ define_ops! {
  Mul => numeric |x:f64,y:f64| Value::Number(x*y), generic |a:&Value,b:&Value| exec_numeric_op(Op::Mul,a.number(),b.number());
  Div => numeric |x:f64,y:f64| Value::Number(x/y), generic |a:&Value,b:&Value| exec_numeric_op(Op::Div,a.number(),b.number());
  Rem => numeric |x:f64,y:f64| Value::Number(x%y), generic |a:&Value,b:&Value| exec_numeric_op(Op::Rem,a.number(),b.number());
- Pow => numeric |x:f64,y:f64| Value::Number(x.powf(y)), generic |a:&Value,b:&Value| exec_numeric_op(Op::Pow,a.number(),b.number());
+ Pow => numeric |x:f64,y:f64| Value::Number(if x.abs() == 1.0 && y.is_infinite() { f64::NAN } else { x.powf(y) }), generic |a:&Value,b:&Value| exec_numeric_op(Op::Pow,a.number(),b.number());
  Eq => numeric |x:f64,y:f64| Value::Bool(x==y), generic |a:&Value,b:&Value| Value::Bool(loose_eq(a,b));
  Ne => numeric |x:f64,y:f64| Value::Bool(x!=y), generic |a:&Value,b:&Value| Value::Bool(!loose_eq(a,b));
  StrictEq => numeric |x:f64,y:f64| Value::Bool(x==y), generic |a:&Value,b:&Value| Value::Bool(eq_strict(a,b));
