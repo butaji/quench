@@ -10674,6 +10674,31 @@ impl Vm {
             self.jit_stats.compile_rejections += 1;
             return Ok(());
         }
+        // A parameter may shadow an outer immutable lexical binding.  The
+        // stencil name map has no parameter-scope edge yet, so retain this
+        // shape on the evaluator where the ordinary environment binder keeps
+        // the shadowing identity explicit.
+        if let FunctionKind::User { env, .. } = &function.kind
+            && node.params.items.iter().any(|parameter| {
+                matches!(&parameter.pattern, BindingPattern::BindingIdentifier(identifier)
+                    if self.immutable_binding(env, identifier.name.as_str()))
+            })
+        {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
+        // Keep functions with direct lexical declarations on the evaluator
+        // until stencil activation layouts model their lexical/var split.
+        // This is the same environment shape that makes parameter shadowing
+        // observable through assignment references.
+        if node.body.as_ref().is_some_and(|body| {
+            let mut lexical_names = HashSet::new();
+            collect_direct_lexical_names(&body.statements, &mut lexical_names);
+            !lexical_names.is_empty()
+        }) {
+            self.jit_stats.compile_rejections += 1;
+            return Ok(());
+        }
         // Parameter defaults and destructuring are initialized by the shared
         // environment binder. Keep these shapes on that path until their
         // stencil lowering carries the same binding semantics.
@@ -17081,15 +17106,13 @@ impl Vm {
     fn readonly_global_binding(&self, environment: &Env, name: &str) -> bool {
         let mut current = Some(environment.clone());
         while let Some(candidate) = current {
-            if candidate.borrow().immutable_names.contains(name) {
-                return true;
+            let borrowed = candidate.borrow();
+            if borrowed.names.contains_key(name) && !borrowed.deleted_names.contains(name) {
+                return borrowed.immutable_names.contains(name)
+                    || (matches!(name, "undefined" | "NaN" | "Infinity")
+                        && self.is_global_environment(&candidate));
             }
-            if matches!(name, "undefined" | "NaN" | "Infinity")
-                && self.is_global_environment(&candidate)
-            {
-                return true;
-            }
-            current = candidate.borrow().parent.clone();
+            current = borrowed.parent.clone();
         }
         false
     }
@@ -17097,10 +17120,11 @@ impl Vm {
     fn immutable_binding(&self, environment: &Env, name: &str) -> bool {
         let mut current = Some(environment.clone());
         while let Some(candidate) = current {
-            if candidate.borrow().immutable_names.contains(name) {
-                return true;
+            let borrowed = candidate.borrow();
+            if borrowed.names.contains_key(name) && !borrowed.deleted_names.contains(name) {
+                return borrowed.immutable_names.contains(name);
             }
-            current = candidate.borrow().parent.clone();
+            current = borrowed.parent.clone();
         }
         false
     }
