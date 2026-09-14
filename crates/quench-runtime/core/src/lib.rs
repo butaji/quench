@@ -9772,6 +9772,13 @@ impl Vm {
             }
         };
         let e = Environment::new(Some(outer));
+        if let Some(identifier) = node.id.as_ref() {
+            e.borrow_mut()
+                .declare(identifier.name.as_str(), function.clone());
+            e.borrow_mut()
+                .named_function_names
+                .insert(identifier.name.to_string());
+        }
         let non_simple_parameters = node.params.items.iter().any(|parameter| {
             parameter.initializer.is_some()
                 || !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
