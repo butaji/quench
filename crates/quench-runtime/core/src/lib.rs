@@ -2246,6 +2246,7 @@ struct DisposableRecord {
 
 struct IteratorRecord {
     iterator: Value,
+    next: Value,
     done: bool,
 }
 
@@ -17738,9 +17739,22 @@ impl Vm {
         if !method.is_function() {
             return Err(JsError::Throw(type_error(self, "value is not iterable")));
         }
+        self.iterator_record_from_method(value, method)
+    }
+
+    fn iterator_record_from_method(
+        &mut self,
+        value: &Value,
+        method: Value,
+    ) -> JsResult<IteratorRecord> {
         let iterator = self.call(method, value.clone(), Vec::new())?;
+        let next = self.get_prop_with_accessors(&iterator, "next")?;
+        if !next.is_function() {
+            return Err(JsError::Throw(type_error(self, "iterator next method is not callable")));
+        }
         Ok(IteratorRecord {
             iterator,
+            next,
             done: false,
         })
     }
@@ -17764,15 +17778,7 @@ impl Vm {
         {
             return Ok(None);
         }
-        let next = self.get_prop_with_accessors(&record.iterator, "next")?;
-        if !next.is_function() {
-            record.done = true;
-            return Err(JsError::Throw(type_error(
-                self,
-                "iterator next method is not callable",
-            )));
-        }
-        let result = match self.call(next, record.iterator.clone(), Vec::new()) {
+        let result = match self.call(record.next.clone(), record.iterator.clone(), Vec::new()) {
             Ok(result) => result,
             Err(error) => {
                 record.done = true;
@@ -17786,7 +17792,8 @@ impl Vm {
                 "iterator result is not an object",
             )));
         }
-        if self.get_prop_with_accessors(&result, "done")?.truthy() {
+        let done = self.get_prop_with_accessors(&result, "done")?.truthy();
+        if done {
             record.done = true;
             return Ok(None);
         }
@@ -29357,7 +29364,11 @@ fn native_typed_array_from(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult
         .get_prop_with_accessors(&source, &vm.well_known_symbol_key("iterator"))?;
     let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
     let (values, result) = if iterator_method.is_function() {
-        let values = vm.iterable_values(&source)?;
+        let mut record = vm.iterator_record_from_method(&source, iterator_method)?;
+        let mut values = Vec::new();
+        while let Some(value) = vm.iterator_step(&mut record)? {
+            values.push(value);
+        }
         let length = values.len();
         let result = typed_array_construct(vm, this.clone(), &[Value::Number(length as f64)])?;
         (values, validate_typed_array_from_result(vm, result, length)?)
