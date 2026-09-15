@@ -9572,6 +9572,9 @@ impl Vm {
                     .get("\0typed-array-kind")
                     .map(Value::string)
                     .unwrap_or_default();
+                if k == self.well_known_symbol_key("toStringTag") && !typed_kind.is_empty() {
+                    return Value::string_value(typed_kind);
+                }
                 if k == "length" {
                     let buffer_len =
                         self.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
