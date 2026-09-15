@@ -17682,9 +17682,6 @@ impl Vm {
     ) -> JsResult<IteratorRecord> {
         let iterator = self.call(method, value.clone(), Vec::new())?;
         let next = self.get_prop_with_accessors(&iterator, "next")?;
-        if !next.is_function() {
-            return Err(JsError::Throw(type_error(self, "iterator next method is not callable")));
-        }
         Ok(IteratorRecord {
             iterator,
             next,
@@ -17695,6 +17692,13 @@ impl Vm {
     fn iterator_step(&mut self, record: &mut IteratorRecord) -> JsResult<Option<Value>> {
         if record.done {
             return Ok(None);
+        }
+        if !record.next.is_function() {
+            record.done = true;
+            return Err(JsError::Throw(type_error(
+                self,
+                "iterator next method is not callable",
+            )));
         }
         // A generator return can resume a yield that occurred after
         // GetIterator but before the first IteratorNext. Preserve that
