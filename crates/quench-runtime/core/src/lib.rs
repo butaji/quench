@@ -10572,6 +10572,15 @@ impl Vm {
         let typed_indexed_key = direct_typed_array && typed_array_numeric_index(key).is_some();
         if typed_indexed_key {
             let numeric_index = typed_array_numeric_index(key).expect("typed numeric index");
+            let kind = object
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get("\0typed-array-kind").map(Value::string))
+                .unwrap_or_default();
+            let converted = if matches!(kind.as_str(), "BigInt64Array" | "BigUint64Array") {
+                bigint_marker(bigint_value(self, &value)?)
+            } else {
+                Value::Number(to_number_with_vm(self, &value)?)
+            };
             let buffer = object
                 .as_object_ref()
                 .and_then(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned());
@@ -10587,7 +10596,7 @@ impl Vm {
             {
                 return Ok(());
             }
-            self.set_prop(object, key, value);
+            self.set_prop(object, key, converted);
             return Ok(());
         }
         if !typed_indexed_key
