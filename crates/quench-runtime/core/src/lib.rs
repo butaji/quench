@@ -7635,6 +7635,7 @@ impl Vm {
             .expect("TypedArray constructor")
             .prototype
             .clone();
+        typed_array_base_prototype.borrow_mut().prototype = self.default_object_prototype();
         self.set_prop(
             &typed_array_base,
             "prototype",
@@ -9634,7 +9635,7 @@ impl Vm {
                         .map_or(available, |value| value.number().max(0.0) as usize);
                     return Value::Number(
                         (if fixed {
-                            declared.min(available)
+                            (declared <= available).then_some(declared).unwrap_or(0)
                         } else {
                             available
                         }) as f64,
@@ -10551,11 +10552,44 @@ impl Vm {
             }
             return Ok(());
         }
-        let typed_indexed_key = object.as_object_ref().is_some_and(|object| {
+        let direct_typed_array = object.as_object_ref().is_some_and(|object| {
             let object = object.borrow();
             object.props.contains_key(TYPED_ARRAY_BUFFER)
-                && typed_array_numeric_index(key).is_some()
         });
+        if !direct_typed_array
+            && typed_array_numeric_index(key).is_some()
+            && object_has_typed_array_prototype(object)
+            && !self.has_own_property_key(object, key)
+        {
+            let descriptor = vm_assignment_descriptor(self, receiver, key, value)?;
+            native_object_define_property(
+                self,
+                Value::Undefined,
+                &[receiver.clone(), Value::string_value(key), descriptor],
+            )?;
+            return Ok(());
+        }
+        let typed_indexed_key = direct_typed_array && typed_array_numeric_index(key).is_some();
+        if typed_indexed_key {
+            let numeric_index = typed_array_numeric_index(key).expect("typed numeric index");
+            let buffer = object
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned());
+            let length = self.get_prop(object, "length").number().max(0.0);
+            if buffer
+                .as_ref()
+                .is_some_and(|buffer| self.get_prop(buffer, "\0array-buffer-detached").truthy())
+                || key == "-0"
+                || !numeric_index.is_finite()
+                || numeric_index < 0.0
+                || numeric_index.fract() != 0.0
+                || numeric_index >= length
+            {
+                return Ok(());
+            }
+            self.set_prop(object, key, value);
+            return Ok(());
+        }
         if !typed_indexed_key
             && let Some((_, setter)) = self.find_accessor(object, key)
         {
@@ -21145,7 +21179,7 @@ impl Vm {
                         .props
                         .get(TYPED_ARRAY_FIXED)
                         .is_some_and(Value::truthy);
-                    let length = if fixed { declared.min(available) } else { available };
+                    let length = if fixed { (declared <= available).then_some(declared).unwrap_or(0) } else { available };
                     if index < length {
                         return Ok(true);
                     }
@@ -38698,11 +38732,19 @@ fn shared_iterator_prototype(vm: &Vm) -> Option<ObjectHandle> {
 
 fn typed_array_element_value(kind: &str, value: &Value) -> Value {
     if matches!(kind, "BigInt64Array" | "BigUint64Array") {
-        return if is_bigint_marker(value) {
-            value.clone()
+        let bigint = if is_bigint_marker(value) {
+            bigint_value_unchecked(value)
         } else {
-            bigint_marker(BigInt::from(value.number() as i64))
+            BigInt::from(value.number() as i64)
         };
+        let modulus = BigInt::from(1u8) << 64;
+        let unsigned = bigint_mod(&bigint, &modulus);
+        let value = if kind == "BigInt64Array" && unsigned >= (BigInt::from(1u8) << 63) {
+            unsigned - &modulus
+        } else {
+            unsigned
+        };
+        return bigint_marker(value);
     }
     let number = value.number();
     if kind == "Float32Array" {
@@ -44304,7 +44346,7 @@ fn object_own_enumerable_keys_mode(target: &Value, include_symbols: bool) -> Vec
                 .props
                 .get(TYPED_ARRAY_FIXED)
                 .is_some_and(Value::truthy);
-            let length = if fixed { declared.min(available) } else { available };
+            let length = if fixed { (declared <= available).then_some(declared).unwrap_or(0) } else { available };
             keys.extend((0..length).map(|index| index.to_string()));
         }
         let mut seen = keys.iter().cloned().collect::<HashSet<_>>();
@@ -44484,6 +44526,29 @@ fn object_own_property_keys(target: &Value) -> Vec<String> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        if let Some(((buffer, offset), bytes)) = object
+            .props
+            .get(TYPED_ARRAY_BUFFER)
+            .cloned()
+            .zip(object.props.get(TYPED_ARRAY_OFFSET).cloned())
+            .zip(object.props.get("\0typed-array-bytes").cloned())
+        {
+            let buffer_length = buffer
+                .as_object_ref()
+                .and_then(|buffer| buffer.borrow().props.get("byteLength").and_then(Value::as_number))
+                .unwrap_or(0.0)
+                .max(0.0) as usize;
+            let offset = offset.number().max(0.0) as usize;
+            let width = bytes.number().max(1.0) as usize;
+            let available = buffer_length.saturating_sub(offset) / width;
+            let declared = object
+                .props
+                .get("\0typed-array-length")
+                .map_or(available, |value| value.number().max(0.0) as usize);
+            let fixed = object.props.get(TYPED_ARRAY_FIXED).is_some_and(Value::truthy);
+            let length = if fixed { (declared <= available).then_some(declared).unwrap_or(0) } else { available };
+            keys.extend((0..length).map(|index| index.to_string()));
+        }
         if object.array.is_some() {
             keys.push("length".into());
         }
