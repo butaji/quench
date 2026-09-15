@@ -10561,6 +10561,17 @@ impl Vm {
             && object_has_typed_array_prototype(object)
             && !self.has_own_property_key(object, key)
         {
+            let numeric_index = typed_array_numeric_index(key).expect("typed numeric index");
+            let typed_target = typed_array_prototype_target(object).expect("typed array prototype");
+            let length = self.get_prop(&typed_target, "length").number().max(0.0);
+            if key == "-0"
+                || !numeric_index.is_finite()
+                || numeric_index < 0.0
+                || numeric_index.fract() != 0.0
+                || numeric_index >= length
+            {
+                return Ok(());
+            }
             let descriptor = vm_assignment_descriptor(self, receiver, key, value)?;
             native_object_define_property(
                 self,
@@ -10572,6 +10583,21 @@ impl Vm {
         let typed_indexed_key = direct_typed_array && typed_array_numeric_index(key).is_some();
         if typed_indexed_key {
             let numeric_index = typed_array_numeric_index(key).expect("typed numeric index");
+            let buffer = object
+                .as_object_ref()
+                .and_then(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned());
+            let length = self.get_prop(object, "length").number().max(0.0);
+            let detached = buffer
+                .as_ref()
+                .is_some_and(|buffer| self.get_prop(buffer, "\0array-buffer-detached").truthy());
+            if !detached && (key == "-0"
+                || !numeric_index.is_finite()
+                || numeric_index < 0.0
+                || numeric_index.fract() != 0.0
+                || numeric_index >= length)
+            {
+                return Ok(());
+            }
             let kind = object
                 .as_object_ref()
                 .and_then(|object| object.borrow().props.get("\0typed-array-kind").map(Value::string))
@@ -10581,19 +10607,7 @@ impl Vm {
             } else {
                 Value::Number(to_number_with_vm(self, &value)?)
             };
-            let buffer = object
-                .as_object_ref()
-                .and_then(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned());
-            let length = self.get_prop(object, "length").number().max(0.0);
-            if buffer
-                .as_ref()
-                .is_some_and(|buffer| self.get_prop(buffer, "\0array-buffer-detached").truthy())
-                || key == "-0"
-                || !numeric_index.is_finite()
-                || numeric_index < 0.0
-                || numeric_index.fract() != 0.0
-                || numeric_index >= length
-            {
+            if detached {
                 return Ok(());
             }
             self.set_prop(object, key, converted);
@@ -21748,12 +21762,17 @@ fn set_assignment_property(vm: &mut Vm, object: &Value, key: &str, value: Value)
     let invokes_setter = vm
         .find_accessor(object, key)
         .is_some_and(|(_, setter)| setter.is_some());
+    let typed_array_index = object.as_object_ref().is_some_and(|object| {
+        let object = object.borrow();
+        object.props.contains_key(TYPED_ARRAY_BUFFER) && typed_array_numeric_index(key).is_some()
+    });
     match vm.set_prop_with_accessors(object, key, value) {
         Ok(()) => Ok(()),
         Err(JsError::Throw(error))
             if !vm.strict_mode
                 && proxy_target(object).is_none()
                 && !vm.restricted_function_property(object, key)
+                && !typed_array_index
                 && !invokes_setter
                 && is_type_error_value(&error) =>
         {
@@ -37143,6 +37162,15 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             ],
         );
     }
+    let direct_typed_set_target = target.as_object_ref().is_some_and(|object| {
+        object.borrow().props.contains_key(TYPED_ARRAY_BUFFER)
+    });
+    let typed_set_target = typed_array_numeric_index(&key).is_some()
+        && (direct_typed_set_target
+            || (!direct_typed_set_target && object_has_typed_array_prototype(&target)));
+    if typed_set_target {
+        return native_typed_array_set_with_receiver(vm, &target, &key, value, &receiver);
+    }
     if let Some((_, setter)) = vm.find_accessor(&target, &key) {
         let Some(setter) = setter else {
             return Ok(Value::Bool(false));
@@ -37221,6 +37249,75 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
         }
         return Err(error);
     }
+    Ok(Value::Bool(true))
+}
+
+fn native_typed_array_set_with_receiver(
+    vm: &mut Vm,
+    target: &Value,
+    key: &str,
+    value: Value,
+    receiver: &Value,
+) -> JsResult<Value> {
+    let Some(numeric_index) = typed_array_numeric_index(key) else {
+        return Ok(Value::Bool(false));
+    };
+    let typed_target = if target
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key(TYPED_ARRAY_BUFFER))
+    {
+        target.clone()
+    } else {
+        typed_array_prototype_target(target).unwrap_or_else(|| target.clone())
+    };
+    let target_length = vm.get_prop(&typed_target, "length").number().max(0.0);
+    if key == "-0"
+        || !numeric_index.is_finite()
+        || numeric_index < 0.0
+        || numeric_index.fract() != 0.0
+        || numeric_index >= target_length
+    {
+        return Ok(Value::Bool(true));
+    }
+    if receiver.same_bits(&typed_target) {
+        vm.set_prop_with_receiver(&typed_target, key, value, receiver)?;
+        return Ok(Value::Bool(true));
+    }
+    if receiver
+        .as_object_ref()
+        .is_some_and(|object| object.borrow().props.contains_key(TYPED_ARRAY_BUFFER))
+        && numeric_index >= vm.get_prop(receiver, "length").number().max(0.0)
+    {
+        return Ok(Value::Bool(false));
+    }
+    let own_descriptor = native_object_get_own_property_descriptor(
+        vm,
+        Value::Undefined,
+        &[receiver.clone(), Value::string_value(key)],
+    )?;
+    if own_descriptor.is_object_like() {
+        if vm.has_property(&own_descriptor, "get")
+            || vm.has_property(&own_descriptor, "set")
+            || !vm.get_prop(&own_descriptor, "writable").truthy()
+        {
+            return Ok(Value::Bool(false));
+        }
+    } else if receiver
+        .as_object_ref()
+        .is_some_and(|object| !object.borrow().extensible)
+    {
+        return Ok(Value::Bool(false));
+    }
+    let descriptor = vm.object(None);
+    vm.set_prop(&descriptor, "value", value);
+    vm.set_prop(&descriptor, "writable", Value::Bool(true));
+    vm.set_prop(&descriptor, "enumerable", Value::Bool(true));
+    vm.set_prop(&descriptor, "configurable", Value::Bool(true));
+    native_object_define_property(
+        vm,
+        Value::Undefined,
+        &[receiver.clone(), Value::string_value(key), descriptor],
+    )?;
     Ok(Value::Bool(true))
 }
 
@@ -43948,15 +44045,19 @@ fn private_target(value: &Value) -> Value {
 }
 
 fn object_has_typed_array_prototype(value: &Value) -> bool {
+    typed_array_prototype_target(value).is_some()
+}
+
+fn typed_array_prototype_target(value: &Value) -> Option<Value> {
     let mut current = value.as_object_ref().and_then(|object| object.borrow().prototype.clone());
     while let Some(prototype) = current {
         let borrowed = prototype.borrow();
         if borrowed.props.contains_key(TYPED_ARRAY_BUFFER) {
-            return true;
+            return Some(Value::Object(prototype.clone()));
         }
         current = borrowed.prototype.clone();
     }
-    false
+    None
 }
 
 fn proxy_handler(value: &Value) -> Option<Value> {
