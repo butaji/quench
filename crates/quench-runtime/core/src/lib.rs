@@ -7694,6 +7694,24 @@ impl Vm {
             "forEach" => native_typed_array_for_each / 1,
             "reduce" => native_typed_array_reduce / 1,
             "reduceRight" => native_typed_array_reduce_right / 1,
+            "fill" => native_typed_array_fill / 1,
+            "values" => native_array_values / 0,
+            "keys" => native_array_keys / 0,
+            "entries" => native_array_entries / 0,
+        );
+        let iterator_key = self.well_known_symbol_key("iterator");
+        self.set_prop(
+            &typed_array_base_value,
+            &iterator_key,
+            self.native_named(native_array_iterator, "values", 0),
+        );
+        let tag_key = self.well_known_symbol_key("toStringTag");
+        self.define_accessor_slot(
+            &typed_array_base_value,
+            &tag_key,
+            Some(self.native_named(native_typed_array_to_string_tag, "get [Symbol.toStringTag]", 0)),
+            None,
+            PropertyAttributes { writable: false, enumerable: false, configurable: true },
         );
         // Native constructor prototype assignment copies the shape. Publish
         // the completed %TypedArray%.prototype after its accessors/methods
@@ -7752,17 +7770,6 @@ impl Vm {
                 "constructor",
                 PropertyAttributes::BUILTIN_METHOD,
             );
-            let tag_key = self.well_known_symbol_key("toStringTag");
-            self.set_prop(
-                &Value::Object(prototype.clone()),
-                &tag_key,
-                Value::string_value(name),
-            );
-            set_property_attributes(
-                &Value::Object(prototype.clone()),
-                &tag_key,
-                PropertyAttributes::BUILTIN_CONSTANT,
-            );
             self.set_prop(
                 &Value::Object(prototype),
                 "\0typed-array-bytes",
@@ -7772,59 +7779,6 @@ impl Vm {
                 &Value::Object(prototype),
                 "\0typed-array-kind",
                 Value::string_value(name),
-            );
-            let prototype = constructor
-                .as_function_ref()
-                .expect("typed array constructor")
-                .prototype
-                .clone();
-            self.set_prop(
-                &Value::Object(prototype),
-                "fill",
-                self.native_named(native_typed_array_fill, "fill", 1),
-            );
-            let prototype = constructor
-                .as_function_ref()
-                .expect("typed array constructor")
-                .prototype
-                .clone();
-            let iterator_key = self.well_known_symbol_key("iterator");
-            self.set_prop(
-                &Value::Object(prototype.clone()),
-                &iterator_key,
-                self.native_named(native_array_iterator, "values", 0),
-            );
-            self.set_prop(
-                &Value::Object(prototype.clone()),
-                "values",
-                self.native_named(native_array_values, "values", 0),
-            );
-            self.set_prop(
-                &Value::Object(prototype.clone()),
-                "keys",
-                self.native_named(native_array_keys, "keys", 0),
-            );
-            self.set_prop(
-                &Value::Object(prototype),
-                "entries",
-                self.native_named(native_array_entries, "entries", 0),
-            );
-            let prototype = constructor
-                .as_function_ref()
-                .expect("typed array constructor")
-                .prototype
-                .clone();
-            for key in ["fill", "values", "keys", "entries"] {
-                set_property_attributes(
-                    &Value::Object(prototype.clone()),
-                    key,
-                    PropertyAttributes::BUILTIN_METHOD,
-                );
-            }
-            set_property_attributes(
-                &Value::Object(prototype),
-                &iterator_key,
-                PropertyAttributes::BUILTIN_METHOD,
             );
             if name == "Uint8Array" {
                 let prototype = Value::Object(
@@ -9647,30 +9601,11 @@ impl Vm {
                         return Value::Undefined;
                     }
                     let offset = offset.number().max(0.0) as usize;
-                    let data = self.get_prop(&buffer, ARRAY_BUFFER_DATA);
-                    if let Some(value) = data.as_object_ref().and_then(|object| {
-                        object.borrow().array.as_ref().and_then(|array| {
-                            let width = bytes.number().max(1.0) as usize;
-                            let value = array.get(offset / width + index).cloned();
-                            value
-                        })
-                    }) {
-                        if matches!(typed_kind.as_str(), "BigInt64Array" | "BigUint64Array")
-                            && !is_bigint_marker(&value)
-                        {
-                            return bigint_marker(BigInt::from(value.number() as i64));
-                        }
-                        return value;
-                    }
                     let buffer_len =
                         self.get_prop(&buffer, "byteLength").number().max(0.0) as usize;
                     let width = bytes.number().max(1.0) as usize;
                     if index < buffer_len.saturating_sub(offset) / width {
-                        return if matches!(typed_kind.as_str(), "BigInt64Array" | "BigUint64Array") {
-                            bigint_marker(BigInt::from(0))
-                        } else {
-                            Value::Number(0.0)
-                        };
+                        return typed_array_buffer_read(self, &buffer, offset + index * width, &typed_kind);
                     }
                 }
             }
@@ -10587,18 +10522,9 @@ impl Vm {
             let buffer = object
                 .as_object_ref()
                 .and_then(|object| object.borrow().props.get(TYPED_ARRAY_BUFFER).cloned());
-            let length = self.get_prop(object, "length").number().max(0.0);
             let detached = buffer
                 .as_ref()
                 .is_some_and(|buffer| self.get_prop(buffer, "\0array-buffer-detached").truthy());
-            if !detached && (key == "-0"
-                || !numeric_index.is_finite()
-                || numeric_index < 0.0
-                || numeric_index.fract() != 0.0
-                || numeric_index >= length)
-            {
-                return Ok(());
-            }
             let kind = object
                 .as_object_ref()
                 .and_then(|object| object.borrow().props.get("\0typed-array-kind").map(Value::string))
@@ -10609,6 +10535,15 @@ impl Vm {
                 Value::Number(to_number_with_vm(self, &value)?)
             };
             if detached {
+                return Ok(());
+            }
+            let length = self.get_prop(object, "length").number().max(0.0);
+            if key == "-0"
+                || !numeric_index.is_finite()
+                || numeric_index < 0.0
+                || numeric_index.fract() != 0.0
+                || numeric_index >= length
+            {
                 return Ok(());
             }
             self.set_prop(object, key, converted);
@@ -10894,15 +10829,13 @@ impl Vm {
             {
                 let offset = offset.number().max(0.0) as usize;
                 let width = bytes.number().max(1.0) as usize;
-                let value = object
+                let kind = object
                     .borrow()
                     .props
                     .get("\0typed-array-kind")
-                    .map_or(v.clone(), |kind| typed_array_element_value(kind.string().as_str(), &v));
-                let data = self.get_prop(&buffer, ARRAY_BUFFER_DATA);
-                if data.as_object_ref().is_some() {
-                    self.set_prop(&data, &(offset / width + index).to_string(), value);
-                }
+                    .map(Value::string)
+                    .unwrap_or_default();
+                typed_array_buffer_write(self, &buffer, offset + index * width, &kind, &v);
             }
             let mut object = object.borrow_mut();
             if object.props.contains_key("\0symbol") && !k.starts_with('\0') {
@@ -29104,7 +29037,7 @@ fn native_typed_array_constructor(vm: &mut Vm, this: Value, args: &[Value]) -> J
             } else {
                 value.clone()
             };
-            vm.set_prop(&data, &index.to_string(), value);
+            typed_array_buffer_write(vm, &backing, index * bytes as usize, typed_array_kind.as_deref().unwrap_or(""), &value);
         }
     }
     Ok(this)
@@ -29151,6 +29084,16 @@ fn native_typed_array_byte_offset(vm: &mut Vm, this: Value, _: &[Value]) -> JsRe
 fn native_typed_array_length(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
     let (_, _, _) = typed_array_internal_slots(vm, &this)?;
     Ok(vm.get_prop(&this, "length"))
+}
+
+fn native_typed_array_to_string_tag(vm: &mut Vm, this: Value, _: &[Value]) -> JsResult<Value> {
+    let Some(kind) = this
+        .as_object_ref()
+        .and_then(|object| object.borrow().props.get("\0typed-array-kind").cloned())
+    else {
+        return Ok(Value::Undefined);
+    };
+    Ok(kind)
 }
 
 fn native_typed_array_fill(vm: &mut Vm, this: Value, args: &[Value]) -> JsResult<Value> {
@@ -37128,9 +37071,6 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
     let key = vm.to_property_key(args.get(1).cloned().unwrap_or(Value::Undefined))?;
     let value = args.get(2).cloned().unwrap_or(Value::Undefined);
     let receiver = args.get(3).cloned().unwrap_or_else(|| target.clone());
-    if !receiver.is_object_like() {
-        return Ok(Value::Bool(false));
-    }
     // Reflect.set observes the proxy trap's boolean result directly; the
     // assignment path intentionally suppresses `false` in sloppy mode, so do
     // not route this operation through that mode-sensitive helper.
@@ -37181,6 +37121,9 @@ fn native_reflect_set(vm: &mut Vm, _: Value, args: &[Value]) -> JsResult<Value> 
             || (!direct_typed_set_target && object_has_typed_array_prototype(&target)));
     if typed_set_target {
         return native_typed_array_set_with_receiver(vm, &target, &key, value, &receiver);
+    }
+    if !receiver.is_object_like() {
+        return Ok(Value::Bool(false));
     }
     if let Some((_, setter)) = vm.find_accessor(&target, &key) {
         let Some(setter) = setter else {
@@ -37281,6 +37224,22 @@ fn native_typed_array_set_with_receiver(
     } else {
         typed_array_prototype_target(target).unwrap_or_else(|| target.clone())
     };
+    if !receiver.is_object_like() {
+        let length = vm.get_prop(&typed_target, "length").number().max(0.0);
+        return Ok(Value::Bool(
+            key != "-0"
+                && typed_array_numeric_index(key).is_some_and(|index| {
+                    !index.is_finite()
+                        || index < 0.0
+                        || index.fract() != 0.0
+                        || index >= length
+                }),
+        ));
+    }
+    if receiver.same_bits(&typed_target) {
+        vm.set_prop_with_receiver(&typed_target, key, value, receiver)?;
+        return Ok(Value::Bool(true));
+    }
     let target_length = vm.get_prop(&typed_target, "length").number().max(0.0);
     if key == "-0"
         || !numeric_index.is_finite()
@@ -37288,10 +37247,6 @@ fn native_typed_array_set_with_receiver(
         || numeric_index.fract() != 0.0
         || numeric_index >= target_length
     {
-        return Ok(Value::Bool(true));
-    }
-    if receiver.same_bits(&typed_target) {
-        vm.set_prop_with_receiver(&typed_target, key, value, receiver)?;
         return Ok(Value::Bool(true));
     }
     if receiver
@@ -38927,6 +38882,77 @@ fn typed_array_element_value(kind: &str, value: &Value) -> Value {
             Value::Number(if value == 0.0 { 0.0 } else { value })
         }
         _ => value.clone(),
+    }
+}
+
+/// Typed-array views share one byte-addressed backing store.  Keeping the
+/// backing bytes authoritative makes every view (including BigInt and float
+/// views) observe the same conversion and resize semantics.
+fn typed_array_buffer_read(vm: &Vm, buffer: &Value, offset: usize, kind: &str) -> Value {
+    let width = typed_array_width(kind);
+    let mut bits = 0u64;
+    let data = vm.get_prop(buffer, ARRAY_BUFFER_DATA);
+    for index in 0..width {
+        let byte = data
+            .as_object_ref()
+            .and_then(|object| {
+                object
+                    .borrow()
+                    .array
+                    .as_ref()
+                    .and_then(|array| array.get(offset + index).cloned())
+            })
+            .map(|value| value.number())
+            .unwrap_or(0.0_f64)
+            .clamp(0.0, 255.0) as u8;
+        bits |= (byte as u64) << (index * 8);
+    }
+    match kind {
+        "BigInt64Array" | "BigUint64Array" => {
+            let value = if kind == "BigInt64Array" { bits as i64 as i128 } else { bits as i128 };
+            bigint_marker(value.into())
+        }
+        "Float64Array" => Value::Number(f64::from_bits(bits)),
+        "Float32Array" => Value::Number(f32::from_bits(bits as u32) as f64),
+        "Float16Array" => Value::Number(decode_float16(bits as u16)),
+        "Int8Array" => Value::Number((bits as u8 as i8) as f64),
+        "Uint8Array" | "Uint8ClampedArray" => Value::Number(bits as u8 as f64),
+        "Int16Array" => Value::Number((bits as u16 as i16) as f64),
+        "Uint16Array" => Value::Number(bits as u16 as f64),
+        "Int32Array" => Value::Number((bits as u32 as i32) as f64),
+        "Uint32Array" => Value::Number(bits as u32 as f64),
+        _ => Value::Number(bits as f64),
+    }
+}
+
+fn typed_array_buffer_write(vm: &Vm, buffer: &Value, offset: usize, kind: &str, value: &Value) {
+    let width = typed_array_width(kind);
+    let converted = typed_array_element_value(kind, value);
+    let bits = match kind {
+        "BigInt64Array" | "BigUint64Array" => {
+            let modulus = BigInt::from(1_u8) << 64;
+            bigint_mod(&bigint_value_unchecked(&converted), &modulus)
+                .to_u64()
+                .unwrap_or(0)
+        }
+        "Float64Array" => converted.number().to_bits(),
+        "Float32Array" => (converted.number() as f32).to_bits() as u64,
+        "Float16Array" => encode_float16(converted.number()) as u64,
+        _ => converted.number() as i64 as u64,
+    };
+    let data = vm.get_prop(buffer, ARRAY_BUFFER_DATA);
+    for index in 0..width {
+        let byte = Value::Number(((bits >> (index * 8)) & 0xff) as f64);
+        vm.set_prop_unchecked(&data, &(offset + index).to_string(), byte);
+    }
+}
+
+fn typed_array_width(kind: &str) -> usize {
+    match kind {
+        "BigInt64Array" | "BigUint64Array" | "Float64Array" => 8,
+        "Float32Array" | "Int32Array" | "Uint32Array" => 4,
+        "Float16Array" | "Int16Array" | "Uint16Array" => 2,
+        _ => 1,
     }
 }
 
