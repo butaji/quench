@@ -43,6 +43,12 @@ impl FunctionCompiler<'_, '_> {
                 PropertyKey::StaticIdentifier(id) => id.name.as_str(),
                 PropertyKey::StringLiteral(value) => value.value.as_str(),
                 _ => {
+                    if let Some(expression) = property.key.as_expression() {
+                        let key = self.expression(expression);
+                        let item = self.expression(&property.value);
+                        self.emit(Op::SetIndex, item, dst, key, 0);
+                        continue;
+                    }
                     self.owner
                         .reject(property.span, "computed object keys are unsupported");
                     continue;

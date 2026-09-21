@@ -105,7 +105,7 @@ fn object_prototype_has_own_property_uses_receiver() {
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(
-            "var object = {}; object.beta = 2; object[10] = 10; object[2] = 2; object.alpha = 1; object[1] = 1; print(Object.keys(object).join(',')); print(Object.values(object).join(',')); var copy = Object.assign({}, object); print(Reflect.ownKeys(copy).join(','));"
+            "var object = { beta: 2, 10: 10, 2: 2, alpha: 1, 1: 1 }; print(Object.keys(object).join(',')); print(Object.values(object).join(',')); var copy = Object.assign({}, object); print(Reflect.ownKeys(copy).join(','));"
         ),
         ["1,2,10,beta,alpha", "1,2,10,2,1", "1,2,10,beta,alpha"],
     );
