@@ -3339,7 +3339,7 @@ pub(crate) fn http2_module_value() -> Value {
         );
         let prototype = quench_runtime::host_api::object(Vec::new());
         let constructor = execute::set_property(constructor, "name", Value::String(name.into()));
-        execute::set_callable_property(&constructor, "prototype", prototype);
+        let _ = execute::set_callable_property(&constructor, "prototype", prototype);
         constructor
     };
     crate::host::namespace_object_from_pairs(vec![

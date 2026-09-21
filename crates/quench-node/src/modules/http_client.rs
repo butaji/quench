@@ -44,7 +44,7 @@ struct RequestOptions {
 
 /// One outbound HTTP request, keyed by `CLIENT_ID_PROP`.
 pub struct ClientReq {
-    pub target: RequestTarget,
+    pub(crate) target: RequestTarget,
     pub method: String,
     pub path: String,
     pub headers: Vec<(String, String)>,

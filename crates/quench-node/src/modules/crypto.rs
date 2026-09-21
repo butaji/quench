@@ -344,7 +344,7 @@ fn x509_name(name: &openssl::x509::X509NameRef) -> String {
     name.entries()
         .filter_map(|entry| {
             let key = entry.object().nid().short_name().ok()?;
-            let value = entry.data().as_utf8().ok()?.to_string();
+            let value = entry.data().to_string().ok()?;
             Some(format!("{key}={value}"))
         })
         .collect::<Vec<_>>()
@@ -1847,34 +1847,6 @@ fn generate_key_pair_sync_mode(
                 "ec",
             )
         }
-        "x25519" => {
-            let pkey = PKey::generate_x25519().map_err(|_| {
-                crypto_error("ERR_CRYPTO_OPERATION_FAILED", "key generation failed")
-            })?;
-            (
-                pkey.private_key_to_pem_pkcs8().map_err(|_| {
-                    crypto_error("ERR_CRYPTO_OPERATION_FAILED", "key generation failed")
-                })?,
-                pkey.public_key_to_pem().map_err(|_| {
-                    crypto_error("ERR_CRYPTO_OPERATION_FAILED", "key generation failed")
-                })?,
-                "x25519",
-            )
-        }
-        "ed25519" => {
-            let pkey = PKey::generate_ed25519().map_err(|_| {
-                crypto_error("ERR_CRYPTO_OPERATION_FAILED", "key generation failed")
-            })?;
-            (
-                pkey.private_key_to_pem_pkcs8().map_err(|_| {
-                    crypto_error("ERR_CRYPTO_OPERATION_FAILED", "key generation failed")
-                })?,
-                pkey.public_key_to_pem().map_err(|_| {
-                    crypto_error("ERR_CRYPTO_OPERATION_FAILED", "key generation failed")
-                })?,
-                "ed25519",
-            )
-        }
         "dsa" => {
             let bits = match execute::get_property(options, "modulusLength") {
                 Value::Number(bits) if bits.is_finite() && bits.fract() == 0.0 && bits >= 512.0 => {
@@ -2913,7 +2885,7 @@ fn create_asymmetric_key(args: &[Value], key_type: &str) -> Result<Value, VmErro
                 } else {
                     let scalar = BigNum::from_slice(&raw).ok()?;
                     let mut point = EcPoint::new(&group).ok()?;
-                    point.mul_generator(&group, &scalar, &mut context).ok()?;
+                    point.mul_generator2(&group, &scalar, &mut context).ok()?;
                     let ec = EcKey::from_private_components(&group, &scalar, &point).ok()?;
                     let pkey = PKey::from_ec_key(ec).ok()?;
                     pkey.private_key_to_pem_pkcs8().ok()?

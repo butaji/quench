@@ -44,7 +44,7 @@ impl NodeSpec {
     }
 }
 
-/// All Node host capabilities. Stable ids; do not reorder.
+// All Node host capabilities. Stable ids; do not reorder.
 node_api! {
     (SPEC_NPM_AJV_CONSTRUCTOR, CAP_NPM_AJV_CONSTRUCTOR, "npm:ajv", 0x2A00),
     (SPEC_NPM_AJV_COMPILE, CAP_NPM_AJV_COMPILE, "npm:ajv:compile", 0x2A01),
@@ -2286,9 +2286,9 @@ pub const CAP_ZLIB_GZIP: CapId = SPEC_ZLIB_GZIP.cap;
 pub const CAP_ZLIB_INFLATE: CapId = SPEC_ZLIB_INFLATE.cap;
 pub const CAP_ZLIB_INFLATE_RAW: CapId = SPEC_ZLIB_INFLATE_RAW.cap;
 
-/// Canonical namespace wiring. Returns the `(name, value)` pairs
-/// the host installs into the `VmContext` via
-/// `with_host_value`. Single source of truth for the global table.
+// Canonical namespace wiring. Returns the `(name, value)` pairs
+// the host installs into the `VmContext` via `with_host_value`.
+// Single source of truth for the global table.
 
 // Legacy capability IDs retained in the canonical NodeSpec table.
 node_api! {

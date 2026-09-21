@@ -120,10 +120,10 @@ pub struct HostState {
     /// Stateful native compressors owned by zlib stream objects.  The VM
     /// value only carries observable stream properties; codec state remains
     /// in the host envelope so each write/flush sees the same deflater.
-    pub zlib_compressors:
+    pub(crate) zlib_compressors:
         std::collections::HashMap<u64, crate::modules::zlib::IncrementalCompressor>,
     /// Stateful native decompressors owned by zlib stream objects.
-    pub zlib_decompressors:
+    pub(crate) zlib_decompressors:
         std::collections::HashMap<u64, crate::modules::zlib::IncrementalDecompressor>,
 }
 

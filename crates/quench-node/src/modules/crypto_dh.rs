@@ -840,7 +840,7 @@ fn ec_key(receiver: &Value) -> Result<EcKey<openssl::pkey::Private>, VmError> {
     let point =
         EcPoint::new(&group).map_err(|_| error("ERR_CRYPTO_OPERATION_FAILED", "Invalid EC key"))?;
     let mut point = point;
-    point.mul_generator(&group, &bn, &ctx).map_err(|_| {
+    point.mul_generator2(&group, &bn, &mut ctx).map_err(|_| {
         error(
             "ERR_CRYPTO_OPERATION_FAILED",
             "Private key is not valid for specified curve",

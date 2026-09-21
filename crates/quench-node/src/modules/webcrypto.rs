@@ -24,15 +24,14 @@ use openssl::{bn::BigNum, pkey::PKey, rsa::Rsa};
 use p256::ecdsa::{
     Signature as P256Signature, SigningKey as P256SigningKey, VerifyingKey as P256VerifyingKey,
 };
-use p256::elliptic_curve::sec1::ToEncodedPoint as P256ToEncodedPoint;
 use p256::{
     ecdh::diffie_hellman as p256_diffie_hellman, PublicKey as P256PublicKey,
     SecretKey as P256SecretKey,
 };
+use p256::elliptic_curve::sec1::ToEncodedPoint as P256ToEncodedPoint;
 use p384::ecdsa::{
     Signature as P384Signature, SigningKey as P384SigningKey, VerifyingKey as P384VerifyingKey,
 };
-use p384::elliptic_curve::sec1::ToEncodedPoint as P384ToEncodedPoint;
 use p384::{
     ecdh::diffie_hellman as p384_diffie_hellman, PublicKey as P384PublicKey,
     SecretKey as P384SecretKey,
@@ -51,7 +50,7 @@ use quench_runtime::ops::Builtin;
 use quench_runtime::value::{ArrayBufferData, PromiseData, PromiseState, Value};
 use rand::RngCore;
 use sha1::{Digest as Sha1Digest, Sha1};
-use sha2::{Digest as ShaDigest, Sha224, Sha256, Sha384, Sha512};
+use sha2::{Sha224, Sha256, Sha384, Sha512};
 use sha3::{
     digest::ExtendableOutput, digest::Update as ShaUpdate, digest::XofReader, Sha3_256, Sha3_384,
     Sha3_512, TurboShake128, TurboShake128Core, TurboShake256, TurboShake256Core,
@@ -4596,7 +4595,7 @@ pub fn generate_key(
                         let public = secret.public_key();
                         (
                             Some(secret.to_bytes().to_vec()),
-                            Some(public.to_encoded_point(false).as_bytes().to_vec()),
+                            Some(public.to_sec1_point(false).as_bytes().to_vec()),
                         )
                     }
                     _ => (None, None),
