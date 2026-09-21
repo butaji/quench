@@ -5,7 +5,9 @@ const NATIVES: &[Native] = &[
     Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectGetPrototypeOf,
-    Native::ObjectSetPrototypeOf, Native::ObjectHasOwn,
+    Native::ObjectSetPrototypeOf, Native::ObjectHasOwn, Native::ObjectPreventExtensions,
+    Native::ObjectIsExtensible, Native::ObjectSeal, Native::ObjectIsSealed,
+    Native::ObjectFreeze, Native::ObjectIsFrozen,
     Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf,
     Native::ReflectGet, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty,
     Native::ReflectSet,
@@ -265,60 +267,6 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
         self.object_data_mut(self.globals).unwrap().proto = self.object_proto;
-    }
-    fn install_object(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        let object = self.native_value(Native::Object);
-        self.set_named(program, object, "prototype", self.object_proto)?;
-        self.set_named(
-            program,
-            self.function_proto,
-            "call",
-            self.native_value(Native::FunctionCall),
-        )?;
-        self.set_named(
-            program,
-            self.function_proto,
-            "apply",
-            self.native_value(Native::FunctionApply),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "keys",
-            self.native_value(Native::ObjectKeys),
-        )?;
-        self.install_object_extra(program, object)?;
-        self.set_named(
-            program,
-            object,
-            "create",
-            self.native_value(Native::ObjectCreate),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "assign",
-            self.native_value(Native::ObjectAssign),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "getPrototypeOf",
-            self.native_value(Native::ObjectGetPrototypeOf),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "setPrototypeOf",
-            self.native_value(Native::ObjectSetPrototypeOf),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "hasOwn",
-            self.native_value(Native::ObjectHasOwn),
-        )?;
-        self.global(program, "Object", object)
     }
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let console = self.object();

@@ -162,6 +162,16 @@ fn define_property_tracks_attributes_and_enumeration() {
 }
 
 #[test]
+fn object_integrity_levels_block_mutation_and_report_state() {
+    assert_eq!(
+        output(
+            "var sealed = { answer: 1 }; Object.seal(sealed); print(Object.isSealed(sealed)); try { sealed.extra = 2; } catch (error) { print('sealed'); } print(Object.isExtensible(sealed)); var frozen = { answer: 1 }; Object.freeze(frozen); print(Object.isFrozen(frozen)); try { frozen.answer = 2; } catch (error) { print('frozen'); } print(frozen.answer); print(Object.isFrozen(1));"
+        ),
+        ["true", "sealed", "false", "true", "frozen", "1", "true"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(

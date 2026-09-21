@@ -311,14 +311,7 @@ impl<H: Host> Vm<H> {
             let slot = self.shapes[data.shape() as usize]
                 .iter()
                 .position(|key| *key == atom);
-            if slot.is_some()
-                && self
-                    .descriptors
-                    .get(&(object, atom))
-                    .is_some_and(|attributes| !attributes.writable)
-            {
-                return Err(JsError("cannot write non-writable property".into()));
-            }
+            self.check_property_write(object, atom, slot.is_some())?;
             let old_is_function = slot
                 .and_then(|slot| self.heap.property_get(data, slot))
                 .is_some_and(|old| self.is_function(old));
@@ -352,6 +345,12 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> Result<(), JsError> {
+        let existing = self.object_data(object).and_then(|data| {
+            self.shapes[data.shape() as usize]
+                .iter()
+                .position(|key| *key == atom)
+        });
+        self.check_property_write(object, atom, existing.is_some())?;
         let shape = self
             .object_data(object)
             .map(Object::shape)

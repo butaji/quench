@@ -17,6 +17,9 @@ impl<H: Host> Vm<H> {
         if native.is_atomics_native() {
             return self.atomics_native(p, native, args);
         }
+        if native.is_object_static() {
+            return self.call_object_native(p, native, args);
+        }
         if native.is_data_view_native() {
             return self.data_view_native(p, native, this, args);
         }
@@ -36,20 +39,6 @@ impl<H: Host> Vm<H> {
             | Native::DateToJSON => self.date_native(native, this),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
-            Native::ObjectKeys
-            | Native::ObjectValues
-            | Native::ObjectEntries
-            | Native::ObjectGetOwnPropertyNames
-            | Native::ObjectGetOwnPropertyDescriptor
-            | Native::ObjectGetOwnPropertyDescriptors
-            | Native::ObjectFromEntries
-            | Native::ObjectIs
-            | Native::ObjectCreate
-            | Native::ObjectAssign
-            | Native::ObjectDefineProperty
-            | Native::ObjectGetPrototypeOf
-            | Native::ObjectSetPrototypeOf
-            | Native::ObjectHasOwn => self.call_object_native(p, native, args),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let this = self.box_object(this)?;
                 let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;

@@ -7,7 +7,7 @@ pub(crate) enum Native {
     Print,
     Object,
     ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
-    ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectGetPrototypeOf,
+    ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen,
     ObjectSetPrototypeOf, ObjectHasOwn, ObjectPrototypeHasOwnProperty, ObjectPrototypePropertyIsEnumerable, ObjectPrototypeIsPrototypeOf,
     ReflectGet, ReflectGetOwnPropertyDescriptor, ReflectDefineProperty,
     ReflectSet,
@@ -175,12 +175,9 @@ pub(crate) enum Native {
     StringReplaceAll, StringAt, StringCodePointAt, StringToUpperCase, StringToLowerCase, StringConcat, StringNormalize,
     EncodeUri, EncodeUriComponent,
     DecodeUri, DecodeUriComponent,
-    StringFromCharCode,
-    ParseInt,
+    StringFromCharCode, ParseInt,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
-    MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign,
-    NumberString,
-    Number,
+    MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, NumberString, Number,
     NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat,
     NumberFixed,
     NumberPrecision,
@@ -213,6 +210,8 @@ impl TypedArrayKind {
     }
 }
 impl Native {
+    #[rustfmt::skip]
+    pub(crate) fn is_object_static(self) -> bool { matches!(self, Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries | Native::ObjectGetOwnPropertyNames | Native::ObjectGetOwnPropertyDescriptor | Native::ObjectGetOwnPropertyDescriptors | Native::ObjectFromEntries | Native::ObjectIs | Native::ObjectCreate | Native::ObjectAssign | Native::ObjectDefineProperty | Native::ObjectGetPrototypeOf | Native::ObjectSetPrototypeOf | Native::ObjectHasOwn | Native::ObjectPreventExtensions | Native::ObjectIsExtensible | Native::ObjectSeal | Native::ObjectIsSealed | Native::ObjectFreeze | Native::ObjectIsFrozen) }
     pub(crate) fn is_typed_array_method(self) -> bool {
         matches!(
             self,
