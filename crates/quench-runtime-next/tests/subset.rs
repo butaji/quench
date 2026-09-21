@@ -603,6 +603,22 @@ fn class_heritage_links_constructor_and_prototype_chains() {
 }
 
 #[test]
+fn derived_constructors_and_super_methods_use_shared_calls() {
+    let source = r#"
+      class Base {
+        constructor(value) { this.value = value; }
+        method() { return this.value; }
+      }
+      class Child extends Base {
+        constructor(value) { super(value + 1); }
+        method() { return super.method() + 1; }
+      }
+      print(new Child(40).method());
+    "#;
+    assert_eq!(output(source), ["42"]);
+}
+
+#[test]
 fn catch_receives_thrown_value() {
     assert_eq!(
         output("try { throw 'caught'; } catch (e) { print(e); }"),

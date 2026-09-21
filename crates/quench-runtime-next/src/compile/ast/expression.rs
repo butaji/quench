@@ -14,6 +14,7 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::LoadThis, dst, 0, 0, 0);
                 dst
             }
+            Expression::Super(_) => self.load_name("\0rqj:super"),
             Expression::FunctionExpression(value) => self.function_expression(value),
             Expression::ArrowFunctionExpression(value) => self.arrow_function_expression(value),
             Expression::ClassExpression(value) => self.class_expression(value),
