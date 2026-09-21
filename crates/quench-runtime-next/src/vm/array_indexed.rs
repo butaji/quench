@@ -21,6 +21,7 @@ impl<H: Host> Vm<H> {
             | Native::ArrayEvery
             | Native::ArrayFind
             | Native::ArrayFindIndex => self.array_callback_native(p, native, this, args),
+            Native::ArrayFlatMap => self.array_flat_map_native(p, this, args),
             Native::ArrayReduce | Native::ArrayReduceRight => {
                 self.array_reduce_native(p, native, this, args)
             }
@@ -316,6 +317,52 @@ impl<H: Host> Vm<H> {
             Native::ArrayFindIndex => Ok(Value::number(-1.0)),
             _ => unreachable!("non-callback native routed to callback dispatch"),
         }
+    }
+
+    pub(super) fn array_flat_map_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (elements, length) = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => (
+                Rc::clone(elements),
+                self.heap.sparse_length(this).unwrap_or(elements.len()),
+            ),
+            _ => return Err(JsError("flatMap receiver is not array".into())),
+        };
+        let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
+            return Err(JsError("flatMap callback is not callable".into()));
+        }
+        let mut output = Vec::new();
+        for index in 0..length {
+            let value = elements
+                .get(index)
+                .copied()
+                .or_else(|| self.heap.sparse_get(this, index))
+                .unwrap_or(Value::UNDEFINED);
+            let callback_args = [value, Value::number(index as f64), this];
+            let result = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
+            if let Some(Cell::Array { elements, .. }) = self.heap.get(result) {
+                let elements = Rc::clone(elements);
+                let length = self.heap.sparse_length(result).unwrap_or(elements.len());
+                output.extend((0..length).map(|offset| {
+                    elements
+                        .get(offset)
+                        .copied()
+                        .or_else(|| self.heap.sparse_get(result, offset))
+                        .unwrap_or(Value::UNDEFINED)
+                }));
+            } else {
+                output.push(result);
+            }
+        }
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(output),
+        }))
     }
 
     pub(super) fn array_reduce_native(
