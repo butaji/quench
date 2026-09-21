@@ -329,6 +329,9 @@ impl<H: Host> Vm<H> {
             self.heap.property_push(object, value);
             self.object_data_mut(object).unwrap().set_shape(next_shape);
         }
+        self.descriptors
+            .entry((object, atom))
+            .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
         if invalidates_method {
             self.invalidate_method_caches();
         }

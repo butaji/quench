@@ -142,6 +142,26 @@ fn own_property_descriptors_preserve_ordered_keys() {
 }
 
 #[test]
+fn define_property_tracks_attributes_and_enumeration() {
+    assert_eq!(
+        output(
+            "var object = { answer: 42 }; Object.defineProperty(object, 'hidden', { value: 7 }); var descriptor = Object.getOwnPropertyDescriptor(object, 'hidden'); print(descriptor.value); print(descriptor.writable); print(descriptor.enumerable); print(object.propertyIsEnumerable('hidden')); print(Object.keys(object).join(',')); print(Object.getOwnPropertyNames(object).join(',')); try { Object.defineProperty(object, 'hidden', { value: 8 }); } catch (error) { print('rejected'); } print(Reflect.defineProperty(object, 'visible', { value: 9, enumerable: true, writable: false, configurable: false })); print(Object.keys(object).join(','));"
+        ),
+        [
+            "7",
+            "false",
+            "false",
+            "false",
+            "answer",
+            "answer,hidden",
+            "rejected",
+            "true",
+            "answer,visible"
+        ],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(
