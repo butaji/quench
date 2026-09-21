@@ -24,6 +24,14 @@ impl<H: Host> Vm<H> {
             ("setUint16", Native::DataViewSetUint16),
             ("getInt16", Native::DataViewGetInt16),
             ("setInt16", Native::DataViewSetInt16),
+            ("getUint32", Native::DataViewGetUint32),
+            ("setUint32", Native::DataViewSetUint32),
+            ("getInt32", Native::DataViewGetInt32),
+            ("setInt32", Native::DataViewSetInt32),
+            ("getFloat32", Native::DataViewGetFloat32),
+            ("setFloat32", Native::DataViewSetFloat32),
+            ("getFloat64", Native::DataViewGetFloat64),
+            ("setFloat64", Native::DataViewSetFloat64),
         ] {
             self.set_named(
                 program,
@@ -112,21 +120,35 @@ impl<H: Host> Vm<H> {
             return Err(JsError("DataView byte offset is invalid".into()));
         }
         let index = index.trunc() as usize;
-        let wide = matches!(
-            native,
+        let width = match native {
             Native::DataViewGetUint16
-                | Native::DataViewSetUint16
-                | Native::DataViewGetInt16
-                | Native::DataViewSetInt16
-        );
-        let width = if wide { 2 } else { 1 };
+            | Native::DataViewSetUint16
+            | Native::DataViewGetInt16
+            | Native::DataViewSetInt16 => 2,
+            Native::DataViewGetUint32
+            | Native::DataViewSetUint32
+            | Native::DataViewGetInt32
+            | Native::DataViewSetInt32
+            | Native::DataViewGetFloat32
+            | Native::DataViewSetFloat32 => 4,
+            Native::DataViewGetFloat64 | Native::DataViewSetFloat64 => 8,
+            _ => 1,
+        };
         if index > length.saturating_sub(width) {
             return Err(JsError("DataView byte offset is out of range".into()));
         }
-        let little_endian = wide
+        let little_endian = width > 1
             && args
                 .get(
-                    if matches!(native, Native::DataViewSetUint16 | Native::DataViewSetInt16) {
+                    if matches!(
+                        native,
+                        Native::DataViewSetUint16
+                            | Native::DataViewSetInt16
+                            | Native::DataViewSetUint32
+                            | Native::DataViewSetInt32
+                            | Native::DataViewSetFloat32
+                            | Native::DataViewSetFloat64
+                    ) {
                         2
                     } else {
                         1
@@ -148,18 +170,19 @@ impl<H: Host> Vm<H> {
                 let value = self.data_view_byte(buffer, offset + index)?;
                 Ok(Value::number((value as i8) as f64))
             }
-            Native::DataViewGetUint16 | Native::DataViewGetInt16 => {
-                let first = self.data_view_byte(buffer, offset + index)? as u16;
-                let second = self.data_view_byte(buffer, offset + index + 1)? as u16;
-                let value = if little_endian {
-                    first | second << 8
-                } else {
-                    first << 8 | second
-                };
-                let value = if native == Native::DataViewGetInt16 {
-                    (value as i16) as f64
-                } else {
-                    value as f64
+            Native::DataViewGetUint16
+            | Native::DataViewGetInt16
+            | Native::DataViewGetUint32
+            | Native::DataViewGetInt32
+            | Native::DataViewGetFloat32
+            | Native::DataViewGetFloat64 => {
+                let bits = self.data_view_read(buffer, offset + index, width, little_endian)?;
+                let value = match native {
+                    Native::DataViewGetInt16 => (bits as u16 as i16) as f64,
+                    Native::DataViewGetInt32 => (bits as u32 as i32) as f64,
+                    Native::DataViewGetFloat32 => f32::from_bits(bits as u32) as f64,
+                    Native::DataViewGetFloat64 => f64::from_bits(bits),
+                    _ => bits as f64,
                 };
                 Ok(Value::number(value))
             }
@@ -176,16 +199,22 @@ impl<H: Host> Vm<H> {
                 self.data_view_write_byte(buffer, offset + index, Self::uint8_from_value(value))?;
                 Ok(Value::UNDEFINED)
             }
-            Native::DataViewSetUint16 | Native::DataViewSetInt16 => {
+            Native::DataViewSetUint16
+            | Native::DataViewSetInt16
+            | Native::DataViewSetUint32
+            | Native::DataViewSetInt32
+            | Native::DataViewSetFloat32
+            | Native::DataViewSetFloat64 => {
                 let value = self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                let value = value.trunc().rem_euclid(65_536.0) as u16;
-                let [first, second] = if little_endian {
-                    [value as u8, (value >> 8) as u8]
-                } else {
-                    [(value >> 8) as u8, value as u8]
+                let bits = match native {
+                    Native::DataViewSetFloat32 => (value as f32).to_bits() as u64,
+                    Native::DataViewSetFloat64 => value.to_bits(),
+                    Native::DataViewSetUint16 | Native::DataViewSetInt16 => {
+                        value.trunc().rem_euclid(65_536.0) as u64
+                    }
+                    _ => value.trunc().rem_euclid(4_294_967_296.0) as u64,
                 };
-                self.data_view_write_byte(buffer, offset + index, first)?;
-                self.data_view_write_byte(buffer, offset + index + 1, second)?;
+                self.data_view_write(buffer, offset + index, width, bits, little_endian)?;
                 Ok(Value::UNDEFINED)
             }
             _ => unreachable!(),
@@ -200,6 +229,44 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| JsError("DataView byte offset is out of range".into())),
             _ => Err(JsError("DataView buffer is invalid".into())),
         }
+    }
+
+    fn data_view_read(
+        &self,
+        buffer: Value,
+        index: usize,
+        width: usize,
+        little_endian: bool,
+    ) -> Result<u64, JsError> {
+        let mut value = 0;
+        for byte_index in 0..width {
+            let byte = self.data_view_byte(buffer, index + byte_index)? as u64;
+            if little_endian {
+                value |= byte << (byte_index * 8);
+            } else {
+                value = value << 8 | byte;
+            }
+        }
+        Ok(value)
+    }
+
+    fn data_view_write(
+        &mut self,
+        buffer: Value,
+        index: usize,
+        width: usize,
+        value: u64,
+        little_endian: bool,
+    ) -> Result<(), JsError> {
+        for byte_index in 0..width {
+            let shift = if little_endian {
+                byte_index * 8
+            } else {
+                (width - byte_index - 1) * 8
+            };
+            self.data_view_write_byte(buffer, index + byte_index, (value >> shift) as u8)?;
+        }
+        Ok(())
     }
 
     fn data_view_write_byte(
