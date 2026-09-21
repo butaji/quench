@@ -38,9 +38,17 @@ impl FunctionCompiler<'_, '_> {
                     self.bind_pattern(element, dst);
                 }
             }
-            BindingPattern::AssignmentPattern(_) => {
-                self.owner
-                    .reject(pattern.span(), "destructuring defaults are unsupported");
+            BindingPattern::AssignmentPattern(assignment) => {
+                let selected = self.reg();
+                self.emit(Op::Move, selected, value, 0, 0);
+                let undefined = self.literal(Constant::Undefined);
+                let missing =
+                    self.emit_binary(2, Operand::register(value), Operand::register(undefined));
+                let skip = self.emit(Op::JumpFalse, missing, 0, 0, 0);
+                let fallback = self.expression(&assignment.right);
+                self.emit(Op::Move, selected, fallback, 0, 0);
+                self.patch(skip);
+                self.bind_pattern(&assignment.left, selected);
             }
         }
     }

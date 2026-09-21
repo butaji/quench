@@ -72,6 +72,16 @@ fn variable_destructuring_reads_object_fields_and_array_indices() {
 }
 
 #[test]
+fn destructuring_defaults_only_evaluate_for_undefined_values() {
+    assert_eq!(
+        output(
+            "var calls = 0; function fallback() { calls = calls + 1; return 42; } const { present = fallback(), missing = fallback() } = { present: 7 }; const [first = fallback(), second = fallback()] = [1]; print(present); print(missing); print(first); print(second); print(calls);"
+        ),
+        ["7", "42", "1", "42", "2"],
+    );
+}
+
+#[test]
 fn array_is_array_distinguishes_arrays_from_array_like_objects() {
     assert_eq!(
         output(
@@ -328,6 +338,18 @@ fn default_parameters_only_evaluate_for_undefined_arguments() {
       print(arrow());
     "#;
     assert_eq!(output(source), ["42", "7", "1", "42"]);
+}
+
+#[test]
+fn destructured_formal_parameters_bind_nested_defaults() {
+    let source = r#"
+      function summarize({ answer = 40 }, [extra = 2]) { return answer + extra; }
+      var summarize_arrow = ({ answer = 40 }, [extra = 2]) => answer + extra;
+      print(summarize({ answer: 7 }, [5]));
+      print(summarize({}, []));
+      print(summarize_arrow({}, []));
+    "#;
+    assert_eq!(output(source), ["12", "42", "42"]);
 }
 
 #[test]

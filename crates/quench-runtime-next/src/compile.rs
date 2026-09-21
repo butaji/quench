@@ -292,7 +292,7 @@ impl<'a> Compiler<'a> {
     fn compile_function(
         &mut self,
         name: Option<&str>,
-        params: &[&str],
+        params: &[String],
         body: &[Statement<'_>],
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
@@ -306,7 +306,7 @@ impl<'a> Compiler<'a> {
         self.collect_locals(body, &mut locals);
         let mut function = FunctionCompiler::new(self, locals, scopes.to_vec(), id);
         if let Some(defaults) = defaults {
-            function.emit_parameter_defaults(defaults);
+            function.emit_parameter_bindings(defaults);
         }
         function.emit_hoisted(body);
         if let Some(fields) = instance_fields {
