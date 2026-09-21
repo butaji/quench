@@ -49,6 +49,8 @@ pub(crate) enum Native {
     ArrayReduceRight,
     ArrayToReversed,
     ArrayToSpliced,
+    ArraySort,
+    ArrayToSorted,
     Map,
     MapGet,
     MapSet,

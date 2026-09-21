@@ -275,6 +275,19 @@ fn array_immutable_methods_preserve_the_original_receiver() {
 }
 
 #[test]
+fn array_sort_methods_support_default_and_user_comparators() {
+    let source = r#"
+      var values = [10, 2, 1];
+      print(values.sort() === values);
+      print(values.join('-'));
+      var sorted = [3, 1, 2].toSorted(function (left, right) { return right - left; });
+      print(sorted.join('-'));
+      print(sorted === values);
+    "#;
+    assert_eq!(output(source), ["true", "1-10-2", "3-2-1", "false"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
