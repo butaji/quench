@@ -383,9 +383,7 @@ impl<'a> Compiler<'a> {
             match statement {
                 Statement::VariableDeclaration(declaration) => {
                     for item in &declaration.declarations {
-                        if let BindingPattern::BindingIdentifier(id) = &item.id {
-                            self.collect_name(Some(id.name.as_str()), output, seen);
-                        }
+                        self.collect_pattern_names(&item.id, output, seen);
                     }
                 }
                 Statement::FunctionDeclaration(function) => self.collect_name(
@@ -461,11 +459,32 @@ impl<'a> Compiler<'a> {
         seen: &mut FxHashSet<Atom>,
     ) {
         for item in &declaration.declarations {
-            if let BindingPattern::BindingIdentifier(id) = &item.id {
-                let atom = self.atom(id.name.as_str());
-                if seen.insert(atom) {
-                    output.push(atom);
+            self.collect_pattern_names(&item.id, output, seen);
+        }
+    }
+
+    fn collect_pattern_names(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        output: &mut Vec<Atom>,
+        seen: &mut FxHashSet<Atom>,
+    ) {
+        match pattern {
+            BindingPattern::BindingIdentifier(id) => {
+                self.collect_name(Some(id.name.as_str()), output, seen)
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    self.collect_pattern_names(&property.value, output, seen);
                 }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                for element in array.elements.iter().flatten() {
+                    self.collect_pattern_names(element, output, seen);
+                }
+            }
+            BindingPattern::AssignmentPattern(assignment) => {
+                self.collect_pattern_names(&assignment.left, output, seen)
             }
         }
     }
