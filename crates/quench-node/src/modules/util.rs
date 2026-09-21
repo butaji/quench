@@ -3034,7 +3034,6 @@ fn inspect_depth_inner(value: &Value, depth: usize) -> String {
             value if quench_runtime::is_callable(value) => inspect_function(value),
             Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
             Value::Uint8Array(_) => inspect_typed_array_compact(value),
-            Value::BigInt(digits) => format!("{digits}n"),
             _ => "<unknown>".into(),
         }
     }
