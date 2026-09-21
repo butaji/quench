@@ -265,6 +265,11 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(Value::number(parse_integer(&text, radix)))
             }
+            Native::NumberParseFloat => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let text = self.to_string(p, value)?;
+                Ok(Value::number(super::number::parse_float(&text)))
+            }
             Native::MathFloor => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 Ok(Value::number(self.to_number(p, value)?.floor()))
