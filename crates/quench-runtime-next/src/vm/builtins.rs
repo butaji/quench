@@ -29,6 +29,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayShift,
     Native::ArrayUnshift,
     Native::ArraySplice,
+    Native::ArrayFill,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
