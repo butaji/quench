@@ -1013,6 +1013,16 @@ fn date_instances_expose_numeric_and_iso_authority() {
 }
 
 #[test]
+fn date_static_parse_and_utc_share_millisecond_authority() {
+    assert_eq!(
+        output(
+            "print(Date.parse('1970-01-01T00:00:00.000Z')); print(Date.UTC(1970, 0, 1)); print(new Date(Date.UTC(1970, 0, 1, 0, 0, 1, 250)).toISOString());"
+        ),
+        ["0", "0", "1970-01-01T00:00:01.250Z"],
+    );
+}
+
+#[test]
 fn number_static_predicates_require_numeric_values() {
     assert_eq!(
         output(
