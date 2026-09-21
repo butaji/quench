@@ -266,13 +266,19 @@ impl<H: Host> Vm<H> {
                         self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
                     self.to_string(p, value)?
                 } else {
-                    let mut text = replacement.clone();
-                    text = text.replace("$&", whole.as_str());
-                    for (index, capture) in captures.iter().enumerate().skip(1) {
-                        let token = format!("${index}");
-                        text = text.replace(&token, capture.map_or("", |value| value.as_str()));
-                    }
-                    text
+                    let captured = captures
+                        .iter()
+                        .skip(1)
+                        .map(|capture| capture.map(|value| value.as_str()))
+                        .collect::<Vec<_>>();
+                    expand_replacement(
+                        &replacement,
+                        whole.as_str(),
+                        &captured,
+                        &receiver,
+                        whole.start(),
+                        whole.end(),
+                    )
                 };
                 result.push_str(&replacement_text);
                 cursor = whole.end();
@@ -338,7 +344,14 @@ impl<H: Host> Vm<H> {
                         self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
                     self.to_string(p, value)?
                 } else {
-                    replacement.replace("$&", &search)
+                    expand_replacement(
+                        &replacement,
+                        &search,
+                        &[],
+                        &receiver,
+                        index,
+                        index + search.len(),
+                    )
                 };
                 result.push_str(&replacement_text);
                 cursor = index + search.len();
@@ -355,7 +368,14 @@ impl<H: Host> Vm<H> {
             let value = self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
             self.to_string(p, value)?
         } else {
-            replacement.replace("$&", &search)
+            expand_replacement(
+                &replacement,
+                &search,
+                &[],
+                &receiver,
+                index,
+                index + search.len(),
+            )
         };
         let mut result =
             String::with_capacity(receiver.len() + replacement.len().saturating_sub(search.len()));
@@ -364,4 +384,68 @@ impl<H: Host> Vm<H> {
         result.push_str(&receiver[index + search.len()..]);
         Ok(self.heap.alloc(Cell::String(result)))
     }
+}
+
+fn expand_replacement(
+    template: &str,
+    whole: &str,
+    captures: &[Option<&str>],
+    input: &str,
+    start: usize,
+    end: usize,
+) -> String {
+    let chars = template.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(template.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '$' || index + 1 >= chars.len() {
+            output.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        let next = chars[index + 1];
+        match next {
+            '$' => {
+                output.push('$');
+                index += 2;
+            }
+            '&' => {
+                output.push_str(whole);
+                index += 2;
+            }
+            '`' => {
+                output.push_str(&input[..start]);
+                index += 2;
+            }
+            '\'' => {
+                output.push_str(&input[end..]);
+                index += 2;
+            }
+            '0'..='9' if next != '0' => {
+                let first = next.to_digit(10).unwrap() as usize;
+                let mut consumed = 1;
+                let mut capture_index = first;
+                if index + 2 < chars.len()
+                    && chars[index + 2].is_ascii_digit()
+                    && first * 10 + chars[index + 2].to_digit(10).unwrap() as usize
+                        <= captures.len()
+                {
+                    capture_index = first * 10 + chars[index + 2].to_digit(10).unwrap() as usize;
+                    consumed = 2;
+                }
+                if capture_index <= captures.len() {
+                    output.push_str(captures[capture_index - 1].unwrap_or(""));
+                    index += consumed + 1;
+                } else {
+                    output.push('$');
+                    index += 1;
+                }
+            }
+            _ => {
+                output.push('$');
+                index += 1;
+            }
+        }
+    }
+    output
 }
