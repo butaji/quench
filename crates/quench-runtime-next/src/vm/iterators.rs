@@ -39,7 +39,9 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn get_iterator(&mut self, source: Value) -> Result<Value, JsError> {
         let kind = match self.heap.get(source) {
-            Some(Cell::Array { .. }) | Some(Cell::Uint8Array { .. }) => IteratorKind::Array,
+            Some(Cell::Array { .. })
+            | Some(Cell::Uint8Array { .. })
+            | Some(Cell::Uint16Array { .. }) => IteratorKind::Array,
             Some(Cell::String(_)) => IteratorKind::String,
             Some(Cell::Map { .. }) => IteratorKind::MapEntries,
             Some(Cell::Set { .. }) => IteratorKind::SetValues,
@@ -69,7 +71,9 @@ impl<H: Host> Vm<H> {
         };
         if !matches!(
             self.heap.get(source),
-            Some(Cell::Array { .. }) | Some(Cell::Uint8Array { .. })
+            Some(Cell::Array { .. })
+                | Some(Cell::Uint8Array { .. })
+                | Some(Cell::Uint16Array { .. })
         ) {
             return Err(JsError("array iterator receiver is not array".into()));
         }

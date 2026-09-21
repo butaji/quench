@@ -35,7 +35,9 @@ impl<H: Host> Vm<H> {
             });
         }
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if self.typed_array_shared(view) != Some(true) {
+        if self.typed_array_shared(view) != Some(true)
+            || self.typed_array_kind(view) != Some(TypedArrayKind::Uint8)
+        {
             return Err(JsError(
                 "Atomics operation requires a shared Uint8Array".into(),
             ));

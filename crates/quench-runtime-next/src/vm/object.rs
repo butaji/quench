@@ -236,7 +236,8 @@ impl<H: Host> Vm<H> {
                     return Ok(Value::number(entries.len() as f64));
                 }
                 Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
-                Some(Cell::Uint8Array { object: x, .. }) => object = x.proto,
+                Some(Cell::Uint8Array { object: x, .. })
+                | Some(Cell::Uint16Array { object: x, .. }) => object = x.proto,
                 Some(Cell::DataView { object: x, .. }) => object = x.proto,
                 Some(Cell::Set { entries, .. }) if atom == self.size_atom => {
                     return Ok(Value::number(entries.len() as f64));
