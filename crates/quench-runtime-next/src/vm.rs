@@ -3,7 +3,7 @@ use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, NUMERIC_LOCAL_TARGET, Op, Operand,
     REGISTER_MASK, RETURN_REGISTER, Register, ResidualProgram, SET_THIS_REGISTER,
 };
-use crate::heap::{Cell, FunctionKind, Heap, Native, Object};
+use crate::heap::{Cell, FunctionKind, Heap, Native, Object, RootId};
 use crate::host::Host;
 use crate::profile::Profile;
 use crate::value::number_to_u32;
@@ -224,6 +224,18 @@ impl<H: Host> Vm<H> {
             object_shapes: vec![],
             random_state: 0x4d59_5df4_d0f3_3173,
         }
+    }
+
+    pub fn root(&mut self, value: Value) -> RootId {
+        self.heap.root(value)
+    }
+
+    pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
+        self.heap.update_root(root, value)
+    }
+
+    pub fn release_root(&mut self, root: RootId) -> bool {
+        self.heap.release_root(root)
     }
 
     pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
