@@ -150,7 +150,7 @@ impl<H: Host> Vm<H> {
                 },
             ),
             Native::ArrayPop => self.array_pop_native(this),
-            Native::ArraySlice => self.array_slice_native(this, args),
+            Native::ArraySlice => self.array_slice_native(p, this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {
