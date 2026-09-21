@@ -120,10 +120,17 @@ impl<H: Host> Vm<H> {
             | Native::MapHas
             | Native::MapDelete
             | Native::MapClear
+            | Native::MapKeys
+            | Native::MapValues
+            | Native::MapEntries
             | Native::SetAdd
             | Native::SetHas
             | Native::SetDelete
-            | Native::SetClear => self.call_collection_native(native, this, args),
+            | Native::SetClear
+            | Native::SetKeys
+            | Native::SetValues
+            | Native::SetEntries
+            | Native::IteratorNext => self.call_collection_native(native, this, args),
             Native::ReflectGet
             | Native::ReflectSet
             | Native::ReflectOwnKeys
@@ -489,8 +496,5 @@ impl<H: Host> Vm<H> {
             || v.is_undefined()
             || v == Value::FALSE
             || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan()))
-    }
-    pub(super) fn is_string(&self, v: Value) -> bool {
-        matches!(self.heap.get(v), Some(Cell::String(_)))
     }
 }

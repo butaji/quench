@@ -132,6 +132,16 @@ fn maps_and_sets_preserve_identity_and_insertion_size() {
 }
 
 #[test]
+fn map_and_set_iterators_produce_ordered_iterator_results() {
+    assert_eq!(
+        output(
+            "var map = new Map(); map.set('a', 1); map.set('b', 2); var iterator = map.entries(); var first = iterator.next(); print(first.value[0]); print(first.value[1]); print(first.done); var second = iterator.next(); print(second.value[0]); print(second.value[1]); print(iterator.next().done); var set = new Set(); set.add('x'); var set_iterator = set.keys(); print(set_iterator.next().value); print(set_iterator.next().done);"
+        ),
+        ["a", "1", "false", "b", "2", "true", "x", "true"],
+    );
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(

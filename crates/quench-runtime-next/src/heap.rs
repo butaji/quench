@@ -40,9 +40,9 @@ pub(crate) struct Heap {
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GcProfile {
-    pub allocated_kinds: [u64; 11],
-    pub allocated_payload_bytes: [u64; 11],
-    pub allocated_size_buckets: [[u64; 8]; 11],
+    pub allocated_kinds: [u64; 12],
+    pub allocated_payload_bytes: [u64; 12],
+    pub allocated_size_buckets: [[u64; 8]; 12],
     pub roots: u64,
     pub work_items: u64,
     pub max_worklist: u64,
@@ -51,7 +51,7 @@ pub(crate) struct GcProfile {
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
-    pub marked_kinds: [u64; 11],
+    pub marked_kinds: [u64; 12],
 }
 
 #[derive(Default)]
@@ -400,6 +400,14 @@ impl Heap {
                 object(value);
                 work.extend(entries.iter().copied());
             }
+            Cell::Iterator {
+                object: value,
+                source,
+                ..
+            } => {
+                object(value);
+                work.push(*source);
+            }
             Cell::Function {
                 object: value, env, ..
             } => {
@@ -425,20 +433,21 @@ impl Heap {
             Cell::Array { .. } => 1,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
-            Cell::Function { .. } => 4,
-            Cell::Environment { .. } => 5,
-            Cell::String(_) => 6,
-            Cell::BigInt(_) => 7,
-            Cell::Symbol(_) => 8,
-            Cell::Date(_) => 9,
-            Cell::Error(_) => 10,
+            Cell::Iterator { .. } => 4,
+            Cell::Function { .. } => 5,
+            Cell::Environment { .. } => 6,
+            Cell::String(_) => 7,
+            Cell::BigInt(_) => 8,
+            Cell::Symbol(_) => 9,
+            Cell::Date(_) => 10,
+            Cell::Error(_) => 11,
         }
     }
 
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         match cell {
-            Cell::Object(_) | Cell::Date(_) => 0,
+            Cell::Object(_) | Cell::Iterator { .. } | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),

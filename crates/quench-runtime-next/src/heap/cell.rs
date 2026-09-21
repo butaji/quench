@@ -28,11 +28,18 @@ pub(crate) enum Native {
     MapHas,
     MapDelete,
     MapClear,
+    MapKeys,
+    MapValues,
+    MapEntries,
     Set,
     SetAdd,
     SetHas,
     SetDelete,
     SetClear,
+    SetKeys,
+    SetValues,
+    SetEntries,
+    IteratorNext,
     FunctionCall,
     Date,
     DateNow,
@@ -76,6 +83,15 @@ pub(crate) enum FunctionKind {
     Native(Native),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum IteratorKind {
+    MapKeys,
+    MapValues,
+    MapEntries,
+    SetValues,
+    SetEntries,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Object {
     pub proto: Value,
@@ -109,6 +125,12 @@ pub(crate) enum Cell {
         object: Object,
         entries: Vec<Value>,
     },
+    Iterator {
+        object: Object,
+        source: Value,
+        kind: IteratorKind,
+        index: usize,
+    },
     Function {
         object: Box<Object>,
         kind: FunctionKind,
@@ -131,7 +153,8 @@ impl Cell {
             Self::Object(object)
             | Self::Array { object, .. }
             | Self::Map { object, .. }
-            | Self::Set { object, .. } => Some(object),
+            | Self::Set { object, .. }
+            | Self::Iterator { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
         }
@@ -142,7 +165,8 @@ impl Cell {
             Self::Object(object)
             | Self::Array { object, .. }
             | Self::Map { object, .. }
-            | Self::Set { object, .. } => Some(object),
+            | Self::Set { object, .. }
+            | Self::Iterator { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
         }

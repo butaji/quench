@@ -1,6 +1,41 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let map = self.native_value(Native::Map);
+        self.map_proto = self.object();
+        for (name, native) in [
+            ("get", Native::MapGet),
+            ("set", Native::MapSet),
+            ("has", Native::MapHas),
+            ("delete", Native::MapDelete),
+            ("clear", Native::MapClear),
+            ("keys", Native::MapKeys),
+            ("values", Native::MapValues),
+            ("entries", Native::MapEntries),
+        ] {
+            self.set_named(program, self.map_proto, name, self.native_value(native))?;
+        }
+        self.set_named(program, map, "prototype", self.map_proto)?;
+        self.global(program, "Map", map)?;
+
+        let set = self.native_value(Native::Set);
+        self.set_proto = self.object();
+        for (name, native) in [
+            ("add", Native::SetAdd),
+            ("has", Native::SetHas),
+            ("delete", Native::SetDelete),
+            ("clear", Native::SetClear),
+            ("keys", Native::SetKeys),
+            ("values", Native::SetValues),
+            ("entries", Native::SetEntries),
+        ] {
+            self.set_named(program, self.set_proto, name, self.native_value(native))?;
+        }
+        self.set_named(program, set, "prototype", self.set_proto)?;
+        self.global(program, "Set", set)
+    }
+
     pub(super) fn construct_collection_native(&mut self, native: Native) -> Result<Value, JsError> {
         let cell = match native {
             Native::Map => Cell::Map {
@@ -75,6 +110,9 @@ impl<H: Host> Vm<H> {
                 entries.clear();
                 Ok(Value::UNDEFINED)
             }
+            Native::MapKeys => self.collection_iterator(this, IteratorKind::MapKeys),
+            Native::MapValues => self.collection_iterator(this, IteratorKind::MapValues),
+            Native::MapEntries => self.collection_iterator(this, IteratorKind::MapEntries),
             Native::SetAdd => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let exists = self.set_entry_index(this, value).is_some();
@@ -114,6 +152,11 @@ impl<H: Host> Vm<H> {
                 entries.clear();
                 Ok(Value::UNDEFINED)
             }
+            Native::SetKeys | Native::SetValues => {
+                self.collection_iterator(this, IteratorKind::SetValues)
+            }
+            Native::SetEntries => self.collection_iterator(this, IteratorKind::SetEntries),
+            Native::IteratorNext => self.iterator_next(this),
             _ => Err(JsError("invalid collection native".into())),
         }
     }
