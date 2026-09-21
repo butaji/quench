@@ -927,6 +927,22 @@ fn date_now_uses_the_host_clock_capability() {
 }
 
 #[test]
+fn date_instances_expose_numeric_and_iso_authority() {
+    assert_eq!(
+        output(
+            "var date = new Date(0); print(date.getTime()); print(date.valueOf()); print(date.toISOString()); print(date.toJSON()); print(JSON.stringify(date));"
+        ),
+        [
+            "0",
+            "0",
+            "1970-01-01T00:00:00.000Z",
+            "1970-01-01T00:00:00.000Z",
+            "\"1970-01-01T00:00:00.000Z\"",
+        ],
+    );
+}
+
+#[test]
 fn number_static_predicates_require_numeric_values() {
     assert_eq!(
         output(

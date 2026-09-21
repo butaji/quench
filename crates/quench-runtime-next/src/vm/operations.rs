@@ -30,6 +30,10 @@ impl<H: Host> Vm<H> {
             Native::DateNow => Ok(Value::number(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             )),
+            Native::DateGetTime
+            | Native::DateValueOf
+            | Native::DateToISOString
+            | Native::DateToJSON => self.date_native(native, this),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::ObjectKeys
             | Native::ObjectCreate

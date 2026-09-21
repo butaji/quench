@@ -157,8 +157,9 @@ impl<H: Host> Vm<H> {
                 ancestors.pop();
                 result
             }
-            Some(Cell::Date(value)) => Ok(serde_json::Number::from_f64(value)
-                .map(serde_json::Value::Number)
+            Some(Cell::Date(value)) => Ok(self
+                .date_to_json_string(value)
+                .map(serde_json::Value::String)
                 .or(Some(serde_json::Value::Null))),
             Some(Cell::Error(value)) => Ok(Some(serde_json::Value::String(value))),
             Some(Cell::Environment { .. }) | Some(Cell::Iterator { .. }) | None => Ok(None),
