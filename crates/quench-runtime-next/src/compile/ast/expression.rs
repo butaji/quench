@@ -224,7 +224,22 @@ impl FunctionCompiler<'_, '_> {
         object: &Expression<'_>,
         key: &Expression<'_>,
     ) -> Register {
-        let object = self.expression(object);
+        let object = if matches!(object, Expression::Super(_)) && !self.super_static {
+            let base = self.expression(object);
+            let prototype = self.reg();
+            let atom = self.owner.atom("prototype");
+            let cache = self.owner.cache_site();
+            self.emit(
+                Op::GetField,
+                prototype,
+                FieldBase::register(base).0,
+                cache,
+                atom,
+            );
+            prototype
+        } else {
+            self.expression(object)
+        };
         let key = self.expression(key);
         let dst = self.reg();
         self.emit(Op::GetIndex, dst, object, key, 0);

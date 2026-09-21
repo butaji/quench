@@ -612,8 +612,8 @@ fn derived_constructors_and_super_methods_use_shared_calls() {
       }
       class Child extends Base {
         constructor(value) { super(value + 1); }
-        method() { return super.method() + 1; }
-        static kind() { return super.kind() + 1; }
+        method() { var key = 'method'; return super[key]() + 1; }
+        static kind() { var key = 'kind'; return super[key]() + 1; }
       }
       print(new Child(40).method());
       print(Child.kind());
