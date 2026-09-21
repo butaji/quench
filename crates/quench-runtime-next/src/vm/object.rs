@@ -239,6 +239,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
                     object = x.proto
                 }
+                Some(Cell::Iterator { object: x, .. }) => object = x.proto,
                 Some(Cell::Function { object: x, .. }) => object = x.proto,
                 _ => return Ok(Value::UNDEFINED),
             }

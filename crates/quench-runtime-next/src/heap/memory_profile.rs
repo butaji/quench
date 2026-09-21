@@ -2,7 +2,7 @@ use super::{Cell, Heap};
 use crate::value::Value;
 use std::mem::size_of;
 
-const KINDS: usize = 11;
+const KINDS: usize = 12;
 const BUCKETS: usize = 8;
 
 #[derive(Default)]
@@ -68,7 +68,7 @@ impl MemoryProfile {
         live_bytes: [usize; KINDS],
     ) {
         eprintln!(
-            "{{\"kind\":\"rqj-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":[\"object\",\"array\",\"map\",\"set\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
+            "{{\"kind\":\"rqj-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
             self.clock,
             self.allocated_counts,
             self.allocated_bytes,
@@ -171,6 +171,7 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
         Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
         Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
+        Cell::Iterator { .. } => 0,
         Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
         Cell::String(value) | Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
         Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
