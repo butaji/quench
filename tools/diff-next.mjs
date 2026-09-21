@@ -6,9 +6,28 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
+function observable({ status, signal, timed_out, stdout, stderr, spawn_error }) {
+  return JSON.stringify({ status, signal, timed_out, stdout, stderr, spawn_error });
+}
+
 const source = process.argv[2];
+const selfTest = source === "--self-test";
+if (selfTest) {
+  const assert = (condition, message) => {
+    if (!condition) throw new Error(`self-test failed: ${message}`);
+  };
+  const executeSelfTest = (label, args, timeout) => execute(label, process.execPath, args, timeout);
+  const timeout = executeSelfTest("timeout", ["-e", "setTimeout(() => {}, 1000)"], 10);
+  assert(timeout.timed_out, "timeout is classified");
+  const crash = executeSelfTest("crash", ["-e", "process.exit(7)"], 1000);
+  assert(crash.status === 7 && !crash.timed_out, "nonzero exit is preserved");
+  const values = [timeout, crash].map(observable);
+  assert(values[0] !== values[1], "observable mismatches remain distinguishable");
+  console.log("diff-next self-test: ok");
+  process.exit(0);
+}
 if (!source) {
-  console.error("usage: diff-next.mjs SCRIPT");
+  console.error("usage: diff-next.mjs SCRIPT | --self-test");
   process.exit(2);
 }
 
@@ -25,12 +44,12 @@ const entries = [
   ["node-oracle", process.env.NODE_BIN ?? process.execPath],
 ];
 
-function execute(label, command) {
+function execute(label, command, args = [absoluteSource], timeout = Number(process.env.DIFF_TIMEOUT_MS ?? 30_000)) {
   const started = performance.now();
-  const result = spawnSync(command, [absoluteSource], {
+  const result = spawnSync(command, args, {
     cwd: process.cwd(),
     encoding: "utf8",
-    timeout: Number(process.env.DIFF_TIMEOUT_MS ?? 30_000),
+    timeout,
     env: process.env,
   });
   const elapsed = performance.now() - started;
@@ -50,8 +69,6 @@ function execute(label, command) {
 }
 
 const results = entries.map(([label, command]) => execute(label, command));
-const observable = ({ status, signal, timed_out, stdout, stderr, spawn_error }) =>
-  JSON.stringify({ status, signal, timed_out, stdout, stderr, spawn_error });
 const reference = observable(results[2]);
 
 console.log(
