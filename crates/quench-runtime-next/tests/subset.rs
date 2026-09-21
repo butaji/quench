@@ -92,6 +92,16 @@ fn object_keys_reflect_own_shape_order() {
 }
 
 #[test]
+fn json_round_trip_uses_runtime_objects_and_arrays() {
+    assert_eq!(
+        output(
+            "var value = JSON.parse('{\"answer\":42,\"items\":[1,2]}'); print(value.answer); print(value.items[1]); print(JSON.stringify(value));"
+        ),
+        ["42", "2", "{\"answer\":42,\"items\":[1,2]}"],
+    );
+}
+
+#[test]
 fn base_classes_lower_to_constructor_and_prototype_methods() {
     let source = r#"
       class Box {

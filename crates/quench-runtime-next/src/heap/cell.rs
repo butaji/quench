@@ -7,6 +7,8 @@ pub(crate) enum Native {
     Print,
     Object,
     ObjectKeys,
+    JsonParse,
+    JsonStringify,
     Array,
     ArrayIsArray,
     ArrayPush,

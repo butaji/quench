@@ -2764,6 +2764,7 @@ dependencies = [
  "oxc_parser 0.150.0",
  "oxc_span 0.150.0",
  "rustc-hash",
+ "serde_json",
 ]
 
 [[package]]
