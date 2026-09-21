@@ -21,6 +21,7 @@ mod dispatch_numeric;
 mod environment;
 mod gc;
 mod index;
+mod json;
 mod method_cache;
 mod object;
 mod operations;

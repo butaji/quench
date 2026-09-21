@@ -4,6 +4,8 @@ const NATIVES: &[Native] = &[
     Native::Print,
     Native::Object,
     Native::ObjectKeys,
+    Native::JsonParse,
+    Native::JsonStringify,
     Native::Array,
     Native::ArrayIsArray,
     Native::ArrayPush,
@@ -64,6 +66,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "String", string)?;
         self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
+        self.install_json(program)?;
         self.install_math(program)
     }
 
@@ -99,6 +102,18 @@ impl<H: Host> Vm<H> {
         let console = self.object();
         self.set_named(program, console, "log", self.native_value(Native::Print))?;
         self.global(program, "console", console)
+    }
+
+    fn install_json(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let json = self.object();
+        self.set_named(program, json, "parse", self.native_value(Native::JsonParse))?;
+        self.set_named(
+            program,
+            json,
+            "stringify",
+            self.native_value(Native::JsonStringify),
+        )?;
+        self.global(program, "JSON", json)
     }
 
     fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
