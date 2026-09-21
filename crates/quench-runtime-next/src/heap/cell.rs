@@ -165,7 +165,8 @@ pub(crate) enum Native {
     StringEndsWith,
     StringReplace, StringSplit, StringTrim, StringTrimStart,
     StringTrimEnd, StringRepeat, StringPadStart, StringPadEnd,
-    StringMatch, StringSearch, StringReplaceAll,
+    StringMatch, StringSearch, StringReplaceAll, StringAt, StringCodePointAt,
+    StringToUpperCase, StringToLowerCase, StringConcat,
     EncodeUri, EncodeUriComponent,
     DecodeUri, DecodeUriComponent,
     StringFromCharCode,
@@ -301,7 +302,6 @@ impl Object {
     pub(crate) fn shape(&self) -> u32 {
         self.properties.auxiliary()
     }
-
     pub(crate) fn set_shape(&mut self, shape: u32) {
         self.properties.set_auxiliary(shape);
     }
