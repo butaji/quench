@@ -3,7 +3,7 @@ include!("regexp_named_groups.rs");
 include!("regexp_surrogates.rs");
 include!("regexp_cache.rs");
 
-pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
+pub(crate) fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
     if flags.contains('u') || flags.contains('v') {
         validate_unicode_escapes(pattern, flags.contains('v'))?;

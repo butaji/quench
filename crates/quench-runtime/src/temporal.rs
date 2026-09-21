@@ -5350,9 +5350,9 @@ mod stubs {
         let mut hour = crate::conversion::to_number(&property("hour")?)? as u32;
         let mut minute = crate::conversion::to_number(&property("minute")?)? as u32;
         let mut second = crate::conversion::to_number(&property("second")?)? as u32;
-        let mut millisecond = crate::conversion::to_number(&property("millisecond")?)? as u32;
-        let mut microsecond = crate::conversion::to_number(&property("microsecond")?)? as u32;
-        let mut nanosecond = crate::conversion::to_number(&property("nanosecond")?)? as u32;
+        let millisecond = crate::conversion::to_number(&property("millisecond")?)? as u32;
+        let microsecond = crate::conversion::to_number(&property("microsecond")?)? as u32;
+        let nanosecond = crate::conversion::to_number(&property("nanosecond")?)? as u32;
         let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
         let offset_nanos = crate::conversion::to_number(&property("offsetNanoseconds")?)? as i128;
         let offset_nanos = offset_nanos / 60_000_000_000 * 60_000_000_000;
@@ -5597,9 +5597,6 @@ mod stubs {
                     }
                 }
             }
-            millisecond = (fraction / 1_000_000) as u32;
-            microsecond = (fraction / 1_000 % 1_000) as u32;
-            nanosecond = (fraction % 1_000) as u32;
         }
         if (smallest.is_some() || precision != usize::MAX)
             && !timezone.starts_with(['+', '-'])

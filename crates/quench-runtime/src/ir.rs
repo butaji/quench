@@ -374,7 +374,7 @@ macro_rules! vm_op {
             /// This is derived beside the canonical opcode declaration so
             /// machine admission does not maintain a second opcode-family
             /// table. Dedicated numeric rows share the binary artifact path.
-            pub const fn generic_bridge_payload(self) -> GenericBridgePayload {
+            pub(crate) const fn generic_bridge_payload(self) -> GenericBridgePayload {
                 match self {
                     $(Self::$name => vm_op!(@payload Self::$name, $($marker)*)),+
                 }
