@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
                 let raw = self
                     .to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
                     .trunc() as i64;
-                let index = if raw < 0 {
+                let index = if native == Native::StringAt && raw < 0 {
                     units.len() as i64 + raw
                 } else {
                     raw
