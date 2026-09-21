@@ -132,6 +132,16 @@ fn object_views_box_primitive_strings_for_indexed_properties() {
 }
 
 #[test]
+fn string_search_uses_utf16_indices_and_positions() {
+    assert_eq!(
+        output(
+            "var text = 'a😀ba😀'; print(text.indexOf('😀')); print(text.indexOf('😀', 3)); print(text.lastIndexOf('😀')); print(text.lastIndexOf('😀', 2)); print(text.indexOf('')); print(text.lastIndexOf(''));"
+        ),
+        ["1", "5", "5", "1", "0", "7"],
+    );
+}
+
+#[test]
 fn destructuring_defaults_only_evaluate_for_undefined_values() {
     assert_eq!(
         output(

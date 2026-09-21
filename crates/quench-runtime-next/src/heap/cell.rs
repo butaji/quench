@@ -168,6 +168,7 @@ pub(crate) enum Native {
     StringIncludes,
     StringStartsWith,
     StringEndsWith,
+    StringIndexOf, StringLastIndexOf,
     StringReplace, StringSplit, StringTrim, StringTrimStart, StringTrimEnd,
     StringRepeat, StringPadStart, StringPadEnd, StringMatch, StringSearch,
     StringReplaceAll, StringAt, StringCodePointAt, StringToUpperCase, StringToLowerCase, StringConcat, StringNormalize,
