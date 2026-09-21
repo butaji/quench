@@ -22,6 +22,17 @@ pub(crate) enum Native {
     ArrayIsArray,
     ArrayPush,
     ArrayPop,
+    Map,
+    MapGet,
+    MapSet,
+    MapHas,
+    MapDelete,
+    MapClear,
+    Set,
+    SetAdd,
+    SetHas,
+    SetDelete,
+    SetClear,
     FunctionCall,
     Date,
     DateNow,
@@ -90,6 +101,14 @@ pub(crate) enum Cell {
         object: Object,
         elements: Rc<Vec<Value>>,
     },
+    Map {
+        object: Object,
+        entries: Vec<(Value, Value)>,
+    },
+    Set {
+        object: Object,
+        entries: Vec<Value>,
+    },
     Function {
         object: Box<Object>,
         kind: FunctionKind,
@@ -109,7 +128,10 @@ pub(crate) enum Cell {
 impl Cell {
     pub(crate) fn object(&self) -> Option<&Object> {
         match self {
-            Self::Object(object) | Self::Array { object, .. } => Some(object),
+            Self::Object(object)
+            | Self::Array { object, .. }
+            | Self::Map { object, .. }
+            | Self::Set { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
         }
@@ -117,7 +139,10 @@ impl Cell {
 
     pub(crate) fn object_mut(&mut self) -> Option<&mut Object> {
         match self {
-            Self::Object(object) | Self::Array { object, .. } => Some(object),
+            Self::Object(object)
+            | Self::Array { object, .. }
+            | Self::Map { object, .. }
+            | Self::Set { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
         }

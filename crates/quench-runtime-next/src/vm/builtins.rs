@@ -19,6 +19,17 @@ const NATIVES: &[Native] = &[
     Native::ArrayIsArray,
     Native::ArrayPush,
     Native::ArrayPop,
+    Native::Map,
+    Native::MapGet,
+    Native::MapSet,
+    Native::MapHas,
+    Native::MapDelete,
+    Native::MapClear,
+    Native::Set,
+    Native::SetAdd,
+    Native::SetHas,
+    Native::SetDelete,
+    Native::SetClear,
     Native::FunctionCall,
     Native::Date,
     Native::DateNow,
@@ -65,6 +76,7 @@ impl<H: Host> Vm<H> {
         self.install_object(program)?;
         self.install_console(program)?;
         self.install_array(program)?;
+        self.install_collections(program)?;
         self.global(program, "undefined", Value::UNDEFINED)?;
         self.global(program, "NaN", Value::number(f64::NAN))?;
         self.global(program, "Infinity", Value::number(f64::INFINITY))?;
@@ -260,6 +272,72 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::ArrayIsArray),
         )?;
         self.global(program, "Array", array)
+    }
+
+    fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let map = self.native_value(Native::Map);
+        self.map_proto = self.object();
+        self.set_named(
+            program,
+            self.map_proto,
+            "get",
+            self.native_value(Native::MapGet),
+        )?;
+        self.set_named(
+            program,
+            self.map_proto,
+            "set",
+            self.native_value(Native::MapSet),
+        )?;
+        self.set_named(
+            program,
+            self.map_proto,
+            "has",
+            self.native_value(Native::MapHas),
+        )?;
+        self.set_named(
+            program,
+            self.map_proto,
+            "delete",
+            self.native_value(Native::MapDelete),
+        )?;
+        self.set_named(
+            program,
+            self.map_proto,
+            "clear",
+            self.native_value(Native::MapClear),
+        )?;
+        self.set_named(program, map, "prototype", self.map_proto)?;
+        self.global(program, "Map", map)?;
+
+        let set = self.native_value(Native::Set);
+        self.set_proto = self.object();
+        self.set_named(
+            program,
+            self.set_proto,
+            "add",
+            self.native_value(Native::SetAdd),
+        )?;
+        self.set_named(
+            program,
+            self.set_proto,
+            "has",
+            self.native_value(Native::SetHas),
+        )?;
+        self.set_named(
+            program,
+            self.set_proto,
+            "delete",
+            self.native_value(Native::SetDelete),
+        )?;
+        self.set_named(
+            program,
+            self.set_proto,
+            "clear",
+            self.native_value(Native::SetClear),
+        )?;
+        self.set_named(program, set, "prototype", self.set_proto)?;
+        self.global(program, "Set", set)
     }
 
     fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {

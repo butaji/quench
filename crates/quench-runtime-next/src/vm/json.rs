@@ -103,6 +103,9 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(Some(serde_json::Value::Array(output)))
             }
+            Some(Cell::Map { .. }) | Some(Cell::Set { .. }) => {
+                Ok(Some(serde_json::Value::Object(serde_json::Map::new())))
+            }
             Some(Cell::Object(object)) => {
                 let shape = object.shape();
                 let keys = self.shapes[shape as usize].clone();

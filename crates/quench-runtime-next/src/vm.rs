@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 mod builtins;
 mod coercion;
+mod collections;
 mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
@@ -25,6 +26,7 @@ mod json;
 mod method_cache;
 mod number;
 mod object;
+mod object_static;
 mod operations;
 mod primitives;
 #[cfg(feature = "profile-aggregate")]
@@ -162,6 +164,8 @@ pub struct Vm<H> {
     object_proto: Value,
     function_proto: Value,
     array_proto: Value,
+    map_proto: Value,
+    set_proto: Value,
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
     natives: Vec<(Native, Value)>,
@@ -181,6 +185,7 @@ pub struct Vm<H> {
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
+    size_atom: Atom,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     primitive_atoms: [Atom; 8],
@@ -201,6 +206,8 @@ impl<H: Host> Vm<H> {
             object_proto: Value::NULL,
             function_proto: Value::NULL,
             array_proto: Value::NULL,
+            map_proto: Value::NULL,
+            set_proto: Value::NULL,
             constants: vec![],
             const_arrays: vec![],
             natives: vec![],
@@ -220,6 +227,7 @@ impl<H: Host> Vm<H> {
             megamorphic_field_indices: vec![],
             megamorphic_fields: vec![],
             length_atom: u32::MAX,
+            size_atom: u32::MAX,
             to_fixed_atom: u32::MAX,
             to_precision_atom: u32::MAX,
             primitive_atoms: [u32::MAX; 8],
@@ -339,6 +347,7 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
+        self.size_atom = self.intern_atom("size");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
         self.primitive_atoms = [

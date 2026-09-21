@@ -73,6 +73,7 @@ impl<H: Host> Vm<H> {
                     elements: Rc::new(vec![Value::UNDEFINED; len]),
                 }))
             }
+            Native::Map | Native::Set => self.construct_collection_native(native),
             Native::Date => Ok(self.heap.alloc(Cell::Date(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             ))),
@@ -109,24 +110,20 @@ impl<H: Host> Vm<H> {
             Native::DateNow => Ok(Value::number(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             )),
-            Native::ObjectKeys => {
-                self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ObjectCreate => {
-                let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if !proto.is_null() && self.object_data(proto).is_none() {
-                    return Err(JsError("Object prototype is not an object".into()));
-                }
-                Ok(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
-            }
-            Native::ObjectAssign => self.object_assign(args),
-            Native::ObjectGetPrototypeOf => {
-                self.object_get_prototype_of(args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ObjectSetPrototypeOf => self.object_set_prototype_of(
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-                args.get(1).copied().unwrap_or(Value::UNDEFINED),
-            ),
+            Native::ObjectKeys
+            | Native::ObjectCreate
+            | Native::ObjectAssign
+            | Native::ObjectGetPrototypeOf
+            | Native::ObjectSetPrototypeOf => self.call_object_native(native, args),
+            Native::MapGet
+            | Native::MapSet
+            | Native::MapHas
+            | Native::MapDelete
+            | Native::MapClear
+            | Native::SetAdd
+            | Native::SetHas
+            | Native::SetDelete
+            | Native::SetClear => self.call_collection_native(native, this, args),
             Native::ReflectGet
             | Native::ReflectSet
             | Native::ReflectOwnKeys
@@ -220,7 +217,7 @@ impl<H: Host> Vm<H> {
             Native::Date => Ok(self.heap.alloc(Cell::Date(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             ))),
-            Native::Object | Native::Array | Native::Error => {
+            Native::Object | Native::Array | Native::Error | Native::Map | Native::Set => {
                 self.construct_native(p, native, args)
             }
             _ => self.call_primitive_native(p, native, this, args),

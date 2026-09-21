@@ -1,72 +1,6 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn object_get_prototype_of(&self, value: Value) -> Result<Value, JsError> {
-        self.object_data(value)
-            .map(|object| object.proto)
-            .ok_or_else(|| JsError("Object.getPrototypeOf target is not an object".into()))
-    }
-
-    pub(super) fn object_set_prototype_of(
-        &mut self,
-        target: Value,
-        proto: Value,
-    ) -> Result<Value, JsError> {
-        if !proto.is_null() && self.object_data(proto).is_none() {
-            return Err(JsError("Object prototype is not an object".into()));
-        }
-        let Some(object) = self.object_data_mut(target) else {
-            return Err(JsError(
-                "Object.setPrototypeOf target is not an object".into(),
-            ));
-        };
-        object.proto = proto;
-        Ok(target)
-    }
-
-    pub(super) fn object_assign(&mut self, args: &[Value]) -> Result<Value, JsError> {
-        let target = args
-            .first()
-            .copied()
-            .filter(|value| self.object_data(*value).is_some())
-            .ok_or_else(|| JsError("Object.assign target is not an object".into()))?;
-        for source in args.iter().copied().skip(1) {
-            let Some(data) = self.object_data(source) else {
-                continue;
-            };
-            let shape = data.shape();
-            let keys = self.shapes[shape as usize].clone();
-            let values = keys
-                .iter()
-                .enumerate()
-                .filter_map(|(slot, atom)| {
-                    self.heap
-                        .property_get(data, slot)
-                        .map(|value| (*atom, value))
-                })
-                .collect::<Vec<_>>();
-            for (atom, value) in values {
-                self.set_property(target, atom, value)?;
-            }
-        }
-        Ok(target)
-    }
-
-    pub(super) fn object_keys(&mut self, object: Value) -> Result<Value, JsError> {
-        let keys = self
-            .object_data(object)
-            .map(|data| self.shapes[data.shape() as usize].clone())
-            .ok_or_else(|| JsError("Object.keys target is not an object".into()))?;
-        let values = keys
-            .iter()
-            .map(|atom| self.heap.alloc(Cell::String(self.atom_name(*atom).into())))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
-    }
-
     #[inline(always)]
     pub(super) fn resolve_field_base(&self, frame: usize, base: FieldBase) -> Value {
         match base.register_index() {
@@ -171,7 +105,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        if !object.is_heap() || atom == self.length_atom {
+        if !object.is_heap() || atom == self.length_atom || atom == self.size_atom {
             return self.get_property(p, object, atom);
         }
         let Some(receiver) = self.object_data(object) else {
@@ -274,6 +208,12 @@ impl<H: Host> Vm<H> {
                     let length = self.heap.sparse_length(object).unwrap_or(elements.len());
                     return Ok(Value::number(length as f64));
                 }
+                Some(Cell::Map { entries, .. }) if atom == self.size_atom => {
+                    return Ok(Value::number(entries.len() as f64));
+                }
+                Some(Cell::Set { entries, .. }) if atom == self.size_atom => {
+                    return Ok(Value::number(entries.len() as f64));
+                }
                 Some(Cell::String(v)) => {
                     return Ok(if atom == self.length_atom {
                         Value::number(v.encode_utf16().count() as f64)
@@ -296,6 +236,9 @@ impl<H: Host> Vm<H> {
                     });
                 }
                 Some(Cell::Object(x)) | Some(Cell::Array { object: x, .. }) => object = x.proto,
+                Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
+                    object = x.proto
+                }
                 Some(Cell::Function { object: x, .. }) => object = x.proto,
                 _ => return Ok(Value::UNDEFINED),
             }
