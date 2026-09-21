@@ -278,6 +278,18 @@ impl<H: Host> Vm<H> {
                         self.native_value(Native::StringReplace)
                     } else if self.lookup_atom("split") == Some(atom) {
                         self.native_value(Native::StringSplit)
+                    } else if self.lookup_atom("trim") == Some(atom) {
+                        self.native_value(Native::StringTrim)
+                    } else if self.lookup_atom("trimStart") == Some(atom) {
+                        self.native_value(Native::StringTrimStart)
+                    } else if self.lookup_atom("trimEnd") == Some(atom) {
+                        self.native_value(Native::StringTrimEnd)
+                    } else if self.lookup_atom("repeat") == Some(atom) {
+                        self.native_value(Native::StringRepeat)
+                    } else if self.lookup_atom("padStart") == Some(atom) {
+                        self.native_value(Native::StringPadStart)
+                    } else if self.lookup_atom("padEnd") == Some(atom) {
+                        self.native_value(Native::StringPadEnd)
                     } else {
                         Value::UNDEFINED
                     });
