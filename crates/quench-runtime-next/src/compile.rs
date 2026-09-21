@@ -17,6 +17,7 @@ mod ast;
 mod binding_time;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
+mod class;
 mod liveness;
 mod numeric;
 #[cfg(feature = "profile-memory")]
@@ -377,21 +378,20 @@ impl<'a> Compiler<'a> {
                 Statement::VariableDeclaration(declaration) => {
                     for item in &declaration.declarations {
                         if let BindingPattern::BindingIdentifier(id) = &item.id {
-                            let atom = self.atom(id.name.as_str());
-                            if seen.insert(atom) {
-                                output.push(atom);
-                            }
+                            self.collect_name(Some(id.name.as_str()), output, seen);
                         }
                     }
                 }
-                Statement::FunctionDeclaration(function) => {
-                    if let Some(name) = &function.id {
-                        let atom = self.atom(name.name.as_str());
-                        if seen.insert(atom) {
-                            output.push(atom);
-                        }
-                    }
-                }
+                Statement::FunctionDeclaration(function) => self.collect_name(
+                    function.id.as_ref().map(|name| name.name.as_str()),
+                    output,
+                    seen,
+                ),
+                Statement::ClassDeclaration(class) => self.collect_name(
+                    class.id.as_ref().map(|name| name.name.as_str()),
+                    output,
+                    seen,
+                ),
                 Statement::BlockStatement(block) => {
                     self.collect_locals_into(&block.body, output, seen)
                 }
@@ -424,15 +424,26 @@ impl<'a> Compiler<'a> {
                         if let Some(parameter) = &handler.param
                             && let BindingPattern::BindingIdentifier(id) = &parameter.pattern
                         {
-                            let atom = self.atom(id.name.as_str());
-                            if seen.insert(atom) {
-                                output.push(atom);
-                            }
+                            self.collect_name(Some(id.name.as_str()), output, seen);
                         }
                         self.collect_locals_into(&handler.body.body, output, seen);
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    fn collect_name(
+        &mut self,
+        name: Option<&str>,
+        output: &mut Vec<Atom>,
+        seen: &mut FxHashSet<Atom>,
+    ) {
+        if let Some(name) = name {
+            let atom = self.atom(name);
+            if seen.insert(atom) {
+                output.push(atom);
             }
         }
     }
@@ -455,46 +466,4 @@ impl<'a> Compiler<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scalar_constants_reuse_exact_slots() {
-        let mut compiler = Compiler::new("test.js");
-        assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
-        assert_eq!(compiler.constant(Constant::String("x".into())), 1);
-        assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
-        assert_eq!(compiler.constant(Constant::String("x".into())), 1);
-        assert_eq!(compiler.constants.len(), 2);
-    }
-
-    #[test]
-    fn scalar_constants_preserve_signed_zero_bits() {
-        let mut compiler = Compiler::new("test.js");
-        assert_ne!(
-            compiler.constant(Constant::Number(0.0)),
-            compiler.constant(Constant::Number(-0.0))
-        );
-    }
-
-    #[test]
-    fn constant_runs_remain_fresh_and_contiguous() {
-        let mut compiler = Compiler::new("test.js");
-        assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
-        let start = compiler.constant_run(vec![Constant::Number(1.0), Constant::Number(1.0)]);
-        assert_eq!(start, 1);
-        assert_eq!(compiler.constants.len(), 3);
-        assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
-    }
-
-    #[test]
-    fn packed_domain_overflow_is_a_diagnostic() {
-        let source = format!("[{}];", "0,".repeat(4097));
-        let errors = Engine::specialize(&source, "packed-overflow.js").unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.message.contains("packed instruction domain"))
-        );
-    }
-}
+mod tests;
