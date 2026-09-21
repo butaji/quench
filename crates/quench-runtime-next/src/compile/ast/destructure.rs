@@ -26,16 +26,36 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             BindingPattern::ArrayPattern(array) => {
-                if array.rest.is_some() {
-                    self.owner
-                        .reject(pattern.span(), "array rest is unsupported");
-                }
                 for (index, element) in array.elements.iter().enumerate() {
                     let Some(element) = element else { continue };
                     let key = self.literal(Constant::Number(index as f64));
                     let dst = self.reg();
                     self.emit(Op::GetIndex, dst, value, key, 0);
                     self.bind_pattern(element, dst);
+                }
+                if let Some(rest) = &array.rest {
+                    let start = self.literal(Constant::Number(array.elements.len() as f64));
+                    let method = self.reg();
+                    let atom = self.owner.atom("slice");
+                    let cache = self.owner.cache_site();
+                    self.emit(
+                        Op::GetField,
+                        method,
+                        FieldBase::register(value).0,
+                        cache,
+                        atom,
+                    );
+                    let argument = self.reg();
+                    self.emit(Op::Move, argument, start, 0, 0);
+                    let rest_value = self.reg();
+                    self.emit(
+                        Op::Call,
+                        rest_value,
+                        method,
+                        value,
+                        (u32::from(argument) << 16) | 1,
+                    );
+                    self.bind_pattern(&rest.argument, rest_value);
                 }
             }
             BindingPattern::AssignmentPattern(assignment) => {
