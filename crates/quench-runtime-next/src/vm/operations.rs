@@ -191,41 +191,6 @@ impl<H: Host> Vm<H> {
             }
         }
     }
-    pub(super) fn unary(
-        &mut self,
-        p: &ResidualProgram,
-        op: u32,
-        value: Value,
-    ) -> Result<Value, JsError> {
-        Ok(match op {
-            0 => Value::number(self.to_number(p, value)?),
-            1 => Value::number(-self.to_number(p, value)?),
-            2 => {
-                if self.truthy(value) {
-                    Value::FALSE
-                } else {
-                    Value::TRUE
-                }
-            }
-            3 => Value::number((!(number_to_u32(self.to_number(p, value)?) as i32)) as f64),
-            4 => {
-                let text = if value.is_undefined() {
-                    "undefined"
-                } else if value.as_bool().is_some() {
-                    "boolean"
-                } else if value.as_number().is_some() {
-                    "number"
-                } else if matches!(self.heap.get(value), Some(Cell::Function { .. })) {
-                    "function"
-                } else {
-                    "object"
-                };
-                self.heap.alloc(Cell::String(text.into()))
-            }
-            5 => Value::UNDEFINED,
-            _ => return Err(JsError("unsupported unary operator".into())),
-        })
-    }
     #[inline]
     pub(super) fn binary(
         &mut self,
