@@ -5,8 +5,11 @@ use rustc_hash::FxHashMap;
 mod cell;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
+mod root;
 mod slots;
 pub(crate) use cell::*;
+pub use root::RootId;
+pub(crate) use root::RootTable;
 use slots::SlotArena;
 
 pub(super) struct Slot {
@@ -26,6 +29,7 @@ pub(crate) struct Heap {
     peak_survivors: usize,
     max_threshold: usize,
     properties: ValueArena,
+    roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<u32, SparseElements>>>,
     #[cfg(feature = "profile-aggregate")]
     gc_profile: GcProfile,
@@ -136,6 +140,7 @@ impl Heap {
         self.peak_survivors = 0;
         self.max_threshold = 384;
         self.properties.reset();
+        self.roots.clear();
         self.sparse_arrays = None;
         #[cfg(feature = "profile-aggregate")]
         {
@@ -164,11 +169,23 @@ impl Heap {
         self.allocations >= self.threshold
     }
 
+    pub(crate) fn root(&mut self, value: Value) -> RootId {
+        self.roots.insert(value)
+    }
+
+    pub(crate) fn update_root(&mut self, root: RootId, value: Value) -> bool {
+        self.roots.update(root, value)
+    }
+
+    pub(crate) fn release_root(&mut self, root: RootId) -> bool {
+        self.roots.remove(root)
+    }
+
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) {
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
         let mark_started = std::time::Instant::now();
-        let mut work: Vec<Value> = roots.into_iter().collect();
+        let mut work: Vec<Value> = roots.into_iter().chain(self.roots.values()).collect();
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.roots += work.len() as u64;

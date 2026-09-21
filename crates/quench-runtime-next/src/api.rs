@@ -1,4 +1,4 @@
-use crate::{Diagnostic, Engine, Host, JsError, ResidualProgram, Value, Vm};
+use crate::{Diagnostic, Engine, Host, JsError, ResidualProgram, RootId, Value, Vm};
 
 /// The syntax context used when compiling source.  The v2 compiler currently
 /// accepts the Script subset; the other contexts are explicit so callers do
@@ -59,6 +59,18 @@ impl<H: Host> Runtime<H> {
     pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.execute(program)
+    }
+
+    pub fn root(&mut self, value: Value) -> RootId {
+        self.vm.root(value)
+    }
+
+    pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
+        self.vm.update_root(root, value)
+    }
+
+    pub fn release_root(&mut self, root: RootId) -> bool {
+        self.vm.release_root(root)
     }
 
     pub fn compile_and_execute(
