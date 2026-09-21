@@ -154,22 +154,8 @@ impl<H: Host> Vm<H> {
                 bytes.len() as f64
             }));
         }
-        if self.lookup_atom("byteLength") == Some(atom)
-            && matches!(self.heap.get(object), Some(Cell::Uint8Array { .. }))
-        {
-            return Ok(Value::number(
-                self.typed_array_length(object).unwrap_or(0) as f64
-            ));
-        }
-        if self.lookup_atom("byteOffset") == Some(atom)
-            && let Some(offset) = self.typed_array_byte_offset(object)
-        {
-            return Ok(Value::number(offset as f64));
-        }
-        if self.lookup_atom("buffer") == Some(atom)
-            && let Some(Cell::Uint8Array { buffer, .. }) = self.heap.get(object)
-        {
-            return Ok(*buffer);
+        if let Some(value) = self.indexed_view_property(object, atom) {
+            return Ok(value);
         }
         let mut owner = object;
         let mut depth = 0u8;
@@ -225,6 +211,9 @@ impl<H: Host> Vm<H> {
             if let Some(v) = self.own_property(object, atom) {
                 return Ok(v);
             }
+            if let Some(v) = self.indexed_view_property(object, atom) {
+                return Ok(v);
+            }
             match self.heap.get(object) {
                 Some(Cell::ArrayBuffer { bytes, shared, .. })
                     if self.lookup_atom("byteLength") == Some(atom) =>
@@ -235,26 +224,6 @@ impl<H: Host> Vm<H> {
                     } else {
                         bytes.len() as f64
                     }));
-                }
-                Some(Cell::Uint8Array { .. }) if atom == self.length_atom => {
-                    return Ok(Value::number(
-                        self.typed_array_length(object).unwrap_or(0) as f64
-                    ));
-                }
-                Some(Cell::Uint8Array { .. }) if self.lookup_atom("byteLength") == Some(atom) => {
-                    return Ok(Value::number(
-                        self.typed_array_length(object).unwrap_or(0) as f64
-                    ));
-                }
-                Some(Cell::Uint8Array { .. }) if self.lookup_atom("byteOffset") == Some(atom) => {
-                    return Ok(Value::number(
-                        self.typed_array_byte_offset(object).unwrap_or(0) as f64,
-                    ));
-                }
-                Some(Cell::Uint8Array { buffer, .. })
-                    if self.lookup_atom("buffer") == Some(atom) =>
-                {
-                    return Ok(*buffer);
                 }
                 Some(Cell::Array { .. }) if atom == self.length_atom => {
                     let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
@@ -268,6 +237,7 @@ impl<H: Host> Vm<H> {
                 }
                 Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
                 Some(Cell::Uint8Array { object: x, .. }) => object = x.proto,
+                Some(Cell::DataView { object: x, .. }) => object = x.proto,
                 Some(Cell::Set { entries, .. }) if atom == self.size_atom => {
                     return Ok(Value::number(entries.len() as f64));
                 }
