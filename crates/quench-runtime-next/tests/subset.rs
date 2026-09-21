@@ -132,6 +132,16 @@ fn date_now_uses_the_host_clock_capability() {
 }
 
 #[test]
+fn number_static_predicates_require_numeric_values() {
+    assert_eq!(
+        output(
+            "print(Number('4')); print(Number.isNaN(NaN)); print(Number.isNaN('x')); print(Number.isFinite(4)); print(Number.isInteger(4.5));"
+        ),
+        ["4", "true", "false", "true", "false"],
+    );
+}
+
+#[test]
 fn base_classes_lower_to_constructor_and_prototype_methods() {
     let source = r#"
       class Box {
