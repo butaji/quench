@@ -1,5 +1,4 @@
 use super::*;
-
 const NATIVES: &[Native] = &[
     Native::Print,
     Native::Object,
@@ -58,8 +57,11 @@ const NATIVES: &[Native] = &[
     Native::ArrayBuffer,
     Native::ArrayBufferSlice,
     Native::ArrayBufferTransfer,
+    Native::ArrayBufferResize,
+    Native::ArrayBufferTransferToFixedLength,
     Native::ArrayBufferIsView,
     Native::SharedArrayBuffer,
+    Native::SharedArrayBufferGrow,
     Native::AtomicsLoad,
     Native::AtomicsStore,
     Native::AtomicsAdd,
@@ -475,26 +477,5 @@ impl<H: Host> Vm<H> {
             self.set_property(object, atom, value)?;
         }
         Ok(())
-    }
-
-    pub(super) fn closure(
-        &mut self,
-        p: &ResidualProgram,
-        id: u32,
-        env: Value,
-    ) -> Result<Value, JsError> {
-        let prototype = self.object();
-        let function = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.function_proto)),
-            kind: match p.functions[id as usize].dispatch {
-                DispatchClass::General => FunctionKind::User(id),
-                DispatchClass::Numeric => FunctionKind::NumericUser(id),
-            },
-            env,
-        });
-        if let Some(atom) = self.lookup_atom("prototype") {
-            self.set_property(function, atom, prototype)?;
-        }
-        Ok(function)
     }
 }

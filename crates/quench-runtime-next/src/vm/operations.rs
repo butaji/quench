@@ -101,6 +101,11 @@ impl<H: Host> Vm<H> {
             }
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args),
             Native::ArrayBufferTransfer => self.array_buffer_transfer_native(this),
+            Native::ArrayBufferResize => self.array_buffer_resize_native(p, this, args),
+            Native::ArrayBufferTransferToFixedLength => {
+                self.array_buffer_transfer_fixed_native(this)
+            }
+            Native::SharedArrayBufferGrow => self.shared_array_buffer_grow_native(p, this, args),
             Native::ArrayFrom | Native::ArrayOf => self.array_modern_native(p, native, this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
