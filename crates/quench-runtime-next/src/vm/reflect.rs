@@ -60,11 +60,21 @@ impl<H: Host> Vm<H> {
             Native::ReflectOwnKeys => self.object_names(target),
             Native::ReflectGetPrototypeOf => self.object_get_prototype_of(target),
             Native::ReflectSetPrototypeOf => {
-                self.object_set_prototype_of(
-                    target,
-                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
-                )?;
-                Ok(Value::TRUE)
+                let proto = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let Some(object) = self.object_data(target) else {
+                    return Err(JsError("Reflect target is not an object".into()));
+                };
+                if !proto.is_null() && self.object_data(proto).is_none() {
+                    return Err(JsError("Reflect prototype is not an object".into()));
+                }
+                Ok(
+                    if self.non_extensible.contains(&target) && object.proto != proto {
+                        Value::FALSE
+                    } else {
+                        self.object_set_prototype_of(target, proto)?;
+                        Value::TRUE
+                    },
+                )
             }
             Native::ReflectConstruct => {
                 let argument_array = args.get(1).copied().unwrap_or(Value::UNDEFINED);
