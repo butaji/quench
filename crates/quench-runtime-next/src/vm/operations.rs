@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if Self::is_collection_native(native) {
-            return self.call_collection_native(native, this, args);
+            return self.call_collection_native(p, native, this, args);
         }
         if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
             return result;

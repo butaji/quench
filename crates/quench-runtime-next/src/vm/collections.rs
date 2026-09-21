@@ -12,6 +12,7 @@ impl<H: Host> Vm<H> {
                 | Native::MapKeys
                 | Native::MapValues
                 | Native::MapEntries
+                | Native::MapForEach
                 | Native::SetAdd
                 | Native::SetHas
                 | Native::SetDelete
@@ -19,6 +20,7 @@ impl<H: Host> Vm<H> {
                 | Native::SetKeys
                 | Native::SetValues
                 | Native::SetEntries
+                | Native::SetForEach
                 | Native::IteratorNext
                 | Native::WeakMapGet
                 | Native::WeakMapSet
@@ -123,6 +125,7 @@ impl<H: Host> Vm<H> {
             ("keys", Native::MapKeys),
             ("values", Native::MapValues),
             ("entries", Native::MapEntries),
+            ("forEach", Native::MapForEach),
         ] {
             self.set_named(program, self.map_proto, name, self.native_value(native))?;
         }
@@ -139,6 +142,7 @@ impl<H: Host> Vm<H> {
             ("keys", Native::SetKeys),
             ("values", Native::SetValues),
             ("entries", Native::SetEntries),
+            ("forEach", Native::SetForEach),
         ] {
             self.set_named(program, self.set_proto, name, self.native_value(native))?;
         }
@@ -208,6 +212,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn call_collection_native(
         &mut self,
+        p: &ResidualProgram,
         native: Native,
         this: Value,
         args: &[Value],
@@ -268,6 +273,17 @@ impl<H: Host> Vm<H> {
             Native::MapKeys => self.collection_iterator(this, IteratorKind::MapKeys),
             Native::MapValues => self.collection_iterator(this, IteratorKind::MapValues),
             Native::MapEntries => self.collection_iterator(this, IteratorKind::MapEntries),
+            Native::MapForEach => {
+                let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let entries = match self.heap.get(this) {
+                    Some(Cell::Map { entries, .. }) => entries.clone(),
+                    _ => return Err(JsError("Map method receiver is not a Map".into())),
+                };
+                for (key, value) in entries {
+                    self.call_value(p, callback, Value::UNDEFINED, &[value, key, this])?;
+                }
+                Ok(Value::UNDEFINED)
+            }
             Native::SetAdd => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let exists = self.set_entry_index(this, value).is_some();
@@ -311,6 +327,17 @@ impl<H: Host> Vm<H> {
                 self.collection_iterator(this, IteratorKind::SetValues)
             }
             Native::SetEntries => self.collection_iterator(this, IteratorKind::SetEntries),
+            Native::SetForEach => {
+                let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let values = match self.heap.get(this) {
+                    Some(Cell::Set { entries, .. }) => entries.clone(),
+                    _ => return Err(JsError("Set method receiver is not a Set".into())),
+                };
+                for value in values {
+                    self.call_value(p, callback, Value::UNDEFINED, &[value, value, this])?;
+                }
+                Ok(Value::UNDEFINED)
+            }
             Native::IteratorNext => self.iterator_next(this),
             Native::WeakMapGet => {
                 let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
