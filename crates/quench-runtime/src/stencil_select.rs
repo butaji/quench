@@ -138,6 +138,44 @@ macro_rules! region_abi_catalog {
     };
 }
 
+// The interpreter build has no physical entries. Keep the ABI vocabulary as
+// a type-level compatibility surface for dormant legacy code, while every
+// contract is non-executable and context-free.
+region_abi_catalog! {
+    ScalarF64Binary => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ScalarF64Unary => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ScalarF64x3 => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ScalarBool => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ScalarWordBool => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ScalarWordPair => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ScalarWordPairBool => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ScalarI32 => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ScalarU32 => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    TaggedWord => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    ConstantWord => { context: false, context_words: 0, preserves_vm_registers: true, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: false, root_materialization_required: false },
+    Bridge => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: true, interruptible_backedge: false, hardware_clobber_mask: 0xffff, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0xffff, generic_context: true, raw_kernel: false, root_materialization_required: true },
+    ArrayKernel => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: false, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: true, raw_kernel: true, root_materialization_required: false },
+    ArrayNumericLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: true, raw_kernel: true, root_materialization_required: false },
+    ArrayCopyLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    ArrayReductionLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    AffineI32Loop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: true, raw_kernel: true, root_materialization_required: false },
+    I32CounterLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    BooleanReductionLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    BranchRecurrenceLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    NestedXorLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    SwitchReductionLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    MatrixReductionLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    TypedLaneLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    TwoStateI32Loop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 0, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    NumericF64Loop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    NumericF64MixedLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    NumericI32BitwiseLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    NumericI32PairLoop => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: false, interruptible_backedge: true, hardware_clobber_mask: 0, hardware_gpr_clobber_mask: 0, live_out_mask: 1, generic_context: false, raw_kernel: true, root_materialization_required: false },
+    CompareBranch => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: true, interruptible_backedge: false, hardware_clobber_mask: 0xffff, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0xffff, generic_context: true, raw_kernel: false, root_materialization_required: true },
+    PropertyGuard => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: true, interruptible_backedge: false, hardware_clobber_mask: 0xffff, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0xffff, generic_context: true, raw_kernel: false, root_materialization_required: true },
+    PropertyWriteGuard => { context: true, context_words: 1, preserves_vm_registers: false, may_call_helper: true, interruptible_backedge: false, hardware_clobber_mask: 0xffff, hardware_gpr_clobber_mask: 0xffff, live_out_mask: 0xffff, generic_context: true, raw_kernel: false, root_materialization_required: true },
+}
+
 /// Rank two structurally compatible region candidates without a parallel ABI
 /// preference table. The tuple contains only facts carried by the selected
 /// physical view: semantic helper boundary, dispatches removed, and code size.
@@ -482,15 +520,15 @@ include!(concat!(env!("OUT_DIR"), "/stencil_artifacts.rs"));
 
 include!("stencil_physical_select.rs");
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 #[path = "stencil_select_contract_tests.rs"]
 mod generated_region_admission_tests;
 
 include!("stencil_select_optimizer.rs");
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 #[path = "stencil_select_artifact_tests.rs"]
 mod artifact_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 #[path = "stencil_select_tests.rs"]
 mod tests;

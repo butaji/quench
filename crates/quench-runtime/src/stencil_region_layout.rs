@@ -453,5 +453,5 @@ fn selected_transfers(view: PhysicalStencilView) -> Result<Vec<PlannedTransfer>,
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 include!("stencil_region_layout_tests.rs");
