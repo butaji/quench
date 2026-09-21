@@ -75,6 +75,14 @@ fn sequence_expressions_preserve_order_and_return_the_tail() {
 }
 
 #[test]
+fn nullish_coalescing_only_falls_back_for_nullish_values() {
+    assert_eq!(
+        output("print(null ?? 42); print(undefined ?? 7); print(0 ?? 9); print('' ?? 3);"),
+        ["42", "7", "0", ""],
+    );
+}
+
+#[test]
 fn method_caches_observe_callable_property_replacement() {
     let source = r#"
       function Box() {}
