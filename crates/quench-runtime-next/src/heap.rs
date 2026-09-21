@@ -167,7 +167,6 @@ impl Heap {
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.roots.remove(root)
     }
-
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) {
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
@@ -225,7 +224,6 @@ impl Heap {
         self.peak_survivors = self.peak_survivors.max(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
     }
-
     pub(super) fn mark_work(&mut self, work: &mut Vec<Value>) {
         while let Some(value) = work.pop() {
             #[cfg(feature = "profile-aggregate")]
@@ -272,7 +270,6 @@ impl Heap {
     fn mark(marks: &mut [u64], index: usize) {
         marks[index / 64] |= 1 << (index % 64);
     }
-
     #[allow(dead_code)]
     pub fn stats(&self) -> (u64, u64, usize, usize, usize) {
         (
@@ -383,6 +380,11 @@ impl Heap {
                 object: value,
                 buffer,
                 ..
+            }
+            | Cell::Uint32Array {
+                object: value,
+                buffer,
+                ..
             } => {
                 object(value);
                 work.push(*buffer);
@@ -444,7 +446,7 @@ impl Heap {
             Cell::Object(_) => 0,
             Cell::Array { .. } => 1,
             Cell::ArrayBuffer { .. } => 0,
-            Cell::Uint8Array { .. } | Cell::Uint16Array { .. } => 0,
+            Cell::Uint8Array { .. } | Cell::Uint16Array { .. } | Cell::Uint32Array { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
@@ -461,14 +463,13 @@ impl Heap {
             Cell::Error(_) => 14,
         }
     }
-
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         match cell {
             Cell::Object(_) | Cell::Iterator { .. } | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
-            Cell::Uint8Array { .. } | Cell::Uint16Array { .. } => 0,
+            Cell::Uint8Array { .. } | Cell::Uint16Array { .. } | Cell::Uint32Array { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
@@ -481,7 +482,6 @@ impl Heap {
             Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
         }
     }
-
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn size_bucket(bytes: usize) -> usize {
         match bytes {
