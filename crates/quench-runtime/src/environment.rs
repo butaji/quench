@@ -1745,5 +1745,4 @@ mod tests {
         assert_eq!(store.update_number(0, 1.0), None);
         assert_eq!(store.load(0), Value::String("4".into()));
     }
-
 }
