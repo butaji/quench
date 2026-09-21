@@ -33,6 +33,8 @@ pub(crate) enum Native {
     ArrayUnshift,
     ArraySplice,
     ArrayFill,
+    ArrayAt,
+    ArrayLastIndexOf,
     Map,
     MapGet,
     MapSet,

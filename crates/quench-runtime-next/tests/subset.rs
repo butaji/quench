@@ -180,6 +180,19 @@ fn array_fill_coerces_bounds_and_returns_the_same_array() {
 }
 
 #[test]
+fn array_at_and_last_index_of_handle_relative_and_coerced_indices() {
+    let source = r#"
+      var values = [0, 1, 2, 1, NaN];
+      print(values.at(-2));
+      print(values.at('1.9'));
+      print(values.at(99) === undefined);
+      print(values.lastIndexOf(1, -2));
+      print(values.lastIndexOf(NaN));
+    "#;
+    assert_eq!(output(source), ["1", "1", "true", "3", "-1"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

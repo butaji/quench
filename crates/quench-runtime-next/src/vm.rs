@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 mod array;
 mod array_builtins;
+mod array_indexed;
 mod builtins;
 mod coercion;
 mod collections;
