@@ -271,6 +271,24 @@ fn static_class_fields_initialize_after_methods_are_installed() {
 }
 
 #[test]
+fn instance_class_fields_initialize_before_constructor_body() {
+    let source = r#"
+      class Box {
+        value = 40;
+        unset;
+        constructor() { this.value = this.value + 2; }
+      }
+      class DefaultBox { answer = 42; }
+      const box = new Box();
+      const default_box = new DefaultBox();
+      print(box.value);
+      print(box.unset === undefined);
+      print(default_box.answer);
+    "#;
+    assert_eq!(output(source), ["42", "true", "42"]);
+}
+
+#[test]
 fn class_methods_capture_the_enclosing_activation() {
     let source = r#"
       function make(offset) {

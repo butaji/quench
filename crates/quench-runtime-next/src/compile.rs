@@ -144,7 +144,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn program(mut self, program: &Program<'_>) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        self.compile_function(None, &[], &program.body, &[], None, None);
+        self.compile_function(None, &[], &program.body, &[], None, None, None);
         if !self.errors.is_empty() {
             return Err(self.errors);
         }
@@ -297,6 +297,7 @@ impl<'a> Compiler<'a> {
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
         defaults: Option<&FormalParameters<'_>>,
+        instance_fields: Option<&[&PropertyDefinition<'_>]>,
     ) -> u32 {
         let id = self.functions.len() as u32;
         self.functions.push(None);
@@ -308,6 +309,9 @@ impl<'a> Compiler<'a> {
             function.emit_parameter_defaults(defaults);
         }
         function.emit_hoisted(body);
+        if let Some(fields) = instance_fields {
+            function.emit_instance_fields(fields);
+        }
         function.statements(body);
         let undefined = function.literal(Constant::Undefined);
         function.emit(Op::Return, undefined, 0, 0, 0);

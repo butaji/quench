@@ -15,6 +15,15 @@ impl FunctionCompiler<'_, '_> {
                 .reject(class.span, "class heritage is not supported yet");
         }
         let scopes = self.capture_scopes();
+        let instance_fields: Vec<_> = class
+            .body
+            .body
+            .iter()
+            .filter_map(|element| match element {
+                ClassElement::PropertyDefinition(field) if !field.r#static => Some(field.as_ref()),
+                _ => None,
+            })
+            .collect();
         let constructor = class.body.body.iter().find_map(|element| match element {
             ClassElement::MethodDefinition(method)
                 if method.kind == MethodDefinitionKind::Constructor =>
@@ -25,12 +34,23 @@ impl FunctionCompiler<'_, '_> {
         });
         let constructor_id = constructor
             .map(|method| {
-                self.owner
-                    .compile_class_method(method, &scopes, Some(self.function_id))
+                self.owner.compile_class_method(
+                    method,
+                    &scopes,
+                    Some(self.function_id),
+                    Some(&instance_fields),
+                )
             })
             .unwrap_or_else(|| {
-                self.owner
-                    .compile_function(None, &[], &[], &scopes, Some(self.function_id), None)
+                self.owner.compile_function(
+                    None,
+                    &[],
+                    &[],
+                    &scopes,
+                    Some(self.function_id),
+                    None,
+                    Some(&instance_fields),
+                )
             });
         let class_value = self.reg();
         self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
@@ -90,7 +110,7 @@ impl FunctionCompiler<'_, '_> {
             };
             let function_id =
                 self.owner
-                    .compile_class_method(method, &scopes, Some(self.function_id));
+                    .compile_class_method(method, &scopes, Some(self.function_id), None);
             let function = self.reg();
             self.emit(Op::MakeClosure, function, 0, 0, function_id);
             let target = if method.r#static {
@@ -108,8 +128,6 @@ impl FunctionCompiler<'_, '_> {
                 continue;
             };
             if !field.r#static {
-                self.owner
-                    .reject(field.span, "instance class fields are unsupported");
                 continue;
             }
             if field.computed {
@@ -138,6 +156,30 @@ impl FunctionCompiler<'_, '_> {
         scopes.extend(self.scopes.iter().cloned());
         scopes
     }
+
+    pub(super) fn emit_instance_fields(&mut self, fields: &[&PropertyDefinition<'_>]) {
+        let this = self.reg();
+        self.emit(Op::LoadThis, this, 0, 0, 0);
+        for field in fields {
+            if field.computed {
+                self.owner
+                    .reject(field.span, "computed class fields are unsupported");
+                continue;
+            }
+            let Some(name) = class_method_name(&field.key) else {
+                self.owner
+                    .reject(field.span, "class field key is unsupported");
+                continue;
+            };
+            let value = match field.value.as_ref() {
+                Some(value) => self.expression(value),
+                None => self.literal(Constant::Undefined),
+            };
+            let atom = self.owner.atom(name);
+            let cache = self.owner.cache_site();
+            self.emit(Op::SetField, value, this, cache, atom);
+        }
+    }
 }
 
 impl Compiler<'_> {
@@ -146,6 +188,7 @@ impl Compiler<'_> {
         method: &MethodDefinition<'_>,
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
+        instance_fields: Option<&[&PropertyDefinition<'_>]>,
     ) -> u32 {
         let params = FunctionCompiler::params_from_formals(&method.value.params, self);
         let body = method
@@ -161,6 +204,7 @@ impl Compiler<'_> {
             scopes,
             parent,
             Some(&method.value.params),
+            instance_fields,
         )
     }
 }
