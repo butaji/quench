@@ -1,6 +1,36 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn object_get_prototype_of(&self, value: Value) -> Result<Value, JsError> {
+        self.object_data(value)
+            .map(|object| object.proto)
+            .ok_or_else(|| JsError("Object.getPrototypeOf target is not an object".into()))
+    }
+
+    pub(super) fn object_set_prototype_of(
+        &mut self,
+        target: Value,
+        proto: Value,
+    ) -> Result<Value, JsError> {
+        if !proto.is_null() && self.object_data(proto).is_none() {
+            return Err(JsError("Object prototype is not an object".into()));
+        }
+        let Some(current_proto) = self.object_data(target).map(|object| object.proto) else {
+            return Err(JsError(
+                "Object.setPrototypeOf target is not an object".into(),
+            ));
+        };
+        if self.non_extensible.contains(&target) && current_proto != proto {
+            return Err(JsError(
+                "cannot change prototype of non-extensible object".into(),
+            ));
+        }
+        self.object_data_mut(target)
+            .expect("object validated")
+            .proto = proto;
+        Ok(target)
+    }
+
     pub(super) fn integrity_bool(value: bool) -> Value {
         if value { Value::TRUE } else { Value::FALSE }
     }
