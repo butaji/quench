@@ -608,6 +608,26 @@ fn resizable_and_growable_buffers_update_views_and_metadata() {
 }
 
 #[test]
+fn regexp_exec_and_test_preserve_captures_and_flags() {
+    assert_eq!(
+        output(
+            "var expression = new RegExp('(a)(b)', 'i'); var match = expression.exec('xxAByy'); print(expression.source); print(expression.flags); print(expression.test('AB')); print(match[0]); print(match[1]); print(match[2]); print(match.index); print(match.input); try { new RegExp('(', 'u'); } catch (error) { print('invalid'); }"
+        ),
+        [
+            "(a)(b)", "i", "true", "AB", "A", "B", "2", "xxAByy", "invalid"
+        ],
+    );
+}
+
+#[test]
+fn regexp_literals_lower_through_the_constructor_authority() {
+    assert_eq!(
+        output("var match = /a+/gi.exec('xxAAyy'); print(match[0]);"),
+        ["AA"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

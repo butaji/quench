@@ -5,6 +5,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => self.string_literal(value),
             Expression::BigIntLiteral(value) => self.bigint_literal(value),
+            Expression::RegExpLiteral(value) => self.regexp_literal(value),
             Expression::TemplateLiteral(value) => self.template_literal(value),
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
             Expression::NullLiteral(_) => self.literal(Constant::Null),
@@ -47,6 +48,32 @@ impl FunctionCompiler<'_, '_> {
     pub(crate) fn load_name(&mut self, name: &str) -> Register {
         let atom = self.owner.atom(name);
         self.load_atom(atom)
+    }
+
+    fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>) -> Register {
+        let callee = self.load_name("RegExp");
+        let pattern = self.literal(Constant::String(value.regex.pattern.text.to_string()));
+        let mut flags = String::new();
+        for (flag, bit) in [
+            ('d', RegExpFlags::D),
+            ('g', RegExpFlags::G),
+            ('i', RegExpFlags::I),
+            ('m', RegExpFlags::M),
+            ('s', RegExpFlags::S),
+            ('u', RegExpFlags::U),
+            ('v', RegExpFlags::V),
+            ('y', RegExpFlags::Y),
+        ] {
+            if value.regex.flags.contains(bit) {
+                flags.push(flag);
+            }
+        }
+        let flags = self.literal(Constant::String(flags));
+        let base = pattern;
+        let destination = self.reg();
+        self.emit(Op::Construct, destination, callee, base, 2);
+        let _ = flags;
+        destination
     }
 
     pub(super) fn load_atom(&mut self, atom: Atom) -> Register {

@@ -26,6 +26,7 @@ impl<H: Host> Vm<H> {
             weak_set_proto: Value::NULL,
             weak_ref_proto: Value::NULL,
             iterator_proto: Value::NULL,
+            regexp_proto: Value::NULL,
             constants: vec![],
             const_arrays: vec![],
             natives: vec![],

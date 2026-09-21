@@ -30,6 +30,7 @@ impl<H: Host> Vm<H> {
             Native::DateNow => Ok(Value::number(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             )),
+            Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::ObjectKeys
             | Native::ObjectCreate
             | Native::ObjectAssign
@@ -171,7 +172,8 @@ impl<H: Host> Vm<H> {
             | Native::Set
             | Native::WeakMap
             | Native::WeakSet
-            | Native::WeakRef => self.construct_native(p, native, args),
+            | Native::WeakRef
+            | Native::RegExp => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }
     }
