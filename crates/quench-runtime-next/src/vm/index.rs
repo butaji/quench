@@ -28,6 +28,11 @@ impl<H: Host> Vm<H> {
         key: Value,
     ) -> Result<Value, JsError> {
         if let Some(index) = key.as_int().filter(|index| *index >= 0)
+            && let Some(value) = self.typed_array_get(object, index as usize)
+        {
+            return Ok(value);
+        }
+        if let Some(index) = key.as_int().filter(|index| *index >= 0)
             && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
             && let Some(value) = elements.get(index as usize).copied()
         {
@@ -46,6 +51,9 @@ impl<H: Host> Vm<H> {
         key: Value,
     ) -> Result<Value, JsError> {
         if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {
+            if let Some(value) = self.typed_array_get(object, index as usize) {
+                return Ok(value);
+            }
             if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
                 let index = index as usize;
                 let dense = elements.get(index).copied();
@@ -88,6 +96,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         if let Some(index) = key.as_int().filter(|index| *index >= 0) {
             let index = index as usize;
+            if self.typed_array_set(p, object, index, value)? {
+                return Ok(());
+            }
             let replaces = matches!(
                 self.heap.get(object),
                 Some(Cell::Array { elements, .. }) if index < elements.len()

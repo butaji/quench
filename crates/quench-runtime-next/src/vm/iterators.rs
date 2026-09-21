@@ -39,7 +39,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn get_iterator(&mut self, source: Value) -> Result<Value, JsError> {
         let kind = match self.heap.get(source) {
-            Some(Cell::Array { .. }) => IteratorKind::Array,
+            Some(Cell::Array { .. }) | Some(Cell::Uint8Array { .. }) => IteratorKind::Array,
             Some(Cell::String(_)) => IteratorKind::String,
             Some(Cell::Map { .. }) => IteratorKind::MapEntries,
             Some(Cell::Set { .. }) => IteratorKind::SetValues,
@@ -137,6 +137,24 @@ impl<H: Host> Vm<H> {
         kind: IteratorKind,
         index: usize,
     ) -> Option<(Value, Option<Value>)> {
+        if let Some(length) = self.typed_array_length(source) {
+            if index >= length {
+                return None;
+            }
+            let value = self.typed_array_get(source, index)?;
+            return match kind {
+                IteratorKind::ArrayKeys => Some((Value::number(index as f64), None)),
+                IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
+                IteratorKind::ArrayEntries => {
+                    let entry = self.heap.alloc(Cell::Array {
+                        object: Self::empty_object(self.array_proto),
+                        elements: Rc::new(vec![Value::number(index as f64), value]),
+                    });
+                    Some((entry, None))
+                }
+                _ => None,
+            };
+        }
         let (elements, length) = match self.heap.get(source) {
             Some(Cell::Array { elements, .. }) => (
                 Rc::clone(elements),

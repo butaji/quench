@@ -45,6 +45,7 @@ impl<H: Host> Vm<H> {
                 }))
             }
             Native::ArrayBuffer => self.construct_array_buffer_native(p, args),
+            Native::Uint8Array => self.construct_uint8_array_native(p, args),
             Native::Map | Native::Set => self.construct_collection_native(native, args),
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),

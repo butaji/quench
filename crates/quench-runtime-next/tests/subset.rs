@@ -351,6 +351,25 @@ fn array_buffer_slice_copies_a_coerced_byte_range() {
 }
 
 #[test]
+fn uint8_array_views_share_buffers_and_coerce_indexed_values() {
+    let source = r#"
+      var values = new Uint8Array([300, -1, 2.9]);
+      print(values.length); print(values.byteLength);
+      print(values[0]); print(values[1]); print(values[2]);
+      values[1] = 258;
+      print(values[1]);
+      var buffer = new ArrayBuffer(4);
+      var view = new Uint8Array(buffer, 1, 2);
+      view[0] = 7;
+      print(view.byteLength); print(buffer.byteLength); print(view[0]);
+    "#;
+    assert_eq!(
+        output(source),
+        ["3", "3", "44", "255", "2", "2", "2", "4", "7"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
