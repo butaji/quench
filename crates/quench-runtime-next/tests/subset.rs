@@ -123,6 +123,19 @@ fn array_concat_is_non_mutating_and_flattens_array_arguments() {
 }
 
 #[test]
+fn array_flat_respects_depth_and_does_not_mutate_source() {
+    let source = r#"
+      var nested = [1, [2, [3]]];
+      var shallow = nested.flat();
+      print(shallow.length);
+      print(shallow[2][0]);
+      print(nested.flat(2).join('-'));
+      print(nested[1][1][0]);
+    "#;
+    assert_eq!(output(source), ["3", "3", "1-2-3", "3"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
