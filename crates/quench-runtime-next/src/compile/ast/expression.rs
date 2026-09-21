@@ -1,5 +1,4 @@
 use super::*;
-
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
         match expression {
@@ -18,6 +17,7 @@ impl FunctionCompiler<'_, '_> {
             }
             Expression::FunctionExpression(value) => self.function_expression(value),
             Expression::ArrowFunctionExpression(value) => self.arrow_function_expression(value),
+            Expression::ClassExpression(value) => self.class_expression(value),
             Expression::ArrayExpression(value) => self.array_expression(value),
             Expression::ObjectExpression(value) => self.object_expression(value),
             Expression::StaticMemberExpression(value) => {
@@ -75,7 +75,7 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    pub(super) fn store_atom(&mut self, atom: Atom, value: Register) {
+    pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
         if let Some(slot) = self.local_slots.get(&atom).copied() {
             self.emit(Op::StoreLocal, value, 0, 0, u32::from(slot));
         } else if let Some((depth, slot)) = self

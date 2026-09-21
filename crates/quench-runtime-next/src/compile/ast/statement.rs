@@ -13,6 +13,9 @@ impl FunctionCompiler<'_, '_> {
     fn statement(&mut self, statement: &Statement<'_>) {
         match statement {
             Statement::EmptyStatement(_) | Statement::FunctionDeclaration(_) => {}
+            Statement::ClassDeclaration(item) => {
+                self.class_declaration(item);
+            }
             Statement::ExpressionStatement(item) => {
                 self.expression(&item.expression);
             }

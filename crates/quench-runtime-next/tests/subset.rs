@@ -59,6 +59,21 @@ fn lexical_declarations_use_function_local_slots() {
 }
 
 #[test]
+fn base_classes_lower_to_constructor_and_prototype_methods() {
+    let source = r#"
+      class Box {
+        constructor(value) { this.value = value; }
+        answer(extra) { return this.value + extra; }
+        static tag() { return 42; }
+      }
+      const box = new Box(40);
+      print(box.answer(2));
+      print(Box.tag());
+    "#;
+    assert_eq!(output(source), ["42", "42"]);
+}
+
+#[test]
 fn template_literals_lower_to_string_addition() {
     assert_eq!(
         output("const answer = 42; print(`value: ${answer}!`);"),
@@ -126,12 +141,8 @@ fn method_caches_distinguish_own_methods_and_cached_writes() {
 
 #[test]
 fn unsupported_syntax_is_rejected_early() {
-    let errors = Engine::specialize("class Bad {}", "bad.js").unwrap_err();
-    assert!(
-        errors[0]
-            .to_string()
-            .contains("outside the supported subset")
-    );
+    let errors = Engine::specialize("class Bad extends Base {}", "bad.js").unwrap_err();
+    assert!(errors[0].to_string().contains("class heritage"));
 }
 
 #[test]

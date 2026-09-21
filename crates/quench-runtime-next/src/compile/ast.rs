@@ -28,9 +28,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) code: Vec<Instr>,
     next_reg: Register,
     pub(super) max_reg: Register,
-    local_slots: Rc<FxHashMap<Atom, u16>>,
-    scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
-    function_id: u32,
+    pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
+    pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
+    pub(super) function_id: u32,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     controls: Vec<ControlTarget>,
     packed_domain_error: bool,
@@ -68,7 +68,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    fn reg(&mut self) -> Register {
+    pub(super) fn reg(&mut self) -> Register {
         let value = self.next_reg;
         if value > Instr::MAX_PAYLOAD {
             self.reject_packed_domain();
