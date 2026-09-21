@@ -26,6 +26,7 @@ impl FunctionCompiler<'_, '_> {
             Statement::WhileStatement(item) => self.while_statement(item),
             Statement::DoWhileStatement(item) => self.do_while_statement(item),
             Statement::ForStatement(item) => self.for_statement(item),
+            Statement::ForOfStatement(item) => self.for_of_statement(item),
             Statement::SwitchStatement(item) => self.switch_statement(item),
             Statement::BreakStatement(item) => self.break_statement(item),
             Statement::ContinueStatement(item) => self.continue_statement(item),
@@ -150,6 +151,64 @@ impl FunctionCompiler<'_, '_> {
             self.patch_to(edge, end);
         }
         self.patch_edges(&control.breaks, end);
+    }
+
+    fn for_of_statement(&mut self, item: &ForOfStatement<'_>) {
+        if item.r#await {
+            self.owner
+                .reject(item.span, "for-await-of is outside the supported subset");
+            return;
+        }
+        let source_atom = self.hidden_local("\0rqj:for-of:source");
+        let index_atom = self.hidden_local("\0rqj:for-of:index");
+        let source_value = self.expression(&item.right);
+        self.store_atom(source_atom, source_value);
+        let initial_index = self.literal(Constant::Number(0.0));
+        self.store_atom(index_atom, initial_index);
+        let head = self.code.len() as u32;
+        let source = self.load_atom(source_atom);
+        let index = self.load_atom(index_atom);
+        let length = self.reg();
+        let length_atom = self.owner.atom("length");
+        let length_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            length,
+            FieldBase::register(source).0,
+            length_cache,
+            length_atom,
+        );
+        let test = self.emit_binary(4, Operand::register(index), Operand::register(length));
+        let end_edge = self.emit(Op::JumpFalse, test, 0, 0, 0);
+        let value = self.reg();
+        self.emit(Op::GetIndex, value, source, index, 0);
+        self.bind_for_of_left(&item.left, value);
+        self.push_control(ControlKind::Loop);
+        self.statement(&item.body);
+        let control = self.controls.pop().unwrap();
+        let update = self.code.len() as u32;
+        self.patch_edges(&control.continues, update);
+        let current_index = self.load_atom(index_atom);
+        let next = self.reg();
+        self.emit(Op::IncDec, next, current_index, 0, 0);
+        self.store_atom(index_atom, next);
+        self.emit(Op::Jump, 0, 0, 0, head);
+        let end = self.code.len() as u32;
+        self.patch_to(end_edge, end);
+        self.patch_edges(&control.breaks, end);
+    }
+
+    fn bind_for_of_left(&mut self, left: &ForStatementLeft<'_>, value: Register) {
+        match left {
+            ForStatementLeft::VariableDeclaration(declaration)
+                if declaration.declarations.len() == 1 =>
+            {
+                self.bind_pattern(&declaration.declarations[0].id, value);
+            }
+            _ => self
+                .owner
+                .reject(left.span(), "for-of assignment targets are unsupported"),
+        }
     }
 
     fn for_initializer(&mut self, init: Option<&ForStatementInit<'_>>) {

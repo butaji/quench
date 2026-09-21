@@ -172,6 +172,16 @@ fn collection_constructors_consume_array_entries_and_dedupe() {
 }
 
 #[test]
+fn array_for_of_binds_each_element_in_order() {
+    assert_eq!(
+        output(
+            "var total = 0; for (const value of [1, 2, 3]) { total = total + value; } print(total);"
+        ),
+        ["6"],
+    );
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(

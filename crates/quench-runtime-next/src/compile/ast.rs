@@ -186,6 +186,20 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .collect()
     }
 
+    pub(super) fn hidden_local(&mut self, name: &str) -> Atom {
+        let mut candidate = name.to_owned();
+        while self.local_slots.contains_key(&self.owner.atom(&candidate)) {
+            candidate.push('_');
+        }
+        let atom = self.owner.atom(&candidate);
+        let slot = self.locals.len() as u16;
+        Rc::get_mut(&mut self.local_slots)
+            .expect("function local scope is uniquely owned")
+            .insert(atom, slot);
+        self.locals.push(atom);
+        atom
+    }
+
     fn static_key<'c>(key: &'c PropertyKey<'c>) -> Option<&'c str> {
         match key {
             PropertyKey::StaticIdentifier(id) => Some(id.name.as_str()),
