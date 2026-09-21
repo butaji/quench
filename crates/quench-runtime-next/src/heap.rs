@@ -16,7 +16,6 @@ use slots::SlotArena;
 pub(super) struct Slot {
     cell: Option<Cell>,
 }
-
 #[derive(Default)]
 pub(crate) struct Heap {
     slots: SlotArena,
@@ -37,7 +36,6 @@ pub(crate) struct Heap {
     #[cfg(feature = "profile-memory")]
     memory_profile: memory_profile::MemoryProfile,
 }
-
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GcProfile {
@@ -54,13 +52,11 @@ pub(crate) struct GcProfile {
     pub sweep_nanos: u64,
     pub marked_kinds: [u64; 15],
 }
-
 #[derive(Default)]
 struct SparseElements {
     values: FxHashMap<usize, Value>,
     length: usize,
 }
-
 impl Heap {
     pub fn new() -> Self {
         Self {
@@ -72,7 +68,6 @@ impl Heap {
             ..Self::default()
         }
     }
-
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
@@ -113,7 +108,6 @@ impl Heap {
         self.peak_live = self.peak_live.max(self.slots.len() - self.free.len());
         Value::heap(index as u32)
     }
-
     pub(crate) fn alloc_object_pair(
         &mut self,
         proto: Value,
@@ -124,11 +118,9 @@ impl Heap {
         let properties = self.properties.pair(shape, first, second);
         self.alloc(Cell::Object(Object { proto, properties }))
     }
-
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
         self.properties.register_shape(shape, length);
     }
-
     pub(crate) fn reset(&mut self) {
         self.slots.clear();
         self.marks.clear();
@@ -152,14 +144,12 @@ impl Heap {
             self.memory_profile = memory_profile::MemoryProfile::default();
         }
     }
-
     pub fn get(&self, value: Value) -> Option<&Cell> {
         let index = value.heap_index()? as usize;
         // SAFETY: heap Values are minted only by `alloc`; tracing keeps every
         // reachable handle live, and raw indices never cross the VM boundary.
         unsafe { self.slots.get_unchecked(index).cell.as_ref() }
     }
-
     pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
         let index = value.heap_index()? as usize;
         // SAFETY: identical live-handle invariant to `get`; unique mutable
@@ -396,6 +386,14 @@ impl Heap {
                 object(value);
                 work.push(*buffer);
             }
+            Cell::DataView {
+                object: value,
+                buffer,
+                ..
+            } => {
+                object(value);
+                work.push(*buffer);
+            }
             Cell::Map {
                 object: value,
                 entries,
@@ -446,6 +444,7 @@ impl Heap {
             Cell::Array { .. } => 1,
             Cell::ArrayBuffer { .. } => 0,
             Cell::Uint8Array { .. } => 0,
+            Cell::DataView { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
             Cell::Iterator { .. } => 4,
@@ -469,6 +468,7 @@ impl Heap {
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::Uint8Array { .. } => 0,
+            Cell::DataView { .. } => 0,
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
