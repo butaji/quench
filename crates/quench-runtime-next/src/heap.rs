@@ -393,6 +393,7 @@ impl Heap {
                 object(value);
                 work.extend(elements.iter().copied());
             }
+            Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::Map {
                 object: value,
                 entries,
@@ -442,6 +443,7 @@ impl Heap {
         match cell {
             Cell::Object(_) => 0,
             Cell::Array { .. } => 1,
+            Cell::ArrayBuffer { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
             Cell::Iterator { .. } => 4,
@@ -463,6 +465,7 @@ impl Heap {
         match cell {
             Cell::Object(_) | Cell::Iterator { .. } | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
