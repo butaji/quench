@@ -424,6 +424,16 @@ fn rest_parameters_collect_trailing_arguments() {
 }
 
 #[test]
+fn computed_object_keys_use_indexed_property_semantics() {
+    let source = r#"
+      var key = 'answer';
+      var object = { [key]: 42, [2]: 'two', [true]: 'yes' };
+      print(object.answer); print(object[2]); print(object.true);
+    "#;
+    assert_eq!(output(source), ["42", "two", "yes"]);
+}
+
+#[test]
 fn destructured_formal_parameters_bind_nested_defaults() {
     let source = r#"
       function summarize({ answer = 40 }, [extra = 2]) { return answer + extra; }
