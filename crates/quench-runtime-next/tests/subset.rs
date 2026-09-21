@@ -721,9 +721,16 @@ fn loop_control_targets_are_derived_from_nesting() {
 }
 
 #[test]
-fn labeled_control_flow_is_rejected_early() {
-    let errors = Engine::specialize("label: while (true) break label;", "bad.js").unwrap_err();
-    assert!(errors[0].to_string().contains("labeled statements"));
+fn labeled_break_targets_the_named_statement() {
+    let source = r#"
+      var count = 0;
+      label: while (true) {
+        count++;
+        break label;
+      }
+      print(count);
+    "#;
+    assert_eq!(output(source), ["1"]);
 }
 
 #[test]

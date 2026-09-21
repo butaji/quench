@@ -30,9 +30,7 @@ impl FunctionCompiler<'_, '_> {
             Statement::SwitchStatement(item) => self.switch_statement(item),
             Statement::BreakStatement(item) => self.break_statement(item),
             Statement::ContinueStatement(item) => self.continue_statement(item),
-            Statement::LabeledStatement(item) => self
-                .owner
-                .reject(item.span, "labeled statements are unsupported"),
+            Statement::LabeledStatement(item) => self.labeled_statement(item),
             Statement::ThrowStatement(item) => {
                 let value = self.expression(&item.argument);
                 self.emit(Op::Throw, value, 0, 0, 0);
@@ -109,7 +107,7 @@ impl FunctionCompiler<'_, '_> {
     fn while_statement(&mut self, item: &WhileStatement<'_>) {
         let head = self.code.len() as u32;
         let condition_end = self.condition(&item.test);
-        self.push_control(ControlKind::Loop);
+        self.push_control(ControlKind::Loop, None);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         self.patch_edges(&control.continues, head);
@@ -121,7 +119,7 @@ impl FunctionCompiler<'_, '_> {
 
     fn do_while_statement(&mut self, item: &DoWhileStatement<'_>) {
         let head = self.code.len() as u32;
-        self.push_control(ControlKind::Loop);
+        self.push_control(ControlKind::Loop, None);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         let condition = self.code.len() as u32;
@@ -137,7 +135,7 @@ impl FunctionCompiler<'_, '_> {
         self.for_initializer(item.init.as_ref());
         let head = self.code.len() as u32;
         let condition_end = item.test.as_ref().map(|test| self.condition(test));
-        self.push_control(ControlKind::Loop);
+        self.push_control(ControlKind::Loop, None);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
@@ -198,7 +196,7 @@ impl FunctionCompiler<'_, '_> {
             value_atom,
         );
         self.bind_for_of_left(&item.left, value);
-        self.push_control(ControlKind::Loop);
+        self.push_control(ControlKind::Loop, None);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
@@ -254,7 +252,7 @@ impl FunctionCompiler<'_, '_> {
             }));
         }
         let no_match = self.emit(Op::Jump, 0, 0, 0, 0);
-        self.push_control(ControlKind::Switch);
+        self.push_control(ControlKind::Switch, None);
         let mut targets = Vec::with_capacity(item.cases.len());
         for case in &item.cases {
             targets.push(self.code.len() as u32);
@@ -277,16 +275,29 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn break_statement(&mut self, item: &BreakStatement<'_>) {
-        if item.label.is_some() {
-            self.owner.reject(item.span, "labeled break is unsupported");
-            return;
-        }
-        let edge = self.emit(Op::Jump, 0, 0, 0, 0);
-        if let Some(control) = self.controls.last_mut() {
-            control.breaks.push(edge);
+        let index = if let Some(label) = &item.label {
+            let label = self.owner.atom(label.name.as_str());
+            self.controls
+                .iter()
+                .rposition(|control| control.label == Some(label))
         } else {
-            self.owner.reject(item.span, "break outside loop or switch");
-        }
+            self.controls.iter().rposition(|control| {
+                matches!(control.kind, ControlKind::Loop | ControlKind::Switch)
+            })
+        };
+        let Some(index) = index else {
+            self.owner.reject(
+                item.span,
+                if item.label.is_some() {
+                    "break label is not in scope"
+                } else {
+                    "break outside loop or switch"
+                },
+            );
+            return;
+        };
+        let edge = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.controls[index].breaks.push(edge);
     }
 
     fn continue_statement(&mut self, item: &ContinueStatement<'_>) {
@@ -307,9 +318,19 @@ impl FunctionCompiler<'_, '_> {
         self.controls[index].continues.push(edge);
     }
 
-    fn push_control(&mut self, kind: ControlKind) {
+    fn labeled_statement(&mut self, item: &LabeledStatement<'_>) {
+        let label = self.owner.atom(item.label.name.as_str());
+        self.push_control(ControlKind::Label, Some(label));
+        self.statement(&item.body);
+        let control = self.controls.pop().unwrap();
+        let end = self.code.len() as u32;
+        self.patch_edges(&control.breaks, end);
+    }
+
+    fn push_control(&mut self, kind: ControlKind, label: Option<Atom>) {
         self.controls.push(ControlTarget {
             kind,
+            label,
             breaks: vec![],
             continues: vec![],
         });
