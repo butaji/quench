@@ -205,6 +205,23 @@ fn array_index_of_uses_strict_equality_and_forward_bounds() {
 }
 
 #[test]
+fn array_copy_within_handles_overlap_and_array_with_is_non_mutating() {
+    let source = r#"
+      var values = [0, 1, 2, 3, 4];
+      print(values.copyWithin(1, 3) === values);
+      print(values.join('-'));
+      var replaced = values.with(-1, 9);
+      print(replaced === values);
+      print(replaced.join('-'));
+      print(values.join('-'));
+    "#;
+    assert_eq!(
+        output(source),
+        ["true", "0-3-4-3-4", "false", "0-3-4-3-9", "0-3-4-3-4"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

@@ -36,6 +36,8 @@ pub(crate) enum Native {
     ArrayAt,
     ArrayLastIndexOf,
     ArrayIndexOf,
+    ArrayCopyWithin,
+    ArrayWith,
     Map,
     MapGet,
     MapSet,
