@@ -1,6 +1,7 @@
 use crate::value::Value;
 use crate::value_vec::ValueVec;
 use std::rc::Rc;
+#[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
     Print,
@@ -162,12 +163,10 @@ pub(crate) enum Native {
     StringIncludes,
     StringStartsWith,
     StringEndsWith,
-    StringReplace,
-    StringSplit,
-    EncodeUri,
-    EncodeUriComponent,
-    DecodeUri,
-    DecodeUriComponent,
+    StringReplace, StringSplit, StringTrim, StringTrimStart,
+    StringTrimEnd, StringRepeat, StringPadStart, StringPadEnd,
+    EncodeUri, EncodeUriComponent,
+    DecodeUri, DecodeUriComponent,
     StringFromCharCode,
     ParseInt,
     MathLog,

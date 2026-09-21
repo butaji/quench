@@ -648,6 +648,16 @@ fn string_replace_and_split_preserve_order_and_limits() {
 }
 
 #[test]
+fn string_trim_repeat_and_padding_use_utf16_lengths() {
+    assert_eq!(
+        output(
+            "print('  hi  '.trim()); print('  hi  '.trimStart()); print('  hi  '.trimEnd()); print('ab'.repeat(3)); print('😀'.padStart(3, 'x')); print('😀'.padEnd(3, 'x'));"
+        ),
+        ["hi", "hi  ", "  hi", "ababab", "x😀", "😀x"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
