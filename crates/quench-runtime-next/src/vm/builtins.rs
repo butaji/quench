@@ -71,6 +71,7 @@ const NATIVES: &[Native] = &[
     Native::AtomicsCompareExchange,
     Native::AtomicsIsLockFree,
     Native::Uint8Array,
+    Native::Uint8ClampedArray,
     Native::Uint16Array,
     Native::Uint32Array,
     Native::Int8Array,
@@ -434,7 +435,6 @@ impl<H: Host> Vm<H> {
         name.hash(&mut hasher);
         hasher.finish()
     }
-
     pub(super) fn index_atom(&mut self, hash: u64, atom: Atom) {
         if self.atoms.contains_key(&hash) {
             self.atom_collisions.entry(hash).or_default().push(atom);

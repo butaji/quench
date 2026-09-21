@@ -55,6 +55,7 @@ impl<H: Host> Vm<H> {
             )?;
         }
         self.global(program, "Uint8Array", uint8_array)?;
+        self.install_uint8_clamped_array(program)?;
         self.install_uint16_array(program)?;
         self.install_uint32_array(program)?;
         self.install_int8_array(program)?;
@@ -67,6 +68,7 @@ impl<H: Host> Vm<H> {
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
         match self.heap.get(object) {
             Some(Cell::Uint8Array { buffer, offset, .. })
+            | Some(Cell::Uint8ClampedArray { buffer, offset, .. })
             | Some(Cell::Uint16Array { buffer, offset, .. })
             | Some(Cell::Uint32Array { buffer, offset, .. })
             | Some(Cell::Int8Array { buffer, offset, .. })
@@ -120,6 +122,7 @@ impl<H: Host> Vm<H> {
                 if matches!(
                     args.first().and_then(|value| self.heap.get(*value)),
                     Some(Cell::Uint8Array { .. })
+                        | Some(Cell::Uint8ClampedArray { .. })
                         | Some(Cell::Uint16Array { .. })
                         | Some(Cell::Uint32Array { .. })
                         | Some(Cell::Int8Array { .. })
@@ -278,6 +281,12 @@ impl<H: Host> Vm<H> {
                 offset,
                 length,
             }),
+            TypedArrayKind::Uint8Clamped => self.heap.alloc(Cell::Uint8ClampedArray {
+                object: Self::empty_object(self.uint8_clamped_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
             TypedArrayKind::Uint16 => self.heap.alloc(Cell::Uint16Array {
                 object: Self::empty_object(self.uint16_array_proto),
                 buffer,
@@ -419,6 +428,22 @@ impl<H: Host> Vm<H> {
             0
         } else {
             number.trunc().rem_euclid(256.0) as u8
+        }
+    }
+
+    pub(super) fn uint8_clamped_from_value(number: f64) -> u8 {
+        if number.is_nan() || number <= 0.0 {
+            return 0;
+        }
+        if number >= 255.0 {
+            return 255;
+        }
+        let floor = number.floor();
+        let fraction = number - floor;
+        if fraction < 0.5 || (fraction == 0.5 && (floor as u64).is_multiple_of(2)) {
+            floor as u8
+        } else {
+            floor as u8 + 1
         }
     }
 

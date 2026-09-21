@@ -9,6 +9,12 @@ impl<H: Host> Vm<H> {
                 length,
                 ..
             }) => (*buffer, *offset, *length, TypedArrayKind::Uint8),
+            Some(Cell::Uint8ClampedArray {
+                buffer,
+                offset,
+                length,
+                ..
+            }) => (*buffer, *offset, *length, TypedArrayKind::Uint8Clamped),
             Some(Cell::Uint16Array {
                 buffer,
                 offset,
@@ -63,6 +69,7 @@ impl<H: Host> Vm<H> {
                 bytes.get(start..end).map(|bytes| {
                     Value::number(match kind {
                         TypedArrayKind::Uint8 => bytes[0] as f64,
+                        TypedArrayKind::Uint8Clamped => bytes[0] as f64,
                         TypedArrayKind::Uint16 => u16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
                         TypedArrayKind::Uint32 => {
                             u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
@@ -90,6 +97,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
         match self.heap.get(object) {
             Some(Cell::Uint8Array { buffer, length, .. })
+            | Some(Cell::Uint8ClampedArray { buffer, length, .. })
             | Some(Cell::Uint16Array { buffer, length, .. })
             | Some(Cell::Uint32Array { buffer, length, .. })
             | Some(Cell::Int8Array { buffer, length, .. })
@@ -110,6 +118,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn typed_array_shared(&self, object: Value) -> Option<bool> {
         let buffer = match self.heap.get(object) {
             Some(Cell::Uint8Array { buffer, .. })
+            | Some(Cell::Uint8ClampedArray { buffer, .. })
             | Some(Cell::Uint16Array { buffer, .. })
             | Some(Cell::Uint32Array { buffer, .. })
             | Some(Cell::Int8Array { buffer, .. })
@@ -128,6 +137,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn typed_array_kind(&self, object: Value) -> Option<TypedArrayKind> {
         match self.heap.get(object) {
             Some(Cell::Uint8Array { .. }) => Some(TypedArrayKind::Uint8),
+            Some(Cell::Uint8ClampedArray { .. }) => Some(TypedArrayKind::Uint8Clamped),
             Some(Cell::Uint16Array { .. }) => Some(TypedArrayKind::Uint16),
             Some(Cell::Uint32Array { .. }) => Some(TypedArrayKind::Uint32),
             Some(Cell::Int8Array { .. }) => Some(TypedArrayKind::Int8),
@@ -142,6 +152,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn typed_array_byte_offset(&self, object: Value) -> Option<usize> {
         let (buffer, offset) = match self.heap.get(object) {
             Some(Cell::Uint8Array { buffer, offset, .. })
+            | Some(Cell::Uint8ClampedArray { buffer, offset, .. })
             | Some(Cell::Uint16Array { buffer, offset, .. })
             | Some(Cell::Uint32Array { buffer, offset, .. })
             | Some(Cell::Int8Array { buffer, offset, .. })
@@ -161,6 +172,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn indexed_view_property(&self, object: Value, atom: Atom) -> Option<Value> {
         match self.heap.get(object) {
             Some(Cell::Uint8Array { buffer, .. })
+            | Some(Cell::Uint8ClampedArray { buffer, .. })
             | Some(Cell::Uint16Array { buffer, .. })
             | Some(Cell::Uint32Array { buffer, .. })
             | Some(Cell::Int8Array { buffer, .. })
@@ -229,6 +241,12 @@ impl<H: Host> Vm<H> {
                 length,
                 ..
             }) => (*buffer, *offset, *length, TypedArrayKind::Uint8),
+            Some(Cell::Uint8ClampedArray {
+                buffer,
+                offset,
+                length,
+                ..
+            }) => (*buffer, *offset, *length, TypedArrayKind::Uint8Clamped),
             Some(Cell::Uint16Array {
                 buffer,
                 offset,
@@ -285,6 +303,9 @@ impl<H: Host> Vm<H> {
             let start = offset + index * kind.width();
             match kind {
                 TypedArrayKind::Uint8 => bytes[start] = Self::uint8_from_value(value),
+                TypedArrayKind::Uint8Clamped => {
+                    bytes[start] = Self::uint8_clamped_from_value(value)
+                }
                 TypedArrayKind::Uint16 => bytes[start..start + 2]
                     .copy_from_slice(&Self::uint16_from_value(value).to_ne_bytes()),
                 TypedArrayKind::Uint32 => bytes[start..start + 4]

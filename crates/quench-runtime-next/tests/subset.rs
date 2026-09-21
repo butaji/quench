@@ -565,6 +565,16 @@ fn float_typed_arrays_preserve_numeric_values_and_widths() {
 }
 
 #[test]
+fn uint8_clamped_array_uses_ties_to_even_conversion() {
+    assert_eq!(
+        output(
+            "var values = new Uint8ClampedArray([-1, 0.5, 1.5, 2.5, 255.5, 300]); print(values.join('-')); print(values.BYTES_PER_ELEMENT); var view = new Uint8ClampedArray(new ArrayBuffer(2)); view[0] = 1.5; view[1] = 300; print(view[0]); print(view[1]); print(ArrayBuffer.isView(view));"
+        ),
+        ["0-0-2-2-255-255", "1", "2", "255", "true"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

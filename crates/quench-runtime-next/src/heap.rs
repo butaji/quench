@@ -278,12 +278,10 @@ impl Heap {
             self.max_threshold,
         )
     }
-
     #[cfg(feature = "profile-aggregate")]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
         self.gc_profile
     }
-
     pub(crate) fn sparse_get(&self, array: Value, index: usize) -> Option<Value> {
         self.sparse_arrays
             .as_ref()?
@@ -433,6 +431,7 @@ impl Heap {
             Cell::Array { .. } => 1,
             Cell::ArrayBuffer { .. } => 0,
             Cell::Uint8Array { .. }
+            | Cell::Uint8ClampedArray { .. }
             | Cell::Uint16Array { .. }
             | Cell::Uint32Array { .. }
             | Cell::Int8Array { .. }
@@ -463,6 +462,7 @@ impl Heap {
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::Uint8Array { .. }
+            | Cell::Uint8ClampedArray { .. }
             | Cell::Uint16Array { .. }
             | Cell::Uint32Array { .. }
             | Cell::Int8Array { .. }

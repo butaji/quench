@@ -198,6 +198,7 @@ pub struct Vm<H> {
     array_proto: Value,
     array_buffer_proto: Value,
     uint8_array_proto: Value,
+    uint8_clamped_array_proto: Value,
     uint16_array_proto: Value,
     uint32_array_proto: Value,
     int8_array_proto: Value,
