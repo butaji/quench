@@ -9,6 +9,10 @@ description = "Pinned v2-derived interpreter snapshot for the Quench rewrite"
 [lib]
 name = "rqj"
 
+[[bin]]
+name = "quench-next"
+path = "src/bin/quench-next.rs"
+
 [features]
 default = []
 profile-aggregate = []
