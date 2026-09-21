@@ -122,6 +122,16 @@ fn object_prototype_controls_follow_the_object_proto_slot() {
 }
 
 #[test]
+fn reflect_forwards_to_property_and_prototype_authorities() {
+    assert_eq!(
+        output(
+            "var object = {}; Reflect.set(object, 'answer', 42); print(Reflect.get(object, 'answer')); print(Reflect.ownKeys(object)[0]); print(Reflect.getPrototypeOf(object) === Object.prototype);"
+        ),
+        ["42", "answer", "true"],
+    );
+}
+
+#[test]
 fn json_round_trip_uses_runtime_objects_and_arrays() {
     assert_eq!(
         output(
