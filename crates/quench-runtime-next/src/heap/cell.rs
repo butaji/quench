@@ -97,6 +97,8 @@ pub(crate) enum FunctionKind {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum IteratorKind {
+    Array,
+    String,
     MapKeys,
     MapValues,
     MapEntries,

@@ -80,6 +80,7 @@ opcodes!(
     MakeObject => CALL_EFFECT,
     MakeObject2 => CALL_EFFECT,
     SuperConstArrayObject2 => CALL_EFFECT,
+    GetIterator => READ_THROW,
     GetField => READ_THROW,
     GetIndex => READ_THROW,
     SetField => WRITE_THROW,

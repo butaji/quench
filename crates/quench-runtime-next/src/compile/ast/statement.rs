@@ -159,39 +159,50 @@ impl FunctionCompiler<'_, '_> {
                 .reject(item.span, "for-await-of is outside the supported subset");
             return;
         }
-        let source_atom = self.hidden_local("\0rqj:for-of:source");
-        let index_atom = self.hidden_local("\0rqj:for-of:index");
+        let iterator_atom = self.hidden_local("\0rqj:for-of:iterator");
         let source_value = self.expression(&item.right);
-        self.store_atom(source_atom, source_value);
-        let initial_index = self.literal(Constant::Number(0.0));
-        self.store_atom(index_atom, initial_index);
+        let iterator = self.reg();
+        self.emit(Op::GetIterator, iterator, source_value, 0, 0);
+        self.store_atom(iterator_atom, iterator);
         let head = self.code.len() as u32;
-        let source = self.load_atom(source_atom);
-        let index = self.load_atom(index_atom);
-        let length = self.reg();
-        let length_atom = self.owner.atom("length");
-        let length_cache = self.owner.cache_site();
+        let iterator = self.load_atom(iterator_atom);
+        let next_atom = self.owner.atom("next");
+        let next_cache = self.owner.cache_site();
+        let method_site = self.owner.method_sites.len() as u32;
+        self.owner
+            .method_sites
+            .push((next_atom, next_cache, Vec::new(), None));
+        let result = self.reg();
+        self.emit(Op::CallMethod, result, iterator, 0, method_site);
+        let done = self.reg();
+        let done_atom = self.owner.atom("done");
+        let done_cache = self.owner.cache_site();
         self.emit(
             Op::GetField,
-            length,
-            FieldBase::register(source).0,
-            length_cache,
-            length_atom,
+            done,
+            FieldBase::register(result).0,
+            done_cache,
+            done_atom,
         );
-        let test = self.emit_binary(4, Operand::register(index), Operand::register(length));
-        let end_edge = self.emit(Op::JumpFalse, test, 0, 0, 0);
+        let body_edge = self.emit(Op::JumpFalse, done, 0, 0, 0);
+        let end_edge = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.patch(body_edge);
         let value = self.reg();
-        self.emit(Op::GetIndex, value, source, index, 0);
+        let value_atom = self.owner.atom("value");
+        let value_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            value,
+            FieldBase::register(result).0,
+            value_cache,
+            value_atom,
+        );
         self.bind_for_of_left(&item.left, value);
         self.push_control(ControlKind::Loop);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
         self.patch_edges(&control.continues, update);
-        let current_index = self.load_atom(index_atom);
-        let next = self.reg();
-        self.emit(Op::IncDec, next, current_index, 0, 0);
-        self.store_atom(index_atom, next);
         self.emit(Op::Jump, 0, 0, 0, head);
         let end = self.code.len() as u32;
         self.patch_to(end_edge, end);
