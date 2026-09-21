@@ -1,6 +1,29 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn array_reverse_native(&mut self, this: Value) -> Result<Value, JsError> {
+        let values = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => {
+                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+                let values = (0..length)
+                    .map(|index| {
+                        elements
+                            .get(index)
+                            .copied()
+                            .or_else(|| self.heap.sparse_get(this, index))
+                            .unwrap_or(Value::UNDEFINED)
+                    })
+                    .collect::<Vec<_>>();
+                values
+            }
+            _ => return Err(JsError("reverse receiver is not array".into())),
+        };
+        for (index, value) in values.into_iter().rev().enumerate() {
+            self.set_array_element(this, index, value);
+        }
+        Ok(this)
+    }
+
     pub(super) fn array_flat_native(
         &mut self,
         p: &ResidualProgram,

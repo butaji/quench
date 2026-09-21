@@ -136,6 +136,17 @@ fn array_flat_respects_depth_and_does_not_mutate_source() {
 }
 
 #[test]
+fn array_reverse_mutates_and_returns_the_same_array() {
+    let source = r#"
+      var values = [1, 2, 3];
+      var result = values.reverse();
+      print(result === values);
+      print(values.join('-'));
+    "#;
+    assert_eq!(output(source), ["true", "3-2-1"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
