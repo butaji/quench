@@ -444,7 +444,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
+    pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
         let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
             return None;
         };
