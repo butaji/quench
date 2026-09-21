@@ -145,6 +145,9 @@ const NATIVES: &[Native] = &[
     Native::Date,
     Native::DateNow,
     Native::Error,
+    Native::RegExp,
+    Native::RegExpExec,
+    Native::RegExpTest,
     Native::String,
     Native::Symbol,
     Native::SymbolFor,
@@ -205,6 +208,7 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::DateNow),
         )?;
         self.global(program, "Error", self.native_value(Native::Error))?;
+        self.install_regexp(program)?;
         let symbol = self.native_value(Native::Symbol);
         self.set_named(program, symbol, "for", self.native_value(Native::SymbolFor))?;
         self.set_named(
