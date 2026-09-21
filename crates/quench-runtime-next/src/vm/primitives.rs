@@ -120,7 +120,8 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(if matched { Value::TRUE } else { Value::FALSE })
             }
-            Native::StringReplace => self.string_replace_native(p, this, args),
+            Native::StringReplace => self.string_replace_native(p, this, args, false),
+            Native::StringReplaceAll => self.string_replace_native(p, this, args, true),
             Native::StringSplit => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
@@ -347,7 +348,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::String(result)))
     }
 
-    fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {
+    pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {
         Ok(self
             .heap
             .alloc(Cell::String(String::from_utf16_lossy(units))))
