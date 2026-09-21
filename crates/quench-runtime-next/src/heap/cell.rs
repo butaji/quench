@@ -13,6 +13,7 @@ pub(crate) enum Native {
     Date,
     Error,
     String,
+    Symbol,
     StringCharCodeAt,
     StringCharAt,
     StringSubstring,
@@ -73,6 +74,7 @@ pub(crate) enum Cell {
     },
     String(String),
     BigInt(String),
+    Symbol(Option<String>),
     Date(f64),
     Error(String),
 }
