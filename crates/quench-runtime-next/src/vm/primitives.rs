@@ -137,6 +137,9 @@ impl<H: Host> Vm<H> {
                     }
                 };
                 let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if self.is_regexp(separator) {
+                    return self.string_split_regexp_native(p, this, separator, limit);
+                }
                 let parts = if separator.is_undefined() {
                     vec![receiver]
                 } else {

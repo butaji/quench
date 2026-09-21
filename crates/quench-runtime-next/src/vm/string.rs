@@ -1,6 +1,51 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn string_split_regexp_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        separator: Value,
+        limit: usize,
+    ) -> Result<Value, JsError> {
+        let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+            return Err(JsError("string method receiver is not a string".into()));
+        };
+        let source_atom = self.intern_atom("source");
+        let flags_atom = self.intern_atom("flags");
+        let source = self.to_string(p, self.get_property(p, separator, source_atom)?)?;
+        let flags = self.to_string(p, self.get_property(p, separator, flags_atom)?)?;
+        let regex = Self::compile_regexp(&source, &flags)?;
+        let mut values = Vec::new();
+        let mut cursor = 0;
+        for captures in regex.captures_iter(&receiver) {
+            let Some(whole) = captures.get(0) else {
+                continue;
+            };
+            values.push(
+                self.heap
+                    .alloc(Cell::String(receiver[cursor..whole.start()].to_owned())),
+            );
+            for capture in captures.iter().skip(1) {
+                values.push(capture.map_or(Value::UNDEFINED, |value| {
+                    self.heap.alloc(Cell::String(value.as_str().into()))
+                }));
+            }
+            cursor = whole.end();
+            if values.len() >= limit {
+                break;
+            }
+        }
+        if values.len() < limit {
+            values.push(self.heap.alloc(Cell::String(receiver[cursor..].to_owned())));
+        }
+        values.truncate(limit);
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
+    }
+
     pub(super) fn string_replace_native(
         &mut self,
         p: &ResidualProgram,

@@ -658,6 +658,16 @@ fn string_replace_uses_regexp_global_and_capture_authority() {
 }
 
 #[test]
+fn string_split_uses_regexp_captures_and_limit() {
+    assert_eq!(
+        output(
+            "var parts = 'a1b2c'.split(/(\\d)/); print(parts.length); print(parts[0]); print(parts[1]); print(parts[2]); print(parts[3]); var limited = 'a1b2c'.split(/\\d/, 2); print(limited.length); print(limited[1]);"
+        ),
+        ["5", "a", "1", "b", "2", "2", "b"],
+    );
+}
+
+#[test]
 fn string_trim_repeat_and_padding_use_utf16_lengths() {
     assert_eq!(
         output(
