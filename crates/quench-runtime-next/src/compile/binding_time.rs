@@ -40,6 +40,9 @@ pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
         Expression::StringLiteral(value) => {
             BindingTime::Static(Constant::String(value.value.to_string()))
         }
+        Expression::BigIntLiteral(value) => {
+            BindingTime::Static(Constant::BigInt(value.value.to_string()))
+        }
         Expression::BooleanLiteral(value) => BindingTime::Static(Constant::Boolean(value.value)),
         Expression::NullLiteral(_) => BindingTime::Static(Constant::Null),
         _ => BindingTime::Dynamic,

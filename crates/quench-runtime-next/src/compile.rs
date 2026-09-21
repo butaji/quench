@@ -106,6 +106,7 @@ struct Compiler<'a> {
 enum ConstantKey {
     Number(u64),
     String(String),
+    BigInt(String),
     Boolean(bool),
     Null,
     Undefined,
@@ -116,6 +117,7 @@ impl From<&Constant> for ConstantKey {
         match value {
             Constant::Number(value) => Self::Number(value.to_bits()),
             Constant::String(value) => Self::String(value.clone()),
+            Constant::BigInt(value) => Self::BigInt(value.clone()),
             Constant::Boolean(value) => Self::Boolean(*value),
             Constant::Null => Self::Null,
             Constant::Undefined => Self::Undefined,

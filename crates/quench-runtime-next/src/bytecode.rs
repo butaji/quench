@@ -16,6 +16,7 @@ pub(crate) const NUMERIC_LOCAL_TARGET: u16 = SET_THIS_REGISTER;
 pub enum Constant {
     Number(f64),
     String(String),
+    BigInt(String),
     Boolean(bool),
     Null,
     Undefined,
@@ -238,8 +239,8 @@ fn local_loads_in_bounds(code: &[Instr], locals: u16) -> bool {
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 5;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0005_0001;
+    pub const FORMAT_VERSION: u8 = 6;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0006_0001;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()
@@ -253,7 +254,7 @@ impl ResidualProgram {
 
     pub fn write_binary(&self, path: &std::path::Path) -> Result<(), String> {
         let mut out = BinaryWriter::new();
-        out.bytes.extend_from_slice(b"RQJ\0\x05");
+        out.bytes.extend_from_slice(b"RQJ\0\x06");
         out.u64(Self::RUNTIME_ABI_FINGERPRINT);
         out.strings(&self.atoms);
         out.u32(self.constants.len() as u32);
@@ -265,6 +266,10 @@ impl ResidualProgram {
                 }
                 Constant::String(value) => {
                     out.u8(1);
+                    out.string(value);
+                }
+                Constant::BigInt(value) => {
+                    out.u8(6);
                     out.string(value);
                 }
                 Constant::Boolean(value) => {
@@ -341,7 +346,7 @@ impl ResidualProgram {
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
         let mut input = BinaryReader::new(&bytes);
-        input.magic(b"RQJ\0\x05")?;
+        input.magic(b"RQJ\0\x06")?;
         let abi = input.u64()?;
         if abi != Self::RUNTIME_ABI_FINGERPRINT {
             return Err("residual runtime ABI mismatch".into());
@@ -350,6 +355,7 @@ impl ResidualProgram {
         let constants = input.list(|input| match input.u8()? {
             0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
             1 => Ok(Constant::String(input.string()?)),
+            6 => Ok(Constant::BigInt(input.string()?)),
             2 => Ok(Constant::Boolean(true)),
             3 => Ok(Constant::Boolean(false)),
             4 => Ok(Constant::Null),

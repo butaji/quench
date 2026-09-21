@@ -23,14 +23,17 @@ fn output(source: &str) -> Vec<String> {
 #[test]
 fn residual_binary_round_trip_preserves_execution() {
     let path = std::env::temp_dir().join(format!("rqj-roundtrip-{}.residual", std::process::id()));
-    let program = Engine::specialize("print(40 + 2);", "roundtrip.js").unwrap();
+    let program = Engine::specialize("print(12345678901234567890n);", "roundtrip.js").unwrap();
     program.write_binary(&path).unwrap();
     let decoded = rqj::ResidualProgram::read_binary(&path).unwrap();
     std::fs::remove_file(path).unwrap();
     let host = Capture::default();
     let view = host.clone();
     Vm::new(host).execute(&decoded).unwrap();
-    assert_eq!(Rc::try_unwrap(view.0).unwrap().into_inner(), ["42"]);
+    assert_eq!(
+        Rc::try_unwrap(view.0).unwrap().into_inner(),
+        ["12345678901234567890"]
+    );
 }
 
 #[test]
@@ -106,6 +109,14 @@ fn nullish_coalescing_only_falls_back_for_nullish_values() {
     assert_eq!(
         output("print(null ?? 42); print(undefined ?? 7); print(0 ?? 9); print('' ?? 3);"),
         ["42", "7", "0", ""],
+    );
+}
+
+#[test]
+fn bigint_literals_are_heap_values_and_stringify_without_loss() {
+    assert_eq!(
+        output("print(12345678901234567890n); print(String(7n)); print(7n === 7n);"),
+        ["12345678901234567890", "7", "true"]
     );
 }
 

@@ -1,6 +1,14 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
+    pub(super) fn string_literal(&mut self, value: &oxc_ast::ast::StringLiteral<'_>) -> Register {
+        self.literal(Constant::String(value.value.to_string()))
+    }
+
+    pub(super) fn bigint_literal(&mut self, value: &oxc_ast::ast::BigIntLiteral<'_>) -> Register {
+        self.literal(Constant::BigInt(value.value.to_string()))
+    }
+
     pub(super) fn template_literal(
         &mut self,
         template: &oxc_ast::ast::TemplateLiteral<'_>,

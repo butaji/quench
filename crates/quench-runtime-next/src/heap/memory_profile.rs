@@ -170,7 +170,7 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::Object(_) | Cell::Function { .. } => 0,
         Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
         Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
-        Cell::String(value) | Cell::Error(value) => value.capacity(),
+        Cell::String(value) | Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
         Cell::Date(_) => 0,
     }
 }

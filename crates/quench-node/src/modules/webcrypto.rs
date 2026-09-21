@@ -24,11 +24,11 @@ use openssl::{bn::BigNum, pkey::PKey, rsa::Rsa};
 use p256::ecdsa::{
     Signature as P256Signature, SigningKey as P256SigningKey, VerifyingKey as P256VerifyingKey,
 };
+use p256::elliptic_curve::sec1::ToEncodedPoint as P256ToEncodedPoint;
 use p256::{
     ecdh::diffie_hellman as p256_diffie_hellman, PublicKey as P256PublicKey,
     SecretKey as P256SecretKey,
 };
-use p256::elliptic_curve::sec1::ToEncodedPoint as P256ToEncodedPoint;
 use p384::ecdsa::{
     Signature as P384Signature, SigningKey as P384SigningKey, VerifyingKey as P384VerifyingKey,
 };
