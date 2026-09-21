@@ -146,6 +146,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     &body.statements,
                     &scopes,
                     Some(self.function_id),
+                    Some(&function.params),
                 );
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
@@ -174,15 +175,41 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .items
             .iter()
             .filter_map(|item| match &item.pattern {
-                BindingPattern::BindingIdentifier(id) if item.initializer.is_none() => {
-                    Some(id.name.as_str())
-                }
+                BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
                 _ => {
                     owner.reject(item.span, "parameter pattern is unsupported");
                     None
                 }
             })
             .collect()
+    }
+
+    fn static_key<'c>(key: &'c PropertyKey<'c>) -> Option<&'c str> {
+        match key {
+            PropertyKey::StaticIdentifier(id) => Some(id.name.as_str()),
+            PropertyKey::StringLiteral(value) => Some(value.value.as_str()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn emit_parameter_defaults(&mut self, params: &oxc_ast::ast::FormalParameters<'_>) {
+        for item in &params.items {
+            let Some(initializer) = &item.initializer else {
+                continue;
+            };
+            let BindingPattern::BindingIdentifier(id) = &item.pattern else {
+                continue;
+            };
+            let atom = self.owner.atom(id.name.as_str());
+            let current = self.load_atom(atom);
+            let undefined = self.literal(Constant::Undefined);
+            let missing =
+                self.emit_binary(2, Operand::register(current), Operand::register(undefined));
+            let skip = self.emit(Op::JumpFalse, missing, 0, 0, 0);
+            let value = self.expression(initializer);
+            self.store_atom(atom, value);
+            self.patch(skip);
+        }
     }
 
     pub(super) fn release_temporaries(&mut self) {

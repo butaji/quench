@@ -30,7 +30,7 @@ impl FunctionCompiler<'_, '_> {
             })
             .unwrap_or_else(|| {
                 self.owner
-                    .compile_function(None, &[], &[], &scopes, Some(self.function_id))
+                    .compile_function(None, &[], &[], &scopes, Some(self.function_id), None)
             });
         let class_value = self.reg();
         self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
@@ -126,7 +126,14 @@ impl Compiler<'_> {
             .as_ref()
             .map_or(&[][..], |body| body.statements.as_slice());
         let name = class_method_name(&method.key);
-        self.compile_function(name, &params, body, scopes, parent)
+        self.compile_function(
+            name,
+            &params,
+            body,
+            scopes,
+            parent,
+            Some(&method.value.params),
+        )
     }
 }
 

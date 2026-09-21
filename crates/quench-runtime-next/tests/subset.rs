@@ -105,6 +105,20 @@ fn sequence_expressions_preserve_order_and_return_the_tail() {
 }
 
 #[test]
+fn default_parameters_only_evaluate_for_undefined_arguments() {
+    let source = r#"
+      var calls = 0;
+      function add(value = (calls = calls + 1, 40)) { return value + 2; }
+      print(add());
+      print(add(5));
+      print(calls);
+      var arrow = (value = 41) => value + 1;
+      print(arrow());
+    "#;
+    assert_eq!(output(source), ["42", "7", "1", "42"]);
+}
+
+#[test]
 fn nullish_coalescing_only_falls_back_for_nullish_values() {
     assert_eq!(
         output("print(null ?? 42); print(undefined ?? 7); print(0 ?? 9); print('' ?? 3);"),

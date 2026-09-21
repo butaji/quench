@@ -101,14 +101,18 @@ impl FunctionCompiler<'_, '_> {
         let body = value
             .body
             .as_ref()
-            .map(|body| body.statements.as_slice())
-            .unwrap_or_default();
+            .map_or(&[][..], |body| body.statements.as_slice());
         let name = value.id.as_ref().map(|id| id.name.as_str());
         let mut scopes = vec![Rc::clone(&self.local_slots)];
         scopes.extend(self.scopes.iter().cloned());
-        let function =
-            self.owner
-                .compile_function(name, &params, body, &scopes, Some(self.function_id));
+        let function = self.owner.compile_function(
+            name,
+            &params,
+            body,
+            &scopes,
+            Some(self.function_id),
+            Some(&value.params),
+        );
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
@@ -203,14 +207,6 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::SetField, item, dst, site, atom);
         }
         dst
-    }
-
-    fn static_key<'a>(key: &'a PropertyKey<'a>) -> Option<&'a str> {
-        match key {
-            PropertyKey::StaticIdentifier(id) => Some(id.name.as_str()),
-            PropertyKey::StringLiteral(value) => Some(value.value.as_str()),
-            _ => None,
-        }
     }
 
     pub(super) fn static_get(&mut self, object: &Expression<'_>, key: &str) -> Register {
