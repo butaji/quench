@@ -237,6 +237,7 @@ impl<H: Host> Vm<H> {
                 }
                 Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
                 Some(Cell::Uint8Array { object: x, .. })
+                | Some(Cell::Uint8ClampedArray { object: x, .. })
                 | Some(Cell::Uint16Array { object: x, .. })
                 | Some(Cell::Uint32Array { object: x, .. })
                 | Some(Cell::Int8Array { object: x, .. })

@@ -41,6 +41,7 @@ impl<H: Host> Vm<H> {
         let kind = match self.heap.get(source) {
             Some(Cell::Array { .. })
             | Some(Cell::Uint8Array { .. })
+            | Some(Cell::Uint8ClampedArray { .. })
             | Some(Cell::Uint16Array { .. })
             | Some(Cell::Uint32Array { .. })
             | Some(Cell::Int8Array { .. })
@@ -79,6 +80,7 @@ impl<H: Host> Vm<H> {
             self.heap.get(source),
             Some(Cell::Array { .. })
                 | Some(Cell::Uint8Array { .. })
+                | Some(Cell::Uint8ClampedArray { .. })
                 | Some(Cell::Uint16Array { .. })
                 | Some(Cell::Uint32Array { .. })
                 | Some(Cell::Int8Array { .. })

@@ -171,6 +171,7 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
         Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
         Cell::Uint8Array { .. }
+        | Cell::Uint8ClampedArray { .. }
         | Cell::Uint16Array { .. }
         | Cell::Uint32Array { .. }
         | Cell::Int8Array { .. }
