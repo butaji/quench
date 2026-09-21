@@ -953,6 +953,16 @@ fn number_static_predicates_require_numeric_values() {
 }
 
 #[test]
+fn number_static_constants_and_parsers_use_numeric_authority() {
+    assert_eq!(
+        output(
+            "print(Number.isSafeInteger(9007199254740991)); print(Number.isSafeInteger(9007199254740992)); print(Number.parseInt('12px')); print(Number.parseFloat('  -1.25e2tail')); print(Number.EPSILON > 0); print(Number.MAX_SAFE_INTEGER);"
+        ),
+        ["true", "false", "12", "-125", "true", "9007199254740991"],
+    );
+}
+
+#[test]
 fn string_search_methods_use_the_receiver_text() {
     assert_eq!(
         output(

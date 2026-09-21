@@ -142,7 +142,8 @@ impl<H: Host> Vm<H> {
             Native::Number
             | Native::NumberIsNaN
             | Native::NumberIsFinite
-            | Native::NumberIsInteger => self.call_number_native(p, native, args),
+            | Native::NumberIsInteger
+            | Native::NumberIsSafeInteger => self.call_number_native(p, native, args),
             Native::NumberFixed => {
                 let number = self.to_number(p, this)?;
                 let digits = args.first().and_then(|v| v.as_number()).unwrap_or(0.0) as usize;

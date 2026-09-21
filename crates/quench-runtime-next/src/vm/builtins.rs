@@ -185,6 +185,8 @@ const NATIVES: &[Native] = &[
     Native::NumberIsNaN,
     Native::NumberIsFinite,
     Native::NumberIsInteger,
+    Native::NumberIsSafeInteger,
+    Native::NumberParseFloat,
     Native::NumberFixed,
     Native::NumberPrecision,
 ];
@@ -236,26 +238,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "String", string)?;
         self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
-        let number = self.native_value(Native::Number);
-        self.set_named(
-            program,
-            number,
-            "isNaN",
-            self.native_value(Native::NumberIsNaN),
-        )?;
-        self.set_named(
-            program,
-            number,
-            "isFinite",
-            self.native_value(Native::NumberIsFinite),
-        )?;
-        self.set_named(
-            program,
-            number,
-            "isInteger",
-            self.native_value(Native::NumberIsInteger),
-        )?;
-        self.global(program, "Number", number)?;
+        self.install_number(program)?;
         self.global(program, "encodeURI", self.native_value(Native::EncodeUri))?;
         self.global(
             program,
