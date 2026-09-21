@@ -154,6 +154,7 @@ impl<H: Host> Vm<H> {
             Native::ArraySlice => self.array_slice_native(p, this, args),
             Native::ArrayIncludes => self.array_includes_native(p, this, args),
             Native::ArrayJoin => self.array_join_native(p, this, args),
+            Native::ArrayConcat => self.array_concat_native(this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {

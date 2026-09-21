@@ -1,6 +1,39 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn array_concat_native(
+        &mut self,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::Array { .. }) = self.heap.get(this) else {
+            return Err(JsError("concat receiver is not array".into()));
+        };
+        let mut values = Vec::new();
+        let append = |value: Value, values: &mut Vec<Value>| {
+            if let Some(Cell::Array { elements, .. }) = self.heap.get(value) {
+                let length = self.heap.sparse_length(value).unwrap_or(elements.len());
+                values.extend((0..length).map(|index| {
+                    elements
+                        .get(index)
+                        .copied()
+                        .or_else(|| self.heap.sparse_get(value, index))
+                        .unwrap_or(Value::UNDEFINED)
+                }));
+            } else {
+                values.push(value);
+            }
+        };
+        append(this, &mut values);
+        for value in args.iter().copied() {
+            append(value, &mut values);
+        }
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
+    }
+
     pub(super) fn array_push_native(
         &mut self,
         this: Value,
