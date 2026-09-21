@@ -112,6 +112,17 @@ fn array_includes_uses_same_value_zero_and_visits_holes() {
 }
 
 #[test]
+fn array_concat_is_non_mutating_and_flattens_array_arguments() {
+    let source = r#"
+      var first = [1, 2];
+      var second = first.concat([3], 4, [5, 6]);
+      print(first.length);
+      print(second.join('-'));
+    "#;
+    assert_eq!(output(source), ["2", "1-2-3-4-5-6"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
