@@ -25,6 +25,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayJoin,
     Native::ArrayConcat,
     Native::ArrayFlat,
+    Native::ArrayReverse,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -332,6 +333,12 @@ impl<H: Host> Vm<H> {
             self.array_proto,
             "flat",
             self.native_value(Native::ArrayFlat),
+        )?;
+        self.set_named(
+            program,
+            self.array_proto,
+            "reverse",
+            self.native_value(Native::ArrayReverse),
         )?;
         self.set_named(program, array, "prototype", self.array_proto)?;
         self.set_named(
