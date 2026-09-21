@@ -120,6 +120,13 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
             }
             Native::ObjectAssign => self.object_assign(args),
+            Native::ObjectGetPrototypeOf => {
+                self.object_get_prototype_of(args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
+            Native::ObjectSetPrototypeOf => self.object_set_prototype_of(
+                args.first().copied().unwrap_or(Value::UNDEFINED),
+                args.get(1).copied().unwrap_or(Value::UNDEFINED),
+            ),
             Native::JsonParse => self.json_parse(p, args),
             Native::JsonStringify => self.json_stringify(p, args),
             Native::MathLog => {
