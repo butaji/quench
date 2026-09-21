@@ -22,9 +22,12 @@ impl FunctionCompiler<'_, '_> {
         }
         self.emit(Op::MakeObject, dst, 0, 0, 0);
         for property in &value.properties {
-            let ObjectPropertyKind::ObjectProperty(property) = property else {
-                self.owner.reject(property.span(), "spread is unsupported");
-                continue;
+            let property = match property {
+                ObjectPropertyKind::ObjectProperty(property) => property,
+                ObjectPropertyKind::SpreadProperty(spread) => {
+                    self.object_spread(dst, &spread.argument);
+                    continue;
+                }
             };
             if property.computed {
                 let Some(key) = self.computed_object_key(&property.key) else {
@@ -51,6 +54,34 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::SetField, item, dst, site, atom);
         }
         dst
+    }
+
+    fn object_spread(&mut self, target: Register, source: &Expression<'_>) {
+        let source = self.expression(source);
+        let object = self.load_name("Object");
+        let assign = self.reg();
+        let assign_atom = self.owner.atom("assign");
+        let assign_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            assign,
+            FieldBase::register(object).0,
+            assign_cache,
+            assign_atom,
+        );
+        let base = self.next_reg;
+        let target_arg = self.reg();
+        self.emit(Op::Move, target_arg, target, 0, 0);
+        let source_arg = self.reg();
+        self.emit(Op::Move, source_arg, source, 0, 0);
+        let result = self.reg();
+        self.emit(
+            Op::Call,
+            result,
+            assign,
+            object,
+            (u32::from(base) << 16) | 2,
+        );
     }
 
     pub(super) fn computed_object_key(&mut self, key: &PropertyKey<'_>) -> Option<Register> {
