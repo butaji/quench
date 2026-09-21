@@ -45,6 +45,8 @@ impl<H: Host> Vm<H> {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }
         self.set_named(program, array, "prototype", self.array_proto)?;
+        self.set_named(program, array, "from", self.native_value(Native::ArrayFrom))?;
+        self.set_named(program, array, "of", self.native_value(Native::ArrayOf))?;
         self.set_named(
             program,
             array,

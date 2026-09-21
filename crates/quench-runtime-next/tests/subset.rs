@@ -320,6 +320,17 @@ fn array_keys_values_and_entries_use_sparse_lengths_and_iterator_results() {
 }
 
 #[test]
+fn array_from_consumes_iterables_and_array_of_preserves_arguments() {
+    let source = r#"
+      print(Array.of(1, 2, 3).join('-'));
+      print(Array.from([4, 5], function (value, index) { return value + index; }).join('-'));
+      print(Array.from('ab').join('-'));
+      print(Array.from(new Set([6, 7])).join('-'));
+    "#;
+    assert_eq!(output(source), ["1-2-3", "4-6", "a-b", "6-7"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
