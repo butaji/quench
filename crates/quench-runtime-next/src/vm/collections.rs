@@ -413,7 +413,7 @@ impl<H: Host> Vm<H> {
             .position(|candidate| self.same_value_zero(*candidate, value))
     }
 
-    fn same_value_zero(&self, left: Value, right: Value) -> bool {
+    pub(super) fn same_value_zero(&self, left: Value, right: Value) -> bool {
         left == right
             || (left.as_number().is_some_and(f64::is_nan)
                 && right.as_number().is_some_and(f64::is_nan))
