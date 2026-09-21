@@ -138,17 +138,7 @@ impl<H: Host> Vm<H> {
                     self.to_number(p, a)?.powf(self.to_number(p, b)?),
                 ))
             }
-            Native::ArrayPush => {
-                let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
-                    return Err(JsError("push receiver is not array".into()));
-                };
-                let mut length = self.heap.sparse_length(this).unwrap_or(elements.len());
-                for value in args {
-                    self.set_array_element(this, length, *value);
-                    length += 1;
-                }
-                Ok(Value::number(length as f64))
-            }
+            Native::ArrayPush => self.array_push_native(this, args),
             Native::ArrayIsArray => Ok(
                 if matches!(
                     args.first().and_then(|value| self.heap.get(*value)),
@@ -159,21 +149,8 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 },
             ),
-            Native::ArrayPop => {
-                let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
-                    return Err(JsError("pop receiver is not array".into()));
-                };
-                let dense_len = elements.len();
-                if self.heap.sparse_length(this).is_some() {
-                    return Ok(self.heap.sparse_pop(this, dense_len));
-                }
-                let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) else {
-                    unreachable!()
-                };
-                Ok(super::index::mutable_array_elements(elements)
-                    .pop()
-                    .unwrap_or(Value::UNDEFINED))
-            }
+            Native::ArrayPop => self.array_pop_native(this),
+            Native::ArraySlice => self.array_slice_native(this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {
