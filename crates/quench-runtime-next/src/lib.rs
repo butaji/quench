@@ -16,3 +16,6 @@ pub use host::{Host, SystemHost};
 pub use memory_edge::report_allocator_memory;
 pub use value::Value;
 pub use vm::{JsError, Vm};
+
+mod api;
+pub use api::{ExecutionRequest, Runtime, RuntimeError, SourceKind};
