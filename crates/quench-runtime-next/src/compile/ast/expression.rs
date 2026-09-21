@@ -1,7 +1,7 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
-    pub(super) fn expression(&mut self, expression: &Expression<'_>) -> Register {
+    pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
         match expression {
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => {
@@ -16,6 +16,7 @@ impl FunctionCompiler<'_, '_> {
                 dst
             }
             Expression::FunctionExpression(value) => self.function_expression(value),
+            Expression::ArrowFunctionExpression(value) => self.arrow_function_expression(value),
             Expression::ArrayExpression(value) => self.array_expression(value),
             Expression::ObjectExpression(value) => self.object_expression(value),
             Expression::StaticMemberExpression(value) => {
@@ -107,6 +108,20 @@ impl FunctionCompiler<'_, '_> {
         let function =
             self.owner
                 .compile_function(name, &params, body, &scopes, Some(self.function_id));
+        let dst = self.reg();
+        self.emit(Op::MakeClosure, dst, 0, 0, function);
+        dst
+    }
+
+    pub(super) fn arrow_function_expression(
+        &mut self,
+        value: &oxc_ast::ast::ArrowFunctionExpression<'_>,
+    ) -> Register {
+        let mut scopes = vec![Rc::clone(&self.local_slots)];
+        scopes.extend(self.scopes.iter().cloned());
+        let function = self
+            .owner
+            .compile_arrow_function(value, &scopes, Some(self.function_id));
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
