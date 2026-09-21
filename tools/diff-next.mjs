@@ -10,6 +10,25 @@ function observable({ status, signal, timed_out, stdout, stderr, spawn_error }) 
   return JSON.stringify({ status, signal, timed_out, stdout, stderr, spawn_error });
 }
 
+function semanticStderr(stderr) {
+  return stderr
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (!line) return false;
+      try {
+        const record = JSON.parse(line);
+        return !(typeof record.kind === "string" && record.kind.startsWith("rqj-"));
+      } catch {
+        return true;
+      }
+    })
+    .join("\n");
+}
+
+function semanticObservable(result) {
+  return observable({ ...result, stderr: semanticStderr(result.stderr) });
+}
+
 const source = process.argv[2];
 const selfTest = source === "--self-test";
 if (selfTest) {
@@ -21,6 +40,9 @@ if (selfTest) {
   assert(timeout.timed_out, "timeout is classified");
   const crash = executeSelfTest("crash", ["-e", "process.exit(7)"], 1000);
   assert(crash.status === 7 && !crash.timed_out, "nonzero exit is preserved");
+  const measured = { status: 0, signal: null, timed_out: false, stdout: "42\n", stderr: '{"kind":"rqj-profile"}\n', spawn_error: null };
+  const clean = { ...measured, stderr: "" };
+  assert(semanticObservable(measured) === semanticObservable(clean), "measurement stderr is non-semantic");
   const values = [timeout, crash].map(observable);
   assert(values[0] !== values[1], "observable mismatches remain distinguishable");
   console.log("diff-next self-test: ok");
@@ -69,7 +91,7 @@ function execute(label, command, args = [absoluteSource], timeout = Number(proce
 }
 
 const results = entries.map(([label, command]) => execute(label, command));
-const reference = observable(results[2]);
+const reference = semanticObservable(results[2]);
 
 console.log(
   JSON.stringify(
@@ -79,7 +101,7 @@ console.log(
       source_sha256: sourceSha256,
       timeout_ms: Number(process.env.DIFF_TIMEOUT_MS ?? 30_000),
       results,
-      matches_node: results.slice(0, 2).map((result) => observable(result) === reference),
+      matches_node: results.slice(0, 2).map((result) => semanticObservable(result) === reference),
     },
     null,
     2,
