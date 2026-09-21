@@ -1,5 +1,4 @@
 use super::*;
-
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn resolve_field_base(&self, frame: usize, base: FieldBase) -> Value {
@@ -9,7 +8,6 @@ impl<H: Host> Vm<H> {
         }
     }
 }
-
 impl FieldCacheSet {
     fn with_pair(first: FieldCache, second: FieldCache) -> Self {
         let mut entries = [EMPTY_CACHE; FIELD_MEGAMORPHIC_INLINE];
@@ -21,7 +19,6 @@ impl FieldCacheSet {
             overflow: None,
         }
     }
-
     #[inline(always)]
     fn get(&self, shape: u32) -> Option<FieldCache> {
         if let Some(entries) = &self.overflow {
@@ -32,7 +29,6 @@ impl FieldCacheSet {
             .find(|entry| entry.receiver == shape)
             .copied()
     }
-
     fn insert(&mut self, cache: FieldCache) {
         const LIMIT: usize = 256;
         if let Some(entries) = &mut self.overflow {
@@ -56,7 +52,6 @@ impl FieldCacheSet {
             self.overflow = Some(Box::new(entries));
         }
     }
-
     #[cfg(any(feature = "profile-memory", test))]
     pub(super) fn len(&self) -> usize {
         self.overflow
@@ -64,7 +59,6 @@ impl FieldCacheSet {
             .map_or(usize::from(self.len), |entries| entries.len())
     }
 }
-
 impl<H: Host> Vm<H> {
     pub(super) fn object_pair(
         &mut self,
@@ -143,7 +137,6 @@ impl<H: Host> Vm<H> {
         self.profile.field_cache(false);
         self.get_field_miss(object, atom, site)
     }
-
     #[cold]
     #[inline(never)]
     pub(super) fn get_field_miss(
@@ -155,12 +148,18 @@ impl<H: Host> Vm<H> {
         if self.lookup_atom("byteLength") == Some(atom)
             && let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(object)
         {
-            return Ok(Value::number(bytes.len() as f64));
+            return Ok(Value::number(if self.array_buffer_detached(object) {
+                0.0
+            } else {
+                bytes.len() as f64
+            }));
         }
         if self.lookup_atom("byteLength") == Some(atom)
-            && let Some(Cell::Uint8Array { length, .. }) = self.heap.get(object)
+            && matches!(self.heap.get(object), Some(Cell::Uint8Array { .. }))
         {
-            return Ok(Value::number(*length as f64));
+            return Ok(Value::number(
+                self.typed_array_length(object).unwrap_or(0) as f64
+            ));
         }
         if self.lookup_atom("byteOffset") == Some(atom)
             && let Some(Cell::Uint8Array { offset, .. }) = self.heap.get(object)
@@ -231,15 +230,21 @@ impl<H: Host> Vm<H> {
                     if self.lookup_atom("byteLength") == Some(atom) =>
                 {
                     let _shared = shared;
-                    return Ok(Value::number(bytes.len() as f64));
+                    return Ok(Value::number(if self.array_buffer_detached(object) {
+                        0.0
+                    } else {
+                        bytes.len() as f64
+                    }));
                 }
-                Some(Cell::Uint8Array { length, .. }) if atom == self.length_atom => {
-                    return Ok(Value::number(*length as f64));
+                Some(Cell::Uint8Array { .. }) if atom == self.length_atom => {
+                    return Ok(Value::number(
+                        self.typed_array_length(object).unwrap_or(0) as f64
+                    ));
                 }
-                Some(Cell::Uint8Array { length, .. })
-                    if self.lookup_atom("byteLength") == Some(atom) =>
-                {
-                    return Ok(Value::number(*length as f64));
+                Some(Cell::Uint8Array { .. }) if self.lookup_atom("byteLength") == Some(atom) => {
+                    return Ok(Value::number(
+                        self.typed_array_length(object).unwrap_or(0) as f64
+                    ));
                 }
                 Some(Cell::Uint8Array { offset, .. })
                     if self.lookup_atom("byteOffset") == Some(atom) =>
@@ -340,7 +345,6 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
-
     pub(super) fn set_field_cached(
         &mut self,
         object: Value,
@@ -400,7 +404,6 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
-
     fn callable_write(&self, object: Value, slot: usize, value: Value) -> bool {
         self.is_function(value)
             || self
