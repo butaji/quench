@@ -169,6 +169,17 @@ fn array_splice_returns_removed_values_and_updates_receiver() {
 }
 
 #[test]
+fn array_fill_coerces_bounds_and_returns_the_same_array() {
+    let source = r#"
+      var values = [0, 1, 2, 3];
+      var result = values.fill(9, '1.5', -1);
+      print(result === values);
+      print(values.join('-'));
+    "#;
+    assert_eq!(output(source), ["true", "0-9-9-3"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

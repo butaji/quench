@@ -128,6 +128,48 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    pub(super) fn array_fill_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let length = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => {
+                self.heap.sparse_length(this).unwrap_or(elements.len())
+            }
+            _ => return Err(JsError("fill receiver is not array".into())),
+        };
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let relative = |number: f64| {
+            if number.is_nan() {
+                0
+            } else if number.is_infinite() {
+                if number.is_sign_negative() { 0 } else { length }
+            } else if number.is_sign_negative() {
+                length.saturating_sub(number.abs().trunc() as usize)
+            } else {
+                (number.trunc() as usize).min(length)
+            }
+        };
+        let start = args
+            .get(1)
+            .map(|value| self.to_number(p, *value))
+            .transpose()?
+            .map(relative)
+            .unwrap_or(0);
+        let end = args
+            .get(2)
+            .map(|value| self.to_number(p, *value))
+            .transpose()?
+            .map(relative)
+            .unwrap_or(length);
+        for index in start.min(end)..end {
+            self.set_array_element(this, index, value);
+        }
+        Ok(this)
+    }
+
     pub(super) fn array_flat_native(
         &mut self,
         p: &ResidualProgram,
