@@ -35,29 +35,36 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn array_slice_native(
         &mut self,
+        p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
-            return Err(JsError("slice receiver is not array".into()));
+        let elements = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => Rc::clone(elements),
+            _ => return Err(JsError("slice receiver is not array".into())),
         };
         let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-        let relative = |value: Value, default: usize| {
-            let number = value.as_number().unwrap_or(default as f64);
+        let mut relative = |value: Value| -> Result<usize, JsError> {
+            let number = self.to_number(p, value)?;
             if number.is_nan() {
-                return 0;
+                return Ok(0);
             }
+            if number.is_infinite() {
+                return Ok(if number.is_sign_negative() { 0 } else { length });
+            }
+            let number = number.trunc();
             if number.is_sign_negative() {
-                length.saturating_sub((-number) as usize)
+                Ok(length.saturating_sub((-number) as usize))
             } else {
-                (number as usize).min(length)
+                Ok((number as usize).min(length))
             }
         };
-        let start = relative(args.first().copied().unwrap_or(Value::number(0.0)), 0);
+        let start = relative(args.first().copied().unwrap_or(Value::number(0.0)))?;
         let end = args
             .get(1)
             .copied()
-            .map(|value| relative(value, length))
+            .map(relative)
+            .transpose()?
             .unwrap_or(length);
         let values = (start.min(end)..end)
             .map(|index| {
