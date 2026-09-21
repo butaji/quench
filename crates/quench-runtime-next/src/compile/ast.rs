@@ -163,28 +163,47 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn params<'c>(
         function: &'c oxc_ast::ast::Function<'c>,
         owner: &mut Compiler<'_>,
-    ) -> Vec<&'c str> {
+    ) -> Vec<String> {
         Self::params_from_formals(&function.params, owner)
     }
 
     pub(super) fn params_from_formals<'c>(
         params: &'c oxc_ast::ast::FormalParameters<'c>,
         owner: &mut Compiler<'_>,
-    ) -> Vec<&'c str> {
+    ) -> Vec<String> {
         if params.rest.is_some() {
             owner.reject(Span::default(), "rest parameters are unsupported");
         }
         params
             .items
             .iter()
-            .filter_map(|item| match &item.pattern {
-                BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
-                _ => {
-                    owner.reject(item.span, "parameter pattern is unsupported");
-                    None
-                }
-            })
+            .enumerate()
+            .map(|(index, item)| Self::parameter_name(&item.pattern, index))
             .collect()
+    }
+
+    fn parameter_name(pattern: &BindingPattern<'_>, index: usize) -> String {
+        Self::first_binding_name(pattern)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("\0rqj:param:{index}"))
+    }
+
+    fn first_binding_name<'c>(pattern: &'c BindingPattern<'c>) -> Option<&'c str> {
+        match pattern {
+            BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
+            BindingPattern::ObjectPattern(object) => object
+                .properties
+                .iter()
+                .find_map(|property| Self::first_binding_name(&property.value)),
+            BindingPattern::ArrayPattern(array) => array
+                .elements
+                .iter()
+                .flatten()
+                .find_map(Self::first_binding_name),
+            BindingPattern::AssignmentPattern(assignment) => {
+                Self::first_binding_name(&assignment.left)
+            }
+        }
     }
 
     pub(super) fn hidden_local(&mut self, name: &str) -> Atom {
@@ -209,23 +228,26 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    pub(super) fn emit_parameter_defaults(&mut self, params: &oxc_ast::ast::FormalParameters<'_>) {
-        for item in &params.items {
-            let Some(initializer) = &item.initializer else {
-                continue;
-            };
-            let BindingPattern::BindingIdentifier(id) = &item.pattern else {
-                continue;
-            };
-            let atom = self.owner.atom(id.name.as_str());
+    pub(super) fn emit_parameter_bindings(&mut self, params: &oxc_ast::ast::FormalParameters<'_>) {
+        for (index, item) in params.items.iter().enumerate() {
+            let atom = self.owner.atom(&Self::parameter_name(&item.pattern, index));
             let current = self.load_atom(atom);
-            let undefined = self.literal(Constant::Undefined);
-            let missing =
-                self.emit_binary(2, Operand::register(current), Operand::register(undefined));
-            let skip = self.emit(Op::JumpFalse, missing, 0, 0, 0);
-            let value = self.expression(initializer);
-            self.store_atom(atom, value);
-            self.patch(skip);
+            if matches!(&item.pattern, BindingPattern::BindingIdentifier(_)) {
+                if let Some(initializer) = &item.initializer {
+                    let undefined = self.literal(Constant::Undefined);
+                    let missing = self.emit_binary(
+                        2,
+                        Operand::register(current),
+                        Operand::register(undefined),
+                    );
+                    let skip = self.emit(Op::JumpFalse, missing, 0, 0, 0);
+                    let value = self.expression(initializer);
+                    self.store_atom(atom, value);
+                    self.patch(skip);
+                }
+            } else {
+                self.bind_pattern(&item.pattern, current);
+            }
         }
     }
 
