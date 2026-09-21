@@ -142,6 +142,16 @@ fn number_static_predicates_require_numeric_values() {
 }
 
 #[test]
+fn string_search_methods_use_the_receiver_text() {
+    assert_eq!(
+        output(
+            "print('quench'.includes('ench')); print('quench'.startsWith('que')); print('quench'.endsWith('nch'));"
+        ),
+        ["true", "true", "true"],
+    );
+}
+
+#[test]
 fn base_classes_lower_to_constructor_and_prototype_methods() {
     let source = r#"
       class Box {

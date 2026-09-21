@@ -234,6 +234,12 @@ impl<H: Host> Vm<H> {
                         self.native_value(Native::StringSubstring)
                     } else if atom == self.primitive_atoms[3] {
                         self.native_value(Native::StringSubstr)
+                    } else if atom == self.primitive_atoms[5] {
+                        self.native_value(Native::StringIncludes)
+                    } else if atom == self.primitive_atoms[6] {
+                        self.native_value(Native::StringStartsWith)
+                    } else if atom == self.primitive_atoms[7] {
+                        self.native_value(Native::StringEndsWith)
                     } else {
                         Value::UNDEFINED
                     });

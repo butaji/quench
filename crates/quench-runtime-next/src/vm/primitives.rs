@@ -49,7 +49,7 @@ impl<H: Host> Vm<H> {
             }
             Native::StringCharAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
-                let Some(Cell::String(receiver)) = self.heap.get(this) else {
+                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let unit = index.try_into().ok().and_then(|index: usize| {
@@ -105,6 +105,20 @@ impl<H: Host> Vm<H> {
                 let count = self.argument_integer(p, args, 1, length - start)?.max(0);
                 let end = start.saturating_add(count).min(length);
                 self.string_from_units(&units[start as usize..end as usize])
+            }
+            Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith => {
+                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                    return Err(JsError("string method receiver is not a string".into()));
+                };
+                let search =
+                    self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let matched = match native {
+                    Native::StringIncludes => receiver.contains(&search),
+                    Native::StringStartsWith => receiver.starts_with(&search),
+                    Native::StringEndsWith => receiver.ends_with(&search),
+                    _ => unreachable!(),
+                };
+                Ok(if matched { Value::TRUE } else { Value::FALSE })
             }
             Native::EncodeUri | Native::EncodeUriComponent => {
                 let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
