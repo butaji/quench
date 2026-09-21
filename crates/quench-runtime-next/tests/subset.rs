@@ -427,7 +427,7 @@ fn rest_parameters_collect_trailing_arguments() {
 fn computed_object_keys_use_indexed_property_semantics() {
     let source = r#"
       var key = 'answer';
-      var object = { [key]: 42, [2]: 'two', [true]: 'yes' };
+      var object = { [key]: 42, [1 + 1]: 'two', [true]: 'yes' };
       print(object.answer); print(object[2]); print(object.true);
     "#;
     assert_eq!(output(source), ["42", "two", "yes"]);
