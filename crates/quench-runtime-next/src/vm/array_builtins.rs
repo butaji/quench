@@ -31,6 +31,8 @@ impl<H: Host> Vm<H> {
             ("findIndex", Native::ArrayFindIndex),
             ("findLast", Native::ArrayFindLast),
             ("findLastIndex", Native::ArrayFindLastIndex),
+            ("group", Native::ArrayGroup),
+            ("groupToMap", Native::ArrayGroupToMap),
             ("flatMap", Native::ArrayFlatMap),
             ("reduce", Native::ArrayReduce),
             ("reduceRight", Native::ArrayReduceRight),

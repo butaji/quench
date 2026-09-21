@@ -15,6 +15,7 @@ use std::rc::Rc;
 mod array;
 mod array_buffer;
 mod array_builtins;
+mod array_group;
 mod array_indexed;
 mod array_modern;
 mod atomics;
