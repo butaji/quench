@@ -222,6 +222,26 @@ fn array_copy_within_handles_overlap_and_array_with_is_non_mutating() {
 }
 
 #[test]
+fn array_callback_methods_share_user_function_invocation() {
+    let source = r#"
+      var values = [1, 2, 3];
+      var total = 0;
+      values.forEach(function (value, index) { total = total + value + index; });
+      print(total);
+      print(values.map(function (value) { return value * 2; }).join('-'));
+      print(values.filter(function (value) { return value > 1; }).join('-'));
+      print(values.some(function (value) { return value === 2; }));
+      print(values.every(function (value) { return value > 0; }));
+      print(values.find(function (value) { return value > 1; }));
+      print(values.findIndex(function (value) { return value > 1; }));
+    "#;
+    assert_eq!(
+        output(source),
+        ["9", "2-4-6", "2-3", "true", "true", "2", "1"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

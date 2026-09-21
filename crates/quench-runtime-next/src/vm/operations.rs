@@ -136,7 +136,14 @@ impl<H: Host> Vm<H> {
             | Native::ArrayLastIndexOf
             | Native::ArrayIndexOf
             | Native::ArrayCopyWithin
-            | Native::ArrayWith => self.array_indexed_native(p, native, this, args),
+            | Native::ArrayWith
+            | Native::ArrayForEach
+            | Native::ArrayMap
+            | Native::ArrayFilter
+            | Native::ArraySome
+            | Native::ArrayEvery
+            | Native::ArrayFind
+            | Native::ArrayFindIndex => self.array_indexed_native(p, native, this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {
