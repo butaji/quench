@@ -172,6 +172,16 @@ fn object_integrity_levels_block_mutation_and_report_state() {
 }
 
 #[test]
+fn reflect_integrity_methods_share_object_state() {
+    assert_eq!(
+        output(
+            "var object = {}; print(Reflect.isExtensible(object)); print(Reflect.preventExtensions(object)); print(Reflect.isExtensible(object)); try { Reflect.preventExtensions(1); } catch (error) { print('type-error'); }"
+        ),
+        ["true", "true", "false", "type-error"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(

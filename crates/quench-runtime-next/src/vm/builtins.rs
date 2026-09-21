@@ -9,7 +9,7 @@ const NATIVES: &[Native] = &[
     Native::ObjectIsExtensible, Native::ObjectSeal, Native::ObjectIsSealed,
     Native::ObjectFreeze, Native::ObjectIsFrozen,
     Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf,
-    Native::ReflectGet, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty,
+    Native::ReflectGet, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty, Native::ReflectPreventExtensions, Native::ReflectIsExtensible,
     Native::ReflectSet,
     Native::ReflectOwnKeys,
     Native::ReflectGetPrototypeOf,
@@ -293,6 +293,8 @@ impl<H: Host> Vm<H> {
                 Native::ReflectGetOwnPropertyDescriptor,
             ),
             ("defineProperty", Native::ReflectDefineProperty),
+            ("preventExtensions", Native::ReflectPreventExtensions),
+            ("isExtensible", Native::ReflectIsExtensible),
         ] {
             self.set_named(program, reflect, name, self.native_value(native))?;
         }
