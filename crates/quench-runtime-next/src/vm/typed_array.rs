@@ -116,6 +116,9 @@ impl<H: Host> Vm<H> {
         let (buffer, offset, length) = self
             .typed_array_view(this)
             .ok_or_else(|| JsError("Uint8Array receiver is invalid".into()))?;
+        if self.array_buffer_detached(buffer) {
+            return Err(JsError("Uint8Array backing buffer is detached".into()));
+        }
         match native {
             Native::Uint8ArraySet => {
                 let source = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -424,6 +427,9 @@ impl<H: Host> Vm<H> {
             }) => (*buffer, *offset, *length),
             _ => return Ok(false),
         };
+        if self.array_buffer_detached(buffer) {
+            return Err(JsError("Uint8Array backing buffer is detached".into()));
+        }
         if index >= length {
             return Ok(true);
         }
