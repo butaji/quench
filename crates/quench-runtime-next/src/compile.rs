@@ -30,6 +30,16 @@ pub struct Diagnostic {
     span: Span,
 }
 
+impl Diagnostic {
+    pub(crate) fn unsupported(source: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            message: message.into(),
+            span: Span::default(),
+        }
+    }
+}
+
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(

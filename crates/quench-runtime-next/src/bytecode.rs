@@ -466,3 +466,4 @@ mod binary;
 mod disassemble;
 #[cfg(test)]
 mod tests;
+mod validate;
