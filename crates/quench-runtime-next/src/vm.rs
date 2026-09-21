@@ -14,6 +14,7 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 mod array;
+mod array_builtins;
 mod builtins;
 mod coercion;
 mod collections;

@@ -147,6 +147,17 @@ fn array_reverse_mutates_and_returns_the_same_array() {
 }
 
 #[test]
+fn array_shift_and_unshift_preserve_order_and_lengths() {
+    let source = r#"
+      var values = [2, 3];
+      print(values.unshift(0, 1));
+      print(values.shift());
+      print(values.join('-'));
+    "#;
+    assert_eq!(output(source), ["4", "0", "1-2-3"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
