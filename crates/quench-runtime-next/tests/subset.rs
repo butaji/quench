@@ -72,6 +72,16 @@ fn variable_destructuring_reads_object_fields_and_array_indices() {
 }
 
 #[test]
+fn array_is_array_distinguishes_arrays_from_array_like_objects() {
+    assert_eq!(
+        output(
+            "print(Array.isArray([])); print(Array.isArray({ length: 0 })); print(Array.isArray('x'));"
+        ),
+        ["true", "false", "false"],
+    );
+}
+
+#[test]
 fn base_classes_lower_to_constructor_and_prototype_methods() {
     let source = r#"
       class Box {
