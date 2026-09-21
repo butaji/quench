@@ -45,6 +45,10 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn call(&mut self, value: &CallExpression<'_>) -> Register {
+        if let Some(argument) = Self::single_spread(&value.arguments) {
+            let (callee, this) = self.callee(&value.callee);
+            return self.spread_call(callee, this, argument);
+        }
         if let Expression::StaticMemberExpression(item) = &value.callee {
             let (receiver, receiver_path) = match &item.object {
                 Expression::ThisExpression(_) => (None, None),
@@ -136,6 +140,40 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::Move, target, value, 0, 0);
         }
         (base, values.len() as u16)
+    }
+
+    fn single_spread<'a>(values: &'a [Argument<'a>]) -> Option<&'a Expression<'a>> {
+        let [Argument::SpreadElement(spread)] = values else {
+            return None;
+        };
+        Some(&spread.argument)
+    }
+
+    fn spread_call(
+        &mut self,
+        callee: Register,
+        this: Register,
+        argument: &Expression<'_>,
+    ) -> Register {
+        let apply = self.reg();
+        let apply_atom = self.owner.atom("apply");
+        let apply_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            apply,
+            FieldBase::register(callee).0,
+            apply_cache,
+            apply_atom,
+        );
+        let spread = self.expression(argument);
+        let base = self.next_reg;
+        let this_arg = self.reg();
+        self.emit(Op::Move, this_arg, this, 0, 0);
+        let values_arg = self.reg();
+        self.emit(Op::Move, values_arg, spread, 0, 0);
+        let result = self.reg();
+        self.emit(Op::Call, result, apply, callee, (u32::from(base) << 16) | 2);
+        result
     }
 
     pub(super) fn argument_registers(&mut self, values: &[Argument<'_>]) -> Vec<Register> {
