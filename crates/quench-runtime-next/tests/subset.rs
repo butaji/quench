@@ -897,6 +897,16 @@ fn built_in_for_of_uses_array_string_map_and_set_iterators() {
 }
 
 #[test]
+fn map_and_set_for_each_preserve_callback_argument_order() {
+    assert_eq!(
+        output(
+            "var map = new Map([['a', 1], ['b', 2]]); var map_seen = ''; map.forEach(function(value, key, owner) { map_seen = map_seen + key + value + (owner === map); }); var set = new Set([2, 2, 3]); var set_seen = ''; set.forEach(function(value, key, owner) { set_seen = set_seen + value + key + (owner === set); }); print(map_seen); print(set_seen);"
+        ),
+        ["a1trueb2true", "22true33true"],
+    );
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(
