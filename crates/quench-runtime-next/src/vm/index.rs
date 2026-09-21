@@ -96,6 +96,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         if let Some(index) = key.as_int().filter(|index| *index >= 0) {
             let index = index as usize;
+            if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
+                let existing =
+                    index < elements.len() || self.heap.sparse_get(object, index).is_some();
+                if self.frozen.contains(&object)
+                    || self.non_extensible.contains(&object) && !existing
+                {
+                    return Err(JsError("cannot write sealed or frozen array".into()));
+                }
+            }
             if self.typed_array_set(p, object, index, value)? {
                 return Ok(());
             }
