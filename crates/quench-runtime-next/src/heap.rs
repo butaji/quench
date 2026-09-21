@@ -40,9 +40,9 @@ pub(crate) struct Heap {
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GcProfile {
-    pub allocated_kinds: [u64; 8],
-    pub allocated_payload_bytes: [u64; 8],
-    pub allocated_size_buckets: [[u64; 8]; 8],
+    pub allocated_kinds: [u64; 9],
+    pub allocated_payload_bytes: [u64; 9],
+    pub allocated_size_buckets: [[u64; 8]; 9],
     pub roots: u64,
     pub work_items: u64,
     pub max_worklist: u64,
@@ -51,7 +51,7 @@ pub(crate) struct GcProfile {
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
-    pub marked_kinds: [u64; 8],
+    pub marked_kinds: [u64; 9],
 }
 
 #[derive(Default)]
@@ -396,7 +396,11 @@ impl Heap {
                 work.push(*parent);
                 work.extend(slots.iter().copied());
             }
-            Cell::String(_) | Cell::BigInt(_) | Cell::Date(_) | Cell::Error(_) => {}
+            Cell::String(_)
+            | Cell::BigInt(_)
+            | Cell::Symbol(_)
+            | Cell::Date(_)
+            | Cell::Error(_) => {}
         }
     }
 
@@ -409,8 +413,9 @@ impl Heap {
             Cell::Environment { .. } => 3,
             Cell::String(_) => 4,
             Cell::BigInt(_) => 5,
-            Cell::Date(_) => 6,
-            Cell::Error(_) => 7,
+            Cell::Symbol(_) => 6,
+            Cell::Date(_) => 7,
+            Cell::Error(_) => 8,
         }
     }
 
@@ -422,6 +427,7 @@ impl Heap {
             Cell::Function { .. } => size_of::<Object>(),
             Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
             Cell::String(value) | Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
+            Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
         }
     }
 

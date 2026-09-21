@@ -121,6 +121,16 @@ fn bigint_literals_are_heap_values_and_stringify_without_loss() {
 }
 
 #[test]
+fn symbols_are_identity_values_with_explicit_display() {
+    assert_eq!(
+        output(
+            "const first = Symbol('x'); print(first); print(String(first)); print(first === first); print(Symbol('x') === Symbol('x'));"
+        ),
+        ["Symbol(x)", "Symbol(x)", "true", "false"],
+    );
+}
+
+#[test]
 fn method_caches_observe_callable_property_replacement() {
     let source = r#"
       function Box() {}

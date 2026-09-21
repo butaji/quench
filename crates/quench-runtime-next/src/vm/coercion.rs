@@ -58,6 +58,9 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::String(value)) | Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.clone()),
+            Some(Cell::Symbol(description)) => {
+                return Ok(format!("Symbol({})", description.as_deref().unwrap_or("")));
+            }
             Some(Cell::Date(value)) => return Ok(value.to_string()),
             _ => {}
         }
