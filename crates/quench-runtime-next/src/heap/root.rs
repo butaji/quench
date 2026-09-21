@@ -69,8 +69,11 @@ impl RootTable {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.entries.clear();
         self.free.clear();
+        for (slot, entry) in self.entries.iter_mut().enumerate() {
+            entry.value = None;
+            self.free.push(slot as u32);
+        }
     }
 }
 
@@ -89,5 +92,16 @@ mod tests {
         assert!(!roots.remove(first));
         assert!(roots.update(second, Value::number(4.0)));
         assert_eq!(roots.values().collect::<Vec<_>>(), [Value::number(4.0)]);
+    }
+
+    #[test]
+    fn clearing_the_heap_invalidates_pre_reset_handles() {
+        let mut roots = RootTable::default();
+        let old = roots.insert(Value::number(1.0));
+        roots.clear();
+        let new = roots.insert(Value::number(2.0));
+        assert_ne!(old, new);
+        assert!(!roots.update(old, Value::number(3.0)));
+        assert!(roots.update(new, Value::number(4.0)));
     }
 }
