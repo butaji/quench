@@ -25,12 +25,20 @@ impl<H: Host> Vm<H> {
             Native::ReflectSet => {
                 let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let atom = self.intern_atom(&key);
-                self.set_property(
-                    target,
-                    atom,
-                    args.get(2).copied().unwrap_or(Value::UNDEFINED),
-                )?;
-                Ok(Value::TRUE)
+                Ok(
+                    if self
+                        .set_property(
+                            target,
+                            atom,
+                            args.get(2).copied().unwrap_or(Value::UNDEFINED),
+                        )
+                        .is_ok()
+                    {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    },
+                )
             }
             Native::ReflectOwnKeys => self.object_names(target),
             Native::ReflectGetPrototypeOf => self.object_get_prototype_of(target),

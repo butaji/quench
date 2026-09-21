@@ -462,6 +462,7 @@ impl<H: Host> Vm<H> {
             return Err(JsError("cannot redefine non-configurable property".into()));
         }
         let value_atom = self.intern_atom("value");
+        let descriptor_value = self.own_property(descriptor, value_atom);
         if !is_new
             && !current.configurable
             && !current.writable
@@ -471,11 +472,10 @@ impl<H: Host> Vm<H> {
         {
             return Err(JsError("cannot write non-writable property".into()));
         }
-        let value = self
-            .own_property(descriptor, value_atom)
-            .or(existing)
-            .unwrap_or(Value::UNDEFINED);
-        self.set_property(target, atom, value)?;
+        let value = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
+        if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
+            self.set_property(target, atom, value)?;
+        }
         self.descriptors.insert((target, atom), attributes);
         Ok(target)
     }

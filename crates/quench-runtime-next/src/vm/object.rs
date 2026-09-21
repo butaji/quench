@@ -311,6 +311,14 @@ impl<H: Host> Vm<H> {
             let slot = self.shapes[data.shape() as usize]
                 .iter()
                 .position(|key| *key == atom);
+            if slot.is_some()
+                && self
+                    .descriptors
+                    .get(&(object, atom))
+                    .is_some_and(|attributes| !attributes.writable)
+            {
+                return Err(JsError("cannot write non-writable property".into()));
+            }
             let old_is_function = slot
                 .and_then(|slot| self.heap.property_get(data, slot))
                 .is_some_and(|old| self.is_function(old));
