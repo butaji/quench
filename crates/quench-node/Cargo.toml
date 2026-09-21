@@ -8,12 +8,17 @@ autobins = false
 name = "quench-node"
 path = "src/main.rs"
 
+[[bin]]
+name = "quench-node-next"
+path = "src/bin/quench-node-next.rs"
+
 [features]
 execution-trace = ["quench-runtime/execution-trace"]
 
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }
 quench-runtime = { path = "../quench-runtime" }
+quench-runtime-next = { path = "../quench-runtime-next" }
 serde_json = "1"
 walkdir = "2"
 sha2 = "0.10"

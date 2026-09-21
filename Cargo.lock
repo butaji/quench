@@ -2708,6 +2708,7 @@ dependencies = [
  "p521",
  "quench-js-check",
  "quench-runtime",
+ "quench-runtime-next",
  "rand",
  "rsa",
  "serde_json",
