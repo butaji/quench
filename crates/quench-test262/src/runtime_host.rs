@@ -362,7 +362,12 @@ impl Test262Host for RuntimeHost {
     fn configure(&mut self, metadata: &crate::TestMetadata) {
         TEST_CAN_BLOCK.with(|can_block| can_block.set(metadata.can_block));
         TEST_FLOAT16.with(|enabled| {
-            enabled.set(metadata.features.iter().any(|feature| feature == "Float16Array"));
+            enabled.set(
+                metadata
+                    .features
+                    .iter()
+                    .any(|feature| feature == "Float16Array"),
+            );
         });
     }
 
@@ -510,11 +515,8 @@ fn float16_constructor() -> quench_runtime::value::Value {
         quench_runtime::ops::Builtin::Uint16Array,
         receiver,
     );
-    let constructor = quench_runtime::execute::set_property(
-        constructor,
-        "prototype",
-        prototype.clone(),
-    );
+    let constructor =
+        quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
     let constructor = quench_runtime::execute::set_property(
         constructor,
         "name",
@@ -539,9 +541,18 @@ fn float16_constructor() -> quench_runtime::value::Value {
         "constructor",
         &[
             ("value".to_string(), constructor.clone()),
-            ("writable".to_string(), quench_runtime::value::Value::Boolean(true)),
-            ("enumerable".to_string(), quench_runtime::value::Value::Boolean(false)),
-            ("configurable".to_string(), quench_runtime::value::Value::Boolean(true)),
+            (
+                "writable".to_string(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
+            (
+                "enumerable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "configurable".to_string(),
+                quench_runtime::value::Value::Boolean(true),
+            ),
         ],
     )
     .unwrap_or(prototype);

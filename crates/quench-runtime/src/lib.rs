@@ -133,12 +133,20 @@ mod sequences;
 mod special;
 mod statement_control;
 mod statements;
-#[cfg(all(test, feature = "legacy-native-tests", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    test,
+    feature = "legacy-native-tests",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 mod stencil_add_tree_tests;
 mod stencil_admission;
 mod stencil_admission_budget;
 pub mod stencil_arena;
-#[cfg(all(test, feature = "legacy-native-tests", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    test,
+    feature = "legacy-native-tests",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 mod stencil_arithmetic_integration_tests;
 mod stencil_binding;
 #[cfg(all(test, feature = "legacy-native-tests"))]
@@ -150,7 +158,11 @@ mod stencil_bridge_tests;
 mod stencil_cache;
 mod stencil_call_return;
 mod stencil_cfg;
-#[cfg(all(test, feature = "legacy-native-tests", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    test,
+    feature = "legacy-native-tests",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 mod stencil_compare_branch_tests;
 #[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_control_composition_tests;
