@@ -149,7 +149,8 @@ impl<H: Host> Vm<H> {
             Native::ArrayToReversed
             | Native::ArrayToSpliced
             | Native::ArraySort
-            | Native::ArrayToSorted => self.array_modern_native(p, native, this, args),
+            | Native::ArrayToSorted
+            | Native::ArrayToString => self.array_modern_native(p, native, this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {

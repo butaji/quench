@@ -35,6 +35,8 @@ impl<H: Host> Vm<H> {
             ("toSpliced", Native::ArrayToSpliced),
             ("sort", Native::ArraySort),
             ("toSorted", Native::ArrayToSorted),
+            ("toString", Native::ArrayToString),
+            ("toLocaleString", Native::ArrayToString),
         ] {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }

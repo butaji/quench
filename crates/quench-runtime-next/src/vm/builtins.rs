@@ -48,6 +48,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayToSpliced,
     Native::ArraySort,
     Native::ArrayToSorted,
+    Native::ArrayToString,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
