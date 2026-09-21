@@ -51,6 +51,12 @@ impl fmt::Display for JsError {
 }
 
 impl JsError {
+    pub(crate) fn validation(message: String) -> Self {
+        Self(ErrorMessage::from(format!(
+            "invalid residual program: {message}"
+        )))
+    }
+
     fn into_message(self) -> String {
         *self.0.0
     }
