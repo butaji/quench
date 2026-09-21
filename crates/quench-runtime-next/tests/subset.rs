@@ -102,6 +102,16 @@ fn object_destructuring_rest_copies_unexcluded_own_properties() {
 }
 
 #[test]
+fn array_includes_uses_same_value_zero_and_visits_holes() {
+    assert_eq!(
+        output(
+            "print([NaN].includes(NaN)); print(new Array(2).includes(undefined)); print([1, 2, 3].includes(1, '1.5')); print([1, 2, 3].includes(1, Infinity));"
+        ),
+        ["true", "true", "false", "false"],
+    );
+}
+
+#[test]
 fn array_is_array_distinguishes_arrays_from_array_like_objects() {
     assert_eq!(
         output(

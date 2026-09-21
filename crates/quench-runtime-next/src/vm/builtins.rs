@@ -20,6 +20,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayPush,
     Native::ArrayPop,
     Native::ArraySlice,
+    Native::ArrayIncludes,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -290,6 +291,12 @@ impl<H: Host> Vm<H> {
             self.array_proto,
             "slice",
             self.native_value(Native::ArraySlice),
+        )?;
+        self.set_named(
+            program,
+            self.array_proto,
+            "includes",
+            self.native_value(Native::ArrayIncludes),
         )?;
         self.set_named(program, array, "prototype", self.array_proto)?;
         self.set_named(
