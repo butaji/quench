@@ -36,6 +36,10 @@ const NATIVES: &[Native] = &[
     Native::MathMax,
     Native::MathRandom,
     Native::NumberString,
+    Native::Number,
+    Native::NumberIsNaN,
+    Native::NumberIsFinite,
+    Native::NumberIsInteger,
     Native::NumberFixed,
     Native::NumberPrecision,
 ];
@@ -51,6 +55,8 @@ impl<H: Host> Vm<H> {
         self.install_console(program)?;
         self.install_array(program)?;
         self.global(program, "undefined", Value::UNDEFINED)?;
+        self.global(program, "NaN", Value::number(f64::NAN))?;
+        self.global(program, "Infinity", Value::number(f64::INFINITY))?;
         self.global(program, "print", self.native_value(Native::Print))?;
         self.global(program, "Date", self.native_value(Native::Date))?;
         self.set_named(
@@ -78,6 +84,26 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "String", string)?;
         self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
+        let number = self.native_value(Native::Number);
+        self.set_named(
+            program,
+            number,
+            "isNaN",
+            self.native_value(Native::NumberIsNaN),
+        )?;
+        self.set_named(
+            program,
+            number,
+            "isFinite",
+            self.native_value(Native::NumberIsFinite),
+        )?;
+        self.set_named(
+            program,
+            number,
+            "isInteger",
+            self.native_value(Native::NumberIsInteger),
+        )?;
+        self.global(program, "Number", number)?;
         self.global(program, "encodeURI", self.native_value(Native::EncodeUri))?;
         self.global(
             program,

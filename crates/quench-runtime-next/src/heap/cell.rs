@@ -39,6 +39,10 @@ pub(crate) enum Native {
     MathMax,
     MathRandom,
     NumberString,
+    Number,
+    NumberIsNaN,
+    NumberIsFinite,
+    NumberIsInteger,
     NumberFixed,
     NumberPrecision,
 }

@@ -86,6 +86,9 @@ impl<H: Host> Vm<H> {
                 let text = self.to_string(p, value)?;
                 Ok(self.heap.alloc(Cell::String(text)))
             }
+            Native::Number => Ok(Value::number(
+                self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?,
+            )),
             _ => Err(JsError("native is not constructible".into())),
         }
     }
@@ -189,6 +192,10 @@ impl<H: Host> Vm<H> {
                 };
                 self.call_value(p, this, receiver, args.get(1..).unwrap_or_default())
             }
+            Native::Number
+            | Native::NumberIsNaN
+            | Native::NumberIsFinite
+            | Native::NumberIsInteger => self.call_number_native(p, native, args),
             Native::NumberFixed => {
                 let number = self.to_number(p, this)?;
                 let digits = args.first().and_then(|v| v.as_number()).unwrap_or(0.0) as usize;
@@ -301,7 +308,6 @@ impl<H: Host> Vm<H> {
         }
         self.binary_slow(p, op, left, right)
     }
-
     #[cold]
     #[inline(never)]
     pub(super) fn binary_slow(

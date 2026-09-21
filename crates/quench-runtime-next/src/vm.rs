@@ -23,6 +23,7 @@ mod gc;
 mod index;
 mod json;
 mod method_cache;
+mod number;
 mod object;
 mod operations;
 mod primitives;
