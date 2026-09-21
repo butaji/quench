@@ -112,6 +112,16 @@ fn object_prototype_property_is_enumerable_uses_own_slots() {
 }
 
 #[test]
+fn object_prototype_is_prototype_of_walks_canonical_links() {
+    assert_eq!(
+        output(
+            "var base = {}; var child = Object.create(base); print(base.isPrototypeOf(child)); print(Object.prototype.isPrototypeOf(child)); print(child.isPrototypeOf(base));"
+        ),
+        ["true", "true", "false"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(
