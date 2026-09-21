@@ -9,6 +9,9 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn logical(&mut self, value: &LogicalExpression<'_>) -> Register {
+        if value.operator.is_coalesce() {
+            return self.coalesce(value);
+        }
         let left = self.expression(&value.left);
         let dst = self.reg();
         self.emit(Op::Move, dst, left, 0, 0);
