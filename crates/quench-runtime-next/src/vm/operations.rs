@@ -17,6 +17,9 @@ impl<H: Host> Vm<H> {
         if native.is_atomics_native() {
             return self.atomics_native(p, native, args);
         }
+        if native.is_data_view_native() {
+            return self.data_view_native(p, native, this, args);
+        }
         match native {
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);

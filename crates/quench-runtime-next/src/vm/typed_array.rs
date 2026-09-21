@@ -105,7 +105,7 @@ impl<H: Host> Vm<H> {
             return Ok(
                 if matches!(
                     args.first().and_then(|value| self.heap.get(*value)),
-                    Some(Cell::Uint8Array { .. })
+                    Some(Cell::Uint8Array { .. }) | Some(Cell::DataView { .. })
                 ) {
                     Value::TRUE
                 } else {
@@ -409,6 +409,48 @@ impl<H: Host> Vm<H> {
         } else {
             offset
         })
+    }
+
+    pub(super) fn indexed_view_property(&self, object: Value, atom: Atom) -> Option<Value> {
+        match self.heap.get(object) {
+            Some(Cell::Uint8Array { buffer, .. }) => {
+                if atom == self.length_atom || self.lookup_atom("byteLength") == Some(atom) {
+                    return Some(Value::number(
+                        self.typed_array_length(object).unwrap_or(0) as f64
+                    ));
+                }
+                if self.lookup_atom("byteOffset") == Some(atom) {
+                    return Some(Value::number(
+                        self.typed_array_byte_offset(object).unwrap_or(0) as f64,
+                    ));
+                }
+                if self.lookup_atom("buffer") == Some(atom) {
+                    return Some(*buffer);
+                }
+            }
+            Some(Cell::DataView { .. }) => {
+                let (buffer, offset, length) = self.data_view_view(object)?;
+                if self.lookup_atom("byteLength") == Some(atom) {
+                    return Some(Value::number(if self.array_buffer_detached(buffer) {
+                        0.0
+                    } else {
+                        length as f64
+                    }));
+                }
+                if self.lookup_atom("byteOffset") == Some(atom) {
+                    return Some(Value::number(if self.array_buffer_detached(buffer) {
+                        0.0
+                    } else {
+                        offset as f64
+                    }));
+                }
+                if self.lookup_atom("buffer") == Some(atom) {
+                    return Some(buffer);
+                }
+            }
+            _ => {}
+        }
+        None
     }
 
     pub(super) fn typed_array_set(

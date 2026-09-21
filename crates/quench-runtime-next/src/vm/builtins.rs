@@ -81,6 +81,9 @@ const NATIVES: &[Native] = &[
     Native::Uint8ArrayKeys,
     Native::Uint8ArrayValues,
     Native::Uint8ArrayEntries,
+    Native::DataView,
+    Native::DataViewGetUint8,
+    Native::DataViewSetUint8,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -158,6 +161,7 @@ impl<H: Host> Vm<H> {
         self.install_array(program)?;
         self.install_array_buffer(program)?;
         self.install_typed_array(program)?;
+        self.install_data_view(program)?;
         self.install_atomics(program)?;
         self.install_collections(program)?;
         self.install_weak_collections(program)?;

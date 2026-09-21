@@ -463,6 +463,16 @@ fn detached_and_shared_buffers_reject_array_buffer_slice() {
 }
 
 #[test]
+fn data_view_reads_and_writes_the_shared_byte_owner() {
+    assert_eq!(
+        output(
+            "var buffer = new ArrayBuffer(4); var view = new DataView(buffer, 1, 2); print(view.byteLength); print(view.byteOffset); print(view.buffer === buffer); view.setUint8(0, 260); print(view.getUint8(0)); print(new Uint8Array(buffer)[1]); print(ArrayBuffer.isView(view)); try { view.getUint8(2); } catch (error) { print('range'); }"
+        ),
+        ["2", "1", "true", "4", "4", "true", "range"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

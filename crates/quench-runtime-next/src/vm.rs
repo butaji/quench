@@ -22,6 +22,7 @@ mod builtins;
 mod coercion;
 mod collections;
 mod construction;
+mod data_view;
 mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
@@ -89,17 +90,14 @@ impl JsError {
             }),
         })
     }
-
     pub(crate) fn thrown_value(&self) -> Option<Value> {
         self.0.payload.thrown
     }
-
     pub(crate) fn validation(message: String) -> Self {
         Self(ErrorMessage::from(format!(
             "invalid residual program: {message}"
         )))
     }
-
     fn into_message(self) -> String {
         self.0.payload.text.clone()
     }
@@ -203,6 +201,7 @@ pub struct Vm<H> {
     array_proto: Value,
     array_buffer_proto: Value,
     uint8_array_proto: Value,
+    data_view_proto: Value,
     map_proto: Value,
     set_proto: Value,
     weak_map_proto: Value,
@@ -251,6 +250,7 @@ impl<H: Host> Vm<H> {
             array_proto: Value::NULL,
             array_buffer_proto: Value::NULL,
             uint8_array_proto: Value::NULL,
+            data_view_proto: Value::NULL,
             map_proto: Value::NULL,
             set_proto: Value::NULL,
             weak_map_proto: Value::NULL,

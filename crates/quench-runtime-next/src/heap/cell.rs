@@ -84,6 +84,9 @@ pub(crate) enum Native {
     Uint8ArrayKeys,
     Uint8ArrayValues,
     Uint8ArrayEntries,
+    DataView,
+    DataViewGetUint8,
+    DataViewSetUint8,
     Map,
     MapGet,
     MapSet,
@@ -187,6 +190,10 @@ impl Native {
                 | Self::AtomicsIsLockFree
         )
     }
+
+    pub(crate) fn is_data_view_native(self) -> bool {
+        matches!(self, Self::DataViewGetUint8 | Self::DataViewSetUint8)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -247,6 +254,12 @@ pub(crate) enum Cell {
         offset: usize,
         length: usize,
     },
+    DataView {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
     Map {
         object: Object,
         entries: Vec<(Value, Value)>,
@@ -296,6 +309,7 @@ impl Cell {
             | Self::Array { object, .. }
             | Self::ArrayBuffer { object, .. }
             | Self::Uint8Array { object, .. }
+            | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
             | Self::WeakMap { object, .. }
@@ -313,6 +327,7 @@ impl Cell {
             | Self::Array { object, .. }
             | Self::ArrayBuffer { object, .. }
             | Self::Uint8Array { object, .. }
+            | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
             | Self::WeakMap { object, .. }
