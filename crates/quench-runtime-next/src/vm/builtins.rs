@@ -1,13 +1,12 @@
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print,
-    Native::Object,
+    Native::Print, Native::Object,
     Native::ObjectKeys,
     Native::ObjectCreate,
     Native::ObjectAssign,
     Native::ObjectGetPrototypeOf,
-    Native::ObjectSetPrototypeOf,
+    Native::ObjectSetPrototypeOf, Native::ObjectHasOwn,
     Native::ReflectGet,
     Native::ReflectSet,
     Native::ReflectOwnKeys,
@@ -316,6 +315,12 @@ impl<H: Host> Vm<H> {
             object,
             "setPrototypeOf",
             self.native_value(Native::ObjectSetPrototypeOf),
+        )?;
+        self.set_named(
+            program,
+            object,
+            "hasOwn",
+            self.native_value(Native::ObjectHasOwn),
         )?;
         self.global(program, "Object", object)
     }
