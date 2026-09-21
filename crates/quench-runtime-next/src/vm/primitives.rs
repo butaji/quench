@@ -30,6 +30,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
+            Native::StringToString | Native::StringValueOf => Ok(this),
             Native::StringCharCodeAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
                 let Some(Cell::String(text)) = self.heap.get(this) else {

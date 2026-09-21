@@ -142,6 +142,16 @@ fn string_search_uses_utf16_indices_and_positions() {
 }
 
 #[test]
+fn string_value_methods_return_the_canonical_primitive() {
+    assert_eq!(
+        output(
+            "var value = 'quench'; print(value.toString()); print(value.valueOf()); print(value.toString() === value);"
+        ),
+        ["quench", "quench", "true"],
+    );
+}
+
+#[test]
 fn destructuring_defaults_only_evaluate_for_undefined_values() {
     assert_eq!(
         output(
