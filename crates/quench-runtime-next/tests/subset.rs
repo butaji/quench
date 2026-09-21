@@ -434,6 +434,17 @@ fn computed_object_keys_use_indexed_property_semantics() {
 }
 
 #[test]
+fn object_spread_copies_sources_in_literal_order() {
+    let source = r#"
+      var first = { value: 1, first: true };
+      var second = { value: 2, second: true };
+      var object = { ...first, value: 3, ...second, final: 4 };
+      print(object.value); print(object.first); print(object.second); print(object.final);
+    "#;
+    assert_eq!(output(source), ["2", "true", "true", "4"]);
+}
+
+#[test]
 fn destructured_formal_parameters_bind_nested_defaults() {
     let source = r#"
       function summarize({ answer = 40 }, [extra = 2]) { return answer + extra; }
