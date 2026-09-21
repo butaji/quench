@@ -80,6 +80,8 @@ const NATIVES: &[Native] = &[
     Native::Float32Array,
     Native::Float64Array,
     Native::Uint8ArraySet,
+    Native::Uint8ArrayReverse,
+    Native::Uint8ArrayFill,
     Native::Uint8ArraySubarray,
     Native::Uint8ArraySlice,
     Native::Uint8ArrayIncludes,
@@ -442,7 +444,6 @@ impl<H: Host> Vm<H> {
             self.atoms.insert(hash, atom);
         }
     }
-
     pub(super) fn atom_name(&self, atom: Atom) -> &str {
         let index = atom as usize;
         if index < self.atom_text.len() {
@@ -451,7 +452,6 @@ impl<H: Host> Vm<H> {
             &self.dynamic_atoms[index - self.atom_text.len()]
         }
     }
-
     pub(super) fn global(
         &mut self,
         _p: &ResidualProgram,

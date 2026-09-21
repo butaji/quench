@@ -83,6 +83,8 @@ pub(crate) enum Native {
     Float32Array,
     Float64Array,
     Uint8ArraySet,
+    Uint8ArrayReverse,
+    Uint8ArrayFill,
     Uint8ArraySubarray,
     Uint8ArraySlice,
     Uint8ArrayIncludes,
@@ -209,6 +211,8 @@ impl Native {
         matches!(
             self,
             Self::Uint8ArraySet
+                | Self::Uint8ArrayReverse
+                | Self::Uint8ArrayFill
                 | Self::Uint8ArraySubarray
                 | Self::Uint8ArraySlice
                 | Self::Uint8ArrayIncludes

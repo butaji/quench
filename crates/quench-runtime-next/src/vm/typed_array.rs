@@ -37,6 +37,8 @@ impl<H: Host> Vm<H> {
         )?;
         for (name, native) in [
             ("set", Native::Uint8ArraySet),
+            ("reverse", Native::Uint8ArrayReverse),
+            ("fill", Native::Uint8ArrayFill),
             ("subarray", Native::Uint8ArraySubarray),
             ("slice", Native::Uint8ArraySlice),
             ("includes", Native::Uint8ArrayIncludes),
@@ -148,6 +150,34 @@ impl<H: Host> Vm<H> {
             return Err(JsError("Uint8Array backing buffer is detached".into()));
         }
         match native {
+            Native::Uint8ArrayReverse => {
+                for index in 0..length / 2 {
+                    let other = length - index - 1;
+                    let left = self
+                        .typed_array_get(this, index)
+                        .unwrap_or(Value::UNDEFINED);
+                    let right = self
+                        .typed_array_get(this, other)
+                        .unwrap_or(Value::UNDEFINED);
+                    self.typed_array_set(p, this, index, right)?;
+                    self.typed_array_set(p, this, other, left)?;
+                }
+                Ok(this)
+            }
+            Native::Uint8ArrayFill => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let value = Value::number(self.to_number(p, value)?);
+                let start = self.typed_array_relative_index(p, args.get(1), length)?;
+                let end = if args.get(2).is_none() {
+                    length
+                } else {
+                    self.typed_array_relative_index(p, args.get(2), length)?
+                };
+                for index in start.min(end)..start.max(end) {
+                    self.typed_array_set(p, this, index, value)?;
+                }
+                Ok(this)
+            }
             Native::Uint8ArraySet => {
                 let source = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let values = self

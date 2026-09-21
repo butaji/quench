@@ -575,6 +575,16 @@ fn uint8_clamped_array_uses_ties_to_even_conversion() {
 }
 
 #[test]
+fn typed_array_reverse_and_fill_mutate_all_numeric_views() {
+    assert_eq!(
+        output(
+            "var values = new Int16Array([1, 2, 3]); print(values.reverse() === values); print(values.join('-')); print(values.fill(9, 1, -1) === values); print(values.join('-')); var floats = new Float64Array([1, 2, 3]); floats.reverse(); floats.fill(4, -2); print(floats.join('-'));"
+        ),
+        ["true", "3-2-1", "true", "3-9-1", "3-4-4"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
