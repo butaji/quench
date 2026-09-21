@@ -64,6 +64,7 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn chain_expression(&mut self, value: &ChainElement<'_>) -> Register {
         match value {
+            ChainElement::CallExpression(item) => self.optional_call(item),
             ChainElement::StaticMemberExpression(item) => {
                 self.optional_static_get(&item.object, item.property.name.as_str())
             }
@@ -76,5 +77,37 @@ impl FunctionCompiler<'_, '_> {
                 self.literal(Constant::Undefined)
             }
         }
+    }
+
+    pub(super) fn optional_call(&mut self, value: &CallExpression<'_>) -> Register {
+        if let Expression::StaticMemberExpression(item) = &value.callee
+            && item.optional
+        {
+            let receiver = self.expression(&item.object);
+            let (dst, end, jump_property) = self.emit_optional_prefix(receiver);
+            self.patch_instruction(jump_property, self.code.len() as u32);
+            let args = self.argument_registers(&value.arguments);
+            let atom = self.owner.atom(item.property.name.as_str());
+            let cache = self.owner.cache_site();
+            let meta = self.owner.method_sites.len() as u32;
+            self.owner.method_sites.push((atom, cache, args, None));
+            self.emit(Op::CallMethod, dst, receiver, 0, meta);
+            self.patch(end);
+            return dst;
+        }
+        let callee = self.expression(&value.callee);
+        let (dst, end, jump_call) = self.emit_optional_prefix(callee);
+        self.patch_instruction(jump_call, self.code.len() as u32);
+        let (base, count) = self.arguments(&value.arguments);
+        let this = self.literal(Constant::Undefined);
+        self.emit(
+            Op::Call,
+            dst,
+            callee,
+            this,
+            (u32::from(base) << 16) | u32::from(count),
+        );
+        self.patch(end);
+        dst
     }
 }

@@ -137,6 +137,16 @@ fn optional_member_access_short_circuits_nullish_bases() {
 }
 
 #[test]
+fn optional_calls_skip_arguments_and_preserve_method_receivers() {
+    assert_eq!(
+        output(
+            "var calls = 0; var none = null; print(none?.(calls = 1)); print(calls); var object = { run: function(value) { return value + 1; } }; print(object?.run(41));"
+        ),
+        ["undefined", "0", "42"],
+    );
+}
+
+#[test]
 fn bigint_literals_are_heap_values_and_stringify_without_loss() {
     assert_eq!(
         output("print(12345678901234567890n); print(String(7n)); print(7n === 7n);"),

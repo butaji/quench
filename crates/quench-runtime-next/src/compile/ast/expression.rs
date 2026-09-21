@@ -28,6 +28,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::UnaryExpression(value) => self.unary(value),
             Expression::LogicalExpression(value) => self.logical(value),
             Expression::ConditionalExpression(value) => self.conditional(value),
+            Expression::CallExpression(value) if value.optional => self.optional_call(value),
             Expression::CallExpression(value) => self.call(value),
             Expression::NewExpression(value) => self.construct(value),
             Expression::SequenceExpression(value) => self.sequence_expression(value),
