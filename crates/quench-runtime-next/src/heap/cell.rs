@@ -175,7 +175,7 @@ pub(crate) enum Native {
     StringReplaceAll, StringAt, StringCodePointAt, StringToUpperCase, StringToLowerCase, StringConcat, StringNormalize,
     EncodeUri, EncodeUriComponent,
     DecodeUri, DecodeUriComponent,
-    StringFromCharCode, ParseInt,
+    StringFromCharCode, StringFromCodePoint, ParseInt,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
     MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, NumberString, Number,
     NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat,
