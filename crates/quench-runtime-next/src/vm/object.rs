@@ -280,6 +280,7 @@ impl<H: Host> Vm<H> {
                         Value::UNDEFINED
                     });
                 }
+                Some(Cell::Date(_)) => return Ok(self.date_property_native(atom)),
                 Some(Cell::Object(x)) | Some(Cell::Array { object: x, .. }) => object = x.proto,
                 Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
                     object = x.proto
