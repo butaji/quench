@@ -182,6 +182,16 @@ fn reflect_integrity_methods_share_object_state() {
 }
 
 #[test]
+fn string_from_code_point_validates_unicode_scalars() {
+    assert_eq!(
+        output(
+            "print(String.fromCodePoint(0x1f642)); try { String.fromCodePoint(0xd800); } catch (error) { print('range-error'); }"
+        ),
+        ["🙂", "range-error"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(

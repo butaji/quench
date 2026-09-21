@@ -292,6 +292,24 @@ impl<H: Host> Vm<H> {
                 }
                 self.string_from_units(&units)
             }
+            Native::StringFromCodePoint => {
+                let mut text = String::new();
+                for value in args {
+                    let number = self.to_number(p, *value)?;
+                    if !number.is_finite()
+                        || number.fract() != 0.0
+                        || !(0.0..=0x10ffff as f64).contains(&number)
+                    {
+                        return Err(JsError("invalid code point".into()));
+                    }
+                    let code_point = number as u32;
+                    if (0xd800..=0xdfff).contains(&code_point) {
+                        return Err(JsError("invalid code point".into()));
+                    }
+                    text.push(char::from_u32(code_point).expect("validated code point"));
+                }
+                Ok(self.heap.alloc(Cell::String(text)))
+            }
             Native::ParseInt => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, value)?;
