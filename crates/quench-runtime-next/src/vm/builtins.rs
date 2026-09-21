@@ -8,6 +8,11 @@ const NATIVES: &[Native] = &[
     Native::ObjectAssign,
     Native::ObjectGetPrototypeOf,
     Native::ObjectSetPrototypeOf,
+    Native::ReflectGet,
+    Native::ReflectSet,
+    Native::ReflectOwnKeys,
+    Native::ReflectGetPrototypeOf,
+    Native::ReflectSetPrototypeOf,
     Native::JsonParse,
     Native::JsonStringify,
     Native::Array,
@@ -123,6 +128,7 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::DecodeUriComponent),
         )?;
         self.install_json(program)?;
+        self.install_reflect(program)?;
         self.install_math(program)
     }
 
@@ -194,6 +200,41 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::JsonStringify),
         )?;
         self.global(program, "JSON", json)
+    }
+
+    fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let reflect = self.object();
+        self.set_named(
+            program,
+            reflect,
+            "get",
+            self.native_value(Native::ReflectGet),
+        )?;
+        self.set_named(
+            program,
+            reflect,
+            "set",
+            self.native_value(Native::ReflectSet),
+        )?;
+        self.set_named(
+            program,
+            reflect,
+            "ownKeys",
+            self.native_value(Native::ReflectOwnKeys),
+        )?;
+        self.set_named(
+            program,
+            reflect,
+            "getPrototypeOf",
+            self.native_value(Native::ReflectGetPrototypeOf),
+        )?;
+        self.set_named(
+            program,
+            reflect,
+            "setPrototypeOf",
+            self.native_value(Native::ReflectSetPrototypeOf),
+        )?;
+        self.global(program, "Reflect", reflect)
     }
 
     fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {

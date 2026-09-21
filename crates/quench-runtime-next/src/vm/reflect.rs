@@ -1,0 +1,39 @@
+use super::*;
+
+impl<H: Host> Vm<H> {
+    pub(super) fn call_reflect_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        match native {
+            Native::ReflectGet => {
+                let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let atom = self.intern_atom(&key);
+                self.get_property(p, target, atom)
+            }
+            Native::ReflectSet => {
+                let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let atom = self.intern_atom(&key);
+                self.set_property(
+                    target,
+                    atom,
+                    args.get(2).copied().unwrap_or(Value::UNDEFINED),
+                )?;
+                Ok(Value::TRUE)
+            }
+            Native::ReflectOwnKeys => self.object_keys(target),
+            Native::ReflectGetPrototypeOf => self.object_get_prototype_of(target),
+            Native::ReflectSetPrototypeOf => {
+                self.object_set_prototype_of(
+                    target,
+                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
+                )?;
+                Ok(Value::TRUE)
+            }
+            _ => Err(JsError("invalid Reflect native".into())),
+        }
+    }
+}
