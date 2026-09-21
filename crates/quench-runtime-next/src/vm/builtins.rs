@@ -82,6 +82,7 @@ const NATIVES: &[Native] = &[
     Native::Uint8ArraySet,
     Native::Uint8ArrayReverse,
     Native::Uint8ArrayFill,
+    Native::Uint8ArrayCopyWithin,
     Native::Uint8ArraySubarray,
     Native::Uint8ArraySlice,
     Native::Uint8ArrayIncludes,
@@ -463,7 +464,6 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
-
     pub(super) fn set_named(
         &mut self,
         _p: &ResidualProgram,
