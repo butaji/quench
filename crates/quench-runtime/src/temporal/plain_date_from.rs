@@ -640,7 +640,6 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
 }
 
 fn has_invalid_calendar_annotation(text: &str) -> bool {
-    let mut seen = false;
     for annotation in text.split('[').skip(1) {
         let Some(value) = ["u-ca=", "!u-ca="]
             .iter()
@@ -649,10 +648,6 @@ fn has_invalid_calendar_annotation(text: &str) -> bool {
         else {
             continue;
         };
-        if seen {
-            continue;
-        }
-        seen = true;
         return !crate::temporal::plain_date::is_supported_calendar_name(value);
     }
     false

@@ -476,7 +476,6 @@ mod tests {
         );
         assert!(matches!(&value, Value::Number(number) if number.is_nan()));
         case.assert(&value);
-        let selection = plan.property_numeric_at(pc).unwrap().borrow().selection();
         assert_eq!(
             plan.property_numeric_at(pc).unwrap().borrow().entry_count(),
             0

@@ -532,7 +532,6 @@ fn f64_to_half(value: f64) -> u16 {
     }
     let half_exponent = (unbiased + 15) as u16;
     if significand == 0x0400 {
-        significand = 0;
         let half_exponent = half_exponent + 1;
         if half_exponent >= 0x1f {
             return sign | 0x7c00;
