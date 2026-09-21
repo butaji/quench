@@ -17,6 +17,7 @@ impl<H: Host> Vm<H> {
             }
             _ => return Err(JsError("reverse receiver is not array".into())),
         };
+        self.check_array_mutation(this, true, false, false)?;
         for (index, value) in values.into_iter().rev().enumerate() {
             self.set_array_element(this, index, value);
         }
@@ -40,6 +41,9 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("shift receiver is not array".into())),
         };
         let first = values.first().copied().unwrap_or(Value::UNDEFINED);
+        if !values.is_empty() {
+            self.check_array_mutation(this, false, false, true)?;
+        }
         if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
             *elements = Rc::new(values.into_iter().skip(1).collect());
         }
@@ -69,6 +73,7 @@ impl<H: Host> Vm<H> {
         let mut updated = args.to_vec();
         updated.extend(values);
         let length = updated.len();
+        self.check_array_mutation(this, true, !args.is_empty(), true)?;
         if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
             *elements = Rc::new(updated);
         }
@@ -118,6 +123,12 @@ impl<H: Host> Vm<H> {
         let mut updated = values[..start].to_vec();
         updated.extend(args.iter().copied().skip(2));
         updated.extend(values[start + delete_count..].iter().copied());
+        self.check_array_mutation(
+            this,
+            !updated.is_empty(),
+            updated.len() > length,
+            updated.len() < length,
+        )?;
         if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
             *elements = Rc::new(updated);
         }
@@ -163,6 +174,9 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .map(relative)
             .unwrap_or(length);
+        if start < end {
+            self.check_array_mutation(this, true, false, false)?;
+        }
         for index in start.min(end)..end {
             self.set_array_element(this, index, value);
         }
@@ -257,6 +271,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError("push receiver is not array".into()));
         };
         let mut length = self.heap.sparse_length(this).unwrap_or(elements.len());
+        if !args.is_empty() {
+            self.check_array_mutation(this, false, true, false)?;
+        }
         for value in args {
             self.set_array_element(this, length, *value);
             length += 1;
@@ -269,6 +286,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError("pop receiver is not array".into()));
         };
         let dense_len = elements.len();
+        if self.heap.sparse_length(this).unwrap_or(dense_len) > 0 {
+            self.check_array_mutation(this, false, false, true)?;
+        }
         if self.heap.sparse_length(this).is_some() {
             return Ok(self.heap.sparse_pop(this, dense_len));
         }

@@ -212,6 +212,16 @@ fn sealed_and_frozen_arrays_guard_indexed_fast_paths() {
 }
 
 #[test]
+fn sealed_and_frozen_array_mutators_honor_integrity() {
+    assert_eq!(
+        output(
+            "var sealed = [1]; Object.seal(sealed); try { sealed.push(2); } catch (error) { print('sealed-push'); } sealed[0] = 2; print(sealed[0]); var frozen = [1, 2]; Object.freeze(frozen); try { frozen.pop(); } catch (error) { print('frozen-pop'); } try { frozen.fill(3); } catch (error) { print('frozen-fill'); } print(frozen.join(','));"
+        ),
+        ["sealed-push", "2", "frozen-pop", "frozen-fill", "1,2"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(

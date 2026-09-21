@@ -164,6 +164,9 @@ impl<H: Host> Vm<H> {
             values[position] = value;
         }
         if mutate {
+            if !values.is_empty() {
+                self.check_array_mutation(this, true, false, false)?;
+            }
             for (index, value) in values.into_iter().enumerate() {
                 self.set_array_element(this, index, value);
             }
