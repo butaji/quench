@@ -2759,6 +2759,7 @@ dependencies = [
 name = "quench-runtime-next"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "oxc_allocator 0.150.0",
  "oxc_ast 0.150.0",
  "oxc_parser 0.150.0",

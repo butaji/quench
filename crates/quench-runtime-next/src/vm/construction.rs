@@ -84,9 +84,15 @@ impl<H: Host> Vm<H> {
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),
             Native::RegExp => self.construct_regexp_native(p, args),
-            Native::Date => Ok(self.heap.alloc(Cell::Date(
-                HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
-            ))),
+            Native::Date => {
+                let milliseconds = match args.first().copied() {
+                    None => {
+                        HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None)
+                    }
+                    Some(value) => self.to_number(p, value)?,
+                };
+                Ok(self.heap.alloc(Cell::Date(milliseconds)))
+            }
             Native::Error => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, v)?;
