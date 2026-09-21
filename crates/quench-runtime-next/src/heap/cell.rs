@@ -9,7 +9,7 @@ pub(crate) enum Native {
     ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen,
     ObjectSetPrototypeOf, ObjectHasOwn, ObjectPrototypeHasOwnProperty, ObjectPrototypePropertyIsEnumerable, ObjectPrototypeIsPrototypeOf,
-    ReflectGet, ReflectGetOwnPropertyDescriptor, ReflectDefineProperty,
+    ReflectGet, ReflectGetOwnPropertyDescriptor, ReflectDefineProperty, ReflectPreventExtensions, ReflectIsExtensible,
     ReflectSet,
     ReflectOwnKeys,
     ReflectGetPrototypeOf,

@@ -74,6 +74,8 @@ impl<H: Host> Vm<H> {
             Native::ReflectGet
             | Native::ReflectGetOwnPropertyDescriptor
             | Native::ReflectDefineProperty
+            | Native::ReflectPreventExtensions
+            | Native::ReflectIsExtensible
             | Native::ReflectSet
             | Native::ReflectOwnKeys
             | Native::ReflectGetPrototypeOf
