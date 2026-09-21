@@ -58,6 +58,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayBuffer,
     Native::ArrayBufferSlice,
     Native::ArrayBufferIsView,
+    Native::SharedArrayBuffer,
     Native::Uint8Array,
     Native::Uint8ArraySet,
     Native::Uint8ArraySubarray,
@@ -161,6 +162,14 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::ArrayBufferIsView),
         )?;
         self.global(program, "ArrayBuffer", array_buffer)?;
+        let shared_array_buffer = self.native_value(Native::SharedArrayBuffer);
+        self.set_named(
+            program,
+            shared_array_buffer,
+            "prototype",
+            self.array_buffer_proto,
+        )?;
+        self.global(program, "SharedArrayBuffer", shared_array_buffer)?;
         self.install_typed_array(program)?;
         self.install_collections(program)?;
         self.install_weak_collections(program)?;

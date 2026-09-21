@@ -227,9 +227,10 @@ impl<H: Host> Vm<H> {
                 return Ok(v);
             }
             match self.heap.get(object) {
-                Some(Cell::ArrayBuffer { bytes, .. })
+                Some(Cell::ArrayBuffer { bytes, shared, .. })
                     if self.lookup_atom("byteLength") == Some(atom) =>
                 {
+                    let _shared = shared;
                     return Ok(Value::number(bytes.len() as f64));
                 }
                 Some(Cell::Uint8Array { length, .. }) if atom == self.length_atom => {

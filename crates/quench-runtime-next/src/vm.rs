@@ -20,6 +20,7 @@ mod array_modern;
 mod builtins;
 mod coercion;
 mod collections;
+mod construction;
 mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
@@ -79,7 +80,6 @@ impl fmt::Display for JsError {
         f.write_str(&self.0.payload.text)
     }
 }
-
 impl JsError {
     pub(crate) fn thrown(value: Value, message: String) -> Self {
         Self(ErrorMessage {
