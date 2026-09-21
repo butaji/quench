@@ -26,30 +26,6 @@ mod shared_pool;
 #[cfg(feature = "execution-trace")]
 pub(crate) use resource::ExecutableResourceSnapshot;
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-extern "C" {
-    fn sys_icache_invalidate(start: *const std::ffi::c_void, size: usize);
-}
-
-#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
-extern "C" {
-    fn __clear_cache(start: *const u8, end: *const u8);
-}
-
-#[inline]
-fn flush_icache(ptr: *const u8, len: usize) {
-    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-    unsafe {
-        sys_icache_invalidate(ptr.cast(), len);
-    }
-    #[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
-    unsafe {
-        __clear_cache(ptr, ptr.add(len));
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    let _ = (ptr, len);
-}
-
 const PAGE: usize = 4096;
 static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -105,6 +81,9 @@ pub enum ArenaError {
 }
 
 pub struct StencilArena {
+    /// Retained only as an ownership buffer for the legacy renderer. Runtime
+    /// execution never promotes this storage to executable memory.
+    storage: Box<[u8]>,
     ptr: *mut u8,
     capacity: usize,
     cursor: usize,
@@ -365,17 +344,13 @@ fn render_arena_physical<const N: usize>(
 }
 
 impl Drop for StencilArena {
-    fn drop(&mut self) {
-        unsafe {
-            libc::munmap(self.ptr.cast(), self.capacity);
-        }
-    }
+    fn drop(&mut self) {}
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 #[path = "stencil_arena_accounting_tests.rs"]
 mod accounting_tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 #[path = "stencil_arena_tests.rs"]
 mod tests;

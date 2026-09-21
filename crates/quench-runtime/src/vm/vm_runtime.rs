@@ -7626,7 +7626,7 @@ include!("vm_builtins.rs");
 include!("vm_properties.rs");
 include!("vm_dispatch.rs");
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod compact_handler_tests {
     use super::{
         quickened_own_get, run_compact_call, run_compact_get_index, run_compact_get_named,

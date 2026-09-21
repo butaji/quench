@@ -268,25 +268,11 @@ impl StencilArena {
     /// been copied and patched.  No caller receives an executable view before
     /// this succeeds.
     pub fn make_executable(&mut self) -> Result<(), ArenaError> {
-        if self.executable {
-            return Ok(());
-        }
-        // AArch64 has separate data/instruction caches. The bytes were copied
-        // and patched through the RW mapping, so invalidate the published
-        // range before the W^X transition makes it executable.
-        flush_icache(self.ptr, self.cursor);
-        let result = unsafe {
-            libc::mprotect(
-                self.ptr.cast(),
-                self.capacity,
-                libc::PROT_READ | libc::PROT_EXEC,
-            )
-        };
-        if result != 0 {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        self.executable = true;
-        Ok(())
+        // The interpreter rewrite has no native execution tier. Keep the
+        // legacy renderer available as an oracle, but never expose writable
+        // heap storage as executable code.
+        let _ = self;
+        Err(ArenaError::ProtectionFailed)
     }
 
     #[cfg(test)]

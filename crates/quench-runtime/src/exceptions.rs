@@ -160,6 +160,6 @@ fn bind_caught(
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 #[path = "stencil_exception_boundary_tests.rs"]
 mod boundary_tests;

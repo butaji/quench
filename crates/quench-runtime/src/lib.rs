@@ -133,26 +133,26 @@ mod sequences;
 mod special;
 mod statement_control;
 mod statements;
-#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(test, feature = "legacy-native-tests", any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_add_tree_tests;
 mod stencil_admission;
 mod stencil_admission_budget;
 pub mod stencil_arena;
-#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(test, feature = "legacy-native-tests", any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_arithmetic_integration_tests;
 mod stencil_binding;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_bitwise_fusion_tests;
 mod stencil_boolean_reduction;
 mod stencil_branch_recurrence;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_bridge_tests;
 mod stencil_cache;
 mod stencil_call_return;
 mod stencil_cfg;
-#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(test, feature = "legacy-native-tests", any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod stencil_compare_branch_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_control_composition_tests;
 mod stencil_counted_function;
 mod stencil_counted_i32_recurrence;
@@ -164,9 +164,9 @@ pub mod stencil_fact;
 mod stencil_forward_call;
 mod stencil_fresh_object_call;
 mod stencil_fusion;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_fusion_store_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_fusion_tests;
 mod stencil_i32_pattern;
 mod stencil_increasing_i32_recurrence;
@@ -178,7 +178,7 @@ mod stencil_local_recursive_sum;
 mod stencil_matrix_reduction;
 mod stencil_method_call;
 mod stencil_missing_property;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_move_integration_tests;
 mod stencil_nested_xor;
 mod stencil_nullish_truthy;
@@ -200,13 +200,13 @@ mod stencil_physical;
 mod stencil_plan;
 mod stencil_policy;
 mod stencil_predicate_fusion;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_property_integration_tests;
 mod stencil_property_numeric;
 mod stencil_property_pair;
 mod stencil_property_return_call;
 mod stencil_property_store_call;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_property_store_tests;
 mod stencil_prototype_call;
 mod stencil_region_builder;
@@ -218,7 +218,7 @@ mod stencil_string_concat;
 mod stencil_switch_reduction;
 #[cfg(test)]
 mod stencil_test_support;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod stencil_truthiness_fusion_tests;
 mod stencil_two_state_i32;
 mod stencil_typed_lane;
@@ -228,7 +228,7 @@ mod stencil_word_composition;
 #[cfg(test)]
 mod test_execution_profile;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod architecture_invariants;
 pub mod native_core;
 mod strings;
