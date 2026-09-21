@@ -638,6 +638,16 @@ fn regexp_global_and_sticky_calls_advance_and_reset_last_index() {
 }
 
 #[test]
+fn string_replace_and_split_preserve_order_and_limits() {
+    assert_eq!(
+        output(
+            "print('a-b-c'.replace('-', ':')); print('a-b-c'.replace('', '_')); var parts = 'a-b-c'.split('-', 2); print(parts.length); print(parts[0]); print(parts[1]); var units = '😀x'.split(''); print(units.length); print(units[0].length); print(units[2]);"
+        ),
+        ["a:b-c", "_a-b-c", "2", "a", "b", "3", "1", "x"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

@@ -159,6 +159,8 @@ const NATIVES: &[Native] = &[
     Native::StringIncludes,
     Native::StringStartsWith,
     Native::StringEndsWith,
+    Native::StringReplace,
+    Native::StringSplit,
     Native::EncodeUri,
     Native::EncodeUriComponent,
     Native::DecodeUri,
