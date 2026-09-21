@@ -31,6 +31,8 @@ impl<H: Host> Vm<H> {
             ("findIndex", Native::ArrayFindIndex),
             ("reduce", Native::ArrayReduce),
             ("reduceRight", Native::ArrayReduceRight),
+            ("toReversed", Native::ArrayToReversed),
+            ("toSpliced", Native::ArrayToSpliced),
         ] {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }
