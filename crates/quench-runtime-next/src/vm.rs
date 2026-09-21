@@ -115,7 +115,6 @@ struct Frame {
     captured: bool,
     registers: Vec<Value>,
 }
-
 enum NumericArguments<'a> {
     Values(&'a [Value]),
     Registers {
@@ -176,7 +175,6 @@ struct MethodCacheKey {
     shape: u32,
     proto: Value,
 }
-
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy)]
 struct InvalidatedMethod {
@@ -200,6 +198,7 @@ pub struct Vm<H> {
     array_buffer_proto: Value,
     uint8_array_proto: Value,
     uint16_array_proto: Value,
+    uint32_array_proto: Value,
     data_view_proto: Value,
     map_proto: Value,
     set_proto: Value,
@@ -250,6 +249,7 @@ impl<H: Host> Vm<H> {
             array_buffer_proto: Value::NULL,
             uint8_array_proto: Value::NULL,
             uint16_array_proto: Value::NULL,
+            uint32_array_proto: Value::NULL,
             data_view_proto: Value::NULL,
             map_proto: Value::NULL,
             set_proto: Value::NULL,

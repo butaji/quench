@@ -41,7 +41,8 @@ impl<H: Host> Vm<H> {
         let kind = match self.heap.get(source) {
             Some(Cell::Array { .. })
             | Some(Cell::Uint8Array { .. })
-            | Some(Cell::Uint16Array { .. }) => IteratorKind::Array,
+            | Some(Cell::Uint16Array { .. })
+            | Some(Cell::Uint32Array { .. }) => IteratorKind::Array,
             Some(Cell::String(_)) => IteratorKind::String,
             Some(Cell::Map { .. }) => IteratorKind::MapEntries,
             Some(Cell::Set { .. }) => IteratorKind::SetValues,
@@ -74,6 +75,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Array { .. })
                 | Some(Cell::Uint8Array { .. })
                 | Some(Cell::Uint16Array { .. })
+                | Some(Cell::Uint32Array { .. })
         ) {
             return Err(JsError("array iterator receiver is not array".into()));
         }
