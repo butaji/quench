@@ -59,12 +59,9 @@ impl<H: Host> Vm<H> {
 
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
         match self.heap.get(object) {
-            Some(Cell::Uint8Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => Some((*buffer, *offset, *length)),
+            Some(Cell::Uint8Array { buffer, offset, .. }) => {
+                Some((*buffer, *offset, self.typed_array_length(object)?))
+            }
             _ => None,
         }
     }
@@ -174,6 +171,7 @@ impl<H: Host> Vm<H> {
                     object: Self::empty_object(self.array_buffer_proto),
                     bytes: Rc::new(bytes),
                     shared: false,
+                    detached: false,
                 });
                 self.new_typed_view(copied, 0, count)
             }
@@ -304,6 +302,7 @@ impl<H: Host> Vm<H> {
                     object: Self::empty_object(self.array_buffer_proto),
                     bytes: Rc::new(vec![0; length]),
                     shared: false,
+                    detached: false,
                 });
                 (buffer, 0, length, values)
             } else {
@@ -317,6 +316,7 @@ impl<H: Host> Vm<H> {
                     object: Self::empty_object(self.array_buffer_proto),
                     bytes: Rc::new(vec![0; length]),
                     shared: false,
+                    detached: false,
                 });
                 (buffer, 0, length, Vec::new())
             };
@@ -374,7 +374,13 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
         match self.heap.get(object) {
-            Some(Cell::Uint8Array { length, .. }) => Some(*length),
+            Some(Cell::Uint8Array { buffer, length, .. }) => {
+                Some(if self.array_buffer_detached(*buffer) {
+                    0
+                } else {
+                    *length
+                })
+            }
             _ => None,
         }
     }

@@ -57,6 +57,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayOf,
     Native::ArrayBuffer,
     Native::ArrayBufferSlice,
+    Native::ArrayBufferTransfer,
     Native::ArrayBufferIsView,
     Native::SharedArrayBuffer,
     Native::AtomicsLoad,
@@ -155,30 +156,7 @@ impl<H: Host> Vm<H> {
         self.install_object(program)?;
         self.install_console(program)?;
         self.install_array(program)?;
-        let array_buffer = self.native_value(Native::ArrayBuffer);
-        self.array_buffer_proto = self.object();
-        self.set_named(program, array_buffer, "prototype", self.array_buffer_proto)?;
-        self.set_named(
-            program,
-            self.array_buffer_proto,
-            "slice",
-            self.native_value(Native::ArrayBufferSlice),
-        )?;
-        self.set_named(
-            program,
-            array_buffer,
-            "isView",
-            self.native_value(Native::ArrayBufferIsView),
-        )?;
-        self.global(program, "ArrayBuffer", array_buffer)?;
-        let shared_array_buffer = self.native_value(Native::SharedArrayBuffer);
-        self.set_named(
-            program,
-            shared_array_buffer,
-            "prototype",
-            self.array_buffer_proto,
-        )?;
-        self.global(program, "SharedArrayBuffer", shared_array_buffer)?;
+        self.install_array_buffer(program)?;
         self.install_typed_array(program)?;
         self.install_atomics(program)?;
         self.install_collections(program)?;
