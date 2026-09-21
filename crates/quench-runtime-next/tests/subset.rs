@@ -296,6 +296,20 @@ fn array_string_methods_join_elements_instead_of_using_object_stringification() 
 }
 
 #[test]
+fn array_keys_values_and_entries_use_sparse_lengths_and_iterator_results() {
+    let source = r#"
+      var values = [7, 8];
+      var keys = values.keys();
+      var items = values.entries();
+      print(keys.next().value); print(keys.next().value); print(keys.next().done);
+      print(values.values().next().value);
+      var entry = items.next().value;
+      print(entry[0]); print(entry[1]);
+    "#;
+    assert_eq!(output(source), ["0", "1", "true", "7", "0", "7"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

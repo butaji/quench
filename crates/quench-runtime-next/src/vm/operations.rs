@@ -151,6 +151,9 @@ impl<H: Host> Vm<H> {
             | Native::ArraySort
             | Native::ArrayToSorted
             | Native::ArrayToString => self.array_modern_native(p, native, this, args),
+            Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
+                self.array_iterator_native(native, this)
+            }
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {
