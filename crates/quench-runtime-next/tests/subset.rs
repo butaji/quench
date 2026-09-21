@@ -668,6 +668,16 @@ fn string_replace_uses_regexp_global_and_capture_authority() {
 }
 
 #[test]
+fn string_replace_expands_replacement_context_tokens() {
+    assert_eq!(
+        output(
+            r#"print('abc'.replace('b', '$$-$&-$`-$\'')); print('xabcy'.replace(/(b)/, '$1-$$-$`-$\''));"#
+        ),
+        ["a$-b-a-cc", "xab-$-xa-cycy"],
+    );
+}
+
+#[test]
 fn string_replace_calls_function_replacers_with_match_context() {
     assert_eq!(
         output(
