@@ -897,6 +897,16 @@ fn json_round_trip_uses_runtime_objects_and_arrays() {
 }
 
 #[test]
+fn json_stringify_preserves_non_finite_and_rejects_cycles() {
+    assert_eq!(
+        output(
+            "var value = {}; value.self = value; try { JSON.stringify(value); print('no-error'); } catch (error) { print('cycle'); } print(JSON.stringify([NaN, Infinity, -Infinity]));"
+        ),
+        ["cycle", "[null,null,null]"],
+    );
+}
+
+#[test]
 fn uri_codecs_preserve_component_and_reserved_character_rules() {
     assert_eq!(
         output(

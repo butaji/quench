@@ -52,7 +52,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let Some(value) = self.to_json(value, false)? else {
+        let Some(value) = self.to_json(value, false, &mut Vec::new())? else {
             return Ok(Value::UNDEFINED);
         };
         let text = serde_json::to_string(&value)
@@ -65,6 +65,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         value: Value,
         array_element: bool,
+        ancestors: &mut Vec<Value>,
     ) -> Result<Option<serde_json::Value>, JsError> {
         if value.is_undefined() {
             return Ok(array_element.then_some(serde_json::Value::Null));
@@ -76,15 +77,16 @@ impl<H: Host> Vm<H> {
             return Ok(Some(serde_json::Value::Bool(value)));
         }
         if let Some(value) = value.as_number() {
-            let number = if value.is_finite()
-                && value.fract() == 0.0
-                && value >= i64::MIN as f64
-                && value <= i64::MAX as f64
-            {
-                serde_json::Number::from(value as i64)
-            } else {
-                serde_json::Number::from_f64(value).unwrap_or_else(|| serde_json::Number::from(0))
-            };
+            if !value.is_finite() {
+                return Ok(Some(serde_json::Value::Null));
+            }
+            let number =
+                if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+                    serde_json::Number::from(value as i64)
+                } else {
+                    serde_json::Number::from_f64(value)
+                        .unwrap_or_else(|| serde_json::Number::from(0))
+                };
             return Ok(Some(serde_json::Value::Number(number)));
         }
         match self.heap.get(value).cloned() {
@@ -94,14 +96,24 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::Function { .. }) => Ok(None),
             Some(Cell::Array { elements, .. }) => {
-                let mut output = Vec::with_capacity(elements.len());
-                for value in elements.iter().copied() {
-                    output.push(
-                        self.to_json(value, true)?
-                            .unwrap_or(serde_json::Value::Null),
-                    );
+                if ancestors.contains(&value) {
+                    return Err(JsError(
+                        "JSON.stringify cannot serialize cyclic structures".into(),
+                    ));
                 }
-                Ok(Some(serde_json::Value::Array(output)))
+                ancestors.push(value);
+                let mut output = Vec::with_capacity(elements.len());
+                let result = (|| {
+                    for value in elements.iter().copied() {
+                        output.push(
+                            self.to_json(value, true, ancestors)?
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    Ok(Some(serde_json::Value::Array(output)))
+                })();
+                ancestors.pop();
+                result
             }
             Some(Cell::Map { .. })
             | Some(Cell::ArrayBuffer { .. })
@@ -122,18 +134,28 @@ impl<H: Host> Vm<H> {
                 Ok(Some(serde_json::Value::Object(serde_json::Map::new())))
             }
             Some(Cell::Object(object)) => {
+                if ancestors.contains(&value) {
+                    return Err(JsError(
+                        "JSON.stringify cannot serialize cyclic structures".into(),
+                    ));
+                }
+                ancestors.push(value);
                 let shape = object.shape();
                 let keys = self.shapes[shape as usize].clone();
                 let mut output = serde_json::Map::new();
-                for (slot, atom) in keys.into_iter().enumerate() {
-                    let Some(value) = self.heap.property_get(&object, slot) else {
-                        continue;
-                    };
-                    if let Some(value) = self.to_json(value, false)? {
-                        output.insert(self.atom_name(atom).into(), value);
+                let result = (|| {
+                    for (slot, atom) in keys.into_iter().enumerate() {
+                        let Some(value) = self.heap.property_get(&object, slot) else {
+                            continue;
+                        };
+                        if let Some(value) = self.to_json(value, false, ancestors)? {
+                            output.insert(self.atom_name(atom).into(), value);
+                        }
                     }
-                }
-                Ok(Some(serde_json::Value::Object(output)))
+                    Ok(Some(serde_json::Value::Object(output)))
+                })();
+                ancestors.pop();
+                result
             }
             Some(Cell::Date(value)) => Ok(serde_json::Number::from_f64(value)
                 .map(serde_json::Value::Number)
