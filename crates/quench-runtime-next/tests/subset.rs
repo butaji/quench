@@ -753,8 +753,10 @@ fn catch_patterns_bind_the_thrown_value() {
       catch ({ code, detail }) { print(code); print(detail); }
       try { throw [3, 5]; }
       catch ([first, second]) { print(first); print(second); }
+      try { throw {}; }
+      catch ({missing = 9}) { print(missing); }
     "#;
-    assert_eq!(output(source), ["17", "4", "3", "5"]);
+    assert_eq!(output(source), ["17", "4", "3", "5", "9"]);
 }
 
 #[test]
