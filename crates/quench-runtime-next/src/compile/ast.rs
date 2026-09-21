@@ -3,6 +3,7 @@ use super::*;
 mod call;
 mod destructure;
 mod expression;
+mod object;
 mod optional;
 mod statement;
 
