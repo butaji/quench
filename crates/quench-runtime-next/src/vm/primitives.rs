@@ -120,26 +120,7 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(if matched { Value::TRUE } else { Value::FALSE })
             }
-            Native::StringReplace => {
-                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let search =
-                    self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let replacement =
-                    self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                let Some(index) = receiver.find(&search) else {
-                    return Ok(self.heap.alloc(Cell::String(receiver)));
-                };
-                let replacement = replacement.replace("$&", &search);
-                let mut result = String::with_capacity(
-                    receiver.len() + replacement.len().saturating_sub(search.len()),
-                );
-                result.push_str(&receiver[..index]);
-                result.push_str(&replacement);
-                result.push_str(&receiver[index + search.len()..]);
-                Ok(self.heap.alloc(Cell::String(result)))
-            }
+            Native::StringReplace => self.string_replace_native(p, this, args),
             Native::StringSplit => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
