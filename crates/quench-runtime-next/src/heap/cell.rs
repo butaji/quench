@@ -154,7 +154,7 @@ pub(crate) enum Native {
     FunctionApply,
     Date,
     DateNow,
-    DateGetTime, DateValueOf, DateToISOString, DateToJSON,
+    DateGetTime, DateValueOf, DateToISOString, DateToJSON, DateParse, DateUTC,
     Error,
     RegExp,
     RegExpExec,

@@ -148,7 +148,7 @@ const NATIVES: &[Native] = &[
     Native::WeakRefDeref,
     Native::FunctionCall,
     Native::FunctionApply,
-    Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateToISOString, Native::DateToJSON,
+    Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateToISOString, Native::DateToJSON, Native::DateParse, Native::DateUTC,
     Native::Error,
     Native::RegExp,
     Native::RegExpExec,
@@ -218,13 +218,7 @@ impl<H: Host> Vm<H> {
         self.global(program, "NaN", Value::number(f64::NAN))?;
         self.global(program, "Infinity", Value::number(f64::INFINITY))?;
         self.global(program, "print", self.native_value(Native::Print))?;
-        self.global(program, "Date", self.native_value(Native::Date))?;
-        self.set_named(
-            program,
-            self.native_value(Native::Date),
-            "now",
-            self.native_value(Native::DateNow),
-        )?;
+        self.install_date(program)?;
         self.global(program, "Error", self.native_value(Native::Error))?;
         self.install_regexp(program)?;
         let symbol = self.native_value(Native::Symbol);

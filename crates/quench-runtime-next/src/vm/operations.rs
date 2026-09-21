@@ -34,6 +34,7 @@ impl<H: Host> Vm<H> {
             | Native::DateValueOf
             | Native::DateToISOString
             | Native::DateToJSON => self.date_native(native, this),
+            Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::ObjectKeys
             | Native::ObjectCreate
