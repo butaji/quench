@@ -179,6 +179,70 @@ impl<H: Host> Vm<H> {
                     elements: Rc::new(values),
                 }))
             }
+            Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => {
+                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                    return Err(JsError("string method receiver is not a string".into()));
+                };
+                let text = match native {
+                    Native::StringTrim => receiver.trim(),
+                    Native::StringTrimStart => receiver.trim_start(),
+                    Native::StringTrimEnd => receiver.trim_end(),
+                    _ => unreachable!(),
+                };
+                Ok(self.heap.alloc(Cell::String(text.into())))
+            }
+            Native::StringRepeat => {
+                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                    return Err(JsError("string method receiver is not a string".into()));
+                };
+                let count = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                if !count.is_finite() || count < 0.0 {
+                    return Err(JsError("invalid string repeat count".into()));
+                }
+                let count = count.trunc() as usize;
+                let Some(size) = receiver.len().checked_mul(count) else {
+                    return Err(JsError("string repeat count is too large".into()));
+                };
+                if size > 64 * 1024 * 1024 {
+                    return Err(JsError("string repeat count is too large".into()));
+                }
+                Ok(self.heap.alloc(Cell::String(receiver.repeat(count))))
+            }
+            Native::StringPadStart | Native::StringPadEnd => {
+                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                    return Err(JsError("string method receiver is not a string".into()));
+                };
+                let target =
+                    self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                if !target.is_finite() || target <= 0.0 {
+                    return Ok(self.heap.alloc(Cell::String(receiver)));
+                }
+                let target = target.trunc().min(64.0 * 1024.0 * 1024.0) as usize;
+                let receiver_units: Vec<u16> = receiver.encode_utf16().collect();
+                if receiver_units.len() >= target {
+                    return Ok(self.heap.alloc(Cell::String(receiver)));
+                }
+                let fill = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let fill_units: Vec<u16> = fill.encode_utf16().collect();
+                if fill_units.is_empty() {
+                    return Ok(self.heap.alloc(Cell::String(receiver)));
+                }
+                let fill_len = target - receiver_units.len();
+                let mut padding = Vec::with_capacity(fill_len);
+                while padding.len() < fill_len {
+                    let remaining = fill_len - padding.len();
+                    padding.extend(fill_units.iter().copied().take(remaining));
+                }
+                let mut units = Vec::with_capacity(target);
+                if native == Native::StringPadEnd {
+                    units.extend(receiver_units);
+                    units.extend(padding);
+                } else {
+                    units.extend(padding);
+                    units.extend(receiver_units);
+                }
+                self.string_from_units(&units)
+            }
             Native::EncodeUri | Native::EncodeUriComponent => {
                 let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 Ok(self.heap.alloc(Cell::String(encode_uri(
