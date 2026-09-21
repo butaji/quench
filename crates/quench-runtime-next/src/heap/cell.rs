@@ -6,6 +6,7 @@ use std::rc::Rc;
 pub(crate) enum Native {
     Print,
     Object,
+    ObjectKeys,
     Array,
     ArrayIsArray,
     ArrayPush,

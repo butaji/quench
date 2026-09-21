@@ -1,6 +1,21 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn object_keys(&mut self, object: Value) -> Result<Value, JsError> {
+        let keys = self
+            .object_data(object)
+            .map(|data| self.shapes[data.shape() as usize].clone())
+            .ok_or_else(|| JsError("Object.keys target is not an object".into()))?;
+        let values = keys
+            .iter()
+            .map(|atom| self.heap.alloc(Cell::String(self.atom_name(*atom).into())))
+            .collect();
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
+    }
+
     #[inline(always)]
     pub(super) fn resolve_field_base(&self, frame: usize, base: FieldBase) -> Value {
         match base.register_index() {

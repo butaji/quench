@@ -82,6 +82,16 @@ fn array_is_array_distinguishes_arrays_from_array_like_objects() {
 }
 
 #[test]
+fn object_keys_reflect_own_shape_order() {
+    assert_eq!(
+        output(
+            "var object = { first: 1, second: 2 }; var keys = Object.keys(object); print(keys[0]); print(keys[1]);"
+        ),
+        ["first", "second"],
+    );
+}
+
+#[test]
 fn base_classes_lower_to_constructor_and_prototype_methods() {
     let source = r#"
       class Box {
