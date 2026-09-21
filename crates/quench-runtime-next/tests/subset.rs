@@ -473,6 +473,16 @@ fn data_view_reads_and_writes_the_shared_byte_owner() {
 }
 
 #[test]
+fn data_view_integer_accessors_honor_width_sign_and_endianness() {
+    assert_eq!(
+        output(
+            "var view = new DataView(new ArrayBuffer(4)); view.setInt8(0, -2); view.setUint16(1, 4660); print(view.getInt8(0)); print(view.getUint16(1)); print(view.getUint16(1, true)); print(view.getInt16(1)); view.setInt16(2, -2, true); print(view.getUint16(2)); print(view.getInt16(2, true));"
+        ),
+        ["-2", "4660", "13330", "4660", "65279", "-2"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

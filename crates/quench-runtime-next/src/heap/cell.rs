@@ -87,6 +87,12 @@ pub(crate) enum Native {
     DataView,
     DataViewGetUint8,
     DataViewSetUint8,
+    DataViewGetInt8,
+    DataViewSetInt8,
+    DataViewGetUint16,
+    DataViewSetUint16,
+    DataViewGetInt16,
+    DataViewSetInt16,
     Map,
     MapGet,
     MapSet,
@@ -192,7 +198,17 @@ impl Native {
     }
 
     pub(crate) fn is_data_view_native(self) -> bool {
-        matches!(self, Self::DataViewGetUint8 | Self::DataViewSetUint8)
+        matches!(
+            self,
+            Self::DataViewGetUint8
+                | Self::DataViewSetUint8
+                | Self::DataViewGetInt8
+                | Self::DataViewSetInt8
+                | Self::DataViewGetUint16
+                | Self::DataViewSetUint16
+                | Self::DataViewGetInt16
+                | Self::DataViewSetInt16
+        )
     }
 }
 
