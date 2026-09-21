@@ -453,6 +453,16 @@ fn array_buffer_transfer_detaches_source_and_preserves_moved_bytes() {
 }
 
 #[test]
+fn detached_and_shared_buffers_reject_array_buffer_slice() {
+    assert_eq!(
+        output(
+            "var buffer = new ArrayBuffer(2); var view = new Uint8Array(buffer, 1, 1); var moved = buffer.transfer(); print(view.byteOffset); try { buffer.slice(); } catch (error) { print('detached'); } var shared = new SharedArrayBuffer(2); try { shared.slice(); } catch (error) { print('shared'); }"
+        ),
+        ["0", "detached", "shared"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

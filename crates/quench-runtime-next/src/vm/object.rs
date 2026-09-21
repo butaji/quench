@@ -162,9 +162,9 @@ impl<H: Host> Vm<H> {
             ));
         }
         if self.lookup_atom("byteOffset") == Some(atom)
-            && let Some(Cell::Uint8Array { offset, .. }) = self.heap.get(object)
+            && let Some(offset) = self.typed_array_byte_offset(object)
         {
-            return Ok(Value::number(*offset as f64));
+            return Ok(Value::number(offset as f64));
         }
         if self.lookup_atom("buffer") == Some(atom)
             && let Some(Cell::Uint8Array { buffer, .. }) = self.heap.get(object)
@@ -246,10 +246,10 @@ impl<H: Host> Vm<H> {
                         self.typed_array_length(object).unwrap_or(0) as f64
                     ));
                 }
-                Some(Cell::Uint8Array { offset, .. })
-                    if self.lookup_atom("byteOffset") == Some(atom) =>
-                {
-                    return Ok(Value::number(*offset as f64));
+                Some(Cell::Uint8Array { .. }) if self.lookup_atom("byteOffset") == Some(atom) => {
+                    return Ok(Value::number(
+                        self.typed_array_byte_offset(object).unwrap_or(0) as f64,
+                    ));
                 }
                 Some(Cell::Uint8Array { buffer, .. })
                     if self.lookup_atom("buffer") == Some(atom) =>
@@ -411,7 +411,6 @@ impl<H: Host> Vm<H> {
                 .and_then(|object| self.heap.property_get(object, slot))
                 .is_some_and(|old| self.is_function(old))
     }
-
     fn record_field_cache(&mut self, site: u16, cache: FieldCache) {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site as usize) };
@@ -439,7 +438,6 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(site as usize) = table_index;
         }
     }
-
     #[inline(always)]
     fn megamorphic_field_cache(&self, site: u16, shape: u32) -> Option<FieldCache> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;

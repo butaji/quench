@@ -73,7 +73,12 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let bytes = match self.heap.get(this) {
-            Some(Cell::ArrayBuffer { bytes, .. }) => Rc::clone(bytes),
+            Some(Cell::ArrayBuffer {
+                bytes,
+                shared,
+                detached,
+                ..
+            }) if !shared && !detached => Rc::clone(bytes),
             _ => return Err(JsError("ArrayBuffer.slice receiver is invalid".into())),
         };
         let length = bytes.len();

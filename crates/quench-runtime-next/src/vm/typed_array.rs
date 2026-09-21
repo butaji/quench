@@ -396,6 +396,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(super) fn typed_array_byte_offset(&self, object: Value) -> Option<usize> {
+        let (buffer, offset) = match self.heap.get(object) {
+            Some(Cell::Uint8Array { buffer, offset, .. }) => (*buffer, *offset),
+            _ => return None,
+        };
+        Some(if self.array_buffer_detached(buffer) {
+            0
+        } else {
+            offset
+        })
+    }
+
     pub(super) fn typed_array_set(
         &mut self,
         p: &ResidualProgram,
