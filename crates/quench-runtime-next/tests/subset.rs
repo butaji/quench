@@ -668,6 +668,16 @@ fn string_split_uses_regexp_captures_and_limit() {
 }
 
 #[test]
+fn string_match_and_search_share_regexp_matching() {
+    assert_eq!(
+        output(
+            "var match = 'ab ab'.match(/(a)(b)/); print(match[0]); print(match[1]); print(match.index); print('xxab'.search(/ab/)); var all = 'ab ab'.match(/ab/g); print(all.length); print(all[1]);"
+        ),
+        ["ab", "a", "0", "2", "2", "ab"],
+    );
+}
+
+#[test]
 fn string_trim_repeat_and_padding_use_utf16_lengths() {
     assert_eq!(
         output(
