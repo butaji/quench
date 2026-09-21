@@ -22,6 +22,13 @@ impl<H: Host> Vm<H> {
             ("indexOf", Native::ArrayIndexOf),
             ("copyWithin", Native::ArrayCopyWithin),
             ("with", Native::ArrayWith),
+            ("forEach", Native::ArrayForEach),
+            ("map", Native::ArrayMap),
+            ("filter", Native::ArrayFilter),
+            ("some", Native::ArraySome),
+            ("every", Native::ArrayEvery),
+            ("find", Native::ArrayFind),
+            ("findIndex", Native::ArrayFindIndex),
         ] {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }

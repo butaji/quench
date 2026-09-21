@@ -14,6 +14,13 @@ impl<H: Host> Vm<H> {
             Native::ArrayIndexOf => self.array_index_of_native(p, this, args),
             Native::ArrayCopyWithin => self.array_copy_within_native(p, this, args),
             Native::ArrayWith => self.array_with_native(p, this, args),
+            Native::ArrayForEach
+            | Native::ArrayMap
+            | Native::ArrayFilter
+            | Native::ArraySome
+            | Native::ArrayEvery
+            | Native::ArrayFind
+            | Native::ArrayFindIndex => self.array_callback_native(p, native, this, args),
             _ => unreachable!("non-indexed native routed to array index dispatch"),
         }
     }
@@ -247,6 +254,65 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),
         }))
+    }
+
+    pub(super) fn array_callback_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (elements, length) = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => (
+                Rc::clone(elements),
+                self.heap.sparse_length(this).unwrap_or(elements.len()),
+            ),
+            _ => return Err(JsError("array callback receiver is not array".into())),
+        };
+        let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
+            return Err(JsError("array callback is not callable".into()));
+        }
+        let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let values = (0..length)
+            .map(|index| {
+                elements
+                    .get(index)
+                    .copied()
+                    .or_else(|| self.heap.sparse_get(this, index))
+                    .unwrap_or(Value::UNDEFINED)
+            })
+            .collect::<Vec<_>>();
+        let mut output = Vec::new();
+        for (index, value) in values.iter().copied().enumerate() {
+            let callback_args = [value, Value::number(index as f64), this];
+            let result = self.call_value(p, callback, this_arg, &callback_args)?;
+            match native {
+                Native::ArrayForEach => {}
+                Native::ArrayMap => output.push(result),
+                Native::ArrayFilter if self.truthy(result) => output.push(value),
+                Native::ArraySome if self.truthy(result) => return Ok(Value::TRUE),
+                Native::ArrayEvery if !self.truthy(result) => return Ok(Value::FALSE),
+                Native::ArrayFind if self.truthy(result) => return Ok(value),
+                Native::ArrayFindIndex if self.truthy(result) => {
+                    return Ok(Value::number(index as f64));
+                }
+                _ => {}
+            }
+        }
+        match native {
+            Native::ArrayForEach => Ok(Value::UNDEFINED),
+            Native::ArrayMap | Native::ArrayFilter => Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(output),
+            })),
+            Native::ArraySome => Ok(Value::FALSE),
+            Native::ArrayEvery => Ok(Value::TRUE),
+            Native::ArrayFind => Ok(Value::UNDEFINED),
+            Native::ArrayFindIndex => Ok(Value::number(-1.0)),
+            _ => unreachable!("non-callback native routed to callback dispatch"),
+        }
     }
 
     fn array_strict_equal(&self, left: Value, right: Value) -> bool {
