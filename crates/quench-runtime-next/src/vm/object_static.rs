@@ -101,6 +101,12 @@ impl<H: Host> Vm<H> {
         self.set_named(
             program,
             object,
+            "getOwnPropertyDescriptors",
+            self.native_value(Native::ObjectGetOwnPropertyDescriptors),
+        )?;
+        self.set_named(
+            program,
+            object,
             "values",
             self.native_value(Native::ObjectValues),
         )?;
@@ -134,6 +140,9 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectGetOwnPropertyDescriptor => {
                 self.object_get_own_property_descriptor(p, args)
+            }
+            Native::ObjectGetOwnPropertyDescriptors => {
+                self.object_get_own_property_descriptors(p, args)
             }
             Native::ObjectValues => {
                 self.object_values(args.first().copied().unwrap_or(Value::UNDEFINED))
@@ -318,6 +327,23 @@ impl<H: Host> Vm<H> {
             self.set_property(descriptor, atom, value)?;
         }
         Ok(descriptor)
+    }
+
+    fn object_get_own_property_descriptors(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let target = self.box_object(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let data = self.object_data(target).expect("boxed target is object");
+        let keys = self.ordered_shape(data);
+        let result = self.object();
+        for (atom, _) in keys {
+            let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+            let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+            self.set_property(result, atom, descriptor)?;
+        }
+        Ok(result)
     }
 }
 

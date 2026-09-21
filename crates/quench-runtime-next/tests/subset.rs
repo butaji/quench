@@ -132,6 +132,16 @@ fn own_property_descriptors_come_from_shape_slots() {
 }
 
 #[test]
+fn own_property_descriptors_preserve_ordered_keys() {
+    assert_eq!(
+        output(
+            "var descriptors = Object.getOwnPropertyDescriptors({ beta: 2, 2: 2, 1: 1 }); print(Object.keys(descriptors).join(',')); print(descriptors[1].value); print(descriptors[2].value); print(descriptors.beta.value);"
+        ),
+        ["1,2,beta", "1", "2", "2"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(
