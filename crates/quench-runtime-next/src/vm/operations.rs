@@ -1,35 +1,6 @@
 use super::*;
 use crate::host::{CapabilityId, HostContext};
-macro_rules! numeric_integer_binary {
-    ($op:expr, $a:expr, $b:expr) => {
-        match $op {
-            7 => Some(if $a >= $b { Value::TRUE } else { Value::FALSE }),
-            8 => Some(
-                $a.checked_add($b)
-                    .map(Value::integer)
-                    .unwrap_or_else(|| Value::number($a as f64 + $b as f64)),
-            ),
-            10 => Some(
-                $a.checked_mul($b)
-                    .map(Value::integer)
-                    .unwrap_or_else(|| Value::number($a as f64 * $b as f64)),
-            ),
-            15 => Some(Value::integer($a >> ($b as u32 & 31))),
-            19 => Some(Value::integer($a & $b)),
-            _ => None,
-        }
-    };
-}
-
 impl<H: Host> Vm<H> {
-    #[inline(always)]
-    pub(super) fn numeric_binary(&self, op: u32, left: Value, right: Value) -> Option<Value> {
-        let Some((a, b)) = Value::int_pair(left, right) else {
-            return None;
-        };
-        numeric_integer_binary!(op, a, b)
-    }
-
     pub(super) fn construct_value(
         &mut self,
         p: &ResidualProgram,
@@ -161,6 +132,9 @@ impl<H: Host> Vm<H> {
             Native::ArrayUnshift => self.array_unshift_native(this, args),
             Native::ArraySplice => self.array_splice_native(p, this, args),
             Native::ArrayFill => self.array_fill_native(p, this, args),
+            Native::ArrayAt | Native::ArrayLastIndexOf => {
+                self.array_indexed_native(p, native, this, args)
+            }
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {

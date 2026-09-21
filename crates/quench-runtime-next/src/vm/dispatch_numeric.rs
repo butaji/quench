@@ -1,5 +1,36 @@
 use super::*;
 
+macro_rules! numeric_integer_binary {
+    ($op:expr, $a:expr, $b:expr) => {
+        match $op {
+            7 => Some(if $a >= $b { Value::TRUE } else { Value::FALSE }),
+            8 => Some(
+                $a.checked_add($b)
+                    .map(Value::integer)
+                    .unwrap_or_else(|| Value::number($a as f64 + $b as f64)),
+            ),
+            10 => Some(
+                $a.checked_mul($b)
+                    .map(Value::integer)
+                    .unwrap_or_else(|| Value::number($a as f64 * $b as f64)),
+            ),
+            15 => Some(Value::integer($a >> ($b as u32 & 31))),
+            19 => Some(Value::integer($a & $b)),
+            _ => None,
+        }
+    };
+}
+
+impl<H: Host> Vm<H> {
+    #[inline(always)]
+    pub(super) fn numeric_binary(&self, op: u32, left: Value, right: Value) -> Option<Value> {
+        let Some((a, b)) = Value::int_pair(left, right) else {
+            return None;
+        };
+        numeric_integer_binary!(op, a, b)
+    }
+}
+
 macro_rules! numeric_integer_semantic {
     (add, $left:expr, $right:expr) => {
         $left
