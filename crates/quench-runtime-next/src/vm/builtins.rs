@@ -72,6 +72,7 @@ const NATIVES: &[Native] = &[
     Native::AtomicsIsLockFree,
     Native::Uint8Array,
     Native::Uint16Array,
+    Native::Uint32Array,
     Native::Uint8ArraySet,
     Native::Uint8ArraySubarray,
     Native::Uint8ArraySlice,

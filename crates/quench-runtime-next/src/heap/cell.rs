@@ -75,6 +75,7 @@ pub(crate) enum Native {
     AtomicsIsLockFree,
     Uint8Array,
     Uint16Array,
+    Uint32Array,
     Uint8ArraySet,
     Uint8ArraySubarray,
     Uint8ArraySlice,
@@ -172,6 +173,7 @@ pub(crate) enum Native {
 pub(crate) enum TypedArrayKind {
     Uint8,
     Uint16,
+    Uint32,
 }
 
 impl TypedArrayKind {
@@ -179,6 +181,7 @@ impl TypedArrayKind {
         match self {
             Self::Uint8 => 1,
             Self::Uint16 => 2,
+            Self::Uint32 => 4,
         }
     }
 }
@@ -308,6 +311,12 @@ pub(crate) enum Cell {
         offset: usize,
         length: usize,
     },
+    Uint32Array {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
     DataView {
         object: Object,
         buffer: Value,
@@ -364,6 +373,7 @@ impl Cell {
             | Self::ArrayBuffer { object, .. }
             | Self::Uint8Array { object, .. }
             | Self::Uint16Array { object, .. }
+            | Self::Uint32Array { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
@@ -383,6 +393,7 @@ impl Cell {
             | Self::ArrayBuffer { object, .. }
             | Self::Uint8Array { object, .. }
             | Self::Uint16Array { object, .. }
+            | Self::Uint32Array { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }

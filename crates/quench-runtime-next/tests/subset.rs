@@ -503,6 +503,25 @@ fn uint16_array_shares_bytes_and_inherits_typed_methods() {
 }
 
 #[test]
+fn uint32_array_preserves_four_byte_elements_and_alignment() {
+    assert_eq!(
+        output(
+            "var values = new Uint32Array([4294967297, -1]); print(values.length); print(values.byteLength); print(values[0]); print(values[1]); var buffer = new ArrayBuffer(8); var view = new Uint32Array(buffer); view[0] = 305419896; print(view[0]); print(view.byteLength); try { new Uint32Array(buffer, 2); } catch (error) { print('alignment'); } print(view.buffer === buffer);"
+        ),
+        [
+            "2",
+            "8",
+            "1",
+            "4294967295",
+            "305419896",
+            "8",
+            "alignment",
+            "true"
+        ],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

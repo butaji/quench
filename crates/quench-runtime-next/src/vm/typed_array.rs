@@ -55,13 +55,15 @@ impl<H: Host> Vm<H> {
             )?;
         }
         self.global(program, "Uint8Array", uint8_array)?;
-        self.install_uint16_array(program)
+        self.install_uint16_array(program)?;
+        self.install_uint32_array(program)
     }
 
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
         match self.heap.get(object) {
             Some(Cell::Uint8Array { buffer, offset, .. })
-            | Some(Cell::Uint16Array { buffer, offset, .. }) => {
+            | Some(Cell::Uint16Array { buffer, offset, .. })
+            | Some(Cell::Uint32Array { buffer, offset, .. }) => {
                 Some((*buffer, *offset, self.typed_array_length(object)?))
             }
             _ => None,
@@ -109,6 +111,7 @@ impl<H: Host> Vm<H> {
                     args.first().and_then(|value| self.heap.get(*value)),
                     Some(Cell::Uint8Array { .. })
                         | Some(Cell::Uint16Array { .. })
+                        | Some(Cell::Uint32Array { .. })
                         | Some(Cell::DataView { .. })
                 ) {
                     Value::TRUE
@@ -266,6 +269,12 @@ impl<H: Host> Vm<H> {
                 offset,
                 length,
             }),
+            TypedArrayKind::Uint32 => self.heap.alloc(Cell::Uint32Array {
+                object: Self::empty_object(self.uint32_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
         })
     }
 
@@ -373,6 +382,14 @@ impl<H: Host> Vm<H> {
             0
         } else {
             number.trunc().rem_euclid(65_536.0) as u16
+        }
+    }
+
+    pub(super) fn uint32_from_value(number: f64) -> u32 {
+        if number.is_nan() || number == 0.0 {
+            0
+        } else {
+            number.trunc().rem_euclid(4_294_967_296.0) as u32
         }
     }
 }
