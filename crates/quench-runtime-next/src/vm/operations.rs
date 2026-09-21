@@ -119,6 +119,7 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
             }
+            Native::ObjectAssign => self.object_assign(args),
             Native::JsonParse => self.json_parse(p, args),
             Native::JsonStringify => self.json_stringify(p, args),
             Native::MathLog => {
