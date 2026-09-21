@@ -1,6 +1,34 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn object_assign(&mut self, args: &[Value]) -> Result<Value, JsError> {
+        let target = args
+            .first()
+            .copied()
+            .filter(|value| self.object_data(*value).is_some())
+            .ok_or_else(|| JsError("Object.assign target is not an object".into()))?;
+        for source in args.iter().copied().skip(1) {
+            let Some(data) = self.object_data(source) else {
+                continue;
+            };
+            let shape = data.shape();
+            let keys = self.shapes[shape as usize].clone();
+            let values = keys
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, atom)| {
+                    self.heap
+                        .property_get(data, slot)
+                        .map(|value| (*atom, value))
+                })
+                .collect::<Vec<_>>();
+            for (atom, value) in values {
+                self.set_property(target, atom, value)?;
+            }
+        }
+        Ok(target)
+    }
+
     pub(super) fn object_keys(&mut self, object: Value) -> Result<Value, JsError> {
         let keys = self
             .object_data(object)
