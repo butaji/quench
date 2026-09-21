@@ -78,6 +78,9 @@ impl<H: Host> Vm<H> {
         if Self::is_collection_native(native) {
             return self.call_collection_native(native, this, args);
         }
+        if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
+            return result;
+        }
         match native {
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
