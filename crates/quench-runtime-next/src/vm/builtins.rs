@@ -6,6 +6,8 @@ const NATIVES: &[Native] = &[
     Native::ObjectKeys,
     Native::ObjectCreate,
     Native::ObjectAssign,
+    Native::ObjectGetPrototypeOf,
+    Native::ObjectSetPrototypeOf,
     Native::JsonParse,
     Native::JsonStringify,
     Native::Array,
@@ -160,6 +162,18 @@ impl<H: Host> Vm<H> {
             object,
             "assign",
             self.native_value(Native::ObjectAssign),
+        )?;
+        self.set_named(
+            program,
+            object,
+            "getPrototypeOf",
+            self.native_value(Native::ObjectGetPrototypeOf),
+        )?;
+        self.set_named(
+            program,
+            object,
+            "setPrototypeOf",
+            self.native_value(Native::ObjectSetPrototypeOf),
         )?;
         self.global(program, "Object", object)
     }

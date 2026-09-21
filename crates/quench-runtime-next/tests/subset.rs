@@ -112,6 +112,16 @@ fn object_assign_copies_sources_in_argument_order() {
 }
 
 #[test]
+fn object_prototype_controls_follow_the_object_proto_slot() {
+    assert_eq!(
+        output(
+            "var first = { answer: 1 }; var second = { answer: 42 }; var object = {}; Object.setPrototypeOf(object, first); print(Object.getPrototypeOf(object).answer); Object.setPrototypeOf(object, second); print(object.answer);"
+        ),
+        ["1", "42"],
+    );
+}
+
+#[test]
 fn json_round_trip_uses_runtime_objects_and_arrays() {
     assert_eq!(
         output(
