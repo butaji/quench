@@ -242,6 +242,21 @@ fn array_callback_methods_share_user_function_invocation() {
 }
 
 #[test]
+fn array_reduce_methods_handle_initial_values_and_direction() {
+    let source = r#"
+      var values = [1, 2, 3];
+      print(values.reduce(function (accumulator, value) { return accumulator + value; }, 0));
+      print(values.reduceRight(function (accumulator, value) { return accumulator - value; }));
+      try { [].reduce(function (accumulator, value) { return accumulator + value; }); }
+      catch (error) { print(error); }
+    "#;
+    assert_eq!(
+        output(source),
+        ["6", "0", "reduce of empty array with no initial value"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
