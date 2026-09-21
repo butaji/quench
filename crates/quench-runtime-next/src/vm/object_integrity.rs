@@ -80,6 +80,9 @@ impl<H: Host> Vm<H> {
             return Ok(target);
         }
         self.non_extensible.insert(target);
+        if freeze {
+            self.frozen.insert(target);
+        }
         let keys = self
             .object_data(target)
             .map(|data| {

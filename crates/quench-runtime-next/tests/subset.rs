@@ -202,6 +202,16 @@ fn non_extensible_prototypes_are_stable() {
 }
 
 #[test]
+fn sealed_and_frozen_arrays_guard_indexed_fast_paths() {
+    assert_eq!(
+        output(
+            "var sealed = [1]; Object.seal(sealed); sealed[0] = 2; print(sealed[0]); try { sealed[1] = 3; } catch (error) { print('sealed'); } var frozen = [1]; Object.freeze(frozen); try { frozen[0] = 2; } catch (error) { print('frozen'); } print(frozen[0]);"
+        ),
+        ["2", "sealed", "frozen", "1"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(

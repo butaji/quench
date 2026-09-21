@@ -262,6 +262,7 @@ pub struct Vm<H> {
     object_shapes: Vec<u32>,
     descriptors: FxHashMap<(Value, Atom), PropertyAttributes>,
     non_extensible: FxHashSet<Value>,
+    frozen: FxHashSet<Value>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -385,6 +386,7 @@ impl<H: Host> Vm<H> {
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
         self.descriptors.clear();
         self.non_extensible.clear();
+        self.frozen.clear();
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.globals = self
             .heap
