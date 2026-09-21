@@ -10,10 +10,10 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn lower_class(&mut self, class: &Class<'_>, bind_name: bool) -> Register {
-        if class.heritage.is_some() {
-            self.owner
-                .reject(class.span, "class heritage is not supported yet");
-        }
+        let heritage = class
+            .heritage
+            .as_ref()
+            .map(|heritage| self.expression(&heritage.expression));
         let scopes = self.capture_scopes();
         let instance_fields: Vec<_> = class
             .body
@@ -84,6 +84,21 @@ impl FunctionCompiler<'_, '_> {
             constructor_cache,
             constructor_atom,
         );
+
+        if let Some(base) = heritage {
+            let base_prototype = self.reg();
+            let prototype_atom = self.owner.atom("prototype");
+            let prototype_cache = self.owner.cache_site();
+            self.emit(
+                Op::GetField,
+                base_prototype,
+                FieldBase::register(base).0,
+                prototype_cache,
+                prototype_atom,
+            );
+            self.set_prototype(prototype, base_prototype);
+            self.set_prototype(class_value, base);
+        }
 
         for element in &class.body.body {
             let ClassElement::MethodDefinition(method) = element else {
@@ -191,6 +206,33 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         class_value
+    }
+
+    fn set_prototype(&mut self, target: Register, prototype: Register) {
+        let object = self.load_name("Object");
+        let setter = self.reg();
+        let atom = self.owner.atom("setPrototypeOf");
+        let cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            setter,
+            FieldBase::register(object).0,
+            cache,
+            atom,
+        );
+        let base = self.next_reg;
+        let target_arg = self.reg();
+        self.emit(Op::Move, target_arg, target, 0, 0);
+        let prototype_arg = self.reg();
+        self.emit(Op::Move, prototype_arg, prototype, 0, 0);
+        let result = self.reg();
+        self.emit(
+            Op::Call,
+            result,
+            setter,
+            object,
+            (u32::from(base) << 16) | 2,
+        );
     }
 
     fn capture_scopes(&self) -> Vec<Rc<FxHashMap<Atom, u16>>> {

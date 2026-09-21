@@ -592,9 +592,14 @@ fn method_caches_distinguish_own_methods_and_cached_writes() {
 }
 
 #[test]
-fn unsupported_syntax_is_rejected_early() {
-    let errors = Engine::specialize("class Bad extends Base {}", "bad.js").unwrap_err();
-    assert!(errors[0].to_string().contains("class heritage"));
+fn class_heritage_links_constructor_and_prototype_chains() {
+    let source = r#"
+      class Base { method() { return 41; } static answer() { return 1; } }
+      class Child extends Base {}
+      print(new Child().method() + 1);
+      print(Child.answer() + 1);
+    "#;
+    assert_eq!(output(source), ["42", "2"]);
 }
 
 #[test]

@@ -43,7 +43,7 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    pub(super) fn load_name(&mut self, name: &str) -> Register {
+    pub(crate) fn load_name(&mut self, name: &str) -> Register {
         let atom = self.owner.atom(name);
         self.load_atom(atom)
     }
