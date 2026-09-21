@@ -13,6 +13,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayToSpliced => self.array_to_spliced_native(p, this, args),
             Native::ArraySort => self.array_sort_native(p, this, args, true),
             Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
+            Native::ArrayToString => self.array_to_string_native(p, this),
             _ => unreachable!("non-modern native routed to modern array dispatch"),
         }
     }
@@ -44,6 +45,14 @@ impl<H: Host> Vm<H> {
         let mut values = self.array_values(this)?;
         values.reverse();
         Ok(self.new_array(values))
+    }
+
+    fn array_to_string_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        self.array_join_native(p, this, &[])
     }
 
     fn array_to_spliced_native(

@@ -288,6 +288,14 @@ fn array_sort_methods_support_default_and_user_comparators() {
 }
 
 #[test]
+fn array_string_methods_join_elements_instead_of_using_object_stringification() {
+    assert_eq!(
+        output("print([1, undefined, null, 'x'].toString()); print([1, 2].toLocaleString());"),
+        ["1,,,x", "1,2"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

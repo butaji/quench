@@ -51,6 +51,7 @@ pub(crate) enum Native {
     ArrayToSpliced,
     ArraySort,
     ArrayToSorted,
+    ArrayToString,
     Map,
     MapGet,
     MapSet,
