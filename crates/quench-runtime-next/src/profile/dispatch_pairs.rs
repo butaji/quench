@@ -20,9 +20,9 @@ fn derive(profile: &Profile, program: &ResidualProgram) -> Matrix {
         pairs[class][first * Op::COUNT + second] += count;
         outgoing[class][first] += count;
     }
-    for pair in 0..PAIRS {
+    for (pair, (&general, &numeric)) in pairs[0].iter().zip(pairs[1].iter()).enumerate() {
         assert_eq!(
-            pairs[0][pair] + pairs[1][pair],
+            general + numeric,
             profile.pairs.get(pair).copied().unwrap_or(0),
             "dispatch/pair matrix lost physical adjacent executions"
         );
