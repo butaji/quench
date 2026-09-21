@@ -23,6 +23,7 @@ const NATIVES: &[Native] = &[
     Native::ArraySlice,
     Native::ArrayIncludes,
     Native::ArrayJoin,
+    Native::ArrayConcat,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -318,6 +319,12 @@ impl<H: Host> Vm<H> {
             self.array_proto,
             "join",
             self.native_value(Native::ArrayJoin),
+        )?;
+        self.set_named(
+            program,
+            self.array_proto,
+            "concat",
+            self.native_value(Native::ArrayConcat),
         )?;
         self.set_named(program, array, "prototype", self.array_proto)?;
         self.set_named(

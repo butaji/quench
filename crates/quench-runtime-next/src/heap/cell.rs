@@ -26,6 +26,7 @@ pub(crate) enum Native {
     ArraySlice,
     ArrayIncludes,
     ArrayJoin,
+    ArrayConcat,
     Map,
     MapGet,
     MapSet,
