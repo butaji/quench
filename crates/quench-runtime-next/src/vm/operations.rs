@@ -73,7 +73,7 @@ impl<H: Host> Vm<H> {
                     elements: Rc::new(vec![Value::UNDEFINED; len]),
                 }))
             }
-            Native::Map | Native::Set => self.construct_collection_native(native),
+            Native::Map | Native::Set => self.construct_collection_native(native, args),
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),
             Native::Date => Ok(self.heap.alloc(Cell::Date(

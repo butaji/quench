@@ -162,6 +162,16 @@ fn weak_ref_deref_tracks_target_and_rejects_primitives() {
 }
 
 #[test]
+fn collection_constructors_consume_array_entries_and_dedupe() {
+    assert_eq!(
+        output(
+            "var map = new Map([['x', 1], ['x', 2]]); print(map.size); print(map.get('x')); var set = new Set(['x', 'x', 'y']); print(set.size); print(set.has('y'));"
+        ),
+        ["1", "2", "2", "true"],
+    );
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(

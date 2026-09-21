@@ -146,16 +146,61 @@ impl<H: Host> Vm<H> {
         self.global(program, "Set", set)
     }
 
-    pub(super) fn construct_collection_native(&mut self, native: Native) -> Result<Value, JsError> {
+    pub(super) fn construct_collection_native(
+        &mut self,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let entries = args
+            .first()
+            .and_then(|value| self.heap.get(*value))
+            .and_then(|cell| match cell {
+                Cell::Array { elements, .. } => Some(elements.as_ref()),
+                _ => None,
+            });
         let cell = match native {
-            Native::Map => Cell::Map {
-                object: Self::empty_object(self.map_proto),
-                entries: Vec::new(),
-            },
-            Native::Set => Cell::Set {
-                object: Self::empty_object(self.set_proto),
-                entries: Vec::new(),
-            },
+            Native::Map => {
+                let mut pairs = Vec::new();
+                if let Some(elements) = entries {
+                    for entry in elements {
+                        let Some(Cell::Array { elements: pair, .. }) = self.heap.get(*entry) else {
+                            return Err(JsError("Map constructor entries must be arrays".into()));
+                        };
+                        let Some(value) = pair.get(1).copied() else {
+                            return Err(JsError("Map constructor entries need two values".into()));
+                        };
+                        if let Some(index) = pairs
+                            .iter()
+                            .position(|(candidate, _)| self.same_value_zero(*candidate, pair[0]))
+                        {
+                            pairs[index].1 = value;
+                        } else {
+                            pairs.push((pair[0], value));
+                        }
+                    }
+                }
+                Cell::Map {
+                    object: Self::empty_object(self.map_proto),
+                    entries: pairs,
+                }
+            }
+            Native::Set => {
+                let mut values = Vec::new();
+                if let Some(elements) = entries {
+                    for value in elements {
+                        if !values
+                            .iter()
+                            .any(|candidate| self.same_value_zero(*candidate, *value))
+                        {
+                            values.push(*value);
+                        }
+                    }
+                }
+                Cell::Set {
+                    object: Self::empty_object(self.set_proto),
+                    entries: values,
+                }
+            }
             _ => return Err(JsError("invalid collection constructor".into())),
         };
         Ok(self.heap.alloc(cell))
