@@ -222,6 +222,16 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 })
             }
+            Native::ObjectPreventExtensions => self.object_prevent_extensions(args),
+            Native::ObjectIsExtensible => Ok(Self::integrity_bool(self.object_is_extensible(args))),
+            Native::ObjectSeal => self.object_set_integrity(args, false),
+            Native::ObjectIsSealed => Ok(Self::integrity_bool(
+                self.object_is_integrity_level(args, false),
+            )),
+            Native::ObjectFreeze => self.object_set_integrity(args, true),
+            Native::ObjectIsFrozen => Ok(Self::integrity_bool(
+                self.object_is_integrity_level(args, true),
+            )),
             _ => Err(JsError("invalid object native".into())),
         }
     }
@@ -282,7 +292,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
+    pub(super) fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
         let mut entries = self.shapes[data.shape() as usize]
             .iter()
             .copied()
