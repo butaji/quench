@@ -67,6 +67,23 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 })
             }
+            Native::ObjectPrototypeIsPrototypeOf => {
+                let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let prototype = self.box_object(this)?;
+                let mut current = target;
+                let mut found = false;
+                while let Some(object) = self.object_data(current) {
+                    current = object.proto;
+                    if current == prototype {
+                        found = true;
+                        break;
+                    }
+                    if current.is_null() {
+                        break;
+                    }
+                }
+                Ok(if found { Value::TRUE } else { Value::FALSE })
+            }
             Native::ReflectGet
             | Native::ReflectSet
             | Native::ReflectOwnKeys

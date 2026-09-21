@@ -82,6 +82,12 @@ impl<H: Host> Vm<H> {
         )?;
         self.set_named(
             program,
+            self.object_proto,
+            "isPrototypeOf",
+            self.native_value(Native::ObjectPrototypeIsPrototypeOf),
+        )?;
+        self.set_named(
+            program,
             object,
             "getOwnPropertyNames",
             self.native_value(Native::ObjectGetOwnPropertyNames),

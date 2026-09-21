@@ -8,7 +8,7 @@ pub(crate) enum Native {
     Object,
     ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectGetPrototypeOf,
-    ObjectSetPrototypeOf, ObjectHasOwn, ObjectPrototypeHasOwnProperty, ObjectPrototypePropertyIsEnumerable,
+    ObjectSetPrototypeOf, ObjectHasOwn, ObjectPrototypeHasOwnProperty, ObjectPrototypePropertyIsEnumerable, ObjectPrototypeIsPrototypeOf,
     ReflectGet,
     ReflectSet,
     ReflectOwnKeys,
