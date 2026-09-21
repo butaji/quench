@@ -238,7 +238,10 @@ impl<H: Host> Vm<H> {
                 Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
                 Some(Cell::Uint8Array { object: x, .. })
                 | Some(Cell::Uint16Array { object: x, .. })
-                | Some(Cell::Uint32Array { object: x, .. }) => object = x.proto,
+                | Some(Cell::Uint32Array { object: x, .. })
+                | Some(Cell::Int8Array { object: x, .. })
+                | Some(Cell::Int16Array { object: x, .. })
+                | Some(Cell::Int32Array { object: x, .. }) => object = x.proto,
                 Some(Cell::DataView { object: x, .. }) => object = x.proto,
                 Some(Cell::Set { entries, .. }) if atom == self.size_atom => {
                     return Ok(Value::number(entries.len() as f64));

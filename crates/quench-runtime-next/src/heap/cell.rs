@@ -76,6 +76,9 @@ pub(crate) enum Native {
     Uint8Array,
     Uint16Array,
     Uint32Array,
+    Int8Array,
+    Int16Array,
+    Int32Array,
     Uint8ArraySet,
     Uint8ArraySubarray,
     Uint8ArraySlice,
@@ -174,6 +177,9 @@ pub(crate) enum TypedArrayKind {
     Uint8,
     Uint16,
     Uint32,
+    Int8,
+    Int16,
+    Int32,
 }
 
 impl TypedArrayKind {
@@ -182,6 +188,9 @@ impl TypedArrayKind {
             Self::Uint8 => 1,
             Self::Uint16 => 2,
             Self::Uint32 => 4,
+            Self::Int8 => 1,
+            Self::Int16 => 2,
+            Self::Int32 => 4,
         }
     }
 }
@@ -317,6 +326,24 @@ pub(crate) enum Cell {
         offset: usize,
         length: usize,
     },
+    Int8Array {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
+    Int16Array {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
+    Int32Array {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
     DataView {
         object: Object,
         buffer: Value,
@@ -366,6 +393,18 @@ pub(crate) enum Cell {
 }
 
 impl Cell {
+    pub(crate) fn typed_array_backing(&self) -> Option<(&Object, Value)> {
+        match self {
+            Self::Uint8Array { object, buffer, .. }
+            | Self::Uint16Array { object, buffer, .. }
+            | Self::Uint32Array { object, buffer, .. }
+            | Self::Int8Array { object, buffer, .. }
+            | Self::Int16Array { object, buffer, .. }
+            | Self::Int32Array { object, buffer, .. } => Some((object, *buffer)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn object(&self) -> Option<&Object> {
         match self {
             Self::Object(object)
@@ -374,6 +413,9 @@ impl Cell {
             | Self::Uint8Array { object, .. }
             | Self::Uint16Array { object, .. }
             | Self::Uint32Array { object, .. }
+            | Self::Int8Array { object, .. }
+            | Self::Int16Array { object, .. }
+            | Self::Int32Array { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
@@ -394,6 +436,9 @@ impl Cell {
             | Self::Uint8Array { object, .. }
             | Self::Uint16Array { object, .. }
             | Self::Uint32Array { object, .. }
+            | Self::Int8Array { object, .. }
+            | Self::Int16Array { object, .. }
+            | Self::Int32Array { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }

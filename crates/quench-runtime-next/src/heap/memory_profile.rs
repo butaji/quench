@@ -170,7 +170,12 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::Object(_) | Cell::Function { .. } => 0,
         Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
         Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
-        Cell::Uint8Array { .. } | Cell::Uint16Array { .. } | Cell::Uint32Array { .. } => 0,
+        Cell::Uint8Array { .. }
+        | Cell::Uint16Array { .. }
+        | Cell::Uint32Array { .. }
+        | Cell::Int8Array { .. }
+        | Cell::Int16Array { .. }
+        | Cell::Int32Array { .. } => 0,
         Cell::DataView { .. } => 0,
         Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
         Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),

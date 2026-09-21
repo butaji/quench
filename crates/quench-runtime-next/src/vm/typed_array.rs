@@ -56,14 +56,20 @@ impl<H: Host> Vm<H> {
         }
         self.global(program, "Uint8Array", uint8_array)?;
         self.install_uint16_array(program)?;
-        self.install_uint32_array(program)
+        self.install_uint32_array(program)?;
+        self.install_int8_array(program)?;
+        self.install_int16_array(program)?;
+        self.install_int32_array(program)
     }
 
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
         match self.heap.get(object) {
             Some(Cell::Uint8Array { buffer, offset, .. })
             | Some(Cell::Uint16Array { buffer, offset, .. })
-            | Some(Cell::Uint32Array { buffer, offset, .. }) => {
+            | Some(Cell::Uint32Array { buffer, offset, .. })
+            | Some(Cell::Int8Array { buffer, offset, .. })
+            | Some(Cell::Int16Array { buffer, offset, .. })
+            | Some(Cell::Int32Array { buffer, offset, .. }) => {
                 Some((*buffer, *offset, self.typed_array_length(object)?))
             }
             _ => None,
@@ -112,6 +118,9 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Uint8Array { .. })
                         | Some(Cell::Uint16Array { .. })
                         | Some(Cell::Uint32Array { .. })
+                        | Some(Cell::Int8Array { .. })
+                        | Some(Cell::Int16Array { .. })
+                        | Some(Cell::Int32Array { .. })
                         | Some(Cell::DataView { .. })
                 ) {
                     Value::TRUE
@@ -271,6 +280,24 @@ impl<H: Host> Vm<H> {
             }),
             TypedArrayKind::Uint32 => self.heap.alloc(Cell::Uint32Array {
                 object: Self::empty_object(self.uint32_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
+            TypedArrayKind::Int8 => self.heap.alloc(Cell::Int8Array {
+                object: Self::empty_object(self.int8_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
+            TypedArrayKind::Int16 => self.heap.alloc(Cell::Int16Array {
+                object: Self::empty_object(self.int16_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
+            TypedArrayKind::Int32 => self.heap.alloc(Cell::Int32Array {
+                object: Self::empty_object(self.int32_array_proto),
                 buffer,
                 offset,
                 length,
