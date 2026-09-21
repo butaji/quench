@@ -207,6 +207,9 @@ impl<H: Host> Vm<H> {
         let count = end
             .saturating_sub(source)
             .min(length.saturating_sub(target));
+        if count > 0 {
+            self.check_array_mutation(this, true, false, false)?;
+        }
         let copied = (0..count)
             .map(|offset| {
                 elements
