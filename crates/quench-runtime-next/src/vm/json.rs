@@ -124,7 +124,7 @@ impl<H: Host> Vm<H> {
                 .map(serde_json::Value::Number)
                 .or_else(|| Some(serde_json::Value::Null))),
             Some(Cell::Error(value)) => Ok(Some(serde_json::Value::String(value))),
-            Some(Cell::Environment { .. }) | None => Ok(None),
+            Some(Cell::Environment { .. }) | Some(Cell::Iterator { .. }) | None => Ok(None),
         }
     }
 }
