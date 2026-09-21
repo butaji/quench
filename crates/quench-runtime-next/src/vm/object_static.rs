@@ -83,7 +83,8 @@ impl<H: Host> Vm<H> {
             object,
             "fromEntries",
             self.native_value(Native::ObjectFromEntries),
-        )
+        )?;
+        self.set_named(program, object, "is", self.native_value(Native::ObjectIs))
     }
 
     pub(super) fn call_object_native(
@@ -118,6 +119,15 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(object)
             }
+            Native::ObjectIs => {
+                let left = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let right = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                Ok(if self.same_value(left, right) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
             Native::ObjectCreate => {
                 let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if !proto.is_null() && self.object_data(proto).is_none() {
@@ -147,6 +157,18 @@ impl<H: Host> Vm<H> {
                 })
             }
             _ => Err(JsError("invalid object native".into())),
+        }
+    }
+
+    fn same_value(&self, left: Value, right: Value) -> bool {
+        if let (Some(a), Some(b)) = (left.as_number(), right.as_number()) {
+            return (a.is_nan() && b.is_nan())
+                || (a == b && (a != 0.0 || a.is_sign_negative() == b.is_sign_negative()));
+        }
+        match (self.heap.get(left), self.heap.get(right)) {
+            (Some(Cell::String(a)), Some(Cell::String(b)))
+            | (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
+            _ => left == right,
         }
     }
 }

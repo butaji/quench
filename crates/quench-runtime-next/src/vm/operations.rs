@@ -39,6 +39,7 @@ impl<H: Host> Vm<H> {
             Native::ObjectKeys
             | Native::ObjectGetOwnPropertyNames
             | Native::ObjectFromEntries
+            | Native::ObjectIs
             | Native::ObjectCreate
             | Native::ObjectAssign
             | Native::ObjectGetPrototypeOf

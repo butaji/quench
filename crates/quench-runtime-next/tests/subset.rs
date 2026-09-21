@@ -72,6 +72,16 @@ fn variable_destructuring_reads_object_fields_and_array_indices() {
 }
 
 #[test]
+fn object_is_uses_same_value_semantics() {
+    assert_eq!(
+        output(
+            "var object = {}; print(Object.is(NaN, NaN)); print(Object.is(0, -0)); print(Object.is('x', 'x')); print(Object.is(object, object)); print(Object.is({}, {}));"
+        ),
+        ["true", "false", "true", "true", "false"],
+    );
+}
+
+#[test]
 fn destructuring_defaults_only_evaluate_for_undefined_values() {
     assert_eq!(
         output(
