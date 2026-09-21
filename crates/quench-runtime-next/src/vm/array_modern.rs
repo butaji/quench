@@ -11,6 +11,8 @@ impl<H: Host> Vm<H> {
         match native {
             Native::ArrayToReversed => self.array_to_reversed_native(this),
             Native::ArrayToSpliced => self.array_to_spliced_native(p, this, args),
+            Native::ArraySort => self.array_sort_native(p, this, args, true),
+            Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
             _ => unreachable!("non-modern native routed to modern array dispatch"),
         }
     }
@@ -73,5 +75,69 @@ impl<H: Host> Vm<H> {
         updated.extend(args.iter().copied().skip(2));
         updated.extend(values[start + delete_count..].iter().copied());
         Ok(self.new_array(updated))
+    }
+
+    fn array_sort_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+        mutate: bool,
+    ) -> Result<Value, JsError> {
+        let mut values = self.array_values(this)?;
+        let comparator = args.first().copied().filter(|value| !value.is_undefined());
+        if let Some(value) = comparator
+            && !matches!(self.heap.get(value), Some(Cell::Function { .. }))
+        {
+            return Err(JsError("sort comparator is not callable".into()));
+        }
+        for index in 1..values.len() {
+            let value = values[index];
+            let mut position = index;
+            while position > 0
+                && self.sort_compare(p, comparator, values[position - 1], value)? > 0.0
+            {
+                values[position] = values[position - 1];
+                position -= 1;
+            }
+            values[position] = value;
+        }
+        if mutate {
+            for (index, value) in values.into_iter().enumerate() {
+                self.set_array_element(this, index, value);
+            }
+            Ok(this)
+        } else {
+            Ok(self.new_array(values))
+        }
+    }
+
+    fn sort_compare(
+        &mut self,
+        p: &ResidualProgram,
+        comparator: Option<Value>,
+        left: Value,
+        right: Value,
+    ) -> Result<f64, JsError> {
+        if left.is_undefined() || right.is_undefined() {
+            return Ok(match (left.is_undefined(), right.is_undefined()) {
+                (true, true) => 0.0,
+                (true, false) => 1.0,
+                (false, true) => -1.0,
+                _ => unreachable!(),
+            });
+        }
+        if let Some(comparator) = comparator {
+            let result = self.call_value(p, comparator, Value::UNDEFINED, &[left, right])?;
+            let number = self.to_number(p, result)?;
+            return Ok(if number.is_nan() { 0.0 } else { number });
+        }
+        let left = self.to_string(p, left)?;
+        let right = self.to_string(p, right)?;
+        Ok(match left.cmp(&right) {
+            std::cmp::Ordering::Less => -1.0,
+            std::cmp::Ordering::Equal => 0.0,
+            std::cmp::Ordering::Greater => 1.0,
+        })
     }
 }

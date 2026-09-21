@@ -46,6 +46,8 @@ const NATIVES: &[Native] = &[
     Native::ArrayReduceRight,
     Native::ArrayToReversed,
     Native::ArrayToSpliced,
+    Native::ArraySort,
+    Native::ArrayToSorted,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
