@@ -544,6 +544,27 @@ fn signed_typed_arrays_wrap_and_decode_element_bits() {
 }
 
 #[test]
+fn float_typed_arrays_preserve_numeric_values_and_widths() {
+    assert_eq!(
+        output(
+            "var f32 = new Float32Array([1.5, -2.25]); print(f32.length); print(f32.byteLength); print(f32[0]); print(f32[1]); var f64 = new Float64Array([1.5, -2.25]); print(f64.length); print(f64.byteLength); print(f64[0]); print(f64[1]); var buffer = new ArrayBuffer(8); var view = new Float64Array(buffer); view[0] = 3.125; print(view[0]); try { new Float64Array(buffer, 4); } catch (error) { print('alignment'); }"
+        ),
+        [
+            "2",
+            "8",
+            "1.5",
+            "-2.25",
+            "2",
+            "16",
+            "1.5",
+            "-2.25",
+            "3.125",
+            "alignment"
+        ],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

@@ -175,7 +175,9 @@ fn cell_bytes(cell: &Cell) -> usize {
         | Cell::Uint32Array { .. }
         | Cell::Int8Array { .. }
         | Cell::Int16Array { .. }
-        | Cell::Int32Array { .. } => 0,
+        | Cell::Int32Array { .. }
+        | Cell::Float32Array { .. }
+        | Cell::Float64Array { .. } => 0,
         Cell::DataView { .. } => 0,
         Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
         Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
