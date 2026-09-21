@@ -1,0 +1,347 @@
+use super::*;
+
+macro_rules! numeric_integer_semantic {
+    (add, $left:expr, $right:expr) => {
+        $left
+            .checked_add($right)
+            .map(Value::integer)
+            .unwrap_or_else(|| Value::number($left as f64 + $right as f64))
+    };
+    (multiply, $left:expr, $right:expr) => {
+        $left
+            .checked_mul($right)
+            .map(Value::integer)
+            .unwrap_or_else(|| Value::number($left as f64 * $right as f64))
+    };
+}
+
+macro_rules! specialized_numeric_value {
+    ($vm:expr, $program:expr, $operator:expr, $semantic:ident, $left:expr, $right:expr) => {{
+        let fast = Value::int_pair($left, $right)
+            .map(|(left, right)| numeric_integer_semantic!($semantic, left, right));
+        #[cfg(feature = "profile-aggregate")]
+        $vm.profile.numeric_binary_path(
+            $operator,
+            fast.is_some(),
+            $left.as_int().is_some() && $right.as_int().is_some(),
+        );
+        match fast {
+            Some(value) => value,
+            None => $vm.binary($program, $operator as u32, $left, $right)?,
+        }
+    }};
+}
+
+macro_rules! execute_specialized_numeric {
+    ($vm:ident, $program:ident, $frame:ident, $ins:ident, $operator:literal, $semantic:ident) => {{
+        $vm.profile.binary($operator, $ins.b(), $ins.c());
+        let left = $vm.resolve_operand($program, $frame, Operand($ins.b()))?;
+        let right = $vm.resolve_operand($program, $frame, Operand($ins.c()))?;
+        let value = specialized_numeric_value!($vm, $program, $operator, $semantic, left, right);
+        if $ins.a() & RETURN_REGISTER != 0 {
+            return Ok(Some(value));
+        }
+        if $ins.a() & NUMERIC_LOCAL_TARGET != 0 {
+            $vm.frames[$frame].locals[($ins.a() & REGISTER_MASK) as usize] = value;
+            $vm.profile.virtual_opcode(Op::StoreLocal as usize);
+        } else {
+            $vm.write($frame, $ins.a(), value);
+        }
+    }};
+}
+
+impl<H: Host> Vm<H> {
+    #[inline(never)]
+    pub(super) fn call_user_numeric(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: NumericArguments<'_>,
+    ) -> Result<Value, JsError> {
+        self.profile
+            .numeric_arguments(matches!(args, NumericArguments::Registers { .. }));
+        self.profile.function(id as usize);
+        let function = &p.functions[id as usize];
+        let mut frame = self.frame_pool.pop().unwrap_or(Frame {
+            function: 0,
+            pc: 0,
+            env: Value::NULL,
+            this: Value::UNDEFINED,
+            locals: vec![],
+            captured: false,
+            registers: vec![],
+        });
+        frame
+            .locals
+            .resize(function.locals as usize, Value::UNDEFINED);
+        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
+        for index in 0..function.params as usize {
+            frame.locals[index] = match args {
+                NumericArguments::Values(values) => {
+                    values.get(index).copied().unwrap_or(Value::UNDEFINED)
+                }
+                NumericArguments::Registers { frame, values } => values
+                    .get(index)
+                    .map_or(Value::UNDEFINED, |register| self.read(frame, *register)),
+            };
+        }
+        frame.function = id;
+        frame.pc = 0;
+        frame.env = parent;
+        frame.this = this;
+        frame.captured = false;
+        let register_count = function.registers as usize;
+        if frame.registers.capacity() < register_count {
+            frame
+                .registers
+                .reserve_exact(register_count - frame.registers.len());
+        }
+        // SAFETY: same compiler-issued register invariant as the general path.
+        unsafe { frame.registers.set_len(register_count) };
+        self.frames.push(frame);
+        let result = self.run_frame_numeric(p, self.frames.len() - 1);
+        let frame = self.frames.pop().unwrap();
+        self.frame_pool.push(Self::recycle_frame(frame));
+        result
+    }
+
+    pub(super) fn run_frame_numeric(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+    ) -> Result<Value, JsError> {
+        let function = self.frames[frame].function as usize;
+        let code = &p.functions[function].code;
+        let mut pc = self.frames[frame].pc;
+        loop {
+            // SAFETY: decoded branch targets are in range and every function
+            // terminates; `pc` is synchronized at every external semantic edge.
+            let _instruction_pc = pc;
+            let ins = unsafe { *code.get_unchecked(pc) };
+            pc += 1;
+            #[cfg(feature = "profile-aggregate")]
+            self.profile
+                .opcode(ins.op() as usize, frame, function as u32, _instruction_pc);
+            #[cfg(not(feature = "profile-aggregate"))]
+            self.profile.opcode(ins.op() as usize);
+            let outcome = (|| -> Result<Option<Value>, JsError> {
+                match ins.op() {
+                    Op::LoadLocal => {
+                        let value = self.frames[frame].locals[ins.imm() as usize];
+                        self.write(frame, ins.a(), value);
+                        if ins.c() == crate::bytecode::NUMERIC_LOCAL_INC_STORE
+                            && let Some(integer) = value.as_int()
+                        {
+                            self.numeric_local_inc_store(
+                                frame,
+                                &mut pc,
+                                integer,
+                                ins.b(),
+                                ins.imm(),
+                            );
+                        }
+                    }
+                    Op::StoreLocal => {
+                        let value = self.read(frame, ins.a());
+                        self.frames[frame].locals[ins.imm() as usize] = value;
+                        if ins.b() != 0 {
+                            self.write(frame, ins.b() - 1, value);
+                        }
+                    }
+                    Op::GetIndex => {
+                        #[cfg(feature = "profile-aggregate")]
+                        self.profile.index_dispatch(false, true);
+                        let base = self.numeric_index_source(frame, ins.b());
+                        let index = self.numeric_index_source(frame, ins.c());
+                        if Operand(ins.b()).tag() == 3 {
+                            self.profile.virtual_opcode(Op::LoadLocal as usize);
+                        }
+                        if Operand(ins.c()).tag() == 3 {
+                            self.profile.virtual_opcode(Op::LoadLocal as usize);
+                        }
+                        let value = self.get_index(p, base, index)?;
+                        self.write(frame, ins.a(), value);
+                    }
+                    Op::SetIndex => {
+                        #[cfg(feature = "profile-aggregate")]
+                        self.profile.index_dispatch(true, true);
+                        self.set_index(
+                            p,
+                            self.read(frame, ins.b()),
+                            self.read(frame, ins.c()),
+                            self.read(frame, ins.a()),
+                        )?
+                    }
+                    Op::Binary => {
+                        self.profile.binary(ins.imm() as usize, ins.b(), ins.c());
+                        let left = self.resolve_operand(p, frame, Operand(ins.b()))?;
+                        let right = self.resolve_operand(p, frame, Operand(ins.c()))?;
+                        let fast = self.numeric_binary(ins.imm(), left, right);
+                        #[cfg(feature = "profile-aggregate")]
+                        self.profile.numeric_binary_path(
+                            ins.imm() as usize,
+                            fast.is_some(),
+                            left.as_int().is_some() && right.as_int().is_some(),
+                        );
+                        let value = match fast {
+                            Some(value) => value,
+                            None => self.binary(p, ins.imm(), left, right)?,
+                        };
+                        if ins.a() & RETURN_REGISTER != 0 {
+                            return Ok(Some(value));
+                        }
+                        if ins.a() & NUMERIC_LOCAL_TARGET != 0 {
+                            self.frames[frame].locals[(ins.a() & REGISTER_MASK) as usize] = value;
+                            self.profile.virtual_opcode(Op::StoreLocal as usize);
+                        } else {
+                            self.write(frame, ins.a(), value);
+                        }
+                    }
+                    Op::NumericAdd => {
+                        execute_specialized_numeric!(self, p, frame, ins, 8, add)
+                    }
+                    Op::NumericMultiply => {
+                        execute_specialized_numeric!(self, p, frame, ins, 10, multiply)
+                    }
+                    Op::IncDec => {
+                        let input = self.read(frame, ins.b());
+                        let delta = if ins.imm() == 0 { 1.0 } else { -1.0 };
+                        let value = if let Some(integer) = input.as_int() {
+                            let next = if ins.imm() == 0 {
+                                integer.checked_add(1)
+                            } else {
+                                integer.checked_sub(1)
+                            };
+                            next.map(Value::integer)
+                                .unwrap_or_else(|| Value::number(f64::from(integer) + delta))
+                        } else {
+                            Value::number(self.to_number(p, input)? + delta)
+                        };
+                        self.write(frame, ins.a(), value);
+                    }
+                    Op::Jump => {
+                        pc = ins.imm() as usize;
+                        self.frames[frame].pc = pc;
+                        self.maybe_collect(p);
+                    }
+                    Op::JumpFalse => {
+                        let value = self.read(frame, ins.a());
+                        let truthy = self.truthy(value);
+                        #[cfg(feature = "profile-aggregate")]
+                        self.profile.branch_value(value.profile_kind(), truthy);
+                        if !truthy {
+                            pc = ins.imm() as usize;
+                        }
+                    }
+                    Op::JumpBinaryFalse => {
+                        self.profile.binary(ins.a() as usize, ins.b(), ins.c());
+                        let left = self.resolve_operand(p, frame, Operand(ins.b()))?;
+                        let right = self.resolve_operand(p, frame, Operand(ins.c()))?;
+                        if !self.binary_truthy(p, u32::from(ins.a()), left, right)? {
+                            pc = ins.imm() as usize;
+                        }
+                    }
+                    Op::Return => {
+                        self.frames[frame].pc = pc;
+                        return Ok(Some(self.read(frame, ins.a())));
+                    }
+                    _ => {
+                        self.frames[frame].pc = pc;
+                        let result = self.numeric_step_fallback(p, frame, ins);
+                        pc = self.frames[frame].pc;
+                        return result;
+                    }
+                }
+                Ok(None)
+            })();
+            match outcome {
+                Ok(Some(value)) => return Ok(value),
+                Ok(None) => {}
+                Err(error) => {
+                    let throwing_pc = pc as u32 - 1;
+                    let handler = p.functions[function]
+                        .handlers
+                        .iter()
+                        .find(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
+                        .copied();
+                    let Some(handler) = handler else {
+                        return Err(error);
+                    };
+                    if let Some(slot) = handler.slot {
+                        let value = self.heap.alloc(Cell::Error(error.into_message()));
+                        if self.frames[frame].captured {
+                            let env = self.frames[frame].env;
+                            let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env)
+                            else {
+                                return Err(JsError("invalid catch environment".into()));
+                            };
+                            slots[slot as usize] = value;
+                        } else {
+                            self.frames[frame].locals[slot as usize] = value;
+                        }
+                    }
+                    pc = handler.target as usize;
+                }
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn numeric_step_fallback(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        instruction: Instr,
+    ) -> Result<Option<Value>, JsError> {
+        let mut pc = self.frames[frame].pc;
+        let result = self.step(p, frame, instruction, &mut pc);
+        self.frames[frame].pc = pc;
+        result
+    }
+
+    #[inline(always)]
+    fn numeric_local_inc_store(
+        &mut self,
+        frame: usize,
+        pc: &mut usize,
+        integer: i32,
+        metadata: u16,
+        local: u32,
+    ) {
+        let function = self.frames[frame].function as usize;
+        let delta = if metadata & RETURN_REGISTER == 0 {
+            1
+        } else {
+            -1
+        };
+        let next = integer
+            .checked_add(delta)
+            .map(Value::integer)
+            .unwrap_or_else(|| Value::number(f64::from(integer) + f64::from(delta)));
+        self.write(frame, metadata & REGISTER_MASK, next);
+        self.frames[frame].locals[local as usize] = next;
+        self.profile_numeric_fusion(frame, function as u32, *pc, Op::IncDec);
+        self.profile_numeric_fusion(frame, function as u32, *pc + 1, Op::StoreLocal);
+        *pc += 2;
+    }
+
+    #[inline(always)]
+    fn numeric_index_source(&self, frame: usize, raw: u16) -> Value {
+        let operand = Operand(raw);
+        match operand.tag() {
+            0 => self.read(frame, operand.payload()),
+            3 => self.frames[frame].locals[operand.payload() as usize],
+            _ => unreachable!("numeric indexed source is a register or local"),
+        }
+    }
+
+    #[inline(always)]
+    fn profile_numeric_fusion(&mut self, _frame: usize, _function: u32, _pc: usize, op: Op) {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.opcode(op as usize, _frame, _function, _pc);
+        #[cfg(not(feature = "profile-aggregate"))]
+        self.profile.opcode(op as usize);
+    }
+}
