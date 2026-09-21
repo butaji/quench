@@ -340,6 +340,7 @@ impl<'a> Compiler<'a> {
             parent,
             name: name.map(|value| function.owner.atom(value)),
             params: params.len() as u16,
+            rest: defaults.is_some_and(|value| value.rest.is_some()),
             locals: function.locals.len() as u16,
             code: function.code,
             registers: function.max_reg,
