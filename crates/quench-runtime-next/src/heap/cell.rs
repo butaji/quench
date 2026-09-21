@@ -59,6 +59,7 @@ pub(crate) enum Native {
     ArrayFrom,
     ArrayOf,
     ArrayBuffer,
+    ArrayBufferSlice,
     Map,
     MapGet,
     MapSet,

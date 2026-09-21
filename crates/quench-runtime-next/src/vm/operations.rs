@@ -156,6 +156,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
                 self.array_iterator_native(native, this)
             }
+            Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args),
             Native::ArrayFrom | Native::ArrayOf => self.array_modern_native(p, native, this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
