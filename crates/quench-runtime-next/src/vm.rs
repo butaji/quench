@@ -17,6 +17,7 @@ mod array_buffer;
 mod array_builtins;
 mod array_indexed;
 mod array_modern;
+mod atomics;
 mod builtins;
 mod coercion;
 mod collections;
@@ -74,7 +75,6 @@ impl From<String> for ErrorMessage {
         }
     }
 }
-
 impl fmt::Display for JsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0.payload.text)

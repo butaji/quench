@@ -341,7 +341,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn uint8_from_value(number: f64) -> u8 {
+    pub(super) fn uint8_from_value(number: f64) -> u8 {
         if number.is_nan() || number == 0.0 {
             0
         } else {
@@ -375,6 +375,17 @@ impl<H: Host> Vm<H> {
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
         match self.heap.get(object) {
             Some(Cell::Uint8Array { length, .. }) => Some(*length),
+            _ => None,
+        }
+    }
+
+    pub(super) fn typed_array_shared(&self, object: Value) -> Option<bool> {
+        let buffer = match self.heap.get(object) {
+            Some(Cell::Uint8Array { buffer, .. }) => *buffer,
+            _ => return None,
+        };
+        match self.heap.get(buffer) {
+            Some(Cell::ArrayBuffer { shared, .. }) => Some(*shared),
             _ => None,
         }
     }

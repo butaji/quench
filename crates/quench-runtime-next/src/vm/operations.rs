@@ -14,6 +14,9 @@ impl<H: Host> Vm<H> {
         if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
             return result;
         }
+        if native.is_atomics_native() {
+            return self.atomics_native(p, native, args);
+        }
         match native {
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
