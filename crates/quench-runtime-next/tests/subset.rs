@@ -595,6 +595,19 @@ fn typed_array_copy_within_snapshots_overlapping_source() {
 }
 
 #[test]
+fn resizable_and_growable_buffers_update_views_and_metadata() {
+    assert_eq!(
+        output(
+            "var buffer = new ArrayBuffer(2, { maxByteLength: 4 }); var view = new Uint8Array(buffer); var fixedView = new Uint8Array(buffer, 0, 2); var data = new DataView(buffer); buffer.resize(4); view[3] = 9; print(buffer.byteLength); print(buffer.maxByteLength); print(buffer.resizable); print(view[3]); print(data.byteLength); buffer.resize(1); print(buffer.byteLength); print(view.length); print(view.byteLength); print(data.byteLength); print(fixedView.length); print(fixedView.byteLength); print(fixedView.byteOffset); var fixed = buffer.transferToFixedLength(); print(fixed.byteLength); print(fixed.resizable); var shared = new SharedArrayBuffer(1, { maxByteLength: 3 }); shared.grow(3); print(shared.byteLength); print(shared.maxByteLength); print(shared.growable);"
+        ),
+        [
+            "4", "4", "true", "9", "4", "1", "1", "1", "1", "0", "0", "0", "1", "false", "3", "3",
+            "true"
+        ],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

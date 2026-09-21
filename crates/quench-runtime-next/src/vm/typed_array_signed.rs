@@ -132,7 +132,13 @@ impl<H: Host> Vm<H> {
             if offset.saturating_add(length.saturating_mul(width)) > buffer_length {
                 return Err(JsError(format!("{name} length is out of range").into()));
             }
-            return Ok(self.alloc_signed_view(kind, source, offset, length));
+            return Ok(self.alloc_signed_view(
+                kind,
+                source,
+                offset,
+                length,
+                self.array_buffer_resizable(source) && args.get(2).is_none(),
+            ));
         }
         let values = self.typed_array_values(source);
         let length = values.as_ref().map_or_else(
@@ -152,6 +158,8 @@ impl<H: Host> Vm<H> {
             bytes: Rc::new(vec![0; length.saturating_mul(width)]),
             shared: false,
             detached: false,
+            max_byte_length: length.saturating_mul(width),
+            resizable: false,
         });
         if let Some(values) = values {
             let converted = values
@@ -172,7 +180,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        Ok(self.alloc_signed_view(kind, buffer, 0, length))
+        Ok(self.alloc_signed_view(kind, buffer, 0, length, false))
     }
 
     fn alloc_signed_view(
@@ -181,6 +189,7 @@ impl<H: Host> Vm<H> {
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     ) -> Value {
         let object = match kind {
             TypedArrayKind::Int8 => Self::empty_object(self.int8_array_proto),
@@ -194,18 +203,21 @@ impl<H: Host> Vm<H> {
                 buffer,
                 offset,
                 length,
+                length_tracking,
             },
             TypedArrayKind::Int16 => Cell::Int16Array {
                 object,
                 buffer,
                 offset,
                 length,
+                length_tracking,
             },
             TypedArrayKind::Int32 => Cell::Int32Array {
                 object,
                 buffer,
                 offset,
                 length,
+                length_tracking,
             },
             _ => unreachable!(),
         };

@@ -80,6 +80,7 @@ impl<H: Host> Vm<H> {
                 buffer: source,
                 offset,
                 length,
+                length_tracking: self.array_buffer_resizable(source) && args.get(2).is_none(),
             }));
         }
         let values = self.typed_array_values(source);
@@ -100,6 +101,8 @@ impl<H: Host> Vm<H> {
             bytes: Rc::new(vec![0; length]),
             shared: false,
             detached: false,
+            max_byte_length: length,
+            resizable: false,
         });
         if let Some(values) = values {
             let converted = values
@@ -118,6 +121,7 @@ impl<H: Host> Vm<H> {
             buffer,
             offset: 0,
             length,
+            length_tracking: false,
         }))
     }
 
@@ -196,6 +200,7 @@ impl<H: Host> Vm<H> {
                 buffer: source,
                 offset,
                 length,
+                length_tracking: self.array_buffer_resizable(source) && args.get(2).is_none(),
             }));
         }
         let values = self.typed_array_values(source);
@@ -216,6 +221,8 @@ impl<H: Host> Vm<H> {
             bytes: Rc::new(vec![0; length.saturating_mul(2)]),
             shared: false,
             detached: false,
+            max_byte_length: length.saturating_mul(2),
+            resizable: false,
         });
         if let Some(values) = values {
             let converted = values
@@ -235,6 +242,7 @@ impl<H: Host> Vm<H> {
             buffer,
             offset: 0,
             length,
+            length_tracking: false,
         }))
     }
 }
@@ -315,6 +323,7 @@ impl<H: Host> Vm<H> {
                 buffer: source,
                 offset,
                 length,
+                length_tracking: self.array_buffer_resizable(source) && args.get(2).is_none(),
             }));
         }
         let values = self.typed_array_values(source);
@@ -335,6 +344,8 @@ impl<H: Host> Vm<H> {
             bytes: Rc::new(vec![0; length.saturating_mul(4)]),
             shared: false,
             detached: false,
+            max_byte_length: length.saturating_mul(4),
+            resizable: false,
         });
         if let Some(values) = values {
             let converted = values
@@ -354,6 +365,7 @@ impl<H: Host> Vm<H> {
             buffer,
             offset: 0,
             length,
+            length_tracking: false,
         }))
     }
 }

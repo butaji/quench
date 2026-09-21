@@ -1,7 +1,6 @@
 use crate::value::Value;
 use crate::value_vec::ValueVec;
 use std::rc::Rc;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
     Print,
@@ -61,8 +60,11 @@ pub(crate) enum Native {
     ArrayBuffer,
     ArrayBufferSlice,
     ArrayBufferTransfer,
+    ArrayBufferResize,
+    ArrayBufferTransferToFixedLength,
     ArrayBufferIsView,
     SharedArrayBuffer,
+    SharedArrayBufferGrow,
     AtomicsLoad,
     AtomicsStore,
     AtomicsAdd,
@@ -177,7 +179,6 @@ pub(crate) enum Native {
     NumberFixed,
     NumberPrecision,
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
     Uint8,
@@ -190,7 +191,6 @@ pub(crate) enum TypedArrayKind {
     Float32,
     Float64,
 }
-
 impl TypedArrayKind {
     pub(crate) const fn width(self) -> usize {
         match self {
@@ -206,7 +206,6 @@ impl TypedArrayKind {
         }
     }
 }
-
 impl Native {
     pub(crate) fn is_typed_array_method(self) -> bool {
         matches!(
@@ -270,14 +269,12 @@ impl Native {
         )
     }
 }
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum FunctionKind {
     User(u32),
     NumericUser(u32),
     Native(Native),
 }
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum IteratorKind {
     Array,
@@ -291,7 +288,6 @@ pub(crate) enum IteratorKind {
     SetValues,
     SetEntries,
 }
-
 #[derive(Clone, Debug)]
 pub(crate) struct Object {
     pub proto: Value,
@@ -322,66 +318,78 @@ pub(crate) enum Cell {
         bytes: Rc<Vec<u8>>,
         shared: bool,
         detached: bool,
+        max_byte_length: usize,
+        resizable: bool,
     },
     Uint8Array {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Uint8ClampedArray {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Uint16Array {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Uint32Array {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Int8Array {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Int16Array {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Int32Array {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Float32Array {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Float64Array {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     DataView {
         object: Object,
         buffer: Value,
         offset: usize,
         length: usize,
+        length_tracking: bool,
     },
     Map {
         object: Object,
@@ -424,7 +432,6 @@ pub(crate) enum Cell {
     Date(f64),
     Error(String),
 }
-
 impl Cell {
     pub(crate) fn typed_array_backing(&self) -> Option<(&Object, Value)> {
         match self {
@@ -440,7 +447,6 @@ impl Cell {
             _ => None,
         }
     }
-
     pub(crate) fn object(&self) -> Option<&Object> {
         match self {
             Self::Object(object)
@@ -466,7 +472,6 @@ impl Cell {
             _ => None,
         }
     }
-
     pub(crate) fn object_mut(&mut self) -> Option<&mut Object> {
         match self {
             Self::Object(object)

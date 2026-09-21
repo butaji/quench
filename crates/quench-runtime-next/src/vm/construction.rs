@@ -2,6 +2,27 @@ use super::*;
 use crate::host::{CapabilityId, HostContext};
 
 impl<H: Host> Vm<H> {
+    pub(super) fn closure(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        env: Value,
+    ) -> Result<Value, JsError> {
+        let prototype = self.object();
+        let function = self.heap.alloc(Cell::Function {
+            object: Box::new(Self::empty_object(self.function_proto)),
+            kind: match p.functions[id as usize].dispatch {
+                DispatchClass::General => FunctionKind::User(id),
+                DispatchClass::Numeric => FunctionKind::NumericUser(id),
+            },
+            env,
+        });
+        if let Some(atom) = self.lookup_atom("prototype") {
+            self.set_property(function, atom, prototype)?;
+        }
+        Ok(function)
+    }
+
     pub(super) fn construct_value(
         &mut self,
         p: &ResidualProgram,

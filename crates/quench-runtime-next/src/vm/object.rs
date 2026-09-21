@@ -145,6 +145,9 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        if let Some(value) = self.array_buffer_virtual_property(object, atom) {
+            return Ok(value);
+        }
         if self.lookup_atom("byteLength") == Some(atom)
             && let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(object)
         {
@@ -215,6 +218,11 @@ impl<H: Host> Vm<H> {
                 return Ok(v);
             }
             match self.heap.get(object) {
+                Some(Cell::ArrayBuffer { .. })
+                    if self.array_buffer_virtual_property(object, atom).is_some() =>
+                {
+                    return Ok(self.array_buffer_virtual_property(object, atom).unwrap());
+                }
                 Some(Cell::ArrayBuffer { bytes, shared, .. })
                     if self.lookup_atom("byteLength") == Some(atom) =>
                 {

@@ -87,6 +87,7 @@ impl<H: Host> Vm<H> {
             buffer,
             offset,
             length,
+            length_tracking: self.array_buffer_resizable(buffer) && args.get(2).is_none(),
         }))
     }
 
@@ -96,8 +97,22 @@ impl<H: Host> Vm<H> {
                 buffer,
                 offset,
                 length,
+                length_tracking,
                 ..
-            }) => Some((*buffer, *offset, *length)),
+            }) => Some((
+                *buffer,
+                *offset,
+                if *length_tracking {
+                    match self.heap.get(*buffer) {
+                        Some(Cell::ArrayBuffer { bytes, .. }) => {
+                            bytes.len().saturating_sub(*offset)
+                        }
+                        _ => 0,
+                    }
+                } else {
+                    *length
+                },
+            )),
             _ => None,
         }
     }
@@ -112,8 +127,8 @@ impl<H: Host> Vm<H> {
         let (buffer, offset, length) = self
             .data_view_view(this)
             .ok_or_else(|| JsError("DataView receiver is invalid".into()))?;
-        if self.array_buffer_detached(buffer) {
-            return Err(JsError("DataView buffer is detached".into()));
+        if self.array_buffer_out_of_bounds(buffer, offset, length) {
+            return Err(JsError("DataView buffer is out of bounds".into()));
         }
         let index = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         if index.is_nan() || index.is_sign_negative() {
