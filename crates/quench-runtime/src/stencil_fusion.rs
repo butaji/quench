@@ -9,7 +9,7 @@ use crate::stencil_plan::{
 };
 
 pub(crate) use crate::stencil_predicate_fusion::{
-    execute_local_predicate, LocalPredicateExecution, NativeLocalPredicatePlan,
+    execute_local_predicate, NativeLocalPredicatePlan,
 };
 
 pub(crate) struct LocalNumericExecution {

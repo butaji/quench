@@ -7250,7 +7250,7 @@ pub(crate) fn normalize_callback_error(error: Value) -> Value {
     } else {
         quench_runtime::ops::Builtin::Error
     };
-    let mut normalized = native_error(builtin, &code, &message);
+    let normalized = native_error(builtin, &code, &message);
     for property in ["library", "reason"] {
         let value = execute::get_property(&error, property);
         if !matches!(value, Value::Undefined) {

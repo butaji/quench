@@ -600,7 +600,7 @@ pub(crate) fn string_to_flags(value: Option<&Value>) -> Result<Value, VmError> {
 
 pub fn open_sync(
     state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
+    _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
@@ -1136,7 +1136,7 @@ pub fn cp(
 }
 
 fn start_async_filter(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     callback: Value,
     leading: &[Value],
     source: String,
@@ -1403,7 +1403,7 @@ pub fn fs_cp_filter_rejected(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let reason = args
+    let _reason = args
         .get(1)
         .and_then(|value| execute::to_js_string(value).ok())
         .unwrap_or_else(|| "<non-string>".into());
@@ -2593,7 +2593,7 @@ pub fn promises_open(
     };
     let constructor = file_handle_constructor();
     let prototype = execute::get_property(&constructor, "prototype");
-    let mut handle = host_api::object(vec![
+    let handle = host_api::object(vec![
         (FILE_HANDLE_FD_KEY.into(), fd),
         (
             "read".into(),
@@ -2998,7 +2998,7 @@ fn glob_matches(args: &[Value]) -> Result<Value, VmError> {
             .collect::<Result<Vec<_>, _>>()?,
         value => vec![crate::modules::path::validate_string(value, "pattern")?],
     };
-    let pattern = pattern_values.first().cloned().unwrap_or_default();
+    let _pattern = pattern_values.first().cloned().unwrap_or_default();
     let options = args
         .get(1)
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)));

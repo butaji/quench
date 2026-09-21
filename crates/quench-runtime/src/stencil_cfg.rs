@@ -748,8 +748,8 @@ fn entry_matches_region(
 fn entry_matches_region_with_terminal_exits(
     entry: &BaselineEntry,
     expected: crate::ir::Opcode,
-    start: usize,
-    end: usize,
+    _start: usize,
+    _end: usize,
     code_end: usize,
 ) -> bool {
     expected.operands_match_physical_contract_with_flags(

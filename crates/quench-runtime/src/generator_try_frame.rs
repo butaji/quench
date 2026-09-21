@@ -138,7 +138,7 @@ fn advance_parent_loop_after_try(
         start: body.start.saturating_add(index as u32 + 1),
         end: body.end,
     };
-    let mut machine = generator.machine.borrow_mut();
+    let machine = generator.machine.borrow_mut();
     let Some(crate::machine::Frame::Loop {
         phase_resume: current,
         ..
@@ -193,7 +193,7 @@ fn push_nested_try_after_yield(
         end: outer_resume.end,
     };
     {
-        let mut machine = generator.machine.borrow_mut();
+        let machine = generator.machine.borrow_mut();
         let Some(outer_offset) = machine.frames.top_offset() else {
             return Ok(false);
         };
@@ -288,7 +288,7 @@ fn complete_try_frame(
 
 fn run_try_handler(
     generator: &GeneratorData,
-    state: &mut GeneratorState,
+    _state: &mut GeneratorState,
     frame: &TryFrameResume,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {

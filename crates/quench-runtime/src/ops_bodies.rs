@@ -82,8 +82,8 @@ impl Op {
                 test,
                 body,
                 update,
-                label,
-                per_iteration,
+                label: _,
+                per_iteration: _,
                 ..
             } => {
                 rehome_loop(init, test, body, update, arena, store);

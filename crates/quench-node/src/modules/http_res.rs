@@ -11,7 +11,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-use super::http::{chunk_bytes, Res, RESPONSE_CLOSE_PENDING_PROP, RES_ID_PROP};
+use super::http::{Res, RESPONSE_CLOSE_PENDING_PROP, RES_ID_PROP};
 use crate::modules::net;
 
 fn res_state(receiver: Option<&Value>) -> Option<u64> {
@@ -428,7 +428,7 @@ fn headers_sent_error(message: &str) -> VmError {
 }
 
 pub fn res_cork(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
@@ -585,7 +585,7 @@ pub fn res_write(
         execute::set_property_in_place(receiver, "writableLength", Value::Number(writable_length));
         execute::set_property_in_place(receiver, "writableNeedDrain", Value::Boolean(!writable_ok));
     }
-    let (status, text, mut headers, socket, keep_alive, http10, send_date, first_write, chunked) = {
+    let (status, text, headers, socket, keep_alive, http10, send_date, first_write, chunked) = {
         let mut guard = state.borrow_mut();
         let response_socket = guard
             .http
@@ -1068,7 +1068,7 @@ fn compose(
     text: &str,
     headers: &[(String, String)],
     body: &[u8],
-    trailers: &[(String, String)],
+    _trailers: &[(String, String)],
     keep_alive: bool,
     http10: bool,
     send_date: bool,

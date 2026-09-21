@@ -933,7 +933,7 @@ pub fn method_remove_all_listeners(
             };
             if let Some(event) = target {
                 let removed = {
-                    let mut guard = emitter.borrow_mut();
+                    let guard = emitter.borrow_mut();
                     guard
                         .events
                         .iter()

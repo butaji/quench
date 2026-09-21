@@ -937,7 +937,7 @@ fn source_assertion_call(value: &Value, null_receiver: bool) -> Option<String> {
     if let Some(offset) = current_offset {
         if let Some((_, _, call, _)) = calls
             .iter()
-            .find(|(start, end, call, _)| *start <= offset && offset <= *end)
+            .find(|(start, end, _call, _)| *start <= offset && offset <= *end)
         {
             if !null_receiver || call.contains(".call(") || call.contains("[\"apply\"](") {
                 return Some(call.clone());
@@ -1722,7 +1722,7 @@ fn needs_structural_diff(value: &Value) -> bool {
         Value::Array(_) => execute::own_enumerable_keys(value)
             .iter()
             .any(|key| key.parse::<usize>().is_ok()),
-        Value::Object(object) => !execute::own_enumerable_keys(value).is_empty(),
+        Value::Object(_object) => !execute::own_enumerable_keys(value).is_empty(),
         _ => false,
     }
 }
@@ -1907,7 +1907,7 @@ fn rendered_deep(value: &Value) -> String {
                 append_collection_properties(&Value::Map(map.clone()), &mut rendered);
                 return rendered;
             }
-            let mut entries = map
+            let entries = map
                 .keys
                 .borrow()
                 .iter()
@@ -1939,7 +1939,7 @@ fn rendered_deep(value: &Value) -> String {
                 return rendered;
             }
             let owner = Value::Set(set.clone());
-            let mut entries = set
+            let entries = set
                 .values
                 .borrow()
                 .iter()
@@ -2605,7 +2605,7 @@ fn error_diff(actual: &Value, expected: &Value) -> Option<String> {
             label(expected)
         ));
     }
-    let cause_render = |value: &Value| {
+    let _cause_render = |value: &Value| {
         if is_error_object(value) {
             label(value)
         } else {
@@ -3279,7 +3279,7 @@ fn typed_array_diff(actual: &Value, expected: &Value) -> Option<String> {
     let (actual_kind, actual_len) = typed_array_kind(actual)?;
     let (expected_kind, expected_len) = typed_array_kind(expected)?;
     let actual_values = typed_array_values(actual, actual_len);
-    let expected_values = typed_array_values(expected, expected_len);
+    let _expected_values = typed_array_values(expected, expected_len);
     let actual_props = typed_array_props(actual);
     let expected_props = typed_array_props(expected);
     let same_shape = actual_kind == expected_kind && actual_len == expected_len;

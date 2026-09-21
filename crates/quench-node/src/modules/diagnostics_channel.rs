@@ -671,7 +671,7 @@ pub fn trace_sync(
     if !quench_runtime::is_callable(callback) {
         return Err(type_error("fn"));
     }
-    let mut context = args
+    let context = args
         .get(1)
         .filter(|value| execute::is_truthy(value))
         .cloned()

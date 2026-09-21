@@ -717,7 +717,7 @@ fn calendar_difference(
     if matches!(smallest, "year" | "month" | "week") && (days != 0 || time_fraction_days != 0.0) {
         let unit_value = match smallest {
             "year" => {
-                let (year_anchor, residual_days) = if receiver_is_end {
+                let (_year_anchor, residual_days) = if receiver_is_end {
                     let receiver_anchor = add_months_serial(end, -(years * 12));
                     (
                         receiver_anchor,

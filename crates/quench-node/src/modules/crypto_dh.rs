@@ -206,7 +206,7 @@ fn make_params(prime: Vec<u8>, generator: Vec<u8>) -> Result<Value, VmError> {
 }
 
 fn verify_error(prime: &[u8], generator: &[u8]) -> u32 {
-    let Ok(mut p) = BigNum::from_slice(prime) else {
+    let Ok(p) = BigNum::from_slice(prime) else {
         return 1;
     };
     let Ok(g) = BigNum::from_slice(generator) else {

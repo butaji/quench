@@ -176,7 +176,7 @@ fn compose_date_string(
     month: u32,
     day: u32,
     ms: f64,
-    is_utc: bool,
+    _is_utc: bool,
 ) -> String {
     let weekday = crate::date::chrono_utils::weekday(ms).unwrap_or(0);
     compose_date_string_with_weekday(slots, year, month, day, weekday)

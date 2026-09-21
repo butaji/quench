@@ -1,6 +1,6 @@
 //! Prototype-data call composition over canonical residual and cache facts.
 
-use crate::machine::{BaselineEntry, CodeView};
+use crate::machine::BaselineEntry;
 
 const REGION_LEN: usize = 4;
 pub(crate) const PROFILE_NAME: &str = "prototype_data_add_const_return";

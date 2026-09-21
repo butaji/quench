@@ -609,7 +609,7 @@ pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
     CURRENT_CONTEXT.with(|current| current.replace(previous));
     match result {
         Ok(()) => Ok(Value::Undefined),
-        Err(error) if todo => {
+        Err(_error) if todo => {
             report(state, &format!("ok - {child_name} # TODO"));
             Ok(Value::Undefined)
         }

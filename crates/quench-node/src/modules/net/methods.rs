@@ -317,7 +317,7 @@ pub fn bound_socket_construct(
 fn bound_object(
     state: &Rc<RefCell<HostState>>,
     id: u64,
-    fd: i64,
+    _fd: i64,
     path: Option<String>,
     address: Option<SocketAddr>,
 ) -> Result<Value, VmError> {
@@ -2179,7 +2179,7 @@ pub fn server_listen(
                 let process_emit = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
                 let message =
                     host_api::object(vec![("cmd".into(), Value::String("NODE_CLUSTER".into()))]);
-                let mut host = state.borrow_mut();
+                let host = state.borrow_mut();
                 for _ in 0..2 {
                     host.event_loop.queue_microtask(
                         process_emit.clone(),
@@ -2784,7 +2784,7 @@ pub fn server_get_connections(
 pub fn server_address(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    args: &[Value],
+    _args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(id) = receiver.and_then(net_id) else {
         return Ok(Value::Null);

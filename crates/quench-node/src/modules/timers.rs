@@ -219,7 +219,7 @@ fn schedule(
 /// `unref`/`ref`/`hasRef`/`refresh` capability methods.
 fn timer_object(
     id: u64,
-    destroyed: &Rc<quench_runtime::value::BindingCell>,
+    _destroyed: &Rc<quench_runtime::value::BindingCell>,
     kind: &TimerKind,
 ) -> Result<Value, VmError> {
     let constructor_name = match kind {

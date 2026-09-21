@@ -374,7 +374,7 @@ fn route_uncaught(
                         .and_then(|_| drive(context, "__quench_run_loop__();"));
                     match handled {
                         Ok(_) => Ok(()),
-                        Err(error)
+                        Err(_error)
                             if crate::modules::process::abort_on_uncaught_exception(
                                 &host.state(),
                             ) =>

@@ -280,7 +280,7 @@ pub(crate) fn execute_function_code_completion_step_in_current_frame(
     let code = owner.code().ok_or(VmError::MissingReturn)?;
     #[cfg(test)]
     crate::test_execution_profile::executed_code(code);
-    let context = current_context_or_default();
+    let _context = current_context_or_default();
     let _ = owner.enter_invocation();
     let mut pc = 0;
     loop {

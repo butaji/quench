@@ -951,7 +951,7 @@ fn compare_typed_arrays(
     right: &Value,
     strict: bool,
     skip_prototype: bool,
-    memo: &mut Vec<(*const (), *const ())>,
+    _memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
     if std::mem::discriminant(left) != std::mem::discriminant(right) {
         return Ok(false);

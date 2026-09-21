@@ -631,7 +631,7 @@ fn to_header_object(values: &[Value]) -> Result<Value, VmError> {
     Ok(result)
 }
 
-fn merge_header_value(mut result: Value, key: &str, value: String) -> Result<Value, VmError> {
+fn merge_header_value(result: Value, key: &str, value: String) -> Result<Value, VmError> {
     let old = execute::get_property(&result, key);
     let old_set_cookies = (key == "set-cookie").then(|| {
         execute::own_enumerable_keys(&old)

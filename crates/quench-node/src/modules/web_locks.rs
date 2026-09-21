@@ -170,7 +170,7 @@ fn remove_pending(state: &Rc<RefCell<HostState>>, name: &str, id: u64) {
 }
 
 fn grant_request(state: &Rc<RefCell<HostState>>, id: u64) -> Result<(), VmError> {
-    let (name, mode, callback, steal) = {
+    let (name, mode, callback, _steal) = {
         let mut host = state.borrow_mut();
         let request = host
             .locks

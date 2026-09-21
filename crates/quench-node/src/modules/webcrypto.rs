@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use aes::{Aes128, Aes192, Aes256};
 use aes_gcm::{
-    aead::{Aead, Payload},
+    aead::Aead,
     KeyInit,
 };
 use base64::Engine;
@@ -4401,7 +4401,7 @@ pub fn to_crypto_key(
 }
 
 pub fn generate_key(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {

@@ -421,7 +421,7 @@ fn update_loop_phase_resume(
         start: range.start.saturating_add(next as u32),
         end: range.end,
     };
-    let mut machine = generator.machine.borrow_mut();
+    let machine = generator.machine.borrow_mut();
     let index = machine.frames.frames.iter().rposition(|frame| {
         matches!(frame, crate::machine::Frame::Loop { body, .. } if *body == loop_body)
     }).ok_or(VmError::MissingReturn)?;

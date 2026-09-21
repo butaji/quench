@@ -348,7 +348,7 @@ fn common_prefix_matches(
     code: CodeView<'_>,
     i: &[Instruction],
     state: u16,
-    value: u16,
+    _value: u16,
     index: u16,
 ) -> Option<()> {
     (i[1].b == i[0].a && i[2].b == i[1].a && i[5].b == i[4].a).then_some(())?;
