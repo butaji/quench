@@ -80,4 +80,43 @@ impl<H: Host> Vm<H> {
             elements: Rc::new(values),
         }))
     }
+
+    pub(super) fn array_includes_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let elements = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => Rc::clone(elements),
+            _ => return Err(JsError("includes receiver is not array".into())),
+        };
+        let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+        let search = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let from = args
+            .get(1)
+            .copied()
+            .map(|value| self.to_number(p, value))
+            .transpose()?
+            .unwrap_or(0.0);
+        if from.is_infinite() && from.is_sign_positive() {
+            return Ok(Value::FALSE);
+        }
+        let start = if from.is_sign_negative() {
+            length.saturating_sub((-from.trunc()) as usize)
+        } else {
+            from.max(0.0).trunc() as usize
+        };
+        for index in start..length {
+            let value = elements
+                .get(index)
+                .copied()
+                .or_else(|| self.heap.sparse_get(this, index))
+                .unwrap_or(Value::UNDEFINED);
+            if self.same_value_zero(value, search) {
+                return Ok(Value::TRUE);
+            }
+        }
+        Ok(Value::FALSE)
+    }
 }
