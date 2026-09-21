@@ -6,7 +6,7 @@ const NATIVES: &[Native] = &[
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectGetPrototypeOf,
     Native::ObjectSetPrototypeOf, Native::ObjectHasOwn,
-    Native::ObjectPrototypeHasOwnProperty,
+    Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable,
     Native::ReflectGet,
     Native::ReflectSet,
     Native::ReflectOwnKeys,
