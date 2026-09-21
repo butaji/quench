@@ -146,6 +146,9 @@ impl<H: Host> Vm<H> {
             | Native::ArrayFindIndex
             | Native::ArrayReduce
             | Native::ArrayReduceRight => self.array_indexed_native(p, native, this, args),
+            Native::ArrayToReversed | Native::ArrayToSpliced => {
+                self.array_modern_native(p, native, this, args)
+            }
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {
