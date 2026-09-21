@@ -69,7 +69,34 @@ impl<H: Host> Vm<H> {
         let flags = self.to_string(p, self.get_property(p, this, flags_atom)?)?;
         let regex = Self::compile_regexp(&source, &flags)?;
         let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let Some(captures) = regex.captures(&input) else {
+        let stateful = flags.contains('g') || flags.contains('y');
+        let sticky = flags.contains('y');
+        let last_index_atom = self.intern_atom("lastIndex");
+        let start = if stateful {
+            let value = self.get_property(p, this, last_index_atom)?;
+            let number = self.to_number(p, value)?;
+            if number.is_finite() && number > 0.0 {
+                let mut index = number.floor() as usize;
+                index = index.min(input.len());
+                while index > 0 && !input.is_char_boundary(index) {
+                    index -= 1;
+                }
+                index
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let captures = regex.captures_at(&input, start);
+        let matched = captures
+            .as_ref()
+            .and_then(|captures| captures.get(0))
+            .is_some_and(|matched| !sticky || matched.start() == start);
+        let Some(captures) = captures.filter(|_| matched) else {
+            if stateful {
+                self.set_property(this, last_index_atom, Value::number(0.0))?;
+            }
             return Ok(if native == Native::RegExpTest {
                 Value::FALSE
             } else {
@@ -92,6 +119,10 @@ impl<H: Host> Vm<H> {
             elements: Rc::new(values),
         });
         let index = captures.get(0).map_or(0, |value| value.start());
+        if stateful {
+            let end = captures.get(0).map_or(start, |value| value.end());
+            self.set_property(this, last_index_atom, Value::number(end as f64))?;
+        }
         let index_atom = self.intern_atom("index");
         self.set_property(result, index_atom, Value::number(index as f64))?;
         let input_value = self.heap.alloc(Cell::String(input));

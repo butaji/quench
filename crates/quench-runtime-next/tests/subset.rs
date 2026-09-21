@@ -628,6 +628,16 @@ fn regexp_literals_lower_through_the_constructor_authority() {
 }
 
 #[test]
+fn regexp_global_and_sticky_calls_advance_and_reset_last_index() {
+    assert_eq!(
+        output(
+            "var global = /a/g; print(global.exec('aba')[0]); print(global.lastIndex); print(global.exec('aba')[0]); print(global.lastIndex); print(global.exec('aba') === null); print(global.lastIndex); var sticky = /a/y; sticky.lastIndex = 1; print(sticky.exec('ba')[0]); print(sticky.lastIndex); sticky.lastIndex = 0; print(sticky.exec('ba') === null); print(sticky.lastIndex);"
+        ),
+        ["a", "1", "a", "3", "true", "0", "a", "2", "true", "0"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
