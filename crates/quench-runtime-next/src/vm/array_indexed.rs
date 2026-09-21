@@ -23,6 +23,9 @@ impl<H: Host> Vm<H> {
             | Native::ArrayFindIndex
             | Native::ArrayFindLast
             | Native::ArrayFindLastIndex => self.array_callback_native(p, native, this, args),
+            Native::ArrayGroup | Native::ArrayGroupToMap => {
+                self.array_group_native(p, native, this, args)
+            }
             Native::ArrayFlatMap => self.array_flat_map_native(p, this, args),
             Native::ArrayReduce | Native::ArrayReduceRight => {
                 self.array_reduce_native(p, native, this, args)
