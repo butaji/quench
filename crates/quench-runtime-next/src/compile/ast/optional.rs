@@ -85,6 +85,17 @@ impl FunctionCompiler<'_, '_> {
         {
             let receiver = self.expression(&item.object);
             let (dst, end, jump_property) = self.emit_optional_prefix(receiver);
+            if Self::has_spread(&value.arguments) {
+                let callee = self.reg();
+                let atom = self.owner.atom(item.property.name.as_str());
+                let cache = self.owner.cache_site();
+                self.patch_instruction(jump_property, self.code.len() as u32);
+                self.emit(Op::GetField, callee, receiver, cache, atom);
+                let result = self.spread_call(callee, receiver, &value.arguments);
+                self.emit(Op::Move, dst, result, 0, 0);
+                self.patch(end);
+                return dst;
+            }
             self.patch_instruction(jump_property, self.code.len() as u32);
             let args = self.argument_registers(&value.arguments);
             let atom = self.owner.atom(item.property.name.as_str());
@@ -98,6 +109,13 @@ impl FunctionCompiler<'_, '_> {
         let callee = self.expression(&value.callee);
         let (dst, end, jump_call) = self.emit_optional_prefix(callee);
         self.patch_instruction(jump_call, self.code.len() as u32);
+        if Self::has_spread(&value.arguments) {
+            let this = self.literal(Constant::Undefined);
+            let result = self.spread_call(callee, this, &value.arguments);
+            self.emit(Op::Move, dst, result, 0, 0);
+            self.patch(end);
+            return dst;
+        }
         let (base, count) = self.arguments(&value.arguments);
         let this = self.literal(Constant::Undefined);
         self.emit(

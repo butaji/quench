@@ -494,9 +494,9 @@ fn optional_member_access_short_circuits_nullish_bases() {
 fn optional_calls_skip_arguments_and_preserve_method_receivers() {
     assert_eq!(
         output(
-            "var calls = 0; var none = null; print(none?.(calls = 1)); print(calls); var object = { run: function(value) { return value + 1; } }; print(object?.run(41));"
+            "var calls = 0; var none = null; var values = [41]; print(none?.(calls = 1)); print(none?.(...values)); print(calls); var object = { run: function(value) { return this.offset + value; }, offset: 1 }; print(object?.run(...values)); print(object?.run?.(...values));"
         ),
-        ["undefined", "0", "42"],
+        ["undefined", "undefined", "0", "42", "42"],
     );
 }
 

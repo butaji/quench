@@ -142,13 +142,13 @@ impl FunctionCompiler<'_, '_> {
         (base, values.len() as u16)
     }
 
-    fn has_spread(values: &[Argument<'_>]) -> bool {
+    pub(super) fn has_spread(values: &[Argument<'_>]) -> bool {
         values
             .iter()
             .any(|argument| matches!(argument, Argument::SpreadElement(_)))
     }
 
-    fn spread_call(
+    pub(super) fn spread_call(
         &mut self,
         callee: Register,
         this: Register,
