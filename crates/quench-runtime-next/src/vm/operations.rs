@@ -75,6 +75,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Map | Native::Set => self.construct_collection_native(native),
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
+            Native::WeakRef => self.construct_weak_ref_native(args),
             Native::Date => Ok(self.heap.alloc(Cell::Date(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             ))),
@@ -218,7 +219,8 @@ impl<H: Host> Vm<H> {
             | Native::Map
             | Native::Set
             | Native::WeakMap
-            | Native::WeakSet => self.construct_native(p, native, args),
+            | Native::WeakSet
+            | Native::WeakRef => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }
     }

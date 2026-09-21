@@ -53,3 +53,30 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
     assert!(heap.get(value).is_none());
     assert!(heap.release_root(map_root));
 }
+
+#[test]
+fn weak_ref_target_is_cleared_after_collection() {
+    let mut heap = Heap::new();
+    let target = heap.alloc(Cell::Object(Object {
+        proto: Value::NULL,
+        properties: ValueVec::new(),
+    }));
+    let reference = heap.alloc(Cell::WeakRef {
+        object: Object {
+            proto: Value::NULL,
+            properties: ValueVec::new(),
+        },
+        target,
+    });
+    let reference_root = heap.root(reference);
+    heap.collect([]);
+    assert!(heap.get(target).is_none());
+    assert!(matches!(
+        heap.get(reference),
+        Some(Cell::WeakRef {
+            target: Value::UNDEFINED,
+            ..
+        })
+    ));
+    assert!(heap.release_root(reference_root));
+}

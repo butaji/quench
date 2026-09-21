@@ -152,6 +152,16 @@ fn weak_collections_require_object_keys_and_preserve_identity() {
 }
 
 #[test]
+fn weak_ref_deref_tracks_target_and_rejects_primitives() {
+    assert_eq!(
+        output(
+            "var target = {}; var reference = new WeakRef(target); print(reference.deref() === target);"
+        ),
+        ["true"],
+    );
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(
