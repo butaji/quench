@@ -747,6 +747,17 @@ fn labeled_continue_targets_the_named_loop() {
 }
 
 #[test]
+fn catch_patterns_bind_the_thrown_value() {
+    let source = r#"
+      try { throw { code: 17, detail: 4 }; }
+      catch ({ code, detail }) { print(code); print(detail); }
+      try { throw [3, 5]; }
+      catch ([first, second]) { print(first); print(second); }
+    "#;
+    assert_eq!(output(source), ["17", "4", "3", "5"]);
+}
+
+#[test]
 fn object_prototypes_and_function_call_support_inheritance() {
     let source = r#"
       Object.prototype.inheritsFrom = function (parent) {

@@ -59,10 +59,8 @@ impl Compiler<'_> {
                 Statement::TryStatement(item) => {
                     self.collect_locals_into(&item.block.body, output, seen);
                     if let Some(handler) = &item.handler {
-                        if let Some(parameter) = &handler.param
-                            && let BindingPattern::BindingIdentifier(id) = &parameter.pattern
-                        {
-                            self.collect_name(Some(id.name.as_str()), output, seen);
+                        if let Some(parameter) = &handler.param {
+                            self.collect_pattern_names(&parameter.pattern, output, seen);
                         }
                         self.collect_locals_into(&handler.body.body, output, seen);
                     }
