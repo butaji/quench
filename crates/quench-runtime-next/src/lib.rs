@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 mod bytecode;
 mod compile;
 mod heap;
