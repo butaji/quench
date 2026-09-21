@@ -56,6 +56,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayFrom,
     Native::ArrayOf,
     Native::ArrayBuffer,
+    Native::ArrayBufferSlice,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -133,7 +134,14 @@ impl<H: Host> Vm<H> {
         self.install_console(program)?;
         self.install_array(program)?;
         let array_buffer = self.native_value(Native::ArrayBuffer);
-        self.set_named(program, array_buffer, "prototype", self.object_proto)?;
+        self.array_buffer_proto = self.object();
+        self.set_named(program, array_buffer, "prototype", self.array_buffer_proto)?;
+        self.set_named(
+            program,
+            self.array_buffer_proto,
+            "slice",
+            self.native_value(Native::ArrayBufferSlice),
+        )?;
         self.global(program, "ArrayBuffer", array_buffer)?;
         self.install_collections(program)?;
         self.install_weak_collections(program)?;

@@ -341,6 +341,16 @@ fn array_buffer_allocates_owned_bytes_and_exposes_byte_length() {
 }
 
 #[test]
+fn array_buffer_slice_copies_a_coerced_byte_range() {
+    assert_eq!(
+        output(
+            "var buffer = new ArrayBuffer(8); var sliced = buffer.slice('2.9', -1); print(buffer.byteLength); print(sliced.byteLength);"
+        ),
+        ["8", "5"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

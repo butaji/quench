@@ -41,14 +41,12 @@ mod string_cache;
 mod superinstruction;
 mod symbol;
 mod type_predicates;
-
 #[derive(Debug)]
 pub struct JsError(ErrorMessage);
 #[derive(Debug)]
 struct ErrorMessage {
     payload: Box<ErrorPayload>,
 }
-
 #[derive(Debug)]
 struct ErrorPayload {
     text: String,
@@ -202,6 +200,7 @@ pub struct Vm<H> {
     object_proto: Value,
     function_proto: Value,
     array_proto: Value,
+    array_buffer_proto: Value,
     map_proto: Value,
     set_proto: Value,
     weak_map_proto: Value,
@@ -248,6 +247,7 @@ impl<H: Host> Vm<H> {
             object_proto: Value::NULL,
             function_proto: Value::NULL,
             array_proto: Value::NULL,
+            array_buffer_proto: Value::NULL,
             map_proto: Value::NULL,
             set_proto: Value::NULL,
             weak_map_proto: Value::NULL,
