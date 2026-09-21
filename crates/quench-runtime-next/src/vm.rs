@@ -194,6 +194,17 @@ const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     proto: Value::UNDEFINED,
     target: None,
 };
+#[derive(Clone, Copy)]
+pub(super) struct PropertyAttributes {
+    pub writable: bool,
+    pub enumerable: bool,
+    pub configurable: bool,
+}
+const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
+    writable: true,
+    enumerable: true,
+    configurable: true,
+};
 pub struct Vm<H> {
     host: H,
     heap: Heap,
@@ -247,6 +258,7 @@ pub struct Vm<H> {
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
+    descriptors: FxHashMap<(Value, Atom), PropertyAttributes>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -368,6 +380,7 @@ impl<H: Host> Vm<H> {
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
         self.megamorphic_methods.clear();
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
+        self.descriptors.clear();
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.globals = self
             .heap

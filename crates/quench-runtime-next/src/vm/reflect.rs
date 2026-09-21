@@ -17,6 +17,11 @@ impl<H: Host> Vm<H> {
             Native::ReflectGetOwnPropertyDescriptor => {
                 self.object_get_own_property_descriptor(p, args)
             }
+            Native::ReflectDefineProperty => Ok(if self.object_define_property(p, args).is_ok() {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            }),
             Native::ReflectSet => {
                 let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let atom = self.intern_atom(&key);
@@ -27,7 +32,7 @@ impl<H: Host> Vm<H> {
                 )?;
                 Ok(Value::TRUE)
             }
-            Native::ReflectOwnKeys => self.object_keys(target),
+            Native::ReflectOwnKeys => self.object_names(target),
             Native::ReflectGetPrototypeOf => self.object_get_prototype_of(target),
             Native::ReflectSetPrototypeOf => {
                 self.object_set_prototype_of(

@@ -37,6 +37,9 @@ impl<H: Host> Vm<H> {
                 .ordered_shape(data)
                 .into_iter()
                 .filter_map(|(atom, slot)| {
+                    if !self.is_enumerable(source, atom) {
+                        return None;
+                    }
                     self.heap
                         .property_get(data, slot)
                         .map(|value| (atom, value))
@@ -52,10 +55,15 @@ impl<H: Host> Vm<H> {
     pub(super) fn object_keys(&mut self, object: Value) -> Result<Value, JsError> {
         let object = self.box_object(object)?;
         let data = self.object_data(object).expect("boxed target is object");
-        let values = self
+        let atoms = self
             .ordered_shape(data)
             .into_iter()
-            .map(|(atom, _)| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
+            .filter(|(atom, _)| self.is_enumerable(object, *atom))
+            .map(|(atom, _)| atom)
+            .collect::<Vec<_>>();
+        let values = atoms
+            .into_iter()
+            .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -107,6 +115,12 @@ impl<H: Host> Vm<H> {
         self.set_named(
             program,
             object,
+            "defineProperty",
+            self.native_value(Native::ObjectDefineProperty),
+        )?;
+        self.set_named(
+            program,
+            object,
             "values",
             self.native_value(Native::ObjectValues),
         )?;
@@ -136,7 +150,7 @@ impl<H: Host> Vm<H> {
                 self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectGetOwnPropertyNames => {
-                self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
+                self.object_names(args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectGetOwnPropertyDescriptor => {
                 self.object_get_own_property_descriptor(p, args)
@@ -144,6 +158,7 @@ impl<H: Host> Vm<H> {
             Native::ObjectGetOwnPropertyDescriptors => {
                 self.object_get_own_property_descriptors(p, args)
             }
+            Native::ObjectDefineProperty => self.object_define_property(p, args),
             Native::ObjectValues => {
                 self.object_values(args.first().copied().unwrap_or(Value::UNDEFINED))
             }
@@ -229,6 +244,7 @@ impl<H: Host> Vm<H> {
         let shape = self.ordered_shape(data);
         let values = shape
             .iter()
+            .filter(|(atom, _)| self.is_enumerable(object, *atom))
             .filter_map(|(_, slot)| self.heap.property_get(data, *slot))
             .collect::<Vec<_>>();
         Ok(self.heap.alloc(Cell::Array {
@@ -243,6 +259,7 @@ impl<H: Host> Vm<H> {
         let shape = self.ordered_shape(data);
         let pairs = shape
             .iter()
+            .filter(|(atom, _)| self.is_enumerable(object, *atom))
             .filter_map(|(atom, slot)| {
                 self.heap
                     .property_get(data, *slot)
@@ -286,6 +303,28 @@ impl<H: Host> Vm<H> {
         entries
     }
 
+    pub(super) fn object_names(&mut self, object: Value) -> Result<Value, JsError> {
+        let object = self.box_object(object)?;
+        let data = self.object_data(object).expect("boxed target is object");
+        let values = self
+            .ordered_shape(data)
+            .into_iter()
+            .map(|(atom, _)| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
+            .collect();
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
+    }
+
+    pub(super) fn is_enumerable(&self, object: Value, atom: Atom) -> bool {
+        self.descriptors
+            .get(&(object, atom))
+            .copied()
+            .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
+            .enumerable
+    }
+
     pub(super) fn box_object(&mut self, value: Value) -> Result<Value, JsError> {
         if self.object_data(value).is_some() {
             return Ok(value);
@@ -316,12 +355,38 @@ impl<H: Host> Vm<H> {
         let Some(value) = self.own_property(target, atom) else {
             return Ok(Value::UNDEFINED);
         };
+        let attributes = self
+            .descriptors
+            .get(&(target, atom))
+            .copied()
+            .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let descriptor = self.object();
         for (name, value) in [
             ("value", value),
-            ("writable", Value::TRUE),
-            ("enumerable", Value::TRUE),
-            ("configurable", Value::TRUE),
+            (
+                "writable",
+                if attributes.writable {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            ),
+            (
+                "enumerable",
+                if attributes.enumerable {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            ),
+            (
+                "configurable",
+                if attributes.configurable {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            ),
         ] {
             let atom = self.intern_atom(name);
             self.set_property(descriptor, atom, value)?;
@@ -344,6 +409,75 @@ impl<H: Host> Vm<H> {
             self.set_property(result, atom, descriptor)?;
         }
         Ok(result)
+    }
+
+    pub(super) fn object_define_property(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let target = self
+            .object_data(target)
+            .map(|_| target)
+            .ok_or_else(|| JsError("defineProperty target is not an object".into()))?;
+        let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        let atom = self.intern_atom(&key);
+        let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+        if self.object_data(descriptor).is_none() {
+            return Err(JsError("property descriptor is not an object".into()));
+        }
+        let existing = self.own_property(target, atom);
+        let current = self
+            .descriptors
+            .get(&(target, atom))
+            .copied()
+            .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+        let is_new = existing.is_none();
+        let mut attributes = if is_new {
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            }
+        } else {
+            current
+        };
+        for (name, slot) in [
+            ("writable", &mut attributes.writable),
+            ("enumerable", &mut attributes.enumerable),
+            ("configurable", &mut attributes.configurable),
+        ] {
+            let atom = self.intern_atom(name);
+            if let Some(value) = self.own_property(descriptor, atom) {
+                *slot = self.truthy(value);
+            }
+        }
+        if !is_new
+            && !current.configurable
+            && (attributes.configurable != current.configurable
+                || attributes.enumerable != current.enumerable
+                || attributes.writable && !current.writable)
+        {
+            return Err(JsError("cannot redefine non-configurable property".into()));
+        }
+        let value_atom = self.intern_atom("value");
+        if !is_new
+            && !current.configurable
+            && !current.writable
+            && self
+                .own_property(descriptor, value_atom)
+                .is_some_and(|next| !self.same_value(existing.unwrap(), next))
+        {
+            return Err(JsError("cannot write non-writable property".into()));
+        }
+        let value = self
+            .own_property(descriptor, value_atom)
+            .or(existing)
+            .unwrap_or(Value::UNDEFINED);
+        self.set_property(target, atom, value)?;
+        self.descriptors.insert((target, atom), attributes);
+        Ok(target)
     }
 }
 
