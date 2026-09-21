@@ -423,6 +423,16 @@ fn atomics_use_shared_uint8_views_and_return_previous_values() {
 }
 
 #[test]
+fn atomics_reject_non_shared_and_out_of_range_views_before_effects() {
+    assert_eq!(
+        output(
+            "var view = new Uint8Array(1); try { Atomics.store(view, 0, 9); } catch (error) { print(view[0]); } var shared = new Uint8Array(new SharedArrayBuffer(1)); try { Atomics.load(shared, 2); } catch (error) { print(shared[0]); }"
+        ),
+        ["0", "0"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
