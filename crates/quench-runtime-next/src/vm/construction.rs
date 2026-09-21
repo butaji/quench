@@ -50,6 +50,7 @@ impl<H: Host> Vm<H> {
                 self.construct_buffer_native(p, native, args)
             }
             Native::Uint8Array => self.construct_uint8_array_native(p, args),
+            Native::Uint8ClampedArray => self.construct_uint8_clamped_array_native(p, args),
             Native::Uint16Array => self.construct_uint16_array_native(p, args),
             Native::Uint32Array => self.construct_uint32_array_native(p, args),
             Native::Int8Array => self.construct_int8_array_native(p, args),

@@ -1,6 +1,126 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn install_uint8_clamped_array(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        let constructor = self.native_value(Native::Uint8ClampedArray);
+        self.uint8_clamped_array_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
+        self.set_named(
+            program,
+            constructor,
+            "prototype",
+            self.uint8_clamped_array_proto,
+        )?;
+        self.set_named(
+            program,
+            constructor,
+            "BYTES_PER_ELEMENT",
+            Value::number(1.0),
+        )?;
+        self.set_named(
+            program,
+            self.uint8_clamped_array_proto,
+            "BYTES_PER_ELEMENT",
+            Value::number(1.0),
+        )?;
+        self.global(program, "Uint8ClampedArray", constructor)
+    }
+
+    pub(super) fn construct_uint8_clamped_array_native(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some((buffer_length, detached)) = self.heap.get(source).and_then(|cell| {
+            if let Cell::ArrayBuffer {
+                bytes, detached, ..
+            } = cell
+            {
+                Some((bytes.len(), *detached))
+            } else {
+                None
+            }
+        }) {
+            if detached {
+                return Err(JsError(
+                    "Uint8ClampedArray backing buffer is detached".into(),
+                ));
+            }
+            let offset = args
+                .get(1)
+                .map(|value| self.to_number(p, *value))
+                .transpose()?
+                .unwrap_or(0.0);
+            if offset.is_nan() || offset.is_sign_negative() {
+                return Err(JsError("Uint8ClampedArray byte offset is invalid".into()));
+            }
+            let offset = offset.trunc() as usize;
+            let length = args
+                .get(2)
+                .map(|value| self.to_number(p, *value))
+                .transpose()?
+                .map(|value| {
+                    if value.is_nan() || value.is_sign_negative() {
+                        0
+                    } else {
+                        value.trunc() as usize
+                    }
+                })
+                .unwrap_or(buffer_length.saturating_sub(offset));
+            if offset > buffer_length || offset.saturating_add(length) > buffer_length {
+                return Err(JsError("Uint8ClampedArray length is out of range".into()));
+            }
+            return Ok(self.heap.alloc(Cell::Uint8ClampedArray {
+                object: Self::empty_object(self.uint8_clamped_array_proto),
+                buffer: source,
+                offset,
+                length,
+            }));
+        }
+        let values = self.typed_array_values(source);
+        let length = values.as_ref().map_or_else(
+            || {
+                self.to_number(p, source).map(|value| {
+                    if value.is_nan() || value.is_sign_negative() {
+                        0
+                    } else {
+                        value.trunc() as usize
+                    }
+                })
+            },
+            |values| Ok(values.len()),
+        )?;
+        let buffer = self.heap.alloc(Cell::ArrayBuffer {
+            object: Self::empty_object(self.array_buffer_proto),
+            bytes: Rc::new(vec![0; length]),
+            shared: false,
+            detached: false,
+        });
+        if let Some(values) = values {
+            let converted = values
+                .into_iter()
+                .map(|value| self.to_number(p, value).map(Self::uint8_clamped_from_value))
+                .collect::<Result<Vec<_>, _>>()?;
+            let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
+                return Err(JsError(
+                    "Uint8ClampedArray backing buffer is invalid".into(),
+                ));
+            };
+            Rc::make_mut(bytes).copy_from_slice(&converted);
+        }
+        Ok(self.heap.alloc(Cell::Uint8ClampedArray {
+            object: Self::empty_object(self.uint8_clamped_array_proto),
+            buffer,
+            offset: 0,
+            length,
+        }))
+    }
+
     pub(super) fn install_uint16_array(
         &mut self,
         program: &ResidualProgram,

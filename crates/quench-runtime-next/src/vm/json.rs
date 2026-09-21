@@ -106,6 +106,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Map { .. })
             | Some(Cell::ArrayBuffer { .. })
             | Some(Cell::Uint8Array { .. })
+            | Some(Cell::Uint8ClampedArray { .. })
             | Some(Cell::Uint16Array { .. })
             | Some(Cell::Uint32Array { .. })
             | Some(Cell::Int8Array { .. })

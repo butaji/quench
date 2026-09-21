@@ -74,6 +74,7 @@ pub(crate) enum Native {
     AtomicsCompareExchange,
     AtomicsIsLockFree,
     Uint8Array,
+    Uint8ClampedArray,
     Uint16Array,
     Uint32Array,
     Int8Array,
@@ -177,6 +178,7 @@ pub(crate) enum Native {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
     Uint8,
+    Uint8Clamped,
     Uint16,
     Uint32,
     Int8,
@@ -190,6 +192,7 @@ impl TypedArrayKind {
     pub(crate) const fn width(self) -> usize {
         match self {
             Self::Uint8 => 1,
+            Self::Uint8Clamped => 1,
             Self::Uint16 => 2,
             Self::Uint32 => 4,
             Self::Int8 => 1,
@@ -320,6 +323,12 @@ pub(crate) enum Cell {
         offset: usize,
         length: usize,
     },
+    Uint8ClampedArray {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
     Uint16Array {
         object: Object,
         buffer: Value,
@@ -414,6 +423,7 @@ impl Cell {
     pub(crate) fn typed_array_backing(&self) -> Option<(&Object, Value)> {
         match self {
             Self::Uint8Array { object, buffer, .. }
+            | Self::Uint8ClampedArray { object, buffer, .. }
             | Self::Uint16Array { object, buffer, .. }
             | Self::Uint32Array { object, buffer, .. }
             | Self::Int8Array { object, buffer, .. }
@@ -431,6 +441,7 @@ impl Cell {
             | Self::Array { object, .. }
             | Self::ArrayBuffer { object, .. }
             | Self::Uint8Array { object, .. }
+            | Self::Uint8ClampedArray { object, .. }
             | Self::Uint16Array { object, .. }
             | Self::Uint32Array { object, .. }
             | Self::Int8Array { object, .. }
@@ -456,6 +467,7 @@ impl Cell {
             | Self::Array { object, .. }
             | Self::ArrayBuffer { object, .. }
             | Self::Uint8Array { object, .. }
+            | Self::Uint8ClampedArray { object, .. }
             | Self::Uint16Array { object, .. }
             | Self::Uint32Array { object, .. }
             | Self::Int8Array { object, .. }
