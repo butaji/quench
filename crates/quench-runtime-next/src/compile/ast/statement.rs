@@ -81,10 +81,6 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn variables(&mut self, declaration: &VariableDeclaration<'_>) {
-        if !declaration.kind.is_var() {
-            self.owner
-                .reject(declaration.span, "only var declarations are supported");
-        }
         for item in &declaration.declarations {
             let BindingPattern::BindingIdentifier(id) = &item.id else {
                 self.owner.reject(item.span, "destructuring is unsupported");
