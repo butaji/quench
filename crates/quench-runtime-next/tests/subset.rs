@@ -74,6 +74,18 @@ fn base_classes_lower_to_constructor_and_prototype_methods() {
 }
 
 #[test]
+fn class_methods_capture_the_enclosing_activation() {
+    let source = r#"
+      function make(offset) {
+        class Box { answer() { return offset + 1; } }
+        return new Box();
+      }
+      print(make(41).answer());
+    "#;
+    assert_eq!(output(source), ["42"]);
+}
+
+#[test]
 fn template_literals_lower_to_string_addition() {
     assert_eq!(
         output("const answer = 42; print(`value: ${answer}!`);"),
