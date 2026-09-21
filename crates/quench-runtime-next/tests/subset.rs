@@ -192,6 +192,16 @@ fn string_from_code_point_validates_unicode_scalars() {
 }
 
 #[test]
+fn non_extensible_prototypes_are_stable() {
+    assert_eq!(
+        output(
+            "var object = {}; var other = {}; Object.preventExtensions(object); print(Reflect.setPrototypeOf(object, other)); try { Object.setPrototypeOf(object, other); } catch (error) { print('type-error'); } print(Object.getPrototypeOf(object) === Object.prototype);"
+        ),
+        ["false", "type-error", "true"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(
