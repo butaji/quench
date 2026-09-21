@@ -102,6 +102,16 @@ fn object_prototype_has_own_property_uses_receiver() {
 }
 
 #[test]
+fn object_prototype_property_is_enumerable_uses_own_slots() {
+    assert_eq!(
+        output(
+            "var object = { answer: 42 }; print(object.propertyIsEnumerable('answer')); print(object.propertyIsEnumerable('toString'));"
+        ),
+        ["true", "false"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(
