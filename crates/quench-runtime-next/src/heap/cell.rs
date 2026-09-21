@@ -8,6 +8,7 @@ pub(crate) enum Native {
     Object,
     ObjectKeys,
     ObjectCreate,
+    ObjectAssign,
     JsonParse,
     JsonStringify,
     Array,

@@ -102,6 +102,16 @@ fn object_create_preserves_prototype_lookup_and_own_shape() {
 }
 
 #[test]
+fn object_assign_copies_sources_in_argument_order() {
+    assert_eq!(
+        output(
+            "var target = { answer: 0 }; Object.assign(target, { answer: 1 }, { answer: 42, extra: 7 }); print(target.answer); print(target.extra);"
+        ),
+        ["42", "7"],
+    );
+}
+
+#[test]
 fn json_round_trip_uses_runtime_objects_and_arrays() {
     assert_eq!(
         output(
