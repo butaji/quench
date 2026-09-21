@@ -55,11 +55,13 @@ impl FunctionCompiler<'_, '_> {
                     &[],
                     &scopes,
                     Some(self.function_id),
-                    None,
-                    Some(&instance_fields),
-                    false,
-                    implicit_super,
-                    implicit_super,
+                    FunctionOptions {
+                        defaults: None,
+                        instance_fields: Some(&instance_fields),
+                        super_static: false,
+                        rest_override: implicit_super,
+                        implicit_super,
+                    },
                 )
             });
         let class_value = self.reg();
@@ -314,11 +316,13 @@ impl Compiler<'_> {
             body,
             scopes,
             parent,
-            Some(&method.value.params),
-            instance_fields,
-            method.r#static,
-            false,
-            false,
+            FunctionOptions {
+                defaults: Some(&method.value.params),
+                instance_fields,
+                super_static: method.r#static,
+                rest_override: false,
+                implicit_super: false,
+            },
         )
     }
 
@@ -334,11 +338,13 @@ impl Compiler<'_> {
             &block.body,
             scopes,
             parent,
-            None,
-            None,
-            true,
-            false,
-            false,
+            FunctionOptions {
+                defaults: None,
+                instance_fields: None,
+                super_static: true,
+                rest_override: false,
+                implicit_super: false,
+            },
         )
     }
 }

@@ -24,9 +24,7 @@ macro_rules! numeric_integer_binary {
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn numeric_binary(&self, op: u32, left: Value, right: Value) -> Option<Value> {
-        let Some((a, b)) = Value::int_pair(left, right) else {
-            return None;
-        };
+        let (a, b) = Value::int_pair(left, right)?;
         numeric_integer_binary!(op, a, b)
     }
 }

@@ -35,13 +35,13 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn as_int(self) -> Option<i32> {
-        ((self.0 & TAG_MASK) == TAG_INT).then(|| self.0 as u32 as i32)
+        ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
     }
 
     #[inline(always)]
     pub(crate) fn int_pair(left: Self, right: Self) -> Option<(i32, i32)> {
         let tags = (left.0 ^ TAG_INT) | (right.0 ^ TAG_INT);
-        (tags & TAG_MASK == 0).then(|| (left.0 as u32 as i32, right.0 as u32 as i32))
+        (tags & TAG_MASK == 0).then_some((left.0 as u32 as i32, right.0 as u32 as i32))
     }
 
     pub(crate) fn heap(index: u32) -> Self {
@@ -57,12 +57,12 @@ impl Value {
     }
 
     pub fn as_bool(self) -> Option<bool> {
-        ((self.0 & TAG_MASK) == TAG_BOOL).then(|| self.0 & 1 != 0)
+        ((self.0 & TAG_MASK) == TAG_BOOL).then_some(self.0 & 1 != 0)
     }
 
     #[inline(always)]
     pub(crate) fn heap_index(self) -> Option<u32> {
-        ((self.0 & TAG_MASK) == TAG_HEAP).then(|| (self.0 & PAYLOAD_MASK) as u32)
+        ((self.0 & TAG_MASK) == TAG_HEAP).then_some((self.0 & PAYLOAD_MASK) as u32)
     }
 
     pub fn is_undefined(self) -> bool {

@@ -45,13 +45,12 @@ impl Heap {
                     key.heap_index()
                         .is_some_and(|key| Self::marked(&self.marks, key as usize))
                 }),
-                Cell::WeakRef { target, .. } => {
+                Cell::WeakRef { target, .. }
                     if !target
                         .heap_index()
-                        .is_some_and(|target| Self::marked(&self.marks, target as usize))
-                    {
-                        *target = Value::UNDEFINED;
-                    }
+                        .is_some_and(|target| Self::marked(&self.marks, target as usize)) =>
+                {
+                    *target = Value::UNDEFINED;
                 }
                 _ => {}
             }

@@ -445,10 +445,10 @@ impl<H: Host> Vm<H> {
         hasher.finish()
     }
     pub(super) fn index_atom(&mut self, hash: u64, atom: Atom) {
-        if self.atoms.contains_key(&hash) {
-            self.atom_collisions.entry(hash).or_default().push(atom);
+        if let std::collections::hash_map::Entry::Vacant(entry) = self.atoms.entry(hash) {
+            entry.insert(atom);
         } else {
-            self.atoms.insert(hash, atom);
+            self.atom_collisions.entry(hash).or_default().push(atom);
         }
     }
     pub(super) fn atom_name(&self, atom: Atom) -> &str {

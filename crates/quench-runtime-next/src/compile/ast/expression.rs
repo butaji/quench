@@ -137,11 +137,10 @@ impl FunctionCompiler<'_, '_> {
             body,
             &scopes,
             Some(self.function_id),
-            Some(&value.params),
-            None,
-            false,
-            false,
-            false,
+            FunctionOptions {
+                defaults: Some(&value.params),
+                ..FunctionOptions::default()
+            },
         );
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);
@@ -199,18 +198,18 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn static_get(&mut self, object: &Expression<'_>, key: &str) -> Register {
-        if let Expression::StaticMemberExpression(inner) = object {
-            if matches!(&inner.object, Expression::ThisExpression(_)) {
-                let dst = self.reg();
-                let first = self.owner.atom(inner.property.name.as_str());
-                let second = self.owner.atom(key);
-                let site = self.owner.cache_site();
-                let second_site = self.owner.cache_site();
-                let access =
-                    self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
-                self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
-                return dst;
-            }
+        if let Expression::StaticMemberExpression(inner) = object
+            && matches!(&inner.object, Expression::ThisExpression(_))
+        {
+            let dst = self.reg();
+            let first = self.owner.atom(inner.property.name.as_str());
+            let second = self.owner.atom(key);
+            let site = self.owner.cache_site();
+            let second_site = self.owner.cache_site();
+            let access =
+                self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
+            self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
+            return dst;
         }
         let dst = self.reg();
         let atom = self.owner.atom(key);

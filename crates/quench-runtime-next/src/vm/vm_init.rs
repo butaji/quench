@@ -32,7 +32,10 @@ impl<H: Host> Vm<H> {
             natives: vec![],
             frames: vec![],
             frame_pool: vec![],
+            #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
+            #[cfg(not(feature = "profile-aggregate"))]
+            profile: Profile,
             shapes: vec![vec![]],
             transitions: FxHashMap::default(),
             atom_text: AtomTable::default(),
