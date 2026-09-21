@@ -111,6 +111,8 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Int8Array { .. })
             | Some(Cell::Int16Array { .. })
             | Some(Cell::Int32Array { .. })
+            | Some(Cell::Float32Array { .. })
+            | Some(Cell::Float64Array { .. })
             | Some(Cell::DataView { .. })
             | Some(Cell::Set { .. })
             | Some(Cell::WeakMap { .. })

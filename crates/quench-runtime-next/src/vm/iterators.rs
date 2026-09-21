@@ -45,7 +45,9 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Uint32Array { .. })
             | Some(Cell::Int8Array { .. })
             | Some(Cell::Int16Array { .. })
-            | Some(Cell::Int32Array { .. }) => IteratorKind::Array,
+            | Some(Cell::Int32Array { .. })
+            | Some(Cell::Float32Array { .. })
+            | Some(Cell::Float64Array { .. }) => IteratorKind::Array,
             Some(Cell::String(_)) => IteratorKind::String,
             Some(Cell::Map { .. }) => IteratorKind::MapEntries,
             Some(Cell::Set { .. }) => IteratorKind::SetValues,
@@ -82,6 +84,8 @@ impl<H: Host> Vm<H> {
                 | Some(Cell::Int8Array { .. })
                 | Some(Cell::Int16Array { .. })
                 | Some(Cell::Int32Array { .. })
+                | Some(Cell::Float32Array { .. })
+                | Some(Cell::Float64Array { .. })
         ) {
             return Err(JsError("array iterator receiver is not array".into()));
         }

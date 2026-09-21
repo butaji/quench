@@ -1,0 +1,194 @@
+use super::*;
+
+impl<H: Host> Vm<H> {
+    pub(super) fn install_float32_array(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        self.install_float_array(
+            program,
+            TypedArrayKind::Float32,
+            Native::Float32Array,
+            "Float32Array",
+        )
+    }
+
+    pub(super) fn install_float64_array(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        self.install_float_array(
+            program,
+            TypedArrayKind::Float64,
+            Native::Float64Array,
+            "Float64Array",
+        )
+    }
+
+    fn install_float_array(
+        &mut self,
+        program: &ResidualProgram,
+        kind: TypedArrayKind,
+        native: Native,
+        name: &str,
+    ) -> Result<(), JsError> {
+        let constructor = self.native_value(native);
+        let proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
+        match kind {
+            TypedArrayKind::Float32 => self.float32_array_proto = proto,
+            TypedArrayKind::Float64 => self.float64_array_proto = proto,
+            _ => unreachable!(),
+        }
+        self.set_named(program, constructor, "prototype", proto)?;
+        self.set_named(
+            program,
+            constructor,
+            "BYTES_PER_ELEMENT",
+            Value::number(kind.width() as f64),
+        )?;
+        self.set_named(
+            program,
+            proto,
+            "BYTES_PER_ELEMENT",
+            Value::number(kind.width() as f64),
+        )?;
+        self.global(program, name, constructor)
+    }
+
+    pub(super) fn construct_float32_array_native(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.construct_float_array_native(p, args, TypedArrayKind::Float32, "Float32Array")
+    }
+
+    pub(super) fn construct_float64_array_native(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.construct_float_array_native(p, args, TypedArrayKind::Float64, "Float64Array")
+    }
+
+    fn construct_float_array_native(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        kind: TypedArrayKind,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let width = kind.width();
+        if let Some((buffer_length, detached)) = self.heap.get(source).and_then(|cell| {
+            if let Cell::ArrayBuffer {
+                bytes, detached, ..
+            } = cell
+            {
+                Some((bytes.len(), *detached))
+            } else {
+                None
+            }
+        }) {
+            if detached {
+                return Err(JsError(format!("{name} backing buffer is detached").into()));
+            }
+            let offset = self.to_number(p, args.get(1).copied().unwrap_or(Value::number(0.0)))?;
+            if offset.is_nan() || offset.is_sign_negative() {
+                return Err(JsError(format!("{name} byte offset is invalid").into()));
+            }
+            let offset = offset.trunc() as usize;
+            if !offset.is_multiple_of(width) || offset > buffer_length {
+                return Err(JsError(
+                    format!("{name} byte offset is out of range").into(),
+                ));
+            }
+            let length = args
+                .get(2)
+                .map(|value| self.to_number(p, *value))
+                .transpose()?
+                .map(|value| {
+                    if value.is_nan() || value.is_sign_negative() {
+                        0
+                    } else {
+                        value.trunc() as usize
+                    }
+                })
+                .unwrap_or((buffer_length - offset) / width);
+            if offset.saturating_add(length.saturating_mul(width)) > buffer_length {
+                return Err(JsError(format!("{name} length is out of range").into()));
+            }
+            return Ok(self.alloc_float_view(kind, source, offset, length));
+        }
+        let values = self.typed_array_values(source);
+        let length = values.as_ref().map_or_else(
+            || {
+                self.to_number(p, source).map(|value| {
+                    if value.is_nan() || value.is_sign_negative() {
+                        0
+                    } else {
+                        value.trunc() as usize
+                    }
+                })
+            },
+            |values| Ok(values.len()),
+        )?;
+        let buffer = self.heap.alloc(Cell::ArrayBuffer {
+            object: Self::empty_object(self.array_buffer_proto),
+            bytes: Rc::new(vec![0; length.saturating_mul(width)]),
+            shared: false,
+            detached: false,
+        });
+        if let Some(values) = values {
+            let converted = values
+                .into_iter()
+                .map(|value| self.to_number(p, value))
+                .collect::<Result<Vec<_>, _>>()?;
+            let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
+                return Err(JsError(format!("{name} backing buffer is invalid").into()));
+            };
+            let bytes = Rc::make_mut(bytes);
+            for (index, value) in converted.into_iter().enumerate() {
+                let start = index * width;
+                if kind == TypedArrayKind::Float32 {
+                    bytes[start..start + 4].copy_from_slice(&(value as f32).to_ne_bytes());
+                } else {
+                    bytes[start..start + 8].copy_from_slice(&value.to_ne_bytes());
+                }
+            }
+        }
+        Ok(self.alloc_float_view(kind, buffer, 0, length))
+    }
+
+    fn alloc_float_view(
+        &mut self,
+        kind: TypedArrayKind,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    ) -> Value {
+        let object = if kind == TypedArrayKind::Float32 {
+            Self::empty_object(self.float32_array_proto)
+        } else {
+            Self::empty_object(self.float64_array_proto)
+        };
+        let cell = if kind == TypedArrayKind::Float32 {
+            Cell::Float32Array {
+                object,
+                buffer,
+                offset,
+                length,
+            }
+        } else {
+            Cell::Float64Array {
+                object,
+                buffer,
+                offset,
+                length,
+            }
+        };
+        self.heap.alloc(cell)
+    }
+}

@@ -39,6 +39,18 @@ impl<H: Host> Vm<H> {
                 length,
                 ..
             }) => (*buffer, *offset, *length, TypedArrayKind::Int32),
+            Some(Cell::Float32Array {
+                buffer,
+                offset,
+                length,
+                ..
+            }) => (*buffer, *offset, *length, TypedArrayKind::Float32),
+            Some(Cell::Float64Array {
+                buffer,
+                offset,
+                length,
+                ..
+            }) => (*buffer, *offset, *length, TypedArrayKind::Float64),
             _ => return None,
         };
         if index >= length {
@@ -60,6 +72,13 @@ impl<H: Host> Vm<H> {
                         TypedArrayKind::Int32 => {
                             i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
                         }
+                        TypedArrayKind::Float32 => {
+                            f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+                        }
+                        TypedArrayKind::Float64 => f64::from_ne_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+                            bytes[7],
+                        ]),
                     })
                 })
             }
@@ -75,7 +94,9 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Uint32Array { buffer, length, .. })
             | Some(Cell::Int8Array { buffer, length, .. })
             | Some(Cell::Int16Array { buffer, length, .. })
-            | Some(Cell::Int32Array { buffer, length, .. }) => {
+            | Some(Cell::Int32Array { buffer, length, .. })
+            | Some(Cell::Float32Array { buffer, length, .. })
+            | Some(Cell::Float64Array { buffer, length, .. }) => {
                 Some(if self.array_buffer_detached(*buffer) {
                     0
                 } else {
@@ -93,7 +114,9 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Uint32Array { buffer, .. })
             | Some(Cell::Int8Array { buffer, .. })
             | Some(Cell::Int16Array { buffer, .. })
-            | Some(Cell::Int32Array { buffer, .. }) => *buffer,
+            | Some(Cell::Int32Array { buffer, .. })
+            | Some(Cell::Float32Array { buffer, .. })
+            | Some(Cell::Float64Array { buffer, .. }) => *buffer,
             _ => return None,
         };
         match self.heap.get(buffer) {
@@ -110,6 +133,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::Int8Array { .. }) => Some(TypedArrayKind::Int8),
             Some(Cell::Int16Array { .. }) => Some(TypedArrayKind::Int16),
             Some(Cell::Int32Array { .. }) => Some(TypedArrayKind::Int32),
+            Some(Cell::Float32Array { .. }) => Some(TypedArrayKind::Float32),
+            Some(Cell::Float64Array { .. }) => Some(TypedArrayKind::Float64),
             _ => None,
         }
     }
@@ -121,7 +146,9 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Uint32Array { buffer, offset, .. })
             | Some(Cell::Int8Array { buffer, offset, .. })
             | Some(Cell::Int16Array { buffer, offset, .. })
-            | Some(Cell::Int32Array { buffer, offset, .. }) => (*buffer, *offset),
+            | Some(Cell::Int32Array { buffer, offset, .. })
+            | Some(Cell::Float32Array { buffer, offset, .. })
+            | Some(Cell::Float64Array { buffer, offset, .. }) => (*buffer, *offset),
             _ => return None,
         };
         Some(if self.array_buffer_detached(buffer) {
@@ -138,7 +165,9 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Uint32Array { buffer, .. })
             | Some(Cell::Int8Array { buffer, .. })
             | Some(Cell::Int16Array { buffer, .. })
-            | Some(Cell::Int32Array { buffer, .. }) => {
+            | Some(Cell::Int32Array { buffer, .. })
+            | Some(Cell::Float32Array { buffer, .. })
+            | Some(Cell::Float64Array { buffer, .. }) => {
                 if atom == self.length_atom || self.lookup_atom("byteLength") == Some(atom) {
                     let width = self
                         .typed_array_kind(object)
@@ -230,6 +259,18 @@ impl<H: Host> Vm<H> {
                 length,
                 ..
             }) => (*buffer, *offset, *length, TypedArrayKind::Int32),
+            Some(Cell::Float32Array {
+                buffer,
+                offset,
+                length,
+                ..
+            }) => (*buffer, *offset, *length, TypedArrayKind::Float32),
+            Some(Cell::Float64Array {
+                buffer,
+                offset,
+                length,
+                ..
+            }) => (*buffer, *offset, *length, TypedArrayKind::Float64),
             _ => return Ok(false),
         };
         if self.array_buffer_detached(buffer) {
@@ -253,6 +294,12 @@ impl<H: Host> Vm<H> {
                     .copy_from_slice(&Self::uint16_from_value(value).to_ne_bytes()),
                 TypedArrayKind::Int32 => bytes[start..start + 4]
                     .copy_from_slice(&Self::uint32_from_value(value).to_ne_bytes()),
+                TypedArrayKind::Float32 => {
+                    bytes[start..start + 4].copy_from_slice(&(value as f32).to_ne_bytes())
+                }
+                TypedArrayKind::Float64 => {
+                    bytes[start..start + 8].copy_from_slice(&value.to_ne_bytes())
+                }
             }
         }
         Ok(true)

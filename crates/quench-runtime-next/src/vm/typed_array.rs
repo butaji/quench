@@ -59,7 +59,9 @@ impl<H: Host> Vm<H> {
         self.install_uint32_array(program)?;
         self.install_int8_array(program)?;
         self.install_int16_array(program)?;
-        self.install_int32_array(program)
+        self.install_int32_array(program)?;
+        self.install_float32_array(program)?;
+        self.install_float64_array(program)
     }
 
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
@@ -69,7 +71,9 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Uint32Array { buffer, offset, .. })
             | Some(Cell::Int8Array { buffer, offset, .. })
             | Some(Cell::Int16Array { buffer, offset, .. })
-            | Some(Cell::Int32Array { buffer, offset, .. }) => {
+            | Some(Cell::Int32Array { buffer, offset, .. })
+            | Some(Cell::Float32Array { buffer, offset, .. })
+            | Some(Cell::Float64Array { buffer, offset, .. }) => {
                 Some((*buffer, *offset, self.typed_array_length(object)?))
             }
             _ => None,
@@ -121,6 +125,8 @@ impl<H: Host> Vm<H> {
                         | Some(Cell::Int8Array { .. })
                         | Some(Cell::Int16Array { .. })
                         | Some(Cell::Int32Array { .. })
+                        | Some(Cell::Float32Array { .. })
+                        | Some(Cell::Float64Array { .. })
                         | Some(Cell::DataView { .. })
                 ) {
                     Value::TRUE
@@ -298,6 +304,18 @@ impl<H: Host> Vm<H> {
             }),
             TypedArrayKind::Int32 => self.heap.alloc(Cell::Int32Array {
                 object: Self::empty_object(self.int32_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
+            TypedArrayKind::Float32 => self.heap.alloc(Cell::Float32Array {
+                object: Self::empty_object(self.float32_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
+            TypedArrayKind::Float64 => self.heap.alloc(Cell::Float64Array {
+                object: Self::empty_object(self.float64_array_proto),
                 buffer,
                 offset,
                 length,

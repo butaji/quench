@@ -46,8 +46,10 @@ mod symbol;
 mod type_predicates;
 mod typed_array;
 mod typed_array_access;
+mod typed_array_float;
 mod typed_array_signed;
 mod typed_array_uint16;
+mod vm_init;
 #[derive(Debug)]
 pub struct JsError(ErrorMessage);
 #[derive(Debug)]
@@ -201,6 +203,8 @@ pub struct Vm<H> {
     int8_array_proto: Value,
     int16_array_proto: Value,
     int32_array_proto: Value,
+    float32_array_proto: Value,
+    float64_array_proto: Value,
     data_view_proto: Value,
     map_proto: Value,
     set_proto: Value,
@@ -239,59 +243,6 @@ pub struct Vm<H> {
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
-    pub fn new(host: H) -> Self {
-        Self {
-            host,
-            heap: Heap::new(),
-            globals: Value::NULL,
-            object_proto: Value::NULL,
-            function_proto: Value::NULL,
-            array_proto: Value::NULL,
-            array_buffer_proto: Value::NULL,
-            uint8_array_proto: Value::NULL,
-            uint16_array_proto: Value::NULL,
-            uint32_array_proto: Value::NULL,
-            int8_array_proto: Value::NULL,
-            int16_array_proto: Value::NULL,
-            int32_array_proto: Value::NULL,
-            data_view_proto: Value::NULL,
-            map_proto: Value::NULL,
-            set_proto: Value::NULL,
-            weak_map_proto: Value::NULL,
-            weak_set_proto: Value::NULL,
-            weak_ref_proto: Value::NULL,
-            iterator_proto: Value::NULL,
-            constants: vec![],
-            const_arrays: vec![],
-            natives: vec![],
-            frames: vec![],
-            frame_pool: vec![],
-            profile: Profile::default(),
-            shapes: vec![vec![]],
-            transitions: FxHashMap::default(),
-            atom_text: AtomTable::default(),
-            atoms: FxHashMap::default(),
-            atom_collisions: FxHashMap::default(),
-            dynamic_atoms: vec![],
-            dynamic_strings: None,
-            symbol_registry: FxHashMap::default(),
-            string_concats: None,
-            field_caches: vec![],
-            megamorphic_field_indices: vec![],
-            megamorphic_fields: vec![],
-            length_atom: u32::MAX,
-            size_atom: u32::MAX,
-            to_fixed_atom: u32::MAX,
-            to_precision_atom: u32::MAX,
-            primitive_atoms: [u32::MAX; 8],
-            method_caches: vec![],
-            megamorphic_methods: vec![],
-            #[cfg(feature = "profile-aggregate")]
-            invalidated_methods: FxHashMap::default(),
-            object_shapes: vec![],
-            random_state: 0x4d59_5df4_d0f3_3173,
-        }
-    }
     pub fn root(&mut self, value: Value) -> RootId {
         self.heap.root(value)
     }
