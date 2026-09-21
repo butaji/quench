@@ -120,6 +120,65 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(if matched { Value::TRUE } else { Value::FALSE })
             }
+            Native::StringReplace => {
+                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                    return Err(JsError("string method receiver is not a string".into()));
+                };
+                let search =
+                    self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let replacement =
+                    self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let Some(index) = receiver.find(&search) else {
+                    return Ok(self.heap.alloc(Cell::String(receiver)));
+                };
+                let replacement = replacement.replace("$&", &search);
+                let mut result = String::with_capacity(
+                    receiver.len() + replacement.len().saturating_sub(search.len()),
+                );
+                result.push_str(&receiver[..index]);
+                result.push_str(&replacement);
+                result.push_str(&receiver[index + search.len()..]);
+                Ok(self.heap.alloc(Cell::String(result)))
+            }
+            Native::StringSplit => {
+                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+                    return Err(JsError("string method receiver is not a string".into()));
+                };
+                let limit = match args.get(1).copied() {
+                    None | Some(Value::UNDEFINED) => usize::MAX,
+                    Some(value) => {
+                        let number = self.to_number(p, value)?;
+                        if !number.is_finite() || number <= 0.0 {
+                            0
+                        } else {
+                            number.trunc().min(usize::MAX as f64) as usize
+                        }
+                    }
+                };
+                let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let parts = if separator.is_undefined() {
+                    vec![receiver]
+                } else {
+                    let separator = self.to_string(p, separator)?;
+                    if separator.is_empty() {
+                        receiver
+                            .encode_utf16()
+                            .map(|unit| String::from_utf16_lossy(&[unit]))
+                            .collect()
+                    } else {
+                        receiver.split(&separator).map(str::to_owned).collect()
+                    }
+                };
+                let values = parts
+                    .into_iter()
+                    .take(limit)
+                    .map(|part| self.heap.alloc(Cell::String(part)))
+                    .collect();
+                Ok(self.heap.alloc(Cell::Array {
+                    object: Self::empty_object(self.array_proto),
+                    elements: Rc::new(values),
+                }))
+            }
             Native::EncodeUri | Native::EncodeUriComponent => {
                 let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 Ok(self.heap.alloc(Cell::String(encode_uri(
