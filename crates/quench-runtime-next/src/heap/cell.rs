@@ -6,7 +6,7 @@ use std::rc::Rc;
 pub(crate) enum Native {
     Print,
     Object,
-    ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertyDescriptor, ObjectFromEntries, ObjectIs,
+    ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectGetPrototypeOf,
     ObjectSetPrototypeOf, ObjectHasOwn, ObjectPrototypeHasOwnProperty, ObjectPrototypePropertyIsEnumerable, ObjectPrototypeIsPrototypeOf,
     ReflectGet, ReflectGetOwnPropertyDescriptor,
