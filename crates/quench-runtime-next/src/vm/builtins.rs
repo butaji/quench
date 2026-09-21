@@ -37,6 +37,15 @@ const NATIVES: &[Native] = &[
     Native::SetValues,
     Native::SetEntries,
     Native::IteratorNext,
+    Native::WeakMap,
+    Native::WeakMapGet,
+    Native::WeakMapSet,
+    Native::WeakMapHas,
+    Native::WeakMapDelete,
+    Native::WeakSet,
+    Native::WeakSetAdd,
+    Native::WeakSetHas,
+    Native::WeakSetDelete,
     Native::FunctionCall,
     Native::Date,
     Native::DateNow,
@@ -84,6 +93,7 @@ impl<H: Host> Vm<H> {
         self.install_console(program)?;
         self.install_array(program)?;
         self.install_collections(program)?;
+        self.install_weak_collections(program)?;
         self.install_iterators(program)?;
         self.global(program, "undefined", Value::UNDEFINED)?;
         self.global(program, "NaN", Value::number(f64::NAN))?;

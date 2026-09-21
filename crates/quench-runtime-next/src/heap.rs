@@ -7,6 +7,7 @@ mod cell;
 mod memory_profile;
 mod root;
 mod slots;
+mod weak;
 pub(crate) use cell::*;
 pub use root::RootId;
 pub(crate) use root::RootTable;
@@ -40,9 +41,9 @@ pub(crate) struct Heap {
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GcProfile {
-    pub allocated_kinds: [u64; 12],
-    pub allocated_payload_bytes: [u64; 12],
-    pub allocated_size_buckets: [[u64; 8]; 12],
+    pub allocated_kinds: [u64; 14],
+    pub allocated_payload_bytes: [u64; 14],
+    pub allocated_size_buckets: [[u64; 8]; 14],
     pub roots: u64,
     pub work_items: u64,
     pub max_worklist: u64,
@@ -51,7 +52,7 @@ pub(crate) struct GcProfile {
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
-    pub marked_kinds: [u64; 12],
+    pub marked_kinds: [u64; 14],
 }
 
 #[derive(Default)]
@@ -191,40 +192,9 @@ impl Heap {
             self.gc_profile.roots += work.len() as u64;
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
-        while let Some(value) = work.pop() {
-            #[cfg(feature = "profile-aggregate")]
-            {
-                self.gc_profile.work_items += 1;
-            }
-            let Some(index) = value.heap_index().map(|value| value as usize) else {
-                continue;
-            };
-            let Some(slot) = self.slots.get_mut(index) else {
-                continue;
-            };
-            if Self::marked(&self.marks, index) || slot.cell.is_none() {
-                continue;
-            }
-            Self::mark(&mut self.marks, index);
-            let cell = slot.cell.as_ref().unwrap();
-            #[cfg(feature = "profile-aggregate")]
-            {
-                self.gc_profile.marked += 1;
-                self.gc_profile.marked_kinds[Self::cell_kind(cell)] += 1;
-            }
-            Self::children(cell, &self.properties, &mut work);
-            if let Some(elements) = self
-                .sparse_arrays
-                .as_ref()
-                .and_then(|arrays| arrays.get(&(index as u32)))
-            {
-                work.extend(elements.values.values().copied());
-            }
-            #[cfg(feature = "profile-aggregate")]
-            {
-                self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
-            }
-        }
+        self.mark_work(&mut work);
+        self.mark_ephemerons(&mut work);
+        self.prune_weak_entries();
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.mark_nanos += mark_started.elapsed().as_nanos() as u64;
@@ -268,6 +238,43 @@ impl Heap {
         self.threshold = headroom.max(384);
         self.peak_survivors = self.peak_survivors.max(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
+    }
+
+    pub(super) fn mark_work(&mut self, work: &mut Vec<Value>) {
+        while let Some(value) = work.pop() {
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.work_items += 1;
+            }
+            let Some(index) = value.heap_index().map(|value| value as usize) else {
+                continue;
+            };
+            let Some(slot) = self.slots.get_mut(index) else {
+                continue;
+            };
+            if Self::marked(&self.marks, index) || slot.cell.is_none() {
+                continue;
+            }
+            Self::mark(&mut self.marks, index);
+            let cell = slot.cell.as_ref().unwrap();
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[Self::cell_kind(cell)] += 1;
+            }
+            Self::children(cell, &self.properties, work);
+            if let Some(elements) = self
+                .sparse_arrays
+                .as_ref()
+                .and_then(|arrays| arrays.get(&(index as u32)))
+            {
+                work.extend(elements.values.values().copied());
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
+            }
+        }
     }
 
     #[inline(always)]
@@ -400,6 +407,9 @@ impl Heap {
                 object(value);
                 work.extend(entries.iter().copied());
             }
+            Cell::WeakMap { object: value, .. } | Cell::WeakSet { object: value, .. } => {
+                object(value);
+            }
             Cell::Iterator {
                 object: value,
                 source,
@@ -434,13 +444,15 @@ impl Heap {
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
             Cell::Iterator { .. } => 4,
-            Cell::Function { .. } => 5,
-            Cell::Environment { .. } => 6,
-            Cell::String(_) => 7,
-            Cell::BigInt(_) => 8,
-            Cell::Symbol(_) => 9,
-            Cell::Date(_) => 10,
-            Cell::Error(_) => 11,
+            Cell::WeakMap { .. } => 5,
+            Cell::WeakSet { .. } => 6,
+            Cell::Function { .. } => 7,
+            Cell::Environment { .. } => 8,
+            Cell::String(_) => 9,
+            Cell::BigInt(_) => 10,
+            Cell::Symbol(_) => 11,
+            Cell::Date(_) => 12,
+            Cell::Error(_) => 13,
         }
     }
 
@@ -451,6 +463,8 @@ impl Heap {
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
+            Cell::WeakMap { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
+            Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::Function { .. } => size_of::<Object>(),
             Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
             Cell::String(value) | Cell::BigInt(value) | Cell::Error(value) => value.capacity(),

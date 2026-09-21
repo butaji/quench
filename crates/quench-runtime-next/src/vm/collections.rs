@@ -1,6 +1,93 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn is_collection_native(native: Native) -> bool {
+        matches!(
+            native,
+            Native::MapGet
+                | Native::MapSet
+                | Native::MapHas
+                | Native::MapDelete
+                | Native::MapClear
+                | Native::MapKeys
+                | Native::MapValues
+                | Native::MapEntries
+                | Native::SetAdd
+                | Native::SetHas
+                | Native::SetDelete
+                | Native::SetClear
+                | Native::SetKeys
+                | Native::SetValues
+                | Native::SetEntries
+                | Native::IteratorNext
+                | Native::WeakMapGet
+                | Native::WeakMapSet
+                | Native::WeakMapHas
+                | Native::WeakMapDelete
+                | Native::WeakSetAdd
+                | Native::WeakSetHas
+                | Native::WeakSetDelete
+        )
+    }
+
+    pub(super) fn construct_weak_collection_native(
+        &mut self,
+        native: Native,
+    ) -> Result<Value, JsError> {
+        let cell = match native {
+            Native::WeakMap => Cell::WeakMap {
+                object: Self::empty_object(self.weak_map_proto),
+                entries: Vec::new(),
+            },
+            Native::WeakSet => Cell::WeakSet {
+                object: Self::empty_object(self.weak_set_proto),
+                entries: Vec::new(),
+            },
+            _ => return Err(JsError("invalid weak collection constructor".into())),
+        };
+        Ok(self.heap.alloc(cell))
+    }
+
+    pub(super) fn install_weak_collections(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        let weak_map = self.native_value(Native::WeakMap);
+        self.weak_map_proto = self.object();
+        for (name, native) in [
+            ("get", Native::WeakMapGet),
+            ("set", Native::WeakMapSet),
+            ("has", Native::WeakMapHas),
+            ("delete", Native::WeakMapDelete),
+        ] {
+            self.set_named(
+                program,
+                self.weak_map_proto,
+                name,
+                self.native_value(native),
+            )?;
+        }
+        self.set_named(program, weak_map, "prototype", self.weak_map_proto)?;
+        self.global(program, "WeakMap", weak_map)?;
+
+        let weak_set = self.native_value(Native::WeakSet);
+        self.weak_set_proto = self.object();
+        for (name, native) in [
+            ("add", Native::WeakSetAdd),
+            ("has", Native::WeakSetHas),
+            ("delete", Native::WeakSetDelete),
+        ] {
+            self.set_named(
+                program,
+                self.weak_set_proto,
+                name,
+                self.native_value(native),
+            )?;
+        }
+        self.set_named(program, weak_set, "prototype", self.weak_set_proto)?;
+        self.global(program, "WeakSet", weak_set)
+    }
+
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
         self.map_proto = self.object();
@@ -157,6 +244,79 @@ impl<H: Host> Vm<H> {
             }
             Native::SetEntries => self.collection_iterator(this, IteratorKind::SetEntries),
             Native::IteratorNext => self.iterator_next(this),
+            Native::WeakMapGet => {
+                let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let Some(index) = self.weak_map_entry_index(this, key) else {
+                    return Ok(Value::UNDEFINED);
+                };
+                let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
+                    return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
+                };
+                Ok(entries[index].1)
+            }
+            Native::WeakMapSet => {
+                let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let index = self.weak_map_entry_index(this, key);
+                let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
+                    return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
+                };
+                if let Some(index) = index {
+                    entries[index].1 = value;
+                } else {
+                    entries.push((key, value));
+                }
+                Ok(this)
+            }
+            Native::WeakMapHas => {
+                let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                Ok(if self.weak_map_entry_index(this, key).is_some() {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
+            Native::WeakMapDelete => {
+                let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let Some(index) = self.weak_map_entry_index(this, key) else {
+                    return Ok(Value::FALSE);
+                };
+                let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
+                    return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
+                };
+                entries.remove(index);
+                Ok(Value::TRUE)
+            }
+            Native::WeakSetAdd => {
+                let value = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let exists = self.weak_set_entry_index(this, value).is_some();
+                let Some(Cell::WeakSet { entries, .. }) = self.heap.get_mut(this) else {
+                    return Err(JsError("WeakSet method receiver is not a WeakSet".into()));
+                };
+                if !exists {
+                    entries.push(value);
+                }
+                Ok(this)
+            }
+            Native::WeakSetHas => {
+                let value = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                Ok(if self.weak_set_entry_index(this, value).is_some() {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
+            Native::WeakSetDelete => {
+                let value = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let Some(index) = self.weak_set_entry_index(this, value) else {
+                    return Ok(Value::FALSE);
+                };
+                let Some(Cell::WeakSet { entries, .. }) = self.heap.get_mut(this) else {
+                    return Err(JsError("WeakSet method receiver is not a WeakSet".into()));
+                };
+                entries.remove(index);
+                Ok(Value::TRUE)
+            }
             _ => Err(JsError("invalid collection native".into())),
         }
     }
@@ -185,5 +345,31 @@ impl<H: Host> Vm<H> {
                 && right.as_number().is_some_and(f64::is_nan))
             || matches!((self.heap.get(left), self.heap.get(right)),
                 (Some(Cell::String(left)), Some(Cell::String(right))) if left == right)
+    }
+
+    fn weak_key(&self, value: Value) -> Result<Value, JsError> {
+        if self.object_data(value).is_some() {
+            Ok(value)
+        } else {
+            Err(JsError("weak collection keys must be objects".into()))
+        }
+    }
+
+    fn weak_map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
+        let Some(Cell::WeakMap { entries, .. }) = self.heap.get(map) else {
+            return None;
+        };
+        entries
+            .iter()
+            .position(|(candidate, _)| self.same_value_zero(*candidate, key))
+    }
+
+    fn weak_set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
+        let Some(Cell::WeakSet { entries, .. }) = self.heap.get(set) else {
+            return None;
+        };
+        entries
+            .iter()
+            .position(|candidate| self.same_value_zero(*candidate, value))
     }
 }

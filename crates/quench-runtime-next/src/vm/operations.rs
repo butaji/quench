@@ -74,6 +74,7 @@ impl<H: Host> Vm<H> {
                 }))
             }
             Native::Map | Native::Set => self.construct_collection_native(native),
+            Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::Date => Ok(self.heap.alloc(Cell::Date(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             ))),
@@ -100,6 +101,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if Self::is_collection_native(native) {
+            return self.call_collection_native(native, this, args);
+        }
         match native {
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -115,22 +119,6 @@ impl<H: Host> Vm<H> {
             | Native::ObjectAssign
             | Native::ObjectGetPrototypeOf
             | Native::ObjectSetPrototypeOf => self.call_object_native(native, args),
-            Native::MapGet
-            | Native::MapSet
-            | Native::MapHas
-            | Native::MapDelete
-            | Native::MapClear
-            | Native::MapKeys
-            | Native::MapValues
-            | Native::MapEntries
-            | Native::SetAdd
-            | Native::SetHas
-            | Native::SetDelete
-            | Native::SetClear
-            | Native::SetKeys
-            | Native::SetValues
-            | Native::SetEntries
-            | Native::IteratorNext => self.call_collection_native(native, this, args),
             Native::ReflectGet
             | Native::ReflectSet
             | Native::ReflectOwnKeys
@@ -224,9 +212,13 @@ impl<H: Host> Vm<H> {
             Native::Date => Ok(self.heap.alloc(Cell::Date(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             ))),
-            Native::Object | Native::Array | Native::Error | Native::Map | Native::Set => {
-                self.construct_native(p, native, args)
-            }
+            Native::Object
+            | Native::Array
+            | Native::Error
+            | Native::Map
+            | Native::Set
+            | Native::WeakMap
+            | Native::WeakSet => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }
     }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::value_vec::ValueVec;
 
 #[test]
 fn compact_object_header_reduces_gc_slot() {
@@ -21,4 +22,34 @@ fn strong_root_keeps_cell_alive_until_release() {
     assert!(heap.release_root(root));
     heap.collect([]);
     assert!(heap.get(kept).is_none());
+}
+
+#[test]
+fn weak_map_values_follow_ephemeron_key_reachability() {
+    let mut heap = Heap::new();
+    let weak_map = heap.alloc(Cell::WeakMap {
+        object: Object {
+            proto: Value::NULL,
+            properties: ValueVec::new(),
+        },
+        entries: Vec::new(),
+    });
+    let key = heap.alloc(Cell::Object(Object {
+        proto: Value::NULL,
+        properties: ValueVec::new(),
+    }));
+    let value = heap.alloc(Cell::String("value".into()));
+    if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
+        entries.push((key, value));
+    }
+    let map_root = heap.root(weak_map);
+    let key_root = heap.root(key);
+    heap.collect([]);
+    assert!(heap.get(key).is_some());
+    assert!(heap.get(value).is_some());
+    assert!(heap.release_root(key_root));
+    heap.collect([]);
+    assert!(heap.get(key).is_none());
+    assert!(heap.get(value).is_none());
+    assert!(heap.release_root(map_root));
 }
