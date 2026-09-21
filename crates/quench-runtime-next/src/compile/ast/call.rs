@@ -45,9 +45,9 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn call(&mut self, value: &CallExpression<'_>) -> Register {
-        if let Some(argument) = Self::single_spread(&value.arguments) {
+        if Self::has_spread(&value.arguments) {
             let (callee, this) = self.callee(&value.callee);
-            return self.spread_call(callee, this, argument);
+            return self.spread_call(callee, this, &value.arguments);
         }
         if let Expression::StaticMemberExpression(item) = &value.callee {
             let (receiver, receiver_path) = match &item.object {
@@ -142,19 +142,72 @@ impl FunctionCompiler<'_, '_> {
         (base, values.len() as u16)
     }
 
-    fn single_spread<'a>(values: &'a [Argument<'a>]) -> Option<&'a Expression<'a>> {
-        let [Argument::SpreadElement(spread)] = values else {
-            return None;
-        };
-        Some(&spread.argument)
+    fn has_spread(values: &[Argument<'_>]) -> bool {
+        values
+            .iter()
+            .any(|argument| matches!(argument, Argument::SpreadElement(_)))
     }
 
     fn spread_call(
         &mut self,
         callee: Register,
         this: Register,
-        argument: &Expression<'_>,
+        values: &[Argument<'_>],
     ) -> Register {
+        let arguments = self.reg();
+        self.emit(Op::MakeArray, arguments, 0, 0, 0);
+
+        let push = self.reg();
+        let push_atom = self.owner.atom("push");
+        let push_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            push,
+            FieldBase::register(arguments).0,
+            push_cache,
+            push_atom,
+        );
+        for argument in values {
+            let (method, receiver, first, second) = match argument {
+                Argument::SpreadElement(spread) => {
+                    let value = self.expression(&spread.argument);
+                    let apply = self.reg();
+                    let apply_atom = self.owner.atom("apply");
+                    let apply_cache = self.owner.cache_site();
+                    self.emit(
+                        Op::GetField,
+                        apply,
+                        FieldBase::register(push).0,
+                        apply_cache,
+                        apply_atom,
+                    );
+                    (apply, push, arguments, Some(value))
+                }
+                argument => (
+                    push,
+                    arguments,
+                    self.expression(argument.as_expression().expect("expression argument")),
+                    None,
+                ),
+            };
+            let base = self.next_reg;
+            let first_arg = self.reg();
+            self.emit(Op::Move, first_arg, first, 0, 0);
+            if let Some(second) = second {
+                let second_arg = self.reg();
+                self.emit(Op::Move, second_arg, second, 0, 0);
+            }
+            let result = self.reg();
+            let count = if second.is_some() { 2 } else { 1 };
+            self.emit(
+                Op::Call,
+                result,
+                method,
+                receiver,
+                (u32::from(base) << 16) | count,
+            );
+        }
+
         let apply = self.reg();
         let apply_atom = self.owner.atom("apply");
         let apply_cache = self.owner.cache_site();
@@ -165,12 +218,11 @@ impl FunctionCompiler<'_, '_> {
             apply_cache,
             apply_atom,
         );
-        let spread = self.expression(argument);
         let base = self.next_reg;
         let this_arg = self.reg();
         self.emit(Op::Move, this_arg, this, 0, 0);
         let values_arg = self.reg();
-        self.emit(Op::Move, values_arg, spread, 0, 0);
+        self.emit(Op::Move, values_arg, arguments, 0, 0);
         let result = self.reg();
         self.emit(Op::Call, result, apply, callee, (u32::from(base) << 16) | 2);
         result
