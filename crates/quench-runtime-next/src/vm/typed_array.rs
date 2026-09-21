@@ -173,6 +173,7 @@ impl<H: Host> Vm<H> {
                 let copied = self.heap.alloc(Cell::ArrayBuffer {
                     object: Self::empty_object(self.array_buffer_proto),
                     bytes: Rc::new(bytes),
+                    shared: false,
                 });
                 self.new_typed_view(copied, 0, count)
             }
@@ -302,6 +303,7 @@ impl<H: Host> Vm<H> {
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
                     object: Self::empty_object(self.array_buffer_proto),
                     bytes: Rc::new(vec![0; length]),
+                    shared: false,
                 });
                 (buffer, 0, length, values)
             } else {
@@ -314,6 +316,7 @@ impl<H: Host> Vm<H> {
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
                     object: Self::empty_object(self.array_buffer_proto),
                     bytes: Rc::new(vec![0; length]),
+                    shared: false,
                 });
                 (buffer, 0, length, Vec::new())
             };
