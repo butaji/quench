@@ -149,6 +149,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     &scopes,
                     Some(self.function_id),
                     Some(&function.params),
+                    None,
                 );
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
