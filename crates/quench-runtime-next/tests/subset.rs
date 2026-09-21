@@ -142,6 +142,16 @@ fn map_and_set_iterators_produce_ordered_iterator_results() {
 }
 
 #[test]
+fn weak_collections_require_object_keys_and_preserve_identity() {
+    assert_eq!(
+        output(
+            "var key = {}; var map = new WeakMap(); map.set(key, 42); print(map.get(key)); print(map.has(key)); print(map.delete(key)); print(map.has(key)); var set = new WeakSet(); set.add(key); print(set.has(key)); print(set.delete(key)); print(set.has(key));"
+        ),
+        ["42", "true", "true", "false", "true", "true", "false"],
+    );
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(

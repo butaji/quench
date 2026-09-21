@@ -103,7 +103,10 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(Some(serde_json::Value::Array(output)))
             }
-            Some(Cell::Map { .. }) | Some(Cell::Set { .. }) => {
+            Some(Cell::Map { .. })
+            | Some(Cell::Set { .. })
+            | Some(Cell::WeakMap { .. })
+            | Some(Cell::WeakSet { .. }) => {
                 Ok(Some(serde_json::Value::Object(serde_json::Map::new())))
             }
             Some(Cell::Object(object)) => {
