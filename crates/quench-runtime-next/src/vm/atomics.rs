@@ -39,6 +39,12 @@ impl<H: Host> Vm<H> {
             return Err(JsError("Atomics index is invalid".into()));
         }
         let index = index_number.trunc() as usize;
+        if self
+            .typed_array_length(view)
+            .is_none_or(|length| index >= length)
+        {
+            return Err(JsError("Atomics index is out of range".into()));
+        }
         let Some(current) = self.typed_array_get(view, index) else {
             return Err(JsError("Atomics receiver is invalid".into()));
         };
