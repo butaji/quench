@@ -39,7 +39,8 @@ impl<H: Host> Vm<H> {
             | Native::ObjectCreate
             | Native::ObjectAssign
             | Native::ObjectGetPrototypeOf
-            | Native::ObjectSetPrototypeOf => self.call_object_native(native, args),
+            | Native::ObjectSetPrototypeOf
+            | Native::ObjectHasOwn => self.call_object_native(p, native, args),
             Native::ReflectGet
             | Native::ReflectSet
             | Native::ReflectOwnKeys

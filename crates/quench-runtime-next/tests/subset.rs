@@ -947,6 +947,16 @@ fn reflect_forwards_to_property_and_prototype_authorities() {
 }
 
 #[test]
+fn object_has_own_uses_direct_shape_properties_only() {
+    assert_eq!(
+        output(
+            "var object = { answer: 42 }; print(Object.hasOwn(object, 'answer')); print(Object.hasOwn(object, 'toString')); print(Object.hasOwn({ '1': 2 }, 1)); try { Object.hasOwn(null, 'x'); } catch (error) { print('nullish'); }"
+        ),
+        ["true", "false", "true", "nullish"],
+    );
+}
+
+#[test]
 fn json_round_trip_uses_runtime_objects_and_arrays() {
     assert_eq!(
         output(

@@ -69,6 +69,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn call_object_native(
         &mut self,
+        p: &ResidualProgram,
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
@@ -91,6 +92,19 @@ impl<H: Host> Vm<H> {
                 args.first().copied().unwrap_or(Value::UNDEFINED),
                 args.get(1).copied().unwrap_or(Value::UNDEFINED),
             ),
+            Native::ObjectHasOwn => {
+                let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if target.is_null() || target.is_undefined() {
+                    return Err(JsError("Object.hasOwn target is nullish".into()));
+                }
+                let text = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let key = self.intern_atom(&text);
+                Ok(if self.own_property(target, key).is_some() {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
             _ => Err(JsError("invalid object native".into())),
         }
     }
