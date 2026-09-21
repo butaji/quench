@@ -92,6 +92,16 @@ fn array_destructuring_rest_uses_array_slice_semantics() {
 }
 
 #[test]
+fn object_destructuring_rest_copies_unexcluded_own_properties() {
+    assert_eq!(
+        output(
+            "const source = { answer: 42, extra: 7 }; const { answer, ...rest } = source; print(answer); print(rest.answer === undefined); print(rest.extra);"
+        ),
+        ["42", "true", "7"],
+    );
+}
+
+#[test]
 fn array_is_array_distinguishes_arrays_from_array_like_objects() {
     assert_eq!(
         output(

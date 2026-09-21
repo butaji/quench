@@ -304,13 +304,13 @@ impl FunctionCompiler<'_, '_> {
         });
     }
 
-    fn patch_edges(&mut self, edges: &[usize], target: u32) {
+    pub(super) fn patch_edges(&mut self, edges: &[usize], target: u32) {
         for edge in edges {
             self.patch_to(*edge, target);
         }
     }
 
-    fn patch_to(&mut self, edge: usize, target: u32) {
+    pub(super) fn patch_to(&mut self, edge: usize, target: u32) {
         self.patch_instruction(edge, target);
     }
 

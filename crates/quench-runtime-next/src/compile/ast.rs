@@ -97,7 +97,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.code.len() - 1
     }
 
-    fn patch(&mut self, at: usize) {
+    pub(super) fn patch(&mut self, at: usize) {
         let target = self.code.len() as u32;
         self.patch_instruction(at, target);
     }
