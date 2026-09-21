@@ -85,15 +85,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn computed_object_key(&mut self, key: &PropertyKey<'_>) -> Option<Register> {
-        Some(match key {
-            PropertyKey::Identifier(identifier) => self.load_name(identifier.name.as_str()),
-            PropertyKey::StringLiteral(value) => {
-                self.literal(Constant::String(value.value.to_string()))
-            }
-            PropertyKey::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
-            PropertyKey::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
-            PropertyKey::NullLiteral(_) => self.literal(Constant::Null),
-            _ => return None,
-        })
+        key.as_expression()
+            .map(|expression| self.expression(expression))
     }
 }
