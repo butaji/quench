@@ -17,20 +17,10 @@ impl StencilArena {
             .ok_or(ArenaError::InvalidCapacity)?
             & !(PAGE - 1);
         let global_charge = budget.reserve(capacity).ok_or(ArenaError::Exhausted)?;
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                capacity,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANON,
-                -1,
-                0,
-            )
-        };
-        if ptr == libc::MAP_FAILED {
-            return Err(ArenaError::MappingFailed);
-        }
+        let mut storage = vec![0u8; capacity].into_boxed_slice();
+        let ptr = storage.as_mut_ptr();
         Ok(Self {
+            storage,
             ptr: ptr.cast(),
             capacity,
             cursor: 0,

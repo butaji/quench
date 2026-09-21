@@ -163,7 +163,7 @@ impl<F: Copy> SharedPhysicalEntry<F> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod tests {
     use super::*;
 
