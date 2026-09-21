@@ -29,6 +29,8 @@ impl<H: Host> Vm<H> {
             ("every", Native::ArrayEvery),
             ("find", Native::ArrayFind),
             ("findIndex", Native::ArrayFindIndex),
+            ("findLast", Native::ArrayFindLast),
+            ("findLastIndex", Native::ArrayFindLastIndex),
             ("flatMap", Native::ArrayFlatMap),
             ("reduce", Native::ArrayReduce),
             ("reduceRight", Native::ArrayReduceRight),

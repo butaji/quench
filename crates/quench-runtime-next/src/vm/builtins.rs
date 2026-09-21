@@ -42,6 +42,8 @@ const NATIVES: &[Native] = &[
     Native::ArrayEvery,
     Native::ArrayFind,
     Native::ArrayFindIndex,
+    Native::ArrayFindLast,
+    Native::ArrayFindLastIndex,
     Native::ArrayFlatMap,
     Native::ArrayReduce,
     Native::ArrayReduceRight,
