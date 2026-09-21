@@ -12,6 +12,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayPop,
     Native::FunctionCall,
     Native::Date,
+    Native::DateNow,
     Native::Error,
     Native::String,
     Native::Symbol,
@@ -51,6 +52,12 @@ impl<H: Host> Vm<H> {
         self.global(program, "undefined", Value::UNDEFINED)?;
         self.global(program, "print", self.native_value(Native::Print))?;
         self.global(program, "Date", self.native_value(Native::Date))?;
+        self.set_named(
+            program,
+            self.native_value(Native::Date),
+            "now",
+            self.native_value(Native::DateNow),
+        )?;
         self.global(program, "Error", self.native_value(Native::Error))?;
         let symbol = self.native_value(Native::Symbol);
         self.set_named(program, symbol, "for", self.native_value(Native::SymbolFor))?;

@@ -103,6 +103,9 @@ impl<H: Host> Vm<H> {
                 HostContext::new(&mut self.host).invoke(CapabilityId::WriteLine, Some(&text));
                 Ok(Value::UNDEFINED)
             }
+            Native::DateNow => Ok(Value::number(
+                HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
+            )),
             Native::ObjectKeys => {
                 self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
             }
