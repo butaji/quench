@@ -758,6 +758,20 @@ fn catch_patterns_bind_the_thrown_value() {
 }
 
 #[test]
+fn class_static_blocks_run_with_the_class_as_this() {
+    let source = r#"
+      var order = 0;
+      class Example {
+        static first = ++order;
+        static { this.second = ++order; }
+        static third = ++order;
+      }
+      print(Example.first); print(Example.second); print(Example.third); print(order);
+    "#;
+    assert_eq!(output(source), ["1", "2", "3", "3"]);
+}
+
+#[test]
 fn object_prototypes_and_function_call_support_inheritance() {
     let source = r#"
       Object.prototype.inheritsFrom = function (parent) {
