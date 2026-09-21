@@ -11,6 +11,8 @@ const NATIVES: &[Native] = &[
     Native::Error,
     Native::String,
     Native::Symbol,
+    Native::SymbolFor,
+    Native::SymbolKeyFor,
     Native::StringCharCodeAt,
     Native::StringCharAt,
     Native::StringSubstring,
@@ -42,7 +44,15 @@ impl<H: Host> Vm<H> {
         self.global(program, "print", self.native_value(Native::Print))?;
         self.global(program, "Date", self.native_value(Native::Date))?;
         self.global(program, "Error", self.native_value(Native::Error))?;
-        self.global(program, "Symbol", self.native_value(Native::Symbol))?;
+        let symbol = self.native_value(Native::Symbol);
+        self.set_named(program, symbol, "for", self.native_value(Native::SymbolFor))?;
+        self.set_named(
+            program,
+            symbol,
+            "keyFor",
+            self.native_value(Native::SymbolKeyFor),
+        )?;
+        self.global(program, "Symbol", symbol)?;
         let string = self.native_value(Native::String);
         self.set_named(
             program,

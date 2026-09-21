@@ -145,6 +145,16 @@ fn symbols_are_identity_values_with_explicit_display() {
 }
 
 #[test]
+fn symbol_registry_preserves_identity_and_key_round_trip() {
+    assert_eq!(
+        output(
+            "var first = Symbol.for('shared'); var second = Symbol.for('shared'); print(first === second); print(Symbol.keyFor(first)); print(Symbol.keyFor(Symbol('local')));"
+        ),
+        ["true", "shared", "undefined"],
+    );
+}
+
+#[test]
 fn method_caches_observe_callable_property_replacement() {
     let source = r#"
       function Box() {}

@@ -14,6 +14,8 @@ pub(crate) enum Native {
     Error,
     String,
     Symbol,
+    SymbolFor,
+    SymbolKeyFor,
     StringCharCodeAt,
     StringCharAt,
     StringSubstring,
