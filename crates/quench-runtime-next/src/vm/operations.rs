@@ -95,6 +95,8 @@ impl<H: Host> Vm<H> {
             | Native::ArrayFindIndex
             | Native::ArrayFindLast
             | Native::ArrayFindLastIndex
+            | Native::ArrayGroup
+            | Native::ArrayGroupToMap
             | Native::ArrayFlatMap
             | Native::ArrayReduce
             | Native::ArrayReduceRight => self.array_indexed_native(p, native, this, args),

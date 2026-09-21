@@ -768,6 +768,16 @@ fn array_find_last_methods_walk_callbacks_in_reverse_order() {
 }
 
 #[test]
+fn array_group_methods_build_objects_and_maps_from_callback_keys() {
+    assert_eq!(
+        output(
+            "var values = [1, 2, 3, 4]; var grouped = values.group(function(value, index, owner) { return (value % 2 ? 'odd' : 'even') + owner.length; }); print(grouped.odd4[0]); print(grouped.even4[1]); var mapped = values.groupToMap(function(value) { return value % 2; }); print(mapped.get(0)[0]); print(mapped.get(1)[1]);"
+        ),
+        ["1", "4", "2", "3"],
+    );
+}
+
+#[test]
 fn array_is_array_distinguishes_arrays_from_array_like_objects() {
     assert_eq!(
         output(
