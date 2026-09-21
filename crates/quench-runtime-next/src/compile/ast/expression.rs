@@ -142,6 +142,7 @@ impl FunctionCompiler<'_, '_> {
             })
             .collect::<Option<Vec<_>>>();
         if let Some(constants) = constants
+            && !constants.is_empty()
             && constants.len() <= u16::MAX as usize
         {
             let start = self.owner.constant_run(constants);
