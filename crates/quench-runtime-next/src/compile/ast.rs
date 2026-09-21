@@ -171,17 +171,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn params_from_formals<'c>(
         params: &'c oxc_ast::ast::FormalParameters<'c>,
-        owner: &mut Compiler<'_>,
+        _owner: &mut Compiler<'_>,
     ) -> Vec<String> {
-        if params.rest.is_some() {
-            owner.reject(Span::default(), "rest parameters are unsupported");
-        }
-        params
+        let mut result = params
             .items
             .iter()
             .enumerate()
             .map(|(index, item)| Self::parameter_name(&item.pattern, index))
-            .collect()
+            .collect::<Vec<_>>();
+        if let Some(rest) = &params.rest {
+            result.push(Self::parameter_name(
+                &rest.rest.argument,
+                params.items.len(),
+            ));
+        }
+        result
     }
 
     fn parameter_name(pattern: &BindingPattern<'_>, index: usize) -> String {
@@ -262,6 +266,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             } else {
                 self.bind_pattern(&item.pattern, current);
             }
+        }
+        if let Some(rest) = &params.rest {
+            let atom = self.owner.atom(&Self::parameter_name(
+                &rest.rest.argument,
+                params.items.len(),
+            ));
+            let current = self.load_atom(atom);
+            self.bind_pattern(&rest.rest.argument, current);
         }
     }
 
