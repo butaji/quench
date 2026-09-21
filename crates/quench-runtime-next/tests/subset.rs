@@ -483,6 +483,16 @@ fn data_view_integer_accessors_honor_width_sign_and_endianness() {
 }
 
 #[test]
+fn data_view_wide_and_float_accessors_preserve_bits() {
+    assert_eq!(
+        output(
+            "var view = new DataView(new ArrayBuffer(16)); view.setUint32(0, 305419896); print(view.getUint32(0)); print(view.getUint32(0, true)); view.setInt32(4, -2, true); print(view.getInt32(4, true)); view.setFloat32(8, 1.5); print(view.getFloat32(8)); view.setFloat64(8, -2.25, true); print(view.getFloat64(8, true));"
+        ),
+        ["305419896", "2018915346", "-2", "1.5", "-2.25"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
