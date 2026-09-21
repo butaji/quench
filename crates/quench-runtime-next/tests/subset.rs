@@ -370,6 +370,28 @@ fn uint8_array_views_share_buffers_and_coerce_indexed_values() {
 }
 
 #[test]
+fn uint8_array_methods_preserve_view_and_copy_semantics() {
+    let source = r#"
+      var values = new Uint8Array([1, 2, 255, 4]);
+      var sub = values.subarray(1, 3);
+      print(sub.join("-"));
+      sub[0] = 9;
+      print(values[1]);
+      var copy = values.slice(-2);
+      copy[0] = 7;
+      print(values[2]); print(copy.toString());
+      values.set([5, 6], 2);
+      print(values.join()); print(values.includes(6)); print(values.indexOf(9));
+      var entry = values.entries().next().value;
+      print(entry[0]); print(entry[1]);
+    "#;
+    assert_eq!(
+        output(source),
+        ["2-255", "9", "255", "7,4", "1,9,5,6", "true", "1", "0", "1"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
