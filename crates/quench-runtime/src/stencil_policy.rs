@@ -327,7 +327,28 @@ impl ExecutionPolicy {
     }
 
     fn current_uncached() -> Self {
-        Self::from_architecture_and_mode(architecture(), ArmMode::from_environment())
+        // The legacy runtime is now an interpreter oracle.  Physical stencil
+        // code remains available only to focused migration tests that opt into
+        // an explicit policy; production construction must never map or
+        // execute guest-generated machine code.
+        Self::disabled_for_runtime()
+    }
+
+    const fn disabled_for_runtime() -> Self {
+        Self {
+            native_leaves: false,
+            local_fusions: LocalFusionPolicy::NONE,
+            native_dispatch: false,
+            fused_regions: false,
+            array_kernels: false,
+            array_numeric_loops: false,
+            affine_i32_loops: false,
+            numeric_i32_bitwise_loops: false,
+            numeric_i32_pair_loops: false,
+            numeric_f64_loops: false,
+            numeric_f64_mixed_loops: false,
+            optimizing_view: false,
+        }
     }
 }
 
