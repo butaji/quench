@@ -12,5 +12,5 @@ runner rather than copying historical scenario totals. Repeat semantic checks
 with the candidate Quench binary before timing. A Node-as-candidate harness pass
 does not establish Quench compatibility or performance.
 
-See the [manual](README.md) for supported diagnostics and frozen qualification,
-and the [performance protocol](../../docs/performance-lanes.md) for VM acceptance.
+See the [manual](README.md) for supported diagnostics and the rewrite queue for
+the current VM acceptance gates.
