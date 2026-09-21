@@ -53,6 +53,8 @@ const NATIVES: &[Native] = &[
     Native::ArrayKeys,
     Native::ArrayValues,
     Native::ArrayEntries,
+    Native::ArrayFrom,
+    Native::ArrayOf,
     Native::Map,
     Native::MapGet,
     Native::MapSet,

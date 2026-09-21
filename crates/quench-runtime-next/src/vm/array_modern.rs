@@ -14,6 +14,8 @@ impl<H: Host> Vm<H> {
             Native::ArraySort => self.array_sort_native(p, this, args, true),
             Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
             Native::ArrayToString => self.array_to_string_native(p, this),
+            Native::ArrayFrom => self.array_from_native(p, args),
+            Native::ArrayOf => Ok(self.new_array(args.to_vec())),
             _ => unreachable!("non-modern native routed to modern array dispatch"),
         }
     }
@@ -53,6 +55,35 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         self.array_join_native(p, this, &[])
+    }
+
+    fn array_from_native(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let iterator = self.get_iterator(source)?;
+        let done_atom = self.intern_atom("done");
+        let value_atom = self.intern_atom("value");
+        let mapfn = args.get(1).copied().filter(|value| !value.is_undefined());
+        if let Some(mapfn) = mapfn
+            && !matches!(self.heap.get(mapfn), Some(Cell::Function { .. }))
+        {
+            return Err(JsError("Array.from map function is not callable".into()));
+        }
+        let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+        let mut values = Vec::new();
+        loop {
+            let step = self.iterator_next(iterator)?;
+            let done = self.get_property(p, step, done_atom)?;
+            if self.truthy(done) {
+                break;
+            }
+            let mut value = self.get_property(p, step, value_atom)?;
+            if let Some(mapfn) = mapfn {
+                let index = Value::number(values.len() as f64);
+                value = self.call_value(p, mapfn, map_this, &[value, index])?;
+            }
+            values.push(value);
+        }
+        Ok(self.new_array(values))
     }
 
     fn array_to_spliced_native(
