@@ -8,10 +8,6 @@ impl FunctionCompiler<'_, '_> {
                 self.store_atom(atom, value);
             }
             BindingPattern::ObjectPattern(object) => {
-                if object.rest.is_some() {
-                    self.owner
-                        .reject(pattern.span(), "object rest is unsupported");
-                }
                 for property in &object.properties {
                     let Some(key) = Self::binding_key(&property.key) else {
                         self.owner
@@ -23,6 +19,10 @@ impl FunctionCompiler<'_, '_> {
                     let cache = self.owner.cache_site();
                     self.emit(Op::GetField, dst, FieldBase::register(value).0, cache, atom);
                     self.bind_pattern(&property.value, dst);
+                }
+                if let Some(rest) = &object.rest {
+                    let rest_value = self.object_rest(value, object);
+                    self.bind_pattern(&rest.argument, rest_value);
                 }
             }
             BindingPattern::ArrayPattern(array) => {
@@ -79,5 +79,74 @@ impl FunctionCompiler<'_, '_> {
             PropertyKey::StringLiteral(value) => Some(value.value.as_str()),
             _ => None,
         }
+    }
+
+    fn object_rest(&mut self, source: Register, pattern: &ObjectPattern<'_>) -> Register {
+        let target = self.reg();
+        self.emit(Op::MakeObject, target, 0, 0, 0);
+
+        let object = self.load_name("Object");
+        let keys_fn = self.reg();
+        let keys_atom = self.owner.atom("keys");
+        let keys_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            keys_fn,
+            FieldBase::register(object).0,
+            keys_cache,
+            keys_atom,
+        );
+        let argument = self.reg();
+        self.emit(Op::Move, argument, source, 0, 0);
+        let keys = self.reg();
+        self.emit(
+            Op::Call,
+            keys,
+            keys_fn,
+            object,
+            (u32::from(argument) << 16) | 1,
+        );
+        let index = self.reg();
+        let zero = self.literal(Constant::Number(0.0));
+        self.emit(Op::Move, index, zero, 0, 0);
+        let head = self.code.len() as u32;
+        let length = self.reg();
+        let length_atom = self.owner.atom("length");
+        let length_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            length,
+            FieldBase::register(keys).0,
+            length_cache,
+            length_atom,
+        );
+        let test = self.emit_binary(4, Operand::register(index), Operand::register(length));
+        let end_edge = self.emit(Op::JumpFalse, test, 0, 0, 0);
+        let key = self.reg();
+        self.emit(Op::GetIndex, key, keys, index, 0);
+        let mut skip_edges = Vec::with_capacity(pattern.properties.len());
+        for property in &pattern.properties {
+            let Some(name) = Self::binding_key(&property.key) else {
+                continue;
+            };
+            let excluded = self.literal(Constant::String(name.to_owned()));
+            let matched = self.emit_binary(2, Operand::register(key), Operand::register(excluded));
+            let not_matched = self.emit(Op::JumpFalse, matched, 0, 0, 0);
+            let skip = self.emit(Op::Jump, 0, 0, 0, 0);
+            self.patch(not_matched);
+            skip_edges.push(skip);
+        }
+        let item = self.reg();
+        self.emit(Op::GetIndex, item, source, key, 0);
+        self.emit(Op::SetIndex, item, target, key, 0);
+        let update = self.code.len() as u32;
+        self.patch_edges(&skip_edges, update);
+        let next = self.reg();
+        self.emit(Op::IncDec, next, index, 0, 0);
+        self.emit(Op::Move, index, next, 0, 0);
+        self.emit(Op::Jump, 0, 0, 0, head);
+        let end = self.code.len() as u32;
+        self.patch_to(end_edge, end);
+        target
     }
 }
