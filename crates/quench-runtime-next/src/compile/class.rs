@@ -24,7 +24,10 @@ impl FunctionCompiler<'_, '_> {
             _ => None,
         });
         let constructor_id = constructor
-            .map(|method| self.owner.compile_class_method(method, &scopes))
+            .map(|method| {
+                self.owner
+                    .compile_class_method(method, &scopes, Some(self.function_id))
+            })
             .unwrap_or_else(|| {
                 self.owner
                     .compile_function(None, &[], &[], &scopes, Some(self.function_id))
@@ -85,7 +88,9 @@ impl FunctionCompiler<'_, '_> {
                     .reject(method.span, "class method key is unsupported");
                 continue;
             };
-            let function_id = self.owner.compile_class_method(method, &scopes);
+            let function_id =
+                self.owner
+                    .compile_class_method(method, &scopes, Some(self.function_id));
             let function = self.reg();
             self.emit(Op::MakeClosure, function, 0, 0, function_id);
             let target = if method.r#static {
@@ -112,6 +117,7 @@ impl Compiler<'_> {
         &mut self,
         method: &MethodDefinition<'_>,
         scopes: &[Rc<FxHashMap<Atom, u16>>],
+        parent: Option<u32>,
     ) -> u32 {
         let params = FunctionCompiler::params_from_formals(&method.value.params, self);
         let body = method
@@ -120,7 +126,7 @@ impl Compiler<'_> {
             .as_ref()
             .map_or(&[][..], |body| body.statements.as_slice());
         let name = class_method_name(&method.key);
-        self.compile_function(name, &params, body, scopes, None)
+        self.compile_function(name, &params, body, scopes, parent)
     }
 }
 
