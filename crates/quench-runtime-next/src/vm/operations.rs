@@ -38,6 +38,7 @@ impl<H: Host> Vm<H> {
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::ObjectKeys
             | Native::ObjectGetOwnPropertyNames
+            | Native::ObjectFromEntries
             | Native::ObjectCreate
             | Native::ObjectAssign
             | Native::ObjectGetPrototypeOf
