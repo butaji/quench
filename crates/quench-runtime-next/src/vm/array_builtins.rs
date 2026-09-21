@@ -20,6 +20,8 @@ impl<H: Host> Vm<H> {
             ("at", Native::ArrayAt),
             ("lastIndexOf", Native::ArrayLastIndexOf),
             ("indexOf", Native::ArrayIndexOf),
+            ("copyWithin", Native::ArrayCopyWithin),
+            ("with", Native::ArrayWith),
         ] {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }

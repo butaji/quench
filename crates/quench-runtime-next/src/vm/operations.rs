@@ -132,9 +132,11 @@ impl<H: Host> Vm<H> {
             Native::ArrayUnshift => self.array_unshift_native(this, args),
             Native::ArraySplice => self.array_splice_native(p, this, args),
             Native::ArrayFill => self.array_fill_native(p, this, args),
-            Native::ArrayAt | Native::ArrayLastIndexOf | Native::ArrayIndexOf => {
-                self.array_indexed_native(p, native, this, args)
-            }
+            Native::ArrayAt
+            | Native::ArrayLastIndexOf
+            | Native::ArrayIndexOf
+            | Native::ArrayCopyWithin
+            | Native::ArrayWith => self.array_indexed_native(p, native, this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {

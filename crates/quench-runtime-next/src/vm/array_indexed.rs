@@ -12,6 +12,8 @@ impl<H: Host> Vm<H> {
             Native::ArrayAt => self.array_at_native(p, this, args),
             Native::ArrayLastIndexOf => self.array_last_index_of_native(p, this, args),
             Native::ArrayIndexOf => self.array_index_of_native(p, this, args),
+            Native::ArrayCopyWithin => self.array_copy_within_native(p, this, args),
+            Native::ArrayWith => self.array_with_native(p, this, args),
             _ => unreachable!("non-indexed native routed to array index dispatch"),
         }
     }
@@ -142,6 +144,109 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(Value::number(-1.0))
+    }
+
+    pub(super) fn array_copy_within_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (elements, length) = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => (
+                Rc::clone(elements),
+                self.heap.sparse_length(this).unwrap_or(elements.len()),
+            ),
+            _ => return Err(JsError("copyWithin receiver is not array".into())),
+        };
+        let relative = |number: f64| {
+            if number.is_nan() {
+                0
+            } else if number.is_infinite() {
+                if number.is_sign_negative() { 0 } else { length }
+            } else if number.is_sign_negative() {
+                length.saturating_sub(number.abs().trunc() as usize)
+            } else {
+                (number.trunc() as usize).min(length)
+            }
+        };
+        let target = args
+            .first()
+            .map(|value| self.to_number(p, *value))
+            .transpose()?
+            .map(relative)
+            .unwrap_or(0);
+        let source = args
+            .get(1)
+            .map(|value| self.to_number(p, *value))
+            .transpose()?
+            .map(relative)
+            .unwrap_or(0);
+        let end = args
+            .get(2)
+            .map(|value| self.to_number(p, *value))
+            .transpose()?
+            .map(relative)
+            .unwrap_or(length);
+        let count = end
+            .saturating_sub(source)
+            .min(length.saturating_sub(target));
+        let copied = (0..count)
+            .map(|offset| {
+                elements
+                    .get(source + offset)
+                    .copied()
+                    .or_else(|| self.heap.sparse_get(this, source + offset))
+                    .unwrap_or(Value::UNDEFINED)
+            })
+            .collect::<Vec<_>>();
+        for (offset, value) in copied.into_iter().enumerate() {
+            self.set_array_element(this, target + offset, value);
+        }
+        Ok(this)
+    }
+
+    pub(super) fn array_with_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (elements, length) = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => (
+                Rc::clone(elements),
+                self.heap.sparse_length(this).unwrap_or(elements.len()),
+            ),
+            _ => return Err(JsError("with receiver is not array".into())),
+        };
+        let number = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        if number.is_infinite() {
+            return Err(JsError("with index is out of range".into()));
+        }
+        let index = if number.is_nan() {
+            0
+        } else if number.is_sign_negative() {
+            length as isize + number.trunc() as isize
+        } else {
+            number.trunc() as isize
+        };
+        if index < 0 || index >= length as isize {
+            return Err(JsError("with index is out of range".into()));
+        }
+        let mut values = (0..length)
+            .map(|offset| {
+                elements
+                    .get(offset)
+                    .copied()
+                    .or_else(|| self.heap.sparse_get(this, offset))
+                    .unwrap_or(Value::UNDEFINED)
+            })
+            .collect::<Vec<_>>();
+        values[index as usize] = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
     }
 
     fn array_strict_equal(&self, left: Value, right: Value) -> bool {
