@@ -67,6 +67,25 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    pub(super) fn install_object_extra(
+        &mut self,
+        program: &ResidualProgram,
+        object: Value,
+    ) -> Result<(), JsError> {
+        self.set_named(
+            program,
+            object,
+            "getOwnPropertyNames",
+            self.native_value(Native::ObjectGetOwnPropertyNames),
+        )?;
+        self.set_named(
+            program,
+            object,
+            "fromEntries",
+            self.native_value(Native::ObjectFromEntries),
+        )
+    }
+
     pub(super) fn call_object_native(
         &mut self,
         p: &ResidualProgram,
@@ -79,6 +98,25 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectGetOwnPropertyNames => {
                 self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
+            Native::ObjectFromEntries => {
+                let input = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let Some(Cell::Array { elements, .. }) = self.heap.get(input).cloned() else {
+                    return Err(JsError("Object.fromEntries input is not iterable".into()));
+                };
+                let object = self.object();
+                for entry in elements.iter().copied() {
+                    let Some(Cell::Array { elements: pair, .. }) = self.heap.get(entry).cloned()
+                    else {
+                        return Err(JsError("Object.fromEntries entry is not an array".into()));
+                    };
+                    let key =
+                        self.to_string(p, pair.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    let value = pair.get(1).copied().unwrap_or(Value::UNDEFINED);
+                    let atom = self.intern_atom(&key);
+                    self.set_property(object, atom, value)?;
+                }
+                Ok(object)
             }
             Native::ObjectCreate => {
                 let proto = args.first().copied().unwrap_or(Value::UNDEFINED);

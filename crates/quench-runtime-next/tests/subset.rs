@@ -967,6 +967,16 @@ fn object_get_own_property_names_shares_shape_ordering() {
 }
 
 #[test]
+fn object_from_entries_uses_key_coercion_and_last_write_order() {
+    assert_eq!(
+        output(
+            "var object = Object.fromEntries([['answer', 40], [42, 2], ['answer', 41]]); print(object.answer); print(object['42']); var names = Object.keys(object); print(names[0]); print(names[1]); try { Object.fromEntries([1]); } catch (error) { print('invalid-entry'); }"
+        ),
+        ["41", "2", "answer", "42", "invalid-entry"],
+    );
+}
+
+#[test]
 fn json_round_trip_uses_runtime_objects_and_arrays() {
     assert_eq!(
         output(
