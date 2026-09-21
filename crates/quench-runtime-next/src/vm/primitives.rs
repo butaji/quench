@@ -183,7 +183,8 @@ impl<H: Host> Vm<H> {
             | Native::StringCodePointAt
             | Native::StringToUpperCase
             | Native::StringToLowerCase
-            | Native::StringConcat => self.string_basic_native(p, native, this, args),
+            | Native::StringConcat
+            | Native::StringNormalize => self.string_basic_native(p, native, this, args),
             Native::StringRepeat => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));

@@ -64,6 +64,18 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(self.heap.alloc(Cell::String(text)))
             }
+            Native::StringNormalize => {
+                use unicode_normalization::UnicodeNormalization;
+                let form = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let text = match form.as_str() {
+                    "NFC" | "undefined" => receiver.nfc().collect(),
+                    "NFD" => receiver.nfd().collect(),
+                    "NFKC" => receiver.nfkc().collect(),
+                    "NFKD" => receiver.nfkd().collect(),
+                    _ => return Err(JsError("invalid normalization form".into())),
+                };
+                Ok(self.heap.alloc(Cell::String(text)))
+            }
             _ => unreachable!(),
         }
     }
@@ -86,6 +98,7 @@ impl<H: Host> Vm<H> {
             ("toUpperCase", Native::StringToUpperCase),
             ("toLowerCase", Native::StringToLowerCase),
             ("concat", Native::StringConcat),
+            ("normalize", Native::StringNormalize),
         ]
         .into_iter()
         .find_map(|(name, native)| (self.lookup_atom(name) == Some(atom)).then_some(native))
