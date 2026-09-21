@@ -62,9 +62,15 @@ impl<H: Host> Vm<H> {
             Native::ArrayKeys => IteratorKind::ArrayKeys,
             Native::ArrayValues => IteratorKind::ArrayValues,
             Native::ArrayEntries => IteratorKind::ArrayEntries,
+            Native::Uint8ArrayKeys => IteratorKind::ArrayKeys,
+            Native::Uint8ArrayValues => IteratorKind::ArrayValues,
+            Native::Uint8ArrayEntries => IteratorKind::ArrayEntries,
             _ => return Err(JsError("invalid array iterator native".into())),
         };
-        if !matches!(self.heap.get(source), Some(Cell::Array { .. })) {
+        if !matches!(
+            self.heap.get(source),
+            Some(Cell::Array { .. }) | Some(Cell::Uint8Array { .. })
+        ) {
             return Err(JsError("array iterator receiver is not array".into()));
         }
         Ok(self.heap.alloc(Cell::Iterator {

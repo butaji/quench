@@ -61,6 +61,16 @@ pub(crate) enum Native {
     ArrayBuffer,
     ArrayBufferSlice,
     Uint8Array,
+    Uint8ArraySet,
+    Uint8ArraySubarray,
+    Uint8ArraySlice,
+    Uint8ArrayIncludes,
+    Uint8ArrayIndexOf,
+    Uint8ArrayJoin,
+    Uint8ArrayToString,
+    Uint8ArrayKeys,
+    Uint8ArrayValues,
+    Uint8ArrayEntries,
     Map,
     MapGet,
     MapSet,
@@ -125,6 +135,28 @@ pub(crate) enum Native {
     NumberIsInteger,
     NumberFixed,
     NumberPrecision,
+}
+
+impl Native {
+    pub(crate) fn is_typed_array_method(self) -> bool {
+        matches!(
+            self,
+            Self::Uint8ArraySet
+                | Self::Uint8ArraySubarray
+                | Self::Uint8ArraySlice
+                | Self::Uint8ArrayIncludes
+                | Self::Uint8ArrayIndexOf
+                | Self::Uint8ArrayJoin
+                | Self::Uint8ArrayToString
+        )
+    }
+
+    pub(crate) fn is_typed_array_iterator(self) -> bool {
+        matches!(
+            self,
+            Self::Uint8ArrayKeys | Self::Uint8ArrayValues | Self::Uint8ArrayEntries
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

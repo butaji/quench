@@ -58,6 +58,16 @@ const NATIVES: &[Native] = &[
     Native::ArrayBuffer,
     Native::ArrayBufferSlice,
     Native::Uint8Array,
+    Native::Uint8ArraySet,
+    Native::Uint8ArraySubarray,
+    Native::Uint8ArraySlice,
+    Native::Uint8ArrayIncludes,
+    Native::Uint8ArrayIndexOf,
+    Native::Uint8ArrayJoin,
+    Native::Uint8ArrayToString,
+    Native::Uint8ArrayKeys,
+    Native::Uint8ArrayValues,
+    Native::Uint8ArrayEntries,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -144,10 +154,7 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::ArrayBufferSlice),
         )?;
         self.global(program, "ArrayBuffer", array_buffer)?;
-        let uint8_array = self.native_value(Native::Uint8Array);
-        self.uint8_array_proto = self.object();
-        self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
-        self.global(program, "Uint8Array", uint8_array)?;
+        self.install_typed_array(program)?;
         self.install_collections(program)?;
         self.install_weak_collections(program)?;
         self.install_iterators(program)?;
