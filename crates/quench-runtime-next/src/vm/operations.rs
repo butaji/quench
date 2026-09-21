@@ -124,7 +124,8 @@ impl<H: Host> Vm<H> {
             | Native::ReflectSet
             | Native::ReflectOwnKeys
             | Native::ReflectGetPrototypeOf
-            | Native::ReflectSetPrototypeOf => self.call_reflect_native(p, native, args),
+            | Native::ReflectSetPrototypeOf
+            | Native::ReflectConstruct => self.call_reflect_native(p, native, args),
             Native::JsonParse => self.json_parse(p, args),
             Native::JsonStringify => self.json_stringify(p, args),
             Native::MathLog => {

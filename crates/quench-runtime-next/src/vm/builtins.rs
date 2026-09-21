@@ -13,6 +13,7 @@ const NATIVES: &[Native] = &[
     Native::ReflectOwnKeys,
     Native::ReflectGetPrototypeOf,
     Native::ReflectSetPrototypeOf,
+    Native::ReflectConstruct,
     Native::JsonParse,
     Native::JsonStringify,
     Native::Array,
@@ -275,6 +276,12 @@ impl<H: Host> Vm<H> {
             reflect,
             "setPrototypeOf",
             self.native_value(Native::ReflectSetPrototypeOf),
+        )?;
+        self.set_named(
+            program,
+            reflect,
+            "construct",
+            self.native_value(Native::ReflectConstruct),
         )?;
         self.global(program, "Reflect", reflect)
     }

@@ -33,6 +33,22 @@ impl<H: Host> Vm<H> {
                 )?;
                 Ok(Value::TRUE)
             }
+            Native::ReflectConstruct => {
+                let argument_array = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let arguments = if argument_array.is_undefined() {
+                    vec![]
+                } else {
+                    match self.heap.get(argument_array) {
+                        Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                        _ => {
+                            return Err(JsError(
+                                "Reflect.construct arguments must be an array".into(),
+                            ));
+                        }
+                    }
+                };
+                self.construct_value(p, target, &arguments)
+            }
             _ => Err(JsError("invalid Reflect native".into())),
         }
     }
