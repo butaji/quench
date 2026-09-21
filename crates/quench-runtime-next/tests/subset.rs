@@ -127,6 +127,16 @@ fn nullish_coalescing_only_falls_back_for_nullish_values() {
 }
 
 #[test]
+fn optional_member_access_short_circuits_nullish_bases() {
+    assert_eq!(
+        output(
+            "var none = null; var object = { value: 42 }; print(none?.value); print(object?.value); print(object.missing?.value);"
+        ),
+        ["undefined", "42", "undefined"],
+    );
+}
+
+#[test]
 fn bigint_literals_are_heap_values_and_stringify_without_loss() {
     assert_eq!(
         output("print(12345678901234567890n); print(String(7n)); print(7n === 7n);"),
