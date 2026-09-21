@@ -59,6 +59,14 @@ fn lexical_declarations_use_function_local_slots() {
 }
 
 #[test]
+fn template_literals_lower_to_string_addition() {
+    assert_eq!(
+        output("const answer = 42; print(`value: ${answer}!`);"),
+        ["value: 42!"]
+    );
+}
+
+#[test]
 fn method_caches_observe_callable_property_replacement() {
     let source = r#"
       function Box() {}

@@ -7,6 +7,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::StringLiteral(value) => {
                 self.literal(Constant::String(value.value.to_string()))
             }
+            Expression::TemplateLiteral(value) => self.template_literal(value),
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
             Expression::NullLiteral(_) => self.literal(Constant::Null),
             Expression::Identifier(value) => self.load_name(value.name.as_str()),
@@ -254,7 +255,7 @@ impl FunctionCompiler<'_, '_> {
         site
     }
 
-    pub(super) fn emit_binary(&mut self, op: u32, left: Operand, right: Operand) -> Register {
+    pub(crate) fn emit_binary(&mut self, op: u32, left: Operand, right: Operand) -> Register {
         let dst = self.reg();
         self.emit(Op::Binary, dst, left.0, right.0, op);
         dst
