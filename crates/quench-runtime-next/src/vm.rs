@@ -41,6 +41,7 @@ mod string_cache;
 mod superinstruction;
 mod symbol;
 mod type_predicates;
+mod typed_array;
 #[derive(Debug)]
 pub struct JsError(ErrorMessage);
 #[derive(Debug)]
@@ -201,6 +202,7 @@ pub struct Vm<H> {
     function_proto: Value,
     array_proto: Value,
     array_buffer_proto: Value,
+    uint8_array_proto: Value,
     map_proto: Value,
     set_proto: Value,
     weak_map_proto: Value,
@@ -248,6 +250,7 @@ impl<H: Host> Vm<H> {
             function_proto: Value::NULL,
             array_proto: Value::NULL,
             array_buffer_proto: Value::NULL,
+            uint8_array_proto: Value::NULL,
             map_proto: Value::NULL,
             set_proto: Value::NULL,
             weak_map_proto: Value::NULL,
@@ -285,15 +288,12 @@ impl<H: Host> Vm<H> {
             random_state: 0x4d59_5df4_d0f3_3173,
         }
     }
-
     pub fn root(&mut self, value: Value) -> RootId {
         self.heap.root(value)
     }
-
     pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
         self.heap.update_root(root, value)
     }
-
     pub fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
     }
