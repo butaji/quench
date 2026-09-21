@@ -1,6 +1,5 @@
 use super::*;
 use crate::host::{CapabilityId, HostContext};
-
 macro_rules! numeric_integer_binary {
     ($op:expr, $a:expr, $b:expr) => {
         match $op {
@@ -176,6 +175,13 @@ impl<H: Host> Vm<H> {
                 let text = self.to_string(p, value)?;
                 Ok(self.heap.alloc(Cell::String(text)))
             }
+            Native::Symbol => {
+                let description = match args.first().copied() {
+                    None | Some(Value::UNDEFINED) => None,
+                    Some(value) => Some(self.to_string(p, value)?),
+                };
+                Ok(self.heap.alloc(Cell::Symbol(description)))
+            }
             Native::Date => Ok(self.heap.alloc(Cell::Date(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             ))),
@@ -184,7 +190,6 @@ impl<H: Host> Vm<H> {
             }
         }
     }
-
     pub(super) fn unary(
         &mut self,
         p: &ResidualProgram,
