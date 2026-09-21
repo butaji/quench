@@ -1,14 +1,12 @@
-//! Build-time stencil catalog and Rust artifact generation boundary.
+//! Build-time semantic region catalog generation boundary.
 //!
 //! The included units share this private module so declarations remain plain
 //! data and every generated view is derived from the same representation.
 
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf};
 
-mod build_stencil_artifacts;
 #[macro_use]
 mod build_stencil_contract;
-mod build_stencil_templates;
 
 use build_stencil_contract::{
     equal, operand, region_key_name, value, AssemblyContinuation, AssemblyControlLink,
@@ -25,7 +23,6 @@ include!("build_stencil_catalog/declarations_rust_assembly.rs");
 include!("build_stencil_catalog/declarations_composed.rs");
 include!("build_stencil_catalog/declarations_tagged.rs");
 include!("build_stencil_catalog/driver.rs");
-include!("build_stencil_catalog/encoding_verify.rs");
 include!("build_stencil_catalog/catalog_physical.rs");
 include!("build_stencil_catalog/catalog_keys.rs");
 include!("build_stencil_catalog/catalog_links.rs");
