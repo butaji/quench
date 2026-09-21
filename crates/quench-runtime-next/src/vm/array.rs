@@ -24,6 +24,58 @@ impl<H: Host> Vm<H> {
         Ok(this)
     }
 
+    pub(super) fn array_shift_native(&mut self, this: Value) -> Result<Value, JsError> {
+        let values = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => {
+                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+                (0..length)
+                    .map(|index| {
+                        elements
+                            .get(index)
+                            .copied()
+                            .or_else(|| self.heap.sparse_get(this, index))
+                            .unwrap_or(Value::UNDEFINED)
+                    })
+                    .collect::<Vec<_>>()
+            }
+            _ => return Err(JsError("shift receiver is not array".into())),
+        };
+        let first = values.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
+            *elements = Rc::new(values.into_iter().skip(1).collect());
+        }
+        Ok(first)
+    }
+
+    pub(super) fn array_unshift_native(
+        &mut self,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let values = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => {
+                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+                (0..length)
+                    .map(|index| {
+                        elements
+                            .get(index)
+                            .copied()
+                            .or_else(|| self.heap.sparse_get(this, index))
+                            .unwrap_or(Value::UNDEFINED)
+                    })
+                    .collect::<Vec<_>>()
+            }
+            _ => return Err(JsError("unshift receiver is not array".into())),
+        };
+        let mut updated = args.to_vec();
+        updated.extend(values);
+        let length = updated.len();
+        if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
+            *elements = Rc::new(updated);
+        }
+        Ok(Value::number(length as f64))
+    }
+
     pub(super) fn array_flat_native(
         &mut self,
         p: &ResidualProgram,
