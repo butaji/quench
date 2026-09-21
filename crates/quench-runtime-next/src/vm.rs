@@ -182,7 +182,7 @@ pub struct Vm<H> {
     length_atom: Atom,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
-    primitive_atoms: [Atom; 5],
+    primitive_atoms: [Atom; 8],
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     #[cfg(feature = "profile-aggregate")]
@@ -221,7 +221,7 @@ impl<H: Host> Vm<H> {
             length_atom: u32::MAX,
             to_fixed_atom: u32::MAX,
             to_precision_atom: u32::MAX,
-            primitive_atoms: [u32::MAX; 5],
+            primitive_atoms: [u32::MAX; 8],
             method_caches: vec![],
             megamorphic_methods: vec![],
             #[cfg(feature = "profile-aggregate")]
@@ -346,6 +346,9 @@ impl<H: Host> Vm<H> {
             self.intern_atom("substring"),
             self.intern_atom("substr"),
             self.intern_atom("toString"),
+            self.intern_atom("includes"),
+            self.intern_atom("startsWith"),
+            self.intern_atom("endsWith"),
         ];
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
         self.megamorphic_methods.clear();
