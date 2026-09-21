@@ -103,6 +103,9 @@ impl<H: Host> Vm<H> {
                 HostContext::new(&mut self.host).invoke(CapabilityId::WriteLine, Some(&text));
                 Ok(Value::UNDEFINED)
             }
+            Native::ObjectKeys => {
+                self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
             Native::MathLog => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 Ok(Value::number(self.to_number(p, v)?.ln()))
