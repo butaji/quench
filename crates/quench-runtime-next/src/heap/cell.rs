@@ -60,6 +60,7 @@ pub(crate) enum Native {
     ArrayOf,
     ArrayBuffer,
     ArrayBufferSlice,
+    ArrayBufferIsView,
     Uint8Array,
     Uint8ArraySet,
     Uint8ArraySubarray,
@@ -148,6 +149,7 @@ impl Native {
                 | Self::Uint8ArrayIndexOf
                 | Self::Uint8ArrayJoin
                 | Self::Uint8ArrayToString
+                | Self::ArrayBufferIsView
         )
     }
 

@@ -23,6 +23,18 @@ impl<H: Host> Vm<H> {
         let uint8_array = self.native_value(Native::Uint8Array);
         self.uint8_array_proto = self.object();
         self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
+        self.set_named(
+            program,
+            uint8_array,
+            "BYTES_PER_ELEMENT",
+            Value::number(1.0),
+        )?;
+        self.set_named(
+            program,
+            self.uint8_array_proto,
+            "BYTES_PER_ELEMENT",
+            Value::number(1.0),
+        )?;
         for (name, native) in [
             ("set", Native::Uint8ArraySet),
             ("subarray", Native::Uint8ArraySubarray),
@@ -92,6 +104,18 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if native == Native::ArrayBufferIsView {
+            return Ok(
+                if matches!(
+                    args.first().and_then(|value| self.heap.get(*value)),
+                    Some(Cell::Uint8Array { .. })
+                ) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            );
+        }
         let (buffer, offset, length) = self
             .typed_array_view(this)
             .ok_or_else(|| JsError("Uint8Array receiver is invalid".into()))?;

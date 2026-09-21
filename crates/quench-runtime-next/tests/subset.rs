@@ -393,6 +393,16 @@ fn uint8_array_methods_preserve_view_and_copy_semantics() {
 }
 
 #[test]
+fn array_buffer_view_detection_and_element_size_are_observable() {
+    assert_eq!(
+        output(
+            "var buffer = new ArrayBuffer(2); var view = new Uint8Array(buffer); print(ArrayBuffer.isView(view)); print(ArrayBuffer.isView(buffer)); print(Uint8Array.BYTES_PER_ELEMENT); print(view.BYTES_PER_ELEMENT);"
+        ),
+        ["true", "false", "1", "1"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

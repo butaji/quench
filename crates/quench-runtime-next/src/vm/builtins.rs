@@ -57,6 +57,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayOf,
     Native::ArrayBuffer,
     Native::ArrayBufferSlice,
+    Native::ArrayBufferIsView,
     Native::Uint8Array,
     Native::Uint8ArraySet,
     Native::Uint8ArraySubarray,
@@ -152,6 +153,12 @@ impl<H: Host> Vm<H> {
             self.array_buffer_proto,
             "slice",
             self.native_value(Native::ArrayBufferSlice),
+        )?;
+        self.set_named(
+            program,
+            array_buffer,
+            "isView",
+            self.native_value(Native::ArrayBufferIsView),
         )?;
         self.global(program, "ArrayBuffer", array_buffer)?;
         self.install_typed_array(program)?;
