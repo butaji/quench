@@ -180,7 +180,7 @@ const NATIVES: &[Native] = &[
     Native::EncodeUriComponent,
     Native::DecodeUri,
     Native::DecodeUriComponent,
-    Native::StringFromCharCode,
+    Native::StringFromCharCode, Native::StringFromCodePoint,
     Native::ParseInt,
     Native::MathLog,
     Native::MathPow,
@@ -239,6 +239,12 @@ impl<H: Host> Vm<H> {
             string,
             "fromCharCode",
             self.native_value(Native::StringFromCharCode),
+        )?;
+        self.set_named(
+            program,
+            string,
+            "fromCodePoint",
+            self.native_value(Native::StringFromCodePoint),
         )?;
         self.global(program, "String", string)?;
         self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
