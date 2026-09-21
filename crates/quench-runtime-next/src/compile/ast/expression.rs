@@ -3,9 +3,8 @@ impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
         match expression {
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
-            Expression::StringLiteral(value) => {
-                self.literal(Constant::String(value.value.to_string()))
-            }
+            Expression::StringLiteral(value) => self.string_literal(value),
+            Expression::BigIntLiteral(value) => self.bigint_literal(value),
             Expression::TemplateLiteral(value) => self.template_literal(value),
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
             Expression::NullLiteral(_) => self.literal(Constant::Null),
