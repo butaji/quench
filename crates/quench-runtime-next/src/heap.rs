@@ -361,6 +361,11 @@ impl Heap {
             work.push(object.proto);
             work.extend(properties.values(object.properties).iter().copied());
         };
+        if let Some((value, buffer)) = cell.typed_array_backing() {
+            object(value);
+            work.push(buffer);
+            return;
+        }
         match cell {
             Cell::Object(value) => object(value),
             Cell::Array {
@@ -371,24 +376,6 @@ impl Heap {
                 work.extend(elements.iter().copied());
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
-            Cell::Uint8Array {
-                object: value,
-                buffer,
-                ..
-            }
-            | Cell::Uint16Array {
-                object: value,
-                buffer,
-                ..
-            }
-            | Cell::Uint32Array {
-                object: value,
-                buffer,
-                ..
-            } => {
-                object(value);
-                work.push(*buffer);
-            }
             Cell::DataView {
                 object: value,
                 buffer,
@@ -438,6 +425,7 @@ impl Heap {
             | Cell::Symbol(_)
             | Cell::Date(_)
             | Cell::Error(_) => {}
+            _ => unreachable!("typed array backing handled above"),
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
@@ -446,7 +434,12 @@ impl Heap {
             Cell::Object(_) => 0,
             Cell::Array { .. } => 1,
             Cell::ArrayBuffer { .. } => 0,
-            Cell::Uint8Array { .. } | Cell::Uint16Array { .. } | Cell::Uint32Array { .. } => 0,
+            Cell::Uint8Array { .. }
+            | Cell::Uint16Array { .. }
+            | Cell::Uint32Array { .. }
+            | Cell::Int8Array { .. }
+            | Cell::Int16Array { .. }
+            | Cell::Int32Array { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
@@ -469,7 +462,12 @@ impl Heap {
             Cell::Object(_) | Cell::Iterator { .. } | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
-            Cell::Uint8Array { .. } | Cell::Uint16Array { .. } | Cell::Uint32Array { .. } => 0,
+            Cell::Uint8Array { .. }
+            | Cell::Uint16Array { .. }
+            | Cell::Uint32Array { .. }
+            | Cell::Int8Array { .. }
+            | Cell::Int16Array { .. }
+            | Cell::Int32Array { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),

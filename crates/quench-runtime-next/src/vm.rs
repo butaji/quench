@@ -46,6 +46,7 @@ mod symbol;
 mod type_predicates;
 mod typed_array;
 mod typed_array_access;
+mod typed_array_signed;
 mod typed_array_uint16;
 #[derive(Debug)]
 pub struct JsError(ErrorMessage);
@@ -181,13 +182,11 @@ struct InvalidatedMethod {
     target: CallTarget,
     reason: u8,
 }
-
 const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     shape: u32::MAX,
     proto: Value::UNDEFINED,
     target: None,
 };
-
 pub struct Vm<H> {
     host: H,
     heap: Heap,
@@ -199,6 +198,9 @@ pub struct Vm<H> {
     uint8_array_proto: Value,
     uint16_array_proto: Value,
     uint32_array_proto: Value,
+    int8_array_proto: Value,
+    int16_array_proto: Value,
+    int32_array_proto: Value,
     data_view_proto: Value,
     map_proto: Value,
     set_proto: Value,
@@ -236,7 +238,6 @@ pub struct Vm<H> {
     object_shapes: Vec<u32>,
     random_state: u64,
 }
-
 impl<H: Host> Vm<H> {
     pub fn new(host: H) -> Self {
         Self {
@@ -250,6 +251,9 @@ impl<H: Host> Vm<H> {
             uint8_array_proto: Value::NULL,
             uint16_array_proto: Value::NULL,
             uint32_array_proto: Value::NULL,
+            int8_array_proto: Value::NULL,
+            int16_array_proto: Value::NULL,
+            int32_array_proto: Value::NULL,
             data_view_proto: Value::NULL,
             map_proto: Value::NULL,
             set_proto: Value::NULL,
@@ -297,7 +301,6 @@ impl<H: Host> Vm<H> {
     pub fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
     }
-
     pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.initialize(program)?;
         #[cfg(feature = "profile-memory")]
@@ -313,7 +316,6 @@ impl<H: Host> Vm<H> {
         }
         result
     }
-
     #[cfg(feature = "profile-memory")]
     fn report_memory(&self, phase: &str) {
         let (
@@ -368,7 +370,6 @@ impl<H: Host> Vm<H> {
             .report(phase, cell_counts, live_payload_bytes);
         crate::report_allocator_memory(phase);
     }
-
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.heap.reset();
         self.constants.clear();
@@ -428,7 +429,6 @@ impl<H: Host> Vm<H> {
         self.const_arrays.resize(self.constants.len(), None);
         self.install_builtins(program)
     }
-
     fn call_value(
         &mut self,
         p: &ResidualProgram,

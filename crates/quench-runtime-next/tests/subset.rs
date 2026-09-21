@@ -522,6 +522,28 @@ fn uint32_array_preserves_four_byte_elements_and_alignment() {
 }
 
 #[test]
+fn signed_typed_arrays_wrap_and_decode_element_bits() {
+    assert_eq!(
+        output(
+            "var i8 = new Int8Array([255, -129, 130]); print(i8.join('-')); print(i8[0]); print(i8[1]); print(i8[2]); var i16 = new Int16Array([65535, 32768]); print(i16[0]); print(i16[1]); var i32 = new Int32Array([4294967295, 2147483648]); print(i32[0]); print(i32[1]); var buffer = new ArrayBuffer(4); var view = new Int32Array(buffer); view[0] = -2; print(view[0]); print(view.byteLength); try { new Int16Array(buffer, 1); } catch (error) { print('alignment'); }"
+        ),
+        [
+            "-1-127--126",
+            "-1",
+            "127",
+            "-126",
+            "-1",
+            "-32768",
+            "-1",
+            "-2147483648",
+            "-2",
+            "4",
+            "alignment"
+        ],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

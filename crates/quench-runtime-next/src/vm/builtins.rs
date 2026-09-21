@@ -73,6 +73,9 @@ const NATIVES: &[Native] = &[
     Native::Uint8Array,
     Native::Uint16Array,
     Native::Uint32Array,
+    Native::Int8Array,
+    Native::Int16Array,
+    Native::Int32Array,
     Native::Uint8ArraySet,
     Native::Uint8ArraySubarray,
     Native::Uint8ArraySlice,
@@ -401,7 +404,6 @@ impl<H: Host> Vm<H> {
         self.heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)))
     }
-
     pub(super) fn lookup_atom(&self, name: &str) -> Option<Atom> {
         let hash = Self::atom_hash(name);
         let primary = self.atoms.get(&hash).copied()?;
