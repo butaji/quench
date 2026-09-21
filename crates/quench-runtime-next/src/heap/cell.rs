@@ -45,6 +45,8 @@ pub(crate) enum Native {
     ArrayEvery,
     ArrayFind,
     ArrayFindIndex,
+    ArrayFindLast,
+    ArrayFindLastIndex,
     ArrayFlatMap,
     ArrayReduce,
     ArrayReduceRight,

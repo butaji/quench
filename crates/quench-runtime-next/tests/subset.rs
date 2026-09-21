@@ -758,6 +758,16 @@ fn array_join_coerces_values_and_preserves_hole_separators() {
 }
 
 #[test]
+fn array_find_last_methods_walk_callbacks_in_reverse_order() {
+    assert_eq!(
+        output(
+            "var seen = ''; var values = [1, 2, 3, 2]; var found = values.findLast(function(value, index, owner) { seen = seen + index; return value === 2 && owner === values; }); print(found); print(seen); print(values.findLastIndex(function(value) { return value === 2; })); print([1, 3].findLast(function(value) { return value === 2; }) === undefined);"
+        ),
+        ["2", "3", "3", "true"],
+    );
+}
+
+#[test]
 fn array_is_array_distinguishes_arrays_from_array_like_objects() {
     assert_eq!(
         output(

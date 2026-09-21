@@ -20,7 +20,9 @@ impl<H: Host> Vm<H> {
             | Native::ArraySome
             | Native::ArrayEvery
             | Native::ArrayFind
-            | Native::ArrayFindIndex => self.array_callback_native(p, native, this, args),
+            | Native::ArrayFindIndex
+            | Native::ArrayFindLast
+            | Native::ArrayFindLastIndex => self.array_callback_native(p, native, this, args),
             Native::ArrayFlatMap => self.array_flat_map_native(p, this, args),
             Native::ArrayReduce | Native::ArrayReduceRight => {
                 self.array_reduce_native(p, native, this, args)
@@ -289,7 +291,13 @@ impl<H: Host> Vm<H> {
             })
             .collect::<Vec<_>>();
         let mut output = Vec::new();
-        for (index, value) in values.iter().copied().enumerate() {
+        let indices = if matches!(native, Native::ArrayFindLast | Native::ArrayFindLastIndex) {
+            (0..values.len()).rev().collect::<Vec<_>>()
+        } else {
+            (0..values.len()).collect::<Vec<_>>()
+        };
+        for index in indices {
+            let value = values[index];
             let callback_args = [value, Value::number(index as f64), this];
             let result = self.call_value(p, callback, this_arg, &callback_args)?;
             match native {
@@ -300,6 +308,10 @@ impl<H: Host> Vm<H> {
                 Native::ArrayEvery if !self.truthy(result) => return Ok(Value::FALSE),
                 Native::ArrayFind if self.truthy(result) => return Ok(value),
                 Native::ArrayFindIndex if self.truthy(result) => {
+                    return Ok(Value::number(index as f64));
+                }
+                Native::ArrayFindLast if self.truthy(result) => return Ok(value),
+                Native::ArrayFindLastIndex if self.truthy(result) => {
                     return Ok(Value::number(index as f64));
                 }
                 _ => {}
@@ -315,6 +327,8 @@ impl<H: Host> Vm<H> {
             Native::ArrayEvery => Ok(Value::TRUE),
             Native::ArrayFind => Ok(Value::UNDEFINED),
             Native::ArrayFindIndex => Ok(Value::number(-1.0)),
+            Native::ArrayFindLast => Ok(Value::UNDEFINED),
+            Native::ArrayFindLastIndex => Ok(Value::number(-1.0)),
             _ => unreachable!("non-callback native routed to callback dispatch"),
         }
     }
