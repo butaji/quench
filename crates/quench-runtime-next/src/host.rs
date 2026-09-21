@@ -1,9 +1,39 @@
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Stable capability identifiers used at the VM/host boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum CapabilityId {
+    WriteLine = 1,
+    ClockMillis = 2,
+}
+
 pub trait Host {
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
+}
+
+/// Borrowed capability context. It exposes typed host effects without
+/// handing heap cells or guest `Value` handles to the host.
+pub struct HostContext<'a, H: Host> {
+    host: &'a mut H,
+}
+
+impl<'a, H: Host> HostContext<'a, H> {
+    pub(crate) fn new(host: &'a mut H) -> Self {
+        Self { host }
+    }
+
+    pub(crate) fn invoke(&mut self, capability: CapabilityId, text: Option<&str>) -> f64 {
+        match capability {
+            CapabilityId::WriteLine => {
+                self.host.write_line(text.unwrap_or_default());
+                0.0
+            }
+            CapabilityId::ClockMillis => self.host.clock_millis(),
+        }
+    }
 }
 
 #[derive(Default)]

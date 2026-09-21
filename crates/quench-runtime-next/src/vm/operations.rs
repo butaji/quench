@@ -1,4 +1,5 @@
 use super::*;
+use crate::host::{CapabilityId, HostContext};
 
 macro_rules! numeric_integer_binary {
     ($op:expr, $a:expr, $b:expr) => {
@@ -73,7 +74,9 @@ impl<H: Host> Vm<H> {
                     elements: Rc::new(vec![Value::UNDEFINED; len]),
                 }))
             }
-            Native::Date => Ok(self.heap.alloc(Cell::Date(self.host.clock_millis()))),
+            Native::Date => Ok(self.heap.alloc(Cell::Date(
+                HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
+            ))),
             Native::Error => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, v)?;
@@ -98,7 +101,7 @@ impl<H: Host> Vm<H> {
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, v)?;
-                self.host.write_line(&text);
+                HostContext::new(&mut self.host).invoke(CapabilityId::WriteLine, Some(&text));
                 Ok(Value::UNDEFINED)
             }
             Native::MathLog => {
@@ -173,7 +176,9 @@ impl<H: Host> Vm<H> {
                 let text = self.to_string(p, value)?;
                 Ok(self.heap.alloc(Cell::String(text)))
             }
-            Native::Date => Ok(self.heap.alloc(Cell::Date(self.host.clock_millis()))),
+            Native::Date => Ok(self.heap.alloc(Cell::Date(
+                HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
+            ))),
             Native::Object | Native::Array | Native::Error => {
                 self.construct_native(p, native, args)
             }
