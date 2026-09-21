@@ -67,10 +67,10 @@ impl FunctionCompiler<'_, '_> {
 
         for element in &class.body.body {
             let ClassElement::MethodDefinition(method) = element else {
-                self.owner.reject(
-                    element.span(),
-                    "class fields and static blocks are unsupported",
-                );
+                if !matches!(element, ClassElement::PropertyDefinition(_)) {
+                    self.owner
+                        .reject(element.span(), "class static blocks are unsupported");
+                }
                 continue;
             };
             if method.kind == MethodDefinitionKind::Constructor {
@@ -101,6 +101,34 @@ impl FunctionCompiler<'_, '_> {
             let atom = self.owner.atom(name);
             let cache = self.owner.cache_site();
             self.emit(Op::SetField, function, target, cache, atom);
+        }
+
+        for element in &class.body.body {
+            let ClassElement::PropertyDefinition(field) = element else {
+                continue;
+            };
+            if !field.r#static {
+                self.owner
+                    .reject(field.span, "instance class fields are unsupported");
+                continue;
+            }
+            if field.computed {
+                self.owner
+                    .reject(field.span, "computed class fields are unsupported");
+                continue;
+            }
+            let Some(name) = class_method_name(&field.key) else {
+                self.owner
+                    .reject(field.span, "class field key is unsupported");
+                continue;
+            };
+            let value = match field.value.as_ref() {
+                Some(value) => self.expression(value),
+                None => self.literal(Constant::Undefined),
+            };
+            let atom = self.owner.atom(name);
+            let cache = self.owner.cache_site();
+            self.emit(Op::SetField, value, class_value, cache, atom);
         }
         class_value
     }
