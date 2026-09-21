@@ -62,6 +62,16 @@ fn lexical_declarations_use_function_local_slots() {
 }
 
 #[test]
+fn variable_destructuring_reads_object_fields_and_array_indices() {
+    assert_eq!(
+        output(
+            "const { answer } = { answer: 42 }; const [left, right] = [40, 2]; print(answer); print(left + right);"
+        ),
+        ["42", "42"],
+    );
+}
+
+#[test]
 fn base_classes_lower_to_constructor_and_prototype_methods() {
     let source = r#"
       class Box {
