@@ -34,15 +34,13 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(source) else {
                 continue;
             };
-            let shape = data.shape();
-            let keys = self.shapes[shape as usize].clone();
-            let values = keys
-                .iter()
-                .enumerate()
-                .filter_map(|(slot, atom)| {
+            let values = self
+                .ordered_shape(data)
+                .into_iter()
+                .filter_map(|(atom, slot)| {
                     self.heap
                         .property_get(data, slot)
-                        .map(|value| (*atom, value))
+                        .map(|value| (atom, value))
                 })
                 .collect::<Vec<_>>();
             for (atom, value) in values {
@@ -53,13 +51,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn object_keys(&mut self, object: Value) -> Result<Value, JsError> {
-        let keys = self
-            .object_data(object)
-            .map(|data| self.shapes[data.shape() as usize].clone())
-            .ok_or_else(|| JsError("Object.keys target is not an object".into()))?;
-        let values = keys
-            .iter()
-            .map(|atom| self.heap.alloc(Cell::String(self.atom_name(*atom).into())))
+        let Some(data) = self.object_data(object) else {
+            return Err(JsError("Object.keys target is not an object".into()));
+        };
+        let values = self
+            .ordered_shape(data)
+            .into_iter()
+            .map(|(atom, _)| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -200,11 +198,10 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.object_data(object) else {
             return Err(JsError("Object.values target is not an object".into()));
         };
-        let shape = self.shapes[data.shape() as usize].clone();
+        let shape = self.ordered_shape(data);
         let values = shape
             .iter()
-            .enumerate()
-            .filter_map(|(slot, _)| self.heap.property_get(data, slot))
+            .filter_map(|(_, slot)| self.heap.property_get(data, *slot))
             .collect::<Vec<_>>();
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -216,13 +213,12 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.object_data(object) else {
             return Err(JsError("Object.entries target is not an object".into()));
         };
-        let shape = self.shapes[data.shape() as usize].clone();
+        let shape = self.ordered_shape(data);
         let pairs = shape
             .iter()
-            .enumerate()
-            .filter_map(|(slot, atom)| {
+            .filter_map(|(atom, slot)| {
                 self.heap
-                    .property_get(data, slot)
+                    .property_get(data, *slot)
                     .map(|value| (*atom, value))
             })
             .collect::<Vec<_>>();
@@ -241,4 +237,33 @@ impl<H: Host> Vm<H> {
             elements: Rc::new(entries),
         }))
     }
+
+    fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
+        let mut entries = self.shapes[data.shape() as usize]
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(slot, atom)| (atom, slot))
+            .collect::<Vec<_>>();
+        entries.sort_by(|(left, _), (right, _)| {
+            match (
+                array_index(self.atom_name(*left)),
+                array_index(self.atom_name(*right)),
+            ) {
+                (Some(left), Some(right)) => left.cmp(&right),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+        entries
+    }
+}
+
+fn array_index(name: &str) -> Option<u32> {
+    if name.is_empty() || name != "0" && name.starts_with('0') {
+        return None;
+    }
+    let index = name.parse::<u32>().ok()?;
+    (index.to_string() == name && index < u32::MAX).then_some(index)
 }
