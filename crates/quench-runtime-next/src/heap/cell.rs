@@ -29,6 +29,8 @@ pub(crate) enum Native {
     ArrayConcat,
     ArrayFlat,
     ArrayReverse,
+    ArrayShift,
+    ArrayUnshift,
     Map,
     MapGet,
     MapSet,

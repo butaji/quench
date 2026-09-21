@@ -26,6 +26,8 @@ const NATIVES: &[Native] = &[
     Native::ArrayConcat,
     Native::ArrayFlat,
     Native::ArrayReverse,
+    Native::ArrayShift,
+    Native::ArrayUnshift,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -287,67 +289,6 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::ReflectConstruct),
         )?;
         self.global(program, "Reflect", reflect)
-    }
-
-    fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        let array = self.native_value(Native::Array);
-        self.array_proto = self.object();
-        self.set_named(
-            program,
-            self.array_proto,
-            "push",
-            self.native_value(Native::ArrayPush),
-        )?;
-        self.set_named(
-            program,
-            self.array_proto,
-            "pop",
-            self.native_value(Native::ArrayPop),
-        )?;
-        self.set_named(
-            program,
-            self.array_proto,
-            "slice",
-            self.native_value(Native::ArraySlice),
-        )?;
-        self.set_named(
-            program,
-            self.array_proto,
-            "includes",
-            self.native_value(Native::ArrayIncludes),
-        )?;
-        self.set_named(
-            program,
-            self.array_proto,
-            "join",
-            self.native_value(Native::ArrayJoin),
-        )?;
-        self.set_named(
-            program,
-            self.array_proto,
-            "concat",
-            self.native_value(Native::ArrayConcat),
-        )?;
-        self.set_named(
-            program,
-            self.array_proto,
-            "flat",
-            self.native_value(Native::ArrayFlat),
-        )?;
-        self.set_named(
-            program,
-            self.array_proto,
-            "reverse",
-            self.native_value(Native::ArrayReverse),
-        )?;
-        self.set_named(program, array, "prototype", self.array_proto)?;
-        self.set_named(
-            program,
-            array,
-            "isArray",
-            self.native_value(Native::ArrayIsArray),
-        )?;
-        self.global(program, "Array", array)
     }
 
     fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
