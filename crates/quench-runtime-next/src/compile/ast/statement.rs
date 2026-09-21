@@ -400,7 +400,7 @@ impl FunctionCompiler<'_, '_> {
                 .reject(item.span, "try without catch is unsupported");
             return;
         };
-        let slot = self.catch_slot(handler);
+        let (slot, binding) = self.catch_slot(handler);
         let start = self.code.len() as u32;
         self.statements(&item.block.body);
         let end = self.code.len() as u32;
@@ -412,11 +412,16 @@ impl FunctionCompiler<'_, '_> {
             target,
             slot,
         });
+        if let Some(atom) = binding {
+            let value = self.load_atom(atom);
+            let parameter = handler.param.as_ref().unwrap();
+            self.bind_pattern(&parameter.pattern, value);
+        }
         self.statements(&handler.body.body);
         self.patch(skip);
     }
 
-    fn catch_slot(&mut self, handler: &CatchClause<'_>) -> Option<u16> {
+    fn catch_slot(&mut self, handler: &CatchClause<'_>) -> (Option<u16>, Option<Atom>) {
         match &handler.param {
             Some(parameter)
                 if matches!(&parameter.pattern, BindingPattern::BindingIdentifier(_)) =>
@@ -425,16 +430,23 @@ impl FunctionCompiler<'_, '_> {
                     unreachable!()
                 };
                 let atom = self.owner.atom(id.name.as_str());
-                self.locals
+                (
+                    self.locals
+                        .iter()
+                        .position(|value| *value == atom)
+                        .map(|value| value as u16),
+                    None,
+                )
+            }
+            None => (None, None),
+            Some(_) => {
+                let atom = self.hidden_local("\0rqj:catch");
+                let slot = self
+                    .locals
                     .iter()
                     .position(|value| *value == atom)
-                    .map(|value| value as u16)
-            }
-            None => None,
-            _ => {
-                self.owner
-                    .reject(handler.span, "catch binding pattern is unsupported");
-                None
+                    .map(|value| value as u16);
+                (slot, Some(atom))
             }
         }
     }

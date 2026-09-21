@@ -312,7 +312,11 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), v);
             }
             Op::Return => return Ok(Some(self.read(f, i.a()))),
-            Op::Throw => return Err(JsError(self.to_string(p, self.read(f, i.a()))?.into())),
+            Op::Throw => {
+                let value = self.read(f, i.a());
+                let message = self.to_string(p, value)?;
+                return Err(JsError::thrown(value, message));
+            }
         }
         Ok(None)
     }
