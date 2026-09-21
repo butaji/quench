@@ -102,6 +102,21 @@ fn json_round_trip_uses_runtime_objects_and_arrays() {
 }
 
 #[test]
+fn uri_codecs_preserve_component_and_reserved_character_rules() {
+    assert_eq!(
+        output(
+            "print(encodeURIComponent('a b/&')); print(decodeURIComponent('a%20b%2F%26')); print(encodeURI('https://x.test/a b')); print(decodeURI('https://x.test/a%20b'));"
+        ),
+        [
+            "a%20b%2F%26",
+            "a b/&",
+            "https://x.test/a%20b",
+            "https://x.test/a b"
+        ],
+    );
+}
+
+#[test]
 fn base_classes_lower_to_constructor_and_prototype_methods() {
     let source = r#"
       class Box {
