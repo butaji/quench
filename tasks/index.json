@@ -1,0 +1,64 @@
+{
+  "schema": 2,
+  "title": "Quench v2-derived interpreter rewrite",
+  "source_of_truth": "tasks/index.json",
+  "rules": "../AGENTS.md",
+  "execution_contract": "README.md",
+  "baseline": {
+    "quench_commit": "6d04050628e3ffa1bc4b5558f7fa795e4ca00ef5",
+    "reference_repository": "../v2",
+    "reference_commit": "e511d1f7e401ecff8cfc4f7cccb6292e6426be44"
+  },
+  "next_task": "02",
+  "completion_policy": "retain_done",
+  "lanes": {
+    "critical_path": [
+      "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+      "24", "27", "28"
+    ],
+    "semantics": ["11", "12", "13", "14", "15", "16", "17", "18"],
+    "conformance": ["19", "20"],
+    "host": ["21", "22", "23"],
+    "performance": ["25", "26"]
+  },
+  "constraints": [
+    "Use the pinned ../v2 source as the implementation and architecture reference, copied into this repository without a sibling build dependency.",
+    "The final engine is interpreter-only: no guest JIT, copy-and-patch stencils, executable-memory runtime, or permanent legacy backend.",
+    "Preserve Quench CLI behavior and observable ECMAScript, Node, and Wasm behavior; internal Rust APIs may change.",
+    "OXC owns JavaScript syntax and the new specializer compiles OXC AST directly to residual bytecode.",
+    "The cutover gate is 100% pinned Test262, 100% pinned Wasm directives, and 100% of the tracked tests/node-compat inventory.",
+    "Apple M4/macOS performance completion requires Score and maximum-RSS parity with the pinned v2 binary on Richards, DeltaBlue, Crypto, and Splay.",
+    "Production behavior may not select between old and new engines through a runtime flag; pre-cutover comparison uses separate development binaries.",
+    "Completed task specifications remain in tasks/ with status done; Git history remains the archive for deleted legacy implementation material."
+  ],
+  "items": [
+    {"id":"01","file":"01.md","title":"Freeze baselines and rewrite inputs","lane":"critical_path","status":"done","depends_on":[]},
+    {"id":"02","file":"02.md","title":"Remove JIT, stencils, and the migrated native core","lane":"critical_path","status":"pending","depends_on":["01"]},
+    {"id":"03","file":"03.md","title":"Clean the interpreter oracle and repository","lane":"critical_path","status":"pending","depends_on":["02"]},
+    {"id":"04","file":"04.md","title":"Import the pinned v2 runtime snapshot","lane":"critical_path","status":"pending","depends_on":["03"]},
+    {"id":"05","file":"05.md","title":"Establish engine and residual-program contracts","lane":"critical_path","status":"pending","depends_on":["04"]},
+    {"id":"06","file":"06.md","title":"Adopt tagged values and JavaScript strings","lane":"critical_path","status":"pending","depends_on":["05"]},
+    {"id":"07","file":"07.md","title":"Extend the tracing heap and root lifecycle","lane":"critical_path","status":"pending","depends_on":["06"]},
+    {"id":"08","file":"08.md","title":"Rebuild objects, shapes, descriptors, and caches","lane":"critical_path","status":"pending","depends_on":["06","07"]},
+    {"id":"09","file":"09.md","title":"Unify activation, realms, jobs, and the host ABI","lane":"critical_path","status":"pending","depends_on":["07","08"]},
+    {"id":"10","file":"10.md","title":"Extend the direct OXC specializer","lane":"critical_path","status":"pending","depends_on":["05","09"]},
+    {"id":"11","file":"11.md","title":"Port core language, function, and class semantics","lane":"semantics","status":"pending","depends_on":["10"]},
+    {"id":"12","file":"12.md","title":"Port object, Reflect, Proxy, and Symbol semantics","lane":"semantics","status":"pending","depends_on":["08","10","11"]},
+    {"id":"13","file":"13.md","title":"Port arrays, buffers, typed arrays, and Atomics","lane":"semantics","status":"pending","depends_on":["07","08","10","11"]},
+    {"id":"14","file":"14.md","title":"Port strings, RegExp, JSON, and URI semantics","lane":"semantics","status":"pending","depends_on":["06","08","10","11"]},
+    {"id":"15","file":"15.md","title":"Port numeric, Date, Intl, and Temporal semantics","lane":"semantics","status":"pending","depends_on":["06","07","08","10","11"]},
+    {"id":"16","file":"16.md","title":"Port collections, iterators, and weak lifecycles","lane":"semantics","status":"pending","depends_on":["07","08","10","11"]},
+    {"id":"17","file":"17.md","title":"Port promises, generators, async execution, and disposal","lane":"semantics","status":"pending","depends_on":["07","09","10","11","16"]},
+    {"id":"18","file":"18.md","title":"Port modules, dynamic compilation, and realm semantics","lane":"semantics","status":"pending","depends_on":["09","10","11","17"]},
+    {"id":"19","file":"19.md","title":"Build next-engine runners and differential oracles","lane":"conformance","status":"pending","depends_on":["05","09","10"]},
+    {"id":"20","file":"20.md","title":"Close Test262 at 100 percent","lane":"conformance","status":"pending","depends_on":["11","12","13","14","15","16","17","18","19"]},
+    {"id":"21","file":"21.md","title":"Adapt Node core to the capability ABI","lane":"host","status":"pending","depends_on":["09","19"]},
+    {"id":"22","file":"22.md","title":"Close tracked Node compatibility at 100 percent","lane":"host","status":"pending","depends_on":["12","13","14","15","16","17","18","21"]},
+    {"id":"23","file":"23.md","title":"Port Wasm and close the specification suite at 100 percent","lane":"host","status":"pending","depends_on":["07","09","10","13","19"]},
+    {"id":"24","file":"24.md","title":"Prove integrated correctness and safety","lane":"critical_path","status":"pending","depends_on":["20","22","23"]},
+    {"id":"25","file":"25.md","title":"Add two-mode residual execution and the v2 lab","lane":"performance","status":"pending","depends_on":["05","09","10","19"]},
+    {"id":"26","file":"26.md","title":"Match v2 Score and RSS","lane":"performance","status":"pending","depends_on":["24","25"]},
+    {"id":"27","file":"27.md","title":"Cut over to the v2-derived runtime","lane":"critical_path","status":"pending","depends_on":["24","26"]},
+    {"id":"28","file":"28.md","title":"Finalize repository contracts","lane":"critical_path","status":"pending","depends_on":["27"]}
+  ]
+}
