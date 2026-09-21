@@ -809,6 +809,23 @@ fn class_static_blocks_run_with_the_class_as_this() {
 }
 
 #[test]
+fn computed_class_fields_and_methods_use_key_expressions() {
+    let source = r#"
+      var key = 'value';
+      class Example {
+        static [key] = 7;
+        static [key + 'Method']() { return 8; }
+        [key + 'Instance'] = 9;
+        [key + 'Method']() { return 10; }
+      }
+      var instance = new Example();
+      print(Example.value); print(Example.valueMethod());
+      print(instance.valueInstance); print(instance.valueMethod());
+    "#;
+    assert_eq!(output(source), ["7", "8", "9", "10"]);
+}
+
+#[test]
 fn object_prototypes_and_function_call_support_inheritance() {
     let source = r#"
       Object.prototype.inheritsFrom = function (parent) {

@@ -99,17 +99,30 @@ impl FunctionCompiler<'_, '_> {
             if method.kind == MethodDefinitionKind::Constructor {
                 continue;
             }
-            if method.kind != MethodDefinitionKind::Method || method.computed {
-                self.owner.reject(
-                    method.span,
-                    "class accessors and computed methods are unsupported",
-                );
+            if method.kind != MethodDefinitionKind::Method {
+                self.owner
+                    .reject(method.span, "class accessors are unsupported");
                 continue;
             }
-            let Some(name) = class_method_name(&method.key) else {
-                self.owner
-                    .reject(method.span, "class method key is unsupported");
-                continue;
+            let computed_key = if method.computed {
+                let Some(key) = method.key.as_expression() else {
+                    self.owner
+                        .reject(method.span, "computed class method key is unsupported");
+                    continue;
+                };
+                Some(self.expression(key))
+            } else {
+                None
+            };
+            let name = if computed_key.is_none() {
+                let Some(name) = class_method_name(&method.key) else {
+                    self.owner
+                        .reject(method.span, "class method key is unsupported");
+                    continue;
+                };
+                Some(self.owner.atom(name))
+            } else {
+                None
             };
             let function_id =
                 self.owner
@@ -121,31 +134,47 @@ impl FunctionCompiler<'_, '_> {
             } else {
                 prototype
             };
-            let atom = self.owner.atom(name);
-            let cache = self.owner.cache_site();
-            self.emit(Op::SetField, function, target, cache, atom);
+            if let Some(key) = computed_key {
+                self.emit(Op::SetIndex, function, target, key, 0);
+            } else {
+                let cache = self.owner.cache_site();
+                self.emit(Op::SetField, function, target, cache, name.unwrap());
+            }
         }
 
         for element in &class.body.body {
             match element {
                 ClassElement::PropertyDefinition(field) if field.r#static => {
-                    if field.computed {
-                        self.owner
-                            .reject(field.span, "computed class fields are unsupported");
-                        continue;
-                    }
-                    let Some(name) = class_method_name(&field.key) else {
-                        self.owner
-                            .reject(field.span, "class field key is unsupported");
-                        continue;
+                    let computed_key = if field.computed {
+                        let Some(key) = field.key.as_expression() else {
+                            self.owner
+                                .reject(field.span, "computed class field key is unsupported");
+                            continue;
+                        };
+                        Some(self.expression(key))
+                    } else {
+                        None
+                    };
+                    let name = if computed_key.is_none() {
+                        let Some(name) = class_method_name(&field.key) else {
+                            self.owner
+                                .reject(field.span, "class field key is unsupported");
+                            continue;
+                        };
+                        Some(self.owner.atom(name))
+                    } else {
+                        None
                     };
                     let value = match field.value.as_ref() {
                         Some(value) => self.expression(value),
                         None => self.literal(Constant::Undefined),
                     };
-                    let atom = self.owner.atom(name);
-                    let cache = self.owner.cache_site();
-                    self.emit(Op::SetField, value, class_value, cache, atom);
+                    if let Some(key) = computed_key {
+                        self.emit(Op::SetIndex, value, class_value, key, 0);
+                    } else {
+                        let cache = self.owner.cache_site();
+                        self.emit(Op::SetField, value, class_value, cache, name.unwrap());
+                    }
                 }
                 ClassElement::StaticBlock(block) => {
                     let function_id = self.owner.compile_class_static_block(
@@ -174,23 +203,36 @@ impl FunctionCompiler<'_, '_> {
         let this = self.reg();
         self.emit(Op::LoadThis, this, 0, 0, 0);
         for field in fields {
-            if field.computed {
-                self.owner
-                    .reject(field.span, "computed class fields are unsupported");
-                continue;
-            }
-            let Some(name) = class_method_name(&field.key) else {
-                self.owner
-                    .reject(field.span, "class field key is unsupported");
-                continue;
+            let computed_key = if field.computed {
+                let Some(key) = field.key.as_expression() else {
+                    self.owner
+                        .reject(field.span, "computed class field key is unsupported");
+                    continue;
+                };
+                Some(self.expression(key))
+            } else {
+                None
+            };
+            let name = if computed_key.is_none() {
+                let Some(name) = class_method_name(&field.key) else {
+                    self.owner
+                        .reject(field.span, "class field key is unsupported");
+                    continue;
+                };
+                Some(self.owner.atom(name))
+            } else {
+                None
             };
             let value = match field.value.as_ref() {
                 Some(value) => self.expression(value),
                 None => self.literal(Constant::Undefined),
             };
-            let atom = self.owner.atom(name);
-            let cache = self.owner.cache_site();
-            self.emit(Op::SetField, value, this, cache, atom);
+            if let Some(key) = computed_key {
+                self.emit(Op::SetIndex, value, this, key, 0);
+            } else {
+                let cache = self.owner.cache_site();
+                self.emit(Op::SetField, value, this, cache, name.unwrap());
+            }
         }
     }
 }
