@@ -28,6 +28,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayReverse,
     Native::ArrayShift,
     Native::ArrayUnshift,
+    Native::ArraySplice,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
