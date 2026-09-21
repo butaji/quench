@@ -205,9 +205,14 @@ impl FunctionCompiler<'_, '_> {
             {
                 self.bind_pattern(&declaration.declarations[0].id, value);
             }
-            _ => self
-                .owner
-                .reject(left.span(), "for-of assignment targets are unsupported"),
+            _ => {
+                if let Some(target) = left.as_simple_assignment_target() {
+                    self.assign_target(target, value, 0);
+                } else {
+                    self.owner
+                        .reject(left.span(), "for-of assignment target unsupported");
+                }
+            }
         }
     }
 
