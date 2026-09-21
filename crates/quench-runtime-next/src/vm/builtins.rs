@@ -164,6 +164,7 @@ const NATIVES: &[Native] = &[
     Native::StringIncludes,
     Native::StringStartsWith,
     Native::StringEndsWith,
+    Native::StringIndexOf, Native::StringLastIndexOf,
     Native::StringReplace, Native::StringSplit, Native::StringTrim, Native::StringTrimStart,
     Native::StringTrimEnd,
     Native::StringRepeat,

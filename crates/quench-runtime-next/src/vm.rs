@@ -45,6 +45,7 @@ mod reflect;
 mod regexp;
 mod string;
 mod string_cache;
+mod string_extra;
 mod superinstruction;
 mod symbol;
 mod type_predicates;

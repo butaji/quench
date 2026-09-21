@@ -4,6 +4,23 @@ fn utf16_index(text: &str, byte_index: usize) -> usize {
     text[..byte_index].encode_utf16().count()
 }
 
+pub(super) fn find_utf16(text: &[u16], search: &[u16], start: usize) -> Option<usize> {
+    if search.is_empty() {
+        return Some(start.min(text.len()));
+    }
+    (start..=text.len().saturating_sub(search.len()))
+        .find(|index| text[*index..*index + search.len()] == *search)
+}
+
+pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Option<usize> {
+    if search.is_empty() {
+        return Some(position.min(text.len()));
+    }
+    (0..=position.min(text.len().saturating_sub(search.len())))
+        .rev()
+        .find(|index| text[*index..*index + search.len()] == *search)
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn string_basic_native(
         &mut self,
@@ -99,6 +116,8 @@ impl<H: Host> Vm<H> {
             ("toLowerCase", Native::StringToLowerCase),
             ("concat", Native::StringConcat),
             ("normalize", Native::StringNormalize),
+            ("indexOf", Native::StringIndexOf),
+            ("lastIndexOf", Native::StringLastIndexOf),
         ]
         .into_iter()
         .find_map(|(name, native)| (self.lookup_atom(name) == Some(atom)).then_some(native))
