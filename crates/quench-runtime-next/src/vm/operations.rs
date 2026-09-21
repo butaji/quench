@@ -109,6 +109,13 @@ impl<H: Host> Vm<H> {
             Native::ObjectKeys => {
                 self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
             }
+            Native::ObjectCreate => {
+                let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if !proto.is_null() && self.object_data(proto).is_none() {
+                    return Err(JsError("Object prototype is not an object".into()));
+                }
+                Ok(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
+            }
             Native::JsonParse => self.json_parse(p, args),
             Native::JsonStringify => self.json_stringify(p, args),
             Native::MathLog => {

@@ -4,6 +4,7 @@ const NATIVES: &[Native] = &[
     Native::Print,
     Native::Object,
     Native::ObjectKeys,
+    Native::ObjectCreate,
     Native::JsonParse,
     Native::JsonStringify,
     Native::Array,
@@ -117,6 +118,12 @@ impl<H: Host> Vm<H> {
             object,
             "keys",
             self.native_value(Native::ObjectKeys),
+        )?;
+        self.set_named(
+            program,
+            object,
+            "create",
+            self.native_value(Native::ObjectCreate),
         )?;
         self.global(program, "Object", object)
     }
