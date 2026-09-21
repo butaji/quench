@@ -158,6 +158,17 @@ fn array_shift_and_unshift_preserve_order_and_lengths() {
 }
 
 #[test]
+fn array_splice_returns_removed_values_and_updates_receiver() {
+    let source = r#"
+      var values = [0, 1, 2, 3];
+      var removed = values.splice(1, 2, 'a', 'b', 'c');
+      print(removed.join('-'));
+      print(values.join('-'));
+    "#;
+    assert_eq!(output(source), ["1-2", "0-a-b-c-3"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

@@ -76,6 +76,58 @@ impl<H: Host> Vm<H> {
         Ok(Value::number(length as f64))
     }
 
+    pub(super) fn array_splice_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let values = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => {
+                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+                (0..length)
+                    .map(|index| {
+                        elements
+                            .get(index)
+                            .copied()
+                            .or_else(|| self.heap.sparse_get(this, index))
+                            .unwrap_or(Value::UNDEFINED)
+                    })
+                    .collect::<Vec<_>>()
+            }
+            _ => return Err(JsError("splice receiver is not array".into())),
+        };
+        let length = values.len();
+        let start_number =
+            self.to_number(p, args.first().copied().unwrap_or(Value::number(0.0)))?;
+        let start = if start_number.is_nan() {
+            0
+        } else if start_number.is_sign_negative() {
+            length.saturating_sub(start_number.abs().trunc() as usize)
+        } else {
+            (start_number.trunc() as usize).min(length)
+        };
+        let delete_count = args
+            .get(1)
+            .map(|value| self.to_number(p, *value))
+            .transpose()?
+            .unwrap_or((length - start) as f64)
+            .max(0.0)
+            .trunc() as usize;
+        let delete_count = delete_count.min(length - start);
+        let removed = values[start..start + delete_count].to_vec();
+        let mut updated = values[..start].to_vec();
+        updated.extend(args.iter().copied().skip(2));
+        updated.extend(values[start + delete_count..].iter().copied());
+        if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
+            *elements = Rc::new(updated);
+        }
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(removed),
+        }))
+    }
+
     pub(super) fn array_flat_native(
         &mut self,
         p: &ResidualProgram,

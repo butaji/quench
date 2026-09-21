@@ -15,6 +15,7 @@ impl<H: Host> Vm<H> {
             ("reverse", Native::ArrayReverse),
             ("shift", Native::ArrayShift),
             ("unshift", Native::ArrayUnshift),
+            ("splice", Native::ArraySplice),
         ] {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }

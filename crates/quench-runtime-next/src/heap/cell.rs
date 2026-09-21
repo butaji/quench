@@ -31,6 +31,7 @@ pub(crate) enum Native {
     ArrayReverse,
     ArrayShift,
     ArrayUnshift,
+    ArraySplice,
     Map,
     MapGet,
     MapSet,
