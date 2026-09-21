@@ -173,6 +173,9 @@ impl<H: Host> Vm<H> {
         let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
             return false;
         };
+        if self.check_array_element_write(object, index).is_err() {
+            return false;
+        }
         let dense_len = elements.len();
         if index < dense_len {
             let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
@@ -197,6 +200,37 @@ impl<H: Host> Vm<H> {
             elements[index] = value;
         }
         true
+    }
+
+    pub(super) fn check_array_element_write(
+        &self,
+        object: Value,
+        index: usize,
+    ) -> Result<(), JsError> {
+        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
+            return Err(JsError("array receiver is not array".into()));
+        };
+        let existing = index < elements.len() || self.heap.sparse_get(object, index).is_some();
+        if self.frozen.contains(&object) || self.non_extensible.contains(&object) && !existing {
+            return Err(JsError("cannot write sealed or frozen array".into()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_array_mutation(
+        &self,
+        object: Value,
+        writes: bool,
+        adds: bool,
+        removes: bool,
+    ) -> Result<(), JsError> {
+        if self.frozen.contains(&object) && (writes || adds || removes) {
+            return Err(JsError("cannot mutate frozen array".into()));
+        }
+        if self.non_extensible.contains(&object) && (adds || removes) {
+            return Err(JsError("cannot change sealed array length".into()));
+        }
+        Ok(())
     }
 }
 
