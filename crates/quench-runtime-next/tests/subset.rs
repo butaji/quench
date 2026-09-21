@@ -608,14 +608,17 @@ fn derived_constructors_and_super_methods_use_shared_calls() {
       class Base {
         constructor(value) { this.value = value; }
         method() { return this.value; }
+        static kind() { return 10; }
       }
       class Child extends Base {
         constructor(value) { super(value + 1); }
         method() { return super.method() + 1; }
+        static kind() { return super.kind() + 1; }
       }
       print(new Child(40).method());
+      print(Child.kind());
     "#;
-    assert_eq!(output(source), ["42"]);
+    assert_eq!(output(source), ["42", "11"]);
 }
 
 #[test]
