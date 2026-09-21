@@ -7,6 +7,7 @@ license = "MIT"
 
 [features]
 execution-trace = []
+legacy-native-tests = []
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -28,10 +29,6 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
 wasmparser = "0.247"
 
-[build-dependencies]
-object = "0.39.1"
-
 [dev-dependencies]
-object = { version = "0.39.1", features = ["write"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

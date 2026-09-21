@@ -202,16 +202,12 @@ fn emit_catalog_rerun_inputs() {
         "driver.rs",
         "encoding_aarch64.rs",
         "encoding_common.rs",
-        "encoding_verify.rs",
         "encoding_x86.rs",
     ] {
         println!("cargo:rerun-if-changed=build_stencil_catalog/{input}");
     }
-    println!("cargo:rerun-if-changed=build_stencil_artifacts.rs");
-    println!("cargo:rerun-if-changed=build_stencil_artifacts");
     println!("cargo:rerun-if-changed=build_stencil_contract.rs");
     println!("cargo:rerun-if-changed=build_stencil_outputs.rs");
-    println!("cargo:rerun-if-changed=build_stencil_templates.rs");
     println!("cargo:rerun-if-changed=src/ir.rs");
 }
 

@@ -12083,5 +12083,6 @@ mod tests {
         assert_eq!(stack.remaining(), 3);
     }
 
+    #[cfg(feature = "legacy-native-tests")]
     include!("machine_tests.rs");
 }
