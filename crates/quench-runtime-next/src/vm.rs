@@ -29,6 +29,7 @@ mod operations;
 mod primitives;
 #[cfg(feature = "profile-aggregate")]
 mod profile_edges;
+mod reflect;
 mod superinstruction;
 mod symbol;
 
