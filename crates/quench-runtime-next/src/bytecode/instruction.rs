@@ -148,6 +148,7 @@ impl Instr {
             Op::Binary
                 | Op::NumericAdd
                 | Op::NumericMultiply
+                | Op::GetIterator
                 | Op::GetField
                 | Op::Call
                 | Op::CallKnown

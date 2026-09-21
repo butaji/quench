@@ -136,6 +136,10 @@ impl<H: Host> Vm<H> {
                 let v = self.get_index(p, self.read(f, i.b()), self.read(f, i.c()))?;
                 self.write(f, i.a(), v);
             }
+            Op::GetIterator => {
+                let value = self.get_iterator(self.read(f, i.b()))?;
+                self.write(f, i.a(), value);
+            }
             Op::SetField => {
                 self.set_field_cached(self.read(f, i.b()), i.imm(), self.read(f, i.a()), i.c())?
             }

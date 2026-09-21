@@ -94,6 +94,7 @@ fn uses(
         Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
             bit(instruction.a())
         }
+        Op::GetIterator => bit(instruction.b()),
         Op::GetField => field_base(instruction, fields),
         Op::GetIndex => operand(instruction.b(), fields) | operand(instruction.c(), fields),
         Op::MakeObject2 => bit(instruction.b()) | bit(instruction.c()),
@@ -142,6 +143,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::MakeConstArray
         | Op::MakeObject
         | Op::MakeObject2
+        | Op::GetIterator
         | Op::GetField
         | Op::GetIndex
         | Op::Binary

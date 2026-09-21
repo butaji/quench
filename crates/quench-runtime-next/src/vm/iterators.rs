@@ -37,6 +37,22 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    pub(super) fn get_iterator(&mut self, source: Value) -> Result<Value, JsError> {
+        let kind = match self.heap.get(source) {
+            Some(Cell::Array { .. }) => IteratorKind::Array,
+            Some(Cell::String(_)) => IteratorKind::String,
+            Some(Cell::Map { .. }) => IteratorKind::MapEntries,
+            Some(Cell::Set { .. }) => IteratorKind::SetValues,
+            _ => return Err(JsError("value is not iterable".into())),
+        };
+        Ok(self.heap.alloc(Cell::Iterator {
+            object: Self::empty_object(self.iterator_proto),
+            source,
+            kind,
+            index: 0,
+        }))
+    }
+
     pub(super) fn iterator_next(&mut self, this: Value) -> Result<Value, JsError> {
         let (source, kind, index) = match self.heap.get(this) {
             Some(Cell::Iterator {
@@ -48,6 +64,13 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("iterator next receiver is not an iterator".into())),
         };
         let selected = match (kind, self.heap.get(source)) {
+            (IteratorKind::Array, Some(Cell::Array { elements, .. })) => {
+                elements.get(index).copied().map(|value| (value, None))
+            }
+            (IteratorKind::String, Some(Cell::String(text))) => text
+                .chars()
+                .nth(index)
+                .map(|value| (self.heap.alloc(Cell::String(value.to_string())), None)),
             (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
                 entries.get(index).map(|(key, _)| (*key, None))
             }

@@ -224,6 +224,23 @@ fn array_for_of_assigns_identifier_and_member_targets() {
 }
 
 #[test]
+fn built_in_for_of_uses_array_string_map_and_set_iterators() {
+    let source = r#"
+      var array_total = 0;
+      for (const value of [1, 2]) { array_total = array_total + value; }
+      var text = '';
+      for (const value of 'ab') { text = text + value; }
+      var map_keys = '';
+      var map = new Map([['a', 1], ['b', 2]]);
+      for (const entry of map) { map_keys = map_keys + entry[0]; }
+      var set_total = 0;
+      for (const value of new Set([3, 4])) { set_total = set_total + value; }
+      print(array_total); print(text); print(map_keys); print(set_total);
+    "#;
+    assert_eq!(output(source), ["3", "ab", "ab", "7"]);
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(
