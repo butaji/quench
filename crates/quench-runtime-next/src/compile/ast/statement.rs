@@ -105,9 +105,13 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn while_statement(&mut self, item: &WhileStatement<'_>) {
+        self.while_statement_labeled(item, None);
+    }
+
+    fn while_statement_labeled(&mut self, item: &WhileStatement<'_>, label: Option<Atom>) {
         let head = self.code.len() as u32;
         let condition_end = self.condition(&item.test);
-        self.push_control(ControlKind::Loop, None);
+        self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         self.patch_edges(&control.continues, head);
@@ -118,8 +122,12 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn do_while_statement(&mut self, item: &DoWhileStatement<'_>) {
+        self.do_while_statement_labeled(item, None);
+    }
+
+    fn do_while_statement_labeled(&mut self, item: &DoWhileStatement<'_>, label: Option<Atom>) {
         let head = self.code.len() as u32;
-        self.push_control(ControlKind::Loop, None);
+        self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         let condition = self.code.len() as u32;
@@ -132,10 +140,14 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn for_statement(&mut self, item: &ForStatement<'_>) {
+        self.for_statement_labeled(item, None);
+    }
+
+    fn for_statement_labeled(&mut self, item: &ForStatement<'_>, label: Option<Atom>) {
         self.for_initializer(item.init.as_ref());
         let head = self.code.len() as u32;
         let condition_end = item.test.as_ref().map(|test| self.condition(test));
-        self.push_control(ControlKind::Loop, None);
+        self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
@@ -152,6 +164,10 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn for_of_statement(&mut self, item: &ForOfStatement<'_>) {
+        self.for_of_statement_labeled(item, None);
+    }
+
+    fn for_of_statement_labeled(&mut self, item: &ForOfStatement<'_>, label: Option<Atom>) {
         if item.r#await {
             self.owner
                 .reject(item.span, "for-await-of is outside the supported subset");
@@ -196,7 +212,7 @@ impl FunctionCompiler<'_, '_> {
             value_atom,
         );
         self.bind_for_of_left(&item.left, value);
-        self.push_control(ControlKind::Loop, None);
+        self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
@@ -301,17 +317,25 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn continue_statement(&mut self, item: &ContinueStatement<'_>) {
-        if item.label.is_some() {
-            self.owner
-                .reject(item.span, "labeled continue is unsupported");
-            return;
-        }
-        let Some(index) = self
-            .controls
-            .iter()
-            .rposition(|control| control.kind == ControlKind::Loop)
-        else {
-            self.owner.reject(item.span, "continue outside loop");
+        let index = if let Some(label) = &item.label {
+            let label = self.owner.atom(label.name.as_str());
+            self.controls.iter().rposition(|control| {
+                control.kind == ControlKind::Loop && control.label == Some(label)
+            })
+        } else {
+            self.controls
+                .iter()
+                .rposition(|control| control.kind == ControlKind::Loop)
+        };
+        let Some(index) = index else {
+            self.owner.reject(
+                item.span,
+                if item.label.is_some() {
+                    "continue label does not target a loop"
+                } else {
+                    "continue outside loop"
+                },
+            );
             return;
         };
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
@@ -320,6 +344,25 @@ impl FunctionCompiler<'_, '_> {
 
     fn labeled_statement(&mut self, item: &LabeledStatement<'_>) {
         let label = self.owner.atom(item.label.name.as_str());
+        match &item.body {
+            Statement::WhileStatement(body) => {
+                self.while_statement_labeled(body, Some(label));
+                return;
+            }
+            Statement::DoWhileStatement(body) => {
+                self.do_while_statement_labeled(body, Some(label));
+                return;
+            }
+            Statement::ForStatement(body) => {
+                self.for_statement_labeled(body, Some(label));
+                return;
+            }
+            Statement::ForOfStatement(body) => {
+                self.for_of_statement_labeled(body, Some(label));
+                return;
+            }
+            _ => {}
+        }
         self.push_control(ControlKind::Label, Some(label));
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
