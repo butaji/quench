@@ -957,6 +957,16 @@ fn object_has_own_uses_direct_shape_properties_only() {
 }
 
 #[test]
+fn object_get_own_property_names_shares_shape_ordering() {
+    assert_eq!(
+        output(
+            "var object = { first: 1, second: 2 }; var names = Object.getOwnPropertyNames(object); print(names.length); print(names[0]); print(names[1]);"
+        ),
+        ["2", "first", "second"],
+    );
+}
+
+#[test]
 fn json_round_trip_uses_runtime_objects_and_arrays() {
     assert_eq!(
         output(

@@ -77,6 +77,9 @@ impl<H: Host> Vm<H> {
             Native::ObjectKeys => {
                 self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
             }
+            Native::ObjectGetOwnPropertyNames => {
+                self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
             Native::ObjectCreate => {
                 let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if !proto.is_null() && self.object_data(proto).is_none() {

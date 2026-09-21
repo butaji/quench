@@ -2,7 +2,7 @@ use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
     Native::Print, Native::Object,
-    Native::ObjectKeys,
+    Native::ObjectKeys, Native::ObjectGetOwnPropertyNames,
     Native::ObjectCreate,
     Native::ObjectAssign,
     Native::ObjectGetPrototypeOf,
@@ -285,6 +285,12 @@ impl<H: Host> Vm<H> {
             object,
             "keys",
             self.native_value(Native::ObjectKeys),
+        )?;
+        self.set_named(
+            program,
+            object,
+            "getOwnPropertyNames",
+            self.native_value(Native::ObjectGetOwnPropertyNames),
         )?;
         self.set_named(
             program,
