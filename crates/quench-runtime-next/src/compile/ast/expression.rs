@@ -34,6 +34,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::ConditionalExpression(value) => self.conditional(value),
             Expression::CallExpression(value) => self.call(value),
             Expression::NewExpression(value) => self.construct(value),
+            Expression::SequenceExpression(value) => self.sequence_expression(value),
             Expression::ParenthesizedExpression(value) => self.expression(&value.expression),
             _ => {
                 self.owner.reject(

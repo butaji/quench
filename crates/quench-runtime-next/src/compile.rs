@@ -22,6 +22,7 @@ mod numeric;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 mod rewrite;
+mod sequence;
 mod template;
 use ast::FunctionCompiler;
 
