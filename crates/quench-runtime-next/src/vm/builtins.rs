@@ -180,6 +180,8 @@ const NATIVES: &[Native] = &[
     Native::MathMin,
     Native::MathMax,
     Native::MathRandom,
+    Native::MathAbs, Native::MathCeil, Native::MathRound, Native::MathTrunc,
+    Native::MathSqrt, Native::MathSign,
     Native::NumberString,
     Native::Number,
     Native::NumberIsNaN,
@@ -376,6 +378,16 @@ impl<H: Host> Vm<H> {
         self.set_named(program, math, "floor", self.native_value(Native::MathFloor))?;
         self.set_named(program, math, "min", self.native_value(Native::MathMin))?;
         self.set_named(program, math, "max", self.native_value(Native::MathMax))?;
+        for (name, native) in [
+            ("abs", Native::MathAbs),
+            ("ceil", Native::MathCeil),
+            ("round", Native::MathRound),
+            ("trunc", Native::MathTrunc),
+            ("sqrt", Native::MathSqrt),
+            ("sign", Native::MathSign),
+        ] {
+            self.set_named(program, math, name, self.native_value(native))?;
+        }
         self.set_named(
             program,
             math,
