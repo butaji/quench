@@ -112,6 +112,16 @@ fn object_keyed_views_put_integer_indices_first() {
 }
 
 #[test]
+fn array_from_supports_array_like_sources_and_mapping() {
+    assert_eq!(
+        output(
+            "var source = { length: 2 }; source[0] = 'a'; source[1] = 'b'; print(Array.from(source).join('-')); print(Array.from(source, function(value, index) { return value + index; }).join('-')); print(Array.from({ length: 2 }).join(','));"
+        ),
+        ["a-b", "a0-b1", ","],
+    );
+}
+
+#[test]
 fn destructuring_defaults_only_evaluate_for_undefined_values() {
     assert_eq!(
         output(
