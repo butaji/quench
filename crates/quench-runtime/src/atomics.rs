@@ -225,6 +225,11 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
         Value::BigInt64Array(view) => Rc::clone(&view.buffer),
         _ => unreachable!(),
     };
+    if !buffer.shared {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.notify requires a shared buffer",
+        ));
+    }
     let count = match arguments.get(2) {
         None | Some(Value::Undefined) => None,
         Some(value) => Some(crate::conversion::to_number(value)?),
@@ -380,6 +385,11 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
         let view = bigint_view(arguments.first())?;
+        if !bigint_view_shared(view) {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics operation requires a shared buffer",
+            ));
+        }
         if builtin == Builtin::AtomicsLoad {
             let index = atomic_index(arguments.get(1))?;
             let value = bigint_old(view, index)?;
@@ -424,6 +434,11 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
             "Atomics operation requires an Int32Array",
         ));
     };
+    if !view.shared() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
     if builtin == Builtin::AtomicsLoad {
         let index = atomic_index(arguments.get(1))?;
         let value = view.get_number(index).ok_or_else(|| {
@@ -468,6 +483,11 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
         let view = bigint_view(arguments.first())?;
+        if !bigint_view_shared(view) {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics operation requires a shared buffer",
+            ));
+        }
         if bigint_view_immutable(view) {
             return Err(crate::value::error::throw_type_error(
                 "Atomics operation requires a writable buffer",
@@ -494,6 +514,11 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
             "Atomics.exchange requires an integer typed array",
         ));
     };
+    if !view.shared() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
     if view.immutable() {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires a writable buffer",
@@ -633,6 +658,11 @@ pub(crate) fn execute(
         arguments.first(),
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
+        if !bigint_view_shared(arguments.first().expect("matched bigint view")) {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics operation requires a shared buffer",
+            ));
+        }
         return execute_bigint(builtin, arguments);
     }
     let Some(view) = atomic_view(arguments.first()) else {
@@ -640,6 +670,11 @@ pub(crate) fn execute(
             "Atomics operation requires an Int32Array",
         ));
     };
+    if !view.shared() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
     if view.immutable() {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires a writable buffer",
@@ -697,6 +732,11 @@ pub(crate) fn execute(
 
 fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     let view = bigint_view(args.first())?;
+    if !bigint_view_shared(view) {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
     if bigint_view_immutable(view) {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires a writable buffer",
@@ -931,6 +971,14 @@ fn bigint_view_immutable(view: &Value) -> bool {
     match view {
         Value::BigInt64Array(v) => v.buffer.immutable,
         Value::BigUint64Array(v) => v.buffer.immutable,
+        _ => false,
+    }
+}
+
+fn bigint_view_shared(view: &Value) -> bool {
+    match view {
+        Value::BigInt64Array(v) => v.buffer.shared,
+        Value::BigUint64Array(v) => v.buffer.shared,
         _ => false,
     }
 }
