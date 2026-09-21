@@ -3,6 +3,7 @@ use super::*;
 const NATIVES: &[Native] = &[
     Native::Print,
     Native::Object,
+    Native::ObjectKeys,
     Native::Array,
     Native::ArrayIsArray,
     Native::ArrayPush,
@@ -84,6 +85,12 @@ impl<H: Host> Vm<H> {
             self.function_proto,
             "call",
             self.native_value(Native::FunctionCall),
+        )?;
+        self.set_named(
+            program,
+            object,
+            "keys",
+            self.native_value(Native::ObjectKeys),
         )?;
         self.global(program, "Object", object)
     }
@@ -204,7 +211,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn atom_name(&self, atom: Atom) -> &str {
+    pub(super) fn atom_name(&self, atom: Atom) -> &str {
         let index = atom as usize;
         if index < self.atom_text.len() {
             &self.atom_text[index]
