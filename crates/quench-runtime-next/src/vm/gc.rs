@@ -51,7 +51,7 @@ impl<H: Host> Vm<H> {
                         .chain(frame.registers.iter().enumerate().filter_map(
                             move |(index, value)| {
                                 roots
-                                    .map_or(true, |mask| mask & (1 << index) != 0)
+                                    .is_none_or(|mask| mask & (1 << index) != 0)
                                     .then_some(*value)
                             },
                         ))

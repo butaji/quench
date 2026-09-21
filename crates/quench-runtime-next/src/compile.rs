@@ -97,10 +97,21 @@ struct Compiler<'a> {
     functions: Vec<Option<BcFunction>>,
     errors: Vec<Diagnostic>,
     cache_sites: u16,
-    method_sites: Vec<(Atom, u16, Vec<Register>, Option<(Atom, u16)>)>,
+    method_sites: Vec<MethodSiteSpec>,
     field_sites: Vec<FieldSite>,
     object_sites: Vec<ObjectSite>,
     superinstructions: Vec<Superinstruction>,
+}
+
+type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
+
+#[derive(Default)]
+struct FunctionOptions<'a> {
+    defaults: Option<&'a FormalParameters<'a>>,
+    instance_fields: Option<&'a [&'a PropertyDefinition<'a>]>,
+    super_static: bool,
+    rest_override: bool,
+    implicit_super: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -151,11 +162,13 @@ impl<'a> Compiler<'a> {
             &program.body,
             &[],
             None,
-            None,
-            None,
-            false,
-            false,
-            false,
+            FunctionOptions {
+                defaults: None,
+                instance_fields: None,
+                super_static: false,
+                rest_override: false,
+                implicit_super: false,
+            },
         );
         if !self.errors.is_empty() {
             return Err(self.errors);
@@ -171,16 +184,16 @@ impl<'a> Compiler<'a> {
         if std::env::var_os("RQJ_MEMORY").is_some() {
             capture_profile::report(&functions);
         }
-        for index in 0..functions.len() {
-            functions[index].dispatch = Self::dispatch_class(&functions[index].code);
-            if functions[index].dispatch == DispatchClass::Numeric {
+        for function in &mut functions {
+            function.dispatch = Self::dispatch_class(&function.code);
+            if function.dispatch == DispatchClass::Numeric {
                 let live = liveness::analyze(
-                    &functions[index],
+                    function,
                     &self.method_sites,
                     &self.field_sites,
                     &self.superinstructions,
                 );
-                numeric::apply(&mut functions[index], live.as_deref());
+                numeric::apply(function, live.as_deref());
             }
         }
         let register_roots = liveness::derive(
@@ -270,9 +283,7 @@ impl<'a> Compiler<'a> {
         site
     }
 
-    fn flatten_method_sites(
-        sites: Vec<(Atom, u16, Vec<Register>, Option<(Atom, u16)>)>,
-    ) -> (Vec<MethodSite>, Vec<Register>) {
+    fn flatten_method_sites(sites: Vec<MethodSiteSpec>) -> (Vec<MethodSite>, Vec<Register>) {
         let argument_capacity = sites.iter().map(|site| site.2.len()).sum();
         let mut arguments = Vec::with_capacity(argument_capacity);
         let metadata = sites
@@ -308,26 +319,23 @@ impl<'a> Compiler<'a> {
         body: &[Statement<'_>],
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
-        defaults: Option<&FormalParameters<'_>>,
-        instance_fields: Option<&[&PropertyDefinition<'_>]>,
-        super_static: bool,
-        rest_override: bool,
-        implicit_super: bool,
+        options: FunctionOptions<'_>,
     ) -> u32 {
         let id = self.functions.len() as u32;
         self.functions.push(None);
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         self.collect_locals(body, &mut locals);
-        let mut function = FunctionCompiler::new(self, locals, scopes.to_vec(), id, super_static);
-        if let Some(defaults) = defaults {
+        let mut function =
+            FunctionCompiler::new(self, locals, scopes.to_vec(), id, options.super_static);
+        if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);
         }
         function.emit_hoisted(body);
-        if implicit_super {
+        if options.implicit_super {
             function.emit_implicit_super();
         }
-        if let Some(fields) = instance_fields {
+        if let Some(fields) = options.instance_fields {
             function.emit_instance_fields(fields);
         }
         function.statements(body);
@@ -357,7 +365,8 @@ impl<'a> Compiler<'a> {
             parent,
             name: name.map(|value| function.owner.atom(value)),
             params: params.len() as u16,
-            rest: rest_override || defaults.is_some_and(|value| value.rest.is_some()),
+            rest: options.rest_override
+                || options.defaults.is_some_and(|value| value.rest.is_some()),
             locals: function.locals.len() as u16,
             code: function.code,
             registers: function.max_reg,

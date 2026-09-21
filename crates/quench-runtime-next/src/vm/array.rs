@@ -5,7 +5,7 @@ impl<H: Host> Vm<H> {
         let values = match self.heap.get(this) {
             Some(Cell::Array { elements, .. }) => {
                 let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-                let values = (0..length)
+                (0..length)
                     .map(|index| {
                         elements
                             .get(index)
@@ -13,8 +13,7 @@ impl<H: Host> Vm<H> {
                             .or_else(|| self.heap.sparse_get(this, index))
                             .unwrap_or(Value::UNDEFINED)
                     })
-                    .collect::<Vec<_>>();
-                values
+                    .collect::<Vec<_>>()
             }
             _ => return Err(JsError("reverse receiver is not array".into())),
         };
