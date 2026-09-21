@@ -54,19 +54,21 @@ impl<H: Host> Vm<H> {
                 self.native_value(native),
             )?;
         }
-        self.global(program, "Uint8Array", uint8_array)
+        self.global(program, "Uint8Array", uint8_array)?;
+        self.install_uint16_array(program)
     }
 
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
         match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, offset, .. }) => {
+            Some(Cell::Uint8Array { buffer, offset, .. })
+            | Some(Cell::Uint16Array { buffer, offset, .. }) => {
                 Some((*buffer, *offset, self.typed_array_length(object)?))
             }
             _ => None,
         }
     }
 
-    fn typed_array_values(&self, source: Value) -> Option<Vec<Value>> {
+    pub(super) fn typed_array_values(&self, source: Value) -> Option<Vec<Value>> {
         if let Some(length) = self.typed_array_length(source) {
             return Some(
                 (0..length)
@@ -105,7 +107,9 @@ impl<H: Host> Vm<H> {
             return Ok(
                 if matches!(
                     args.first().and_then(|value| self.heap.get(*value)),
-                    Some(Cell::Uint8Array { .. }) | Some(Cell::DataView { .. })
+                    Some(Cell::Uint8Array { .. })
+                        | Some(Cell::Uint16Array { .. })
+                        | Some(Cell::DataView { .. })
                 ) {
                     Value::TRUE
                 } else {
@@ -116,6 +120,9 @@ impl<H: Host> Vm<H> {
         let (buffer, offset, length) = self
             .typed_array_view(this)
             .ok_or_else(|| JsError("Uint8Array receiver is invalid".into()))?;
+        let kind = self
+            .typed_array_kind(this)
+            .ok_or_else(|| JsError("typed array receiver is invalid".into()))?;
         if self.array_buffer_detached(buffer) {
             return Err(JsError("Uint8Array backing buffer is detached".into()));
         }
@@ -139,12 +146,10 @@ impl<H: Host> Vm<H> {
                 }
                 let converted = values
                     .into_iter()
-                    .map(|value| self.to_number(p, value).map(Self::uint8_from_value))
+                    .map(|value| self.to_number(p, value).map(Value::number))
                     .collect::<Result<Vec<_>, _>>()?;
-                if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
-                    let bytes = Rc::make_mut(bytes);
-                    bytes[offset + start..offset + start + converted.len()]
-                        .copy_from_slice(&converted);
+                for (index, value) in converted.into_iter().enumerate() {
+                    self.typed_array_set(p, this, start + index, value)?;
                 }
                 Ok(Value::UNDEFINED)
             }
@@ -154,8 +159,9 @@ impl<H: Host> Vm<H> {
                 let end = if args.get(1).is_none() { length } else { end };
                 self.new_typed_view(
                     buffer,
-                    offset + begin.min(end),
+                    offset + begin.min(end) * kind.width(),
                     begin.max(end) - begin.min(end),
+                    kind,
                 )
             }
             Native::Uint8ArraySlice => {
@@ -164,9 +170,10 @@ impl<H: Host> Vm<H> {
                 let end = if args.get(1).is_none() { length } else { end };
                 let start = begin.min(end);
                 let count = begin.max(end) - start;
+                let width = kind.width();
                 let bytes = match self.heap.get(buffer) {
                     Some(Cell::ArrayBuffer { bytes, .. }) => {
-                        bytes[offset + start..offset + start + count].to_vec()
+                        bytes[offset + start * width..offset + (start + count) * width].to_vec()
                     }
                     _ => return Err(JsError("Uint8Array backing buffer is invalid".into())),
                 };
@@ -176,7 +183,7 @@ impl<H: Host> Vm<H> {
                     shared: false,
                     detached: false,
                 });
-                self.new_typed_view(copied, 0, count)
+                self.new_typed_view(copied, 0, count, kind)
             }
             Native::Uint8ArrayIncludes | Native::Uint8ArrayIndexOf => {
                 let search =
@@ -244,13 +251,22 @@ impl<H: Host> Vm<H> {
         buffer: Value,
         offset: usize,
         length: usize,
+        kind: TypedArrayKind,
     ) -> Result<Value, JsError> {
-        Ok(self.heap.alloc(Cell::Uint8Array {
-            object: Self::empty_object(self.uint8_array_proto),
-            buffer,
-            offset,
-            length,
-        }))
+        Ok(match kind {
+            TypedArrayKind::Uint8 => self.heap.alloc(Cell::Uint8Array {
+                object: Self::empty_object(self.uint8_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
+            TypedArrayKind::Uint16 => self.heap.alloc(Cell::Uint16Array {
+                object: Self::empty_object(self.uint16_array_proto),
+                buffer,
+                offset,
+                length,
+            }),
+        })
     }
 
     pub(super) fn construct_uint8_array_native(
@@ -352,133 +368,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn typed_array_get(&self, object: Value, index: usize) -> Option<Value> {
-        let (buffer, offset, length) = match self.heap.get(object) {
-            Some(Cell::Uint8Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length),
-            _ => return None,
-        };
-        if index >= length {
-            return Some(Value::UNDEFINED);
-        }
-        let value = match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { bytes, .. }) => bytes
-                .get(offset + index)
-                .copied()
-                .map(|value| Value::number(value as f64)),
-            _ => None,
-        };
-        Some(value.unwrap_or(Value::UNDEFINED))
-    }
-
-    pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
-        match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, length, .. }) => {
-                Some(if self.array_buffer_detached(*buffer) {
-                    0
-                } else {
-                    *length
-                })
-            }
-            _ => None,
-        }
-    }
-
-    pub(super) fn typed_array_shared(&self, object: Value) -> Option<bool> {
-        let buffer = match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, .. }) => *buffer,
-            _ => return None,
-        };
-        match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { shared, .. }) => Some(*shared),
-            _ => None,
-        }
-    }
-
-    pub(super) fn typed_array_byte_offset(&self, object: Value) -> Option<usize> {
-        let (buffer, offset) = match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, offset, .. }) => (*buffer, *offset),
-            _ => return None,
-        };
-        Some(if self.array_buffer_detached(buffer) {
+    pub(super) fn uint16_from_value(number: f64) -> u16 {
+        if number.is_nan() || number == 0.0 {
             0
         } else {
-            offset
-        })
-    }
-
-    pub(super) fn indexed_view_property(&self, object: Value, atom: Atom) -> Option<Value> {
-        match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, .. }) => {
-                if atom == self.length_atom || self.lookup_atom("byteLength") == Some(atom) {
-                    return Some(Value::number(
-                        self.typed_array_length(object).unwrap_or(0) as f64
-                    ));
-                }
-                if self.lookup_atom("byteOffset") == Some(atom) {
-                    return Some(Value::number(
-                        self.typed_array_byte_offset(object).unwrap_or(0) as f64,
-                    ));
-                }
-                if self.lookup_atom("buffer") == Some(atom) {
-                    return Some(*buffer);
-                }
-            }
-            Some(Cell::DataView { .. }) => {
-                let (buffer, offset, length) = self.data_view_view(object)?;
-                if self.lookup_atom("byteLength") == Some(atom) {
-                    return Some(Value::number(if self.array_buffer_detached(buffer) {
-                        0.0
-                    } else {
-                        length as f64
-                    }));
-                }
-                if self.lookup_atom("byteOffset") == Some(atom) {
-                    return Some(Value::number(if self.array_buffer_detached(buffer) {
-                        0.0
-                    } else {
-                        offset as f64
-                    }));
-                }
-                if self.lookup_atom("buffer") == Some(atom) {
-                    return Some(buffer);
-                }
-            }
-            _ => {}
+            number.trunc().rem_euclid(65_536.0) as u16
         }
-        None
-    }
-
-    pub(super) fn typed_array_set(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        index: usize,
-        value: Value,
-    ) -> Result<bool, JsError> {
-        let (buffer, offset, length) = match self.heap.get(object) {
-            Some(Cell::Uint8Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length),
-            _ => return Ok(false),
-        };
-        if self.array_buffer_detached(buffer) {
-            return Err(JsError("Uint8Array backing buffer is detached".into()));
-        }
-        if index >= length {
-            return Ok(true);
-        }
-        let value = Self::uint8_from_value(self.to_number(p, value)?);
-        if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
-            Rc::make_mut(bytes)[offset + index] = value;
-        }
-        Ok(true)
     }
 }
