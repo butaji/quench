@@ -734,6 +734,19 @@ fn labeled_break_targets_the_named_statement() {
 }
 
 #[test]
+fn labeled_continue_targets_the_named_loop() {
+    let source = r#"
+      var count = 0;
+      label: for (var i = 0; i < 3; i++) {
+        count++;
+        continue label;
+      }
+      print(count);
+    "#;
+    assert_eq!(output(source), ["3"]);
+}
+
+#[test]
 fn object_prototypes_and_function_call_support_inheritance() {
     let source = r#"
       Object.prototype.inheritsFrom = function (parent) {
