@@ -76,6 +76,12 @@ impl<H: Host> Vm<H> {
         )?;
         self.set_named(
             program,
+            self.object_proto,
+            "propertyIsEnumerable",
+            self.native_value(Native::ObjectPrototypePropertyIsEnumerable),
+        )?;
+        self.set_named(
+            program,
             object,
             "getOwnPropertyNames",
             self.native_value(Native::ObjectGetOwnPropertyNames),

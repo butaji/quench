@@ -57,6 +57,16 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 })
             }
+            Native::ObjectPrototypePropertyIsEnumerable => {
+                let this = self.box_object(this)?;
+                let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let key = self.intern_atom(&text);
+                Ok(if self.own_property(this, key).is_some() {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
             Native::ReflectGet
             | Native::ReflectSet
             | Native::ReflectOwnKeys
