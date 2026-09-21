@@ -21,6 +21,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::Date(value)) => return Ok(*value),
             Some(Cell::String(value)) => return Ok(value.parse().unwrap_or(f64::NAN)),
+            Some(Cell::BigInt(value)) => return Ok(value.parse().unwrap_or(f64::NAN)),
             _ => {}
         }
         if let Some(atom) = self.lookup_atom("valueOf") {
@@ -56,6 +57,7 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value) {
             Some(Cell::String(value)) | Some(Cell::Error(value)) => return Ok(value.clone()),
+            Some(Cell::BigInt(value)) => return Ok(value.clone()),
             Some(Cell::Date(value)) => return Ok(value.to_string()),
             _ => {}
         }

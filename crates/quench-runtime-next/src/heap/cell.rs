@@ -72,6 +72,7 @@ pub(crate) enum Cell {
         slots: Box<[Value]>,
     },
     String(String),
+    BigInt(String),
     Date(f64),
     Error(String),
 }
