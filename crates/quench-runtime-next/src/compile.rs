@@ -12,6 +12,7 @@ use crate::bytecode::{
     MethodSite, ObjectSite, Op, Operand, Register, ResidualProgram, Superinstruction,
 };
 
+mod arrow;
 mod ast;
 mod binding_time;
 #[cfg(feature = "profile-memory")]

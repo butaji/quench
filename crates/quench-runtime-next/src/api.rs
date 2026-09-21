@@ -129,4 +129,18 @@ mod tests {
             .unwrap_err();
         assert!(format!("{error:?}").contains("module compilation"));
     }
+
+    #[test]
+    fn arrow_functions_compile_as_residual_closures() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var add = (x) => x + 1; print(add(41));",
+                "arrow.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["42"]);
+    }
 }
