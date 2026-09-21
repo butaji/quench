@@ -60,6 +60,7 @@ pub(crate) enum Native {
     ArrayOf,
     ArrayBuffer,
     ArrayBufferSlice,
+    ArrayBufferTransfer,
     ArrayBufferIsView,
     SharedArrayBuffer,
     AtomicsLoad,
@@ -238,6 +239,7 @@ pub(crate) enum Cell {
         object: Object,
         bytes: Rc<Vec<u8>>,
         shared: bool,
+        detached: bool,
     },
     Uint8Array {
         object: Object,

@@ -443,6 +443,16 @@ fn atomics_reject_non_shared_and_out_of_range_views_before_effects() {
 }
 
 #[test]
+fn array_buffer_transfer_detaches_source_and_preserves_moved_bytes() {
+    assert_eq!(
+        output(
+            "var buffer = new ArrayBuffer(3); var view = new Uint8Array(buffer); view[0] = 8; var moved = buffer.transfer(); print(buffer.byteLength); print(view.length); print(view[0]); print(moved.byteLength); print(new Uint8Array(moved)[0]);"
+        ),
+        ["0", "0", "undefined", "3", "8"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
