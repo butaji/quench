@@ -138,23 +138,28 @@ impl FunctionCompiler<'_, '_> {
             Expression::StaticMemberExpression(item) => {
                 if matches!(&item.object, Expression::Super(_)) {
                     let base = self.expression(&item.object);
-                    let prototype = self.reg();
-                    let atom = self.owner.atom("prototype");
-                    let cache = self.owner.cache_site();
-                    self.emit(
-                        Op::GetField,
-                        prototype,
-                        FieldBase::register(base).0,
-                        cache,
-                        atom,
-                    );
+                    let target = if self.super_static {
+                        base
+                    } else {
+                        let prototype = self.reg();
+                        let atom = self.owner.atom("prototype");
+                        let cache = self.owner.cache_site();
+                        self.emit(
+                            Op::GetField,
+                            prototype,
+                            FieldBase::register(base).0,
+                            cache,
+                            atom,
+                        );
+                        prototype
+                    };
                     let callee = self.reg();
                     let method_atom = self.owner.atom(item.property.name.as_str());
                     let method_cache = self.owner.cache_site();
                     self.emit(
                         Op::GetField,
                         callee,
-                        FieldBase::register(prototype).0,
+                        FieldBase::register(target).0,
                         method_cache,
                         method_atom,
                     );

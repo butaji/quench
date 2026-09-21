@@ -39,6 +39,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     controls: Vec<ControlTarget>,
     packed_domain_error: bool,
+    pub(super) super_static: bool,
 }
 
 impl<'a, 'b> FunctionCompiler<'a, 'b> {
@@ -47,6 +48,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         locals: Vec<Atom>,
         scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
         function_id: u32,
+        super_static: bool,
     ) -> Self {
         if locals.len() > usize::from(u16::MAX) {
             owner.reject(Span::default(), "function exceeds the local-slot limit");
@@ -70,6 +72,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             handlers: vec![],
             controls: vec![],
             packed_domain_error: false,
+            super_static,
         }
     }
 
@@ -153,6 +156,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     Some(self.function_id),
                     Some(&function.params),
                     None,
+                    false,
                 );
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
