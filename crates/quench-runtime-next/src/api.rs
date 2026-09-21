@@ -75,3 +75,46 @@ pub enum RuntimeError {
     Diagnostics(Vec<Diagnostic>),
     Execution(JsError),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::RefCell, rc::Rc};
+
+    #[derive(Clone, Default)]
+    struct Capture(Rc<RefCell<Vec<String>>>);
+
+    impl Host for Capture {
+        fn write_line(&mut self, text: &str) {
+            self.0.borrow_mut().push(text.into());
+        }
+
+        fn clock_millis(&mut self) -> f64 {
+            0.0
+        }
+    }
+
+    #[test]
+    fn script_requests_use_the_validated_runtime_boundary() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script("print(40 + 2);", "boundary.js"))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["42"]);
+    }
+
+    #[test]
+    fn non_script_requests_are_rejected_before_execution() {
+        let mut runtime = Runtime::new(Capture::default());
+        let error = runtime
+            .compile_and_execute(ExecutionRequest {
+                source: "export default 1;",
+                name: "module.mjs",
+                kind: SourceKind::Module,
+            })
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("module compilation"));
+    }
+}
