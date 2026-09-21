@@ -123,6 +123,10 @@ impl<H: Host> Vm<H> {
             | Native::StringCharAt
             | Native::StringSubstring
             | Native::StringSubstr
+            | Native::EncodeUri
+            | Native::EncodeUriComponent
+            | Native::DecodeUri
+            | Native::DecodeUriComponent
             | Native::StringFromCharCode
             | Native::ParseInt
             | Native::MathFloor

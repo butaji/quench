@@ -106,6 +106,19 @@ impl<H: Host> Vm<H> {
                 let end = start.saturating_add(count).min(length);
                 self.string_from_units(&units[start as usize..end as usize])
             }
+            Native::EncodeUri | Native::EncodeUriComponent => {
+                let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                Ok(self.heap.alloc(Cell::String(encode_uri(
+                    &value,
+                    native == Native::EncodeUriComponent,
+                ))))
+            }
+            Native::DecodeUri | Native::DecodeUriComponent => {
+                let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let decoded = decode_uri(&value, native == Native::DecodeUriComponent)
+                    .map_err(|message| JsError(message.into()))?;
+                Ok(self.heap.alloc(Cell::String(decoded)))
+            }
             Native::StringFromCharCode => {
                 let mut units = Vec::with_capacity(args.len());
                 for value in args {
@@ -215,6 +228,56 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::String(String::from_utf16_lossy(units))))
     }
+}
+
+fn encode_uri(value: &str, component: bool) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut output = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        let unescaped = byte.is_ascii_alphanumeric()
+            || b"-_.!~*'()".contains(byte)
+            || (!component && b";/?:@&=+$,#".contains(byte));
+        if unescaped {
+            output.push(*byte as char);
+        } else {
+            output.push('%');
+            output.push(HEX[(byte >> 4) as usize] as char);
+            output.push(HEX[(byte & 0xf) as usize] as char);
+        }
+    }
+    output
+}
+
+fn decode_uri(value: &str, component: bool) -> Result<String, &'static str> {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let reserved = b";/?:@&=+$,#";
+    let hex = |byte: u8| match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    };
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            output.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return Err("malformed URI escape");
+        }
+        let value = (hex(bytes[index + 1]).ok_or("malformed URI escape")? << 4)
+            | hex(bytes[index + 2]).ok_or("malformed URI escape")?;
+        if !component && reserved.contains(&value) {
+            output.extend_from_slice(&bytes[index..index + 3]);
+        } else {
+            output.push(value);
+        }
+        index += 3;
+    }
+    String::from_utf8(output).map_err(|_| "malformed URI sequence")
 }
 
 fn parse_integer(text: &str, mut radix: i32) -> f64 {
