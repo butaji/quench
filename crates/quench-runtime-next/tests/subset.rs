@@ -648,6 +648,16 @@ fn string_replace_and_split_preserve_order_and_limits() {
 }
 
 #[test]
+fn string_replace_uses_regexp_global_and_capture_authority() {
+    assert_eq!(
+        output(
+            "print('ab ab'.replace(/(a)(b)/, '$2$1')); print('ab ab'.replace(/(a)(b)/g, '$2$1'));"
+        ),
+        ["ba ab", "ba ba"],
+    );
+}
+
+#[test]
 fn string_trim_repeat_and_padding_use_utf16_lengths() {
     assert_eq!(
         output(

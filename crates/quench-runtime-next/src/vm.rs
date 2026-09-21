@@ -41,6 +41,7 @@ mod primitives;
 mod profile_edges;
 mod reflect;
 mod regexp;
+mod string;
 mod string_cache;
 mod superinstruction;
 mod symbol;

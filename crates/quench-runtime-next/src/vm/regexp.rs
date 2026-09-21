@@ -2,6 +2,23 @@ use super::*;
 use regex::RegexBuilder;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn is_regexp(&self, value: Value) -> bool {
+        let mut current = value;
+        for _ in 0..32 {
+            if current == self.regexp_proto {
+                return true;
+            }
+            let Some(Cell::Object(object)) = self.heap.get(current) else {
+                return false;
+            };
+            if object.proto.is_null() {
+                return false;
+            }
+            current = object.proto;
+        }
+        false
+    }
+
     pub(super) fn install_regexp(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         for name in ["source", "flags", "lastIndex", "index", "input"] {
             self.intern_atom(name);
@@ -131,7 +148,7 @@ impl<H: Host> Vm<H> {
         Ok(result)
     }
 
-    fn compile_regexp(source: &str, flags: &str) -> Result<regex::Regex, JsError> {
+    pub(super) fn compile_regexp(source: &str, flags: &str) -> Result<regex::Regex, JsError> {
         let mut builder = RegexBuilder::new(source);
         let mut seen = 0u8;
         for flag in flags.chars() {
