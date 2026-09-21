@@ -175,6 +175,9 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }
+            Native::StringMatch | Native::StringSearch => {
+                self.string_match_or_search_native(p, native, this, args)
+            }
             Native::StringRepeat => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));

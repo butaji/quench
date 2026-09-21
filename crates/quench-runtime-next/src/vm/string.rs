@@ -1,6 +1,92 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn string_native_for_atom(&self, atom: Atom) -> Option<Native> {
+        [
+            ("replace", Native::StringReplace),
+            ("split", Native::StringSplit),
+            ("trim", Native::StringTrim),
+            ("trimStart", Native::StringTrimStart),
+            ("trimEnd", Native::StringTrimEnd),
+            ("repeat", Native::StringRepeat),
+            ("padStart", Native::StringPadStart),
+            ("padEnd", Native::StringPadEnd),
+            ("match", Native::StringMatch),
+            ("search", Native::StringSearch),
+        ]
+        .into_iter()
+        .find_map(|(name, native)| (self.lookup_atom(name) == Some(atom)).then_some(native))
+    }
+
+    pub(super) fn string_match_or_search_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+            return Err(JsError("string method receiver is not a string".into()));
+        };
+        let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let (source, flags) = if self.is_regexp(pattern) {
+            let source_atom = self.intern_atom("source");
+            let flags_atom = self.intern_atom("flags");
+            (
+                self.to_string(p, self.get_property(p, pattern, source_atom)?)?,
+                self.to_string(p, self.get_property(p, pattern, flags_atom)?)?,
+            )
+        } else {
+            (regex::escape(&self.to_string(p, pattern)?), String::new())
+        };
+        let regex = Self::compile_regexp(&source, &flags)?;
+        let Some(first) = regex.captures(&receiver) else {
+            return Ok(if native == Native::StringSearch {
+                Value::number(-1.0)
+            } else {
+                Value::NULL
+            });
+        };
+        if native == Native::StringSearch {
+            return Ok(Value::number(
+                first.get(0).map_or(-1isize, |value| value.start() as isize) as f64,
+            ));
+        }
+        if flags.contains('g') {
+            let values = regex
+                .captures_iter(&receiver)
+                .filter_map(|captures| captures.get(0))
+                .map(|value| self.heap.alloc(Cell::String(value.as_str().into())))
+                .collect();
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(values),
+            }));
+        }
+        let values = first
+            .iter()
+            .map(|value| {
+                value.map_or(Value::UNDEFINED, |value| {
+                    self.heap.alloc(Cell::String(value.as_str().into()))
+                })
+            })
+            .collect::<Vec<_>>();
+        let result = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        });
+        let index = self.intern_atom("index");
+        let input = self.intern_atom("input");
+        self.set_property(
+            result,
+            index,
+            Value::number(first.get(0).map_or(0, |value| value.start()) as f64),
+        )?;
+        let input_value = self.heap.alloc(Cell::String(receiver));
+        self.set_property(result, input, input_value)?;
+        Ok(result)
+    }
+
     pub(super) fn string_split_regexp_native(
         &mut self,
         p: &ResidualProgram,

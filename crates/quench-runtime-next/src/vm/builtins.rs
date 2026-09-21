@@ -167,6 +167,8 @@ const NATIVES: &[Native] = &[
     Native::StringRepeat,
     Native::StringPadStart,
     Native::StringPadEnd,
+    Native::StringMatch,
+    Native::StringSearch,
     Native::EncodeUri,
     Native::EncodeUriComponent,
     Native::DecodeUri,
