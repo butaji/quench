@@ -40,6 +40,7 @@ mod primitives;
 #[cfg(feature = "profile-aggregate")]
 mod profile_edges;
 mod reflect;
+mod regexp;
 mod string_cache;
 mod superinstruction;
 mod symbol;
@@ -213,6 +214,7 @@ pub struct Vm<H> {
     weak_set_proto: Value,
     weak_ref_proto: Value,
     iterator_proto: Value,
+    regexp_proto: Value,
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
     natives: Vec<(Native, Value)>,

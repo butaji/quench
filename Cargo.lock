@@ -2763,6 +2763,7 @@ dependencies = [
  "oxc_ast 0.150.0",
  "oxc_parser 0.150.0",
  "oxc_span 0.150.0",
+ "regex",
  "rustc-hash",
  "serde_json",
 ]

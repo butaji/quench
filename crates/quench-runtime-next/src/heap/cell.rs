@@ -148,6 +148,9 @@ pub(crate) enum Native {
     Date,
     DateNow,
     Error,
+    RegExp,
+    RegExpExec,
+    RegExpTest,
     String,
     Symbol,
     SymbolFor,
@@ -223,14 +226,12 @@ impl Native {
                 | Self::ArrayBufferIsView
         )
     }
-
     pub(crate) fn is_typed_array_iterator(self) -> bool {
         matches!(
             self,
             Self::Uint8ArrayKeys | Self::Uint8ArrayValues | Self::Uint8ArrayEntries
         )
     }
-
     pub(crate) fn is_atomics_native(self) -> bool {
         matches!(
             self,
@@ -246,7 +247,6 @@ impl Native {
                 | Self::AtomicsIsLockFree
         )
     }
-
     pub(crate) fn is_data_view_native(self) -> bool {
         matches!(
             self,
