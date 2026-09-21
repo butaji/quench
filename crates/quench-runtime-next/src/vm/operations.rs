@@ -37,6 +37,7 @@ impl<H: Host> Vm<H> {
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::ObjectKeys
+            | Native::ObjectGetOwnPropertyNames
             | Native::ObjectCreate
             | Native::ObjectAssign
             | Native::ObjectGetPrototypeOf
