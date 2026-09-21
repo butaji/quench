@@ -81,6 +81,18 @@ impl<H: Host> Vm<H> {
         self.set_named(
             program,
             object,
+            "values",
+            self.native_value(Native::ObjectValues),
+        )?;
+        self.set_named(
+            program,
+            object,
+            "entries",
+            self.native_value(Native::ObjectEntries),
+        )?;
+        self.set_named(
+            program,
+            object,
             "fromEntries",
             self.native_value(Native::ObjectFromEntries),
         )?;
@@ -99,6 +111,12 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectGetOwnPropertyNames => {
                 self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
+            Native::ObjectValues => {
+                self.object_values(args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
+            Native::ObjectEntries => {
+                self.object_entries(args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectFromEntries => {
                 let input = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -170,5 +188,51 @@ impl<H: Host> Vm<H> {
             | (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
             _ => left == right,
         }
+    }
+
+    fn object_values(&mut self, object: Value) -> Result<Value, JsError> {
+        let Some(data) = self.object_data(object) else {
+            return Err(JsError("Object.values target is not an object".into()));
+        };
+        let shape = self.shapes[data.shape() as usize].clone();
+        let values = shape
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, _)| self.heap.property_get(data, slot))
+            .collect::<Vec<_>>();
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
+    }
+
+    fn object_entries(&mut self, object: Value) -> Result<Value, JsError> {
+        let Some(data) = self.object_data(object) else {
+            return Err(JsError("Object.entries target is not an object".into()));
+        };
+        let shape = self.shapes[data.shape() as usize].clone();
+        let pairs = shape
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, atom)| {
+                self.heap
+                    .property_get(data, slot)
+                    .map(|value| (*atom, value))
+            })
+            .collect::<Vec<_>>();
+        let entries = pairs
+            .into_iter()
+            .map(|(atom, value)| {
+                let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+                self.heap.alloc(Cell::Array {
+                    object: Self::empty_object(self.array_proto),
+                    elements: Rc::new(vec![key, value]),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(entries),
+        }))
     }
 }
