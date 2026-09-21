@@ -24,6 +24,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayIncludes,
     Native::ArrayJoin,
     Native::ArrayConcat,
+    Native::ArrayFlat,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -325,6 +326,12 @@ impl<H: Host> Vm<H> {
             self.array_proto,
             "concat",
             self.native_value(Native::ArrayConcat),
+        )?;
+        self.set_named(
+            program,
+            self.array_proto,
+            "flat",
+            self.native_value(Native::ArrayFlat),
         )?;
         self.set_named(program, array, "prototype", self.array_proto)?;
         self.set_named(

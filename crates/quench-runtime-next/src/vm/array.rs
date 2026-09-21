@@ -1,6 +1,52 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn array_flat_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !matches!(self.heap.get(this), Some(Cell::Array { .. })) {
+            return Err(JsError("flat receiver is not array".into()));
+        }
+        let depth = match self.to_number(p, args.first().copied().unwrap_or(Value::number(1.0)))? {
+            value if value.is_nan() || value <= 0.0 => 0,
+            value if value.is_infinite() => usize::MAX,
+            value => value.trunc() as usize,
+        };
+        let mut values = Vec::new();
+        self.flatten_array(this, depth, &mut values);
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
+    }
+
+    fn flatten_array(&self, value: Value, depth: usize, output: &mut Vec<Value>) {
+        let Some(Cell::Array { elements, .. }) = self.heap.get(value) else {
+            output.push(value);
+            return;
+        };
+        let length = self.heap.sparse_length(value).unwrap_or(elements.len());
+        let items = (0..length)
+            .map(|index| {
+                elements
+                    .get(index)
+                    .copied()
+                    .or_else(|| self.heap.sparse_get(value, index))
+                    .unwrap_or(Value::UNDEFINED)
+            })
+            .collect::<Vec<_>>();
+        for item in items {
+            if depth > 0 && matches!(self.heap.get(item), Some(Cell::Array { .. })) {
+                self.flatten_array(item, depth - 1, output);
+            } else {
+                output.push(item);
+            }
+        }
+    }
+
     pub(super) fn array_concat_native(
         &mut self,
         this: Value,
