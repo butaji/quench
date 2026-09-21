@@ -146,6 +146,11 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        if self.lookup_atom("byteLength") == Some(atom)
+            && let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(object)
+        {
+            return Ok(Value::number(bytes.len() as f64));
+        }
         let mut owner = object;
         let mut depth = 0u8;
         loop {
@@ -201,6 +206,11 @@ impl<H: Host> Vm<H> {
                 return Ok(v);
             }
             match self.heap.get(object) {
+                Some(Cell::ArrayBuffer { bytes, .. })
+                    if self.lookup_atom("byteLength") == Some(atom) =>
+                {
+                    return Ok(Value::number(bytes.len() as f64));
+                }
                 Some(Cell::Array { .. }) if atom == self.length_atom => {
                     let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
                         unreachable!()
@@ -211,6 +221,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::Map { entries, .. }) if atom == self.size_atom => {
                     return Ok(Value::number(entries.len() as f64));
                 }
+                Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
                 Some(Cell::Set { entries, .. }) if atom == self.size_atom => {
                     return Ok(Value::number(entries.len() as f64));
                 }

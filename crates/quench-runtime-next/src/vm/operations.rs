@@ -44,6 +44,7 @@ impl<H: Host> Vm<H> {
                     elements: Rc::new(vec![Value::UNDEFINED; len]),
                 }))
             }
+            Native::ArrayBuffer => self.construct_array_buffer_native(p, args),
             Native::Map | Native::Set => self.construct_collection_native(native, args),
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),

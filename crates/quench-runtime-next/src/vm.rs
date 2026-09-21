@@ -12,8 +12,8 @@ use rustc_hash::FxHashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
-
 mod array;
+mod array_buffer;
 mod array_builtins;
 mod array_indexed;
 mod array_modern;

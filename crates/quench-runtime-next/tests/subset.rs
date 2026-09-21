@@ -331,6 +331,16 @@ fn array_from_consumes_iterables_and_array_of_preserves_arguments() {
 }
 
 #[test]
+fn array_buffer_allocates_owned_bytes_and_exposes_byte_length() {
+    assert_eq!(
+        output(
+            "var buffer = new ArrayBuffer('4.9'); print(buffer.byteLength); print(new ArrayBuffer().byteLength);"
+        ),
+        ["4", "0"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
