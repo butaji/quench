@@ -79,6 +79,8 @@ pub(crate) enum Native {
     Int8Array,
     Int16Array,
     Int32Array,
+    Float32Array,
+    Float64Array,
     Uint8ArraySet,
     Uint8ArraySubarray,
     Uint8ArraySlice,
@@ -180,6 +182,8 @@ pub(crate) enum TypedArrayKind {
     Int8,
     Int16,
     Int32,
+    Float32,
+    Float64,
 }
 
 impl TypedArrayKind {
@@ -191,6 +195,8 @@ impl TypedArrayKind {
             Self::Int8 => 1,
             Self::Int16 => 2,
             Self::Int32 => 4,
+            Self::Float32 => 4,
+            Self::Float64 => 8,
         }
     }
 }
@@ -344,6 +350,18 @@ pub(crate) enum Cell {
         offset: usize,
         length: usize,
     },
+    Float32Array {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
+    Float64Array {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
     DataView {
         object: Object,
         buffer: Value,
@@ -400,7 +418,9 @@ impl Cell {
             | Self::Uint32Array { object, buffer, .. }
             | Self::Int8Array { object, buffer, .. }
             | Self::Int16Array { object, buffer, .. }
-            | Self::Int32Array { object, buffer, .. } => Some((object, *buffer)),
+            | Self::Int32Array { object, buffer, .. }
+            | Self::Float32Array { object, buffer, .. }
+            | Self::Float64Array { object, buffer, .. } => Some((object, *buffer)),
             _ => None,
         }
     }
@@ -416,6 +436,8 @@ impl Cell {
             | Self::Int8Array { object, .. }
             | Self::Int16Array { object, .. }
             | Self::Int32Array { object, .. }
+            | Self::Float32Array { object, .. }
+            | Self::Float64Array { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
@@ -439,6 +461,8 @@ impl Cell {
             | Self::Int8Array { object, .. }
             | Self::Int16Array { object, .. }
             | Self::Int32Array { object, .. }
+            | Self::Float32Array { object, .. }
+            | Self::Float64Array { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }

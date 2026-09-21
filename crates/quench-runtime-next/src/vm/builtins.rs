@@ -76,6 +76,8 @@ const NATIVES: &[Native] = &[
     Native::Int8Array,
     Native::Int16Array,
     Native::Int32Array,
+    Native::Float32Array,
+    Native::Float64Array,
     Native::Uint8ArraySet,
     Native::Uint8ArraySubarray,
     Native::Uint8ArraySlice,
@@ -417,7 +419,6 @@ impl<H: Host> Vm<H> {
                 .find(|atom| self.atom_name(*atom) == name)
         })
     }
-
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
         if let Some(atom) = self.lookup_atom(name) {
             return atom;
@@ -428,7 +429,6 @@ impl<H: Host> Vm<H> {
         self.profile.dynamic_atom();
         atom
     }
-
     pub(super) fn atom_hash(name: &str) -> u64 {
         let mut hasher = rustc_hash::FxHasher::default();
         name.hash(&mut hasher);

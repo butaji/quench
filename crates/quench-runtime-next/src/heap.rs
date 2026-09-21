@@ -260,12 +260,10 @@ impl Heap {
             }
         }
     }
-
     #[inline(always)]
     fn marked(marks: &[u64], index: usize) -> bool {
         marks[index / 64] & (1 << (index % 64)) != 0
     }
-
     #[inline(always)]
     fn mark(marks: &mut [u64], index: usize) {
         marks[index / 64] |= 1 << (index % 64);
@@ -439,7 +437,9 @@ impl Heap {
             | Cell::Uint32Array { .. }
             | Cell::Int8Array { .. }
             | Cell::Int16Array { .. }
-            | Cell::Int32Array { .. } => 0,
+            | Cell::Int32Array { .. }
+            | Cell::Float32Array { .. }
+            | Cell::Float64Array { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
@@ -467,7 +467,9 @@ impl Heap {
             | Cell::Uint32Array { .. }
             | Cell::Int8Array { .. }
             | Cell::Int16Array { .. }
-            | Cell::Int32Array { .. } => 0,
+            | Cell::Int32Array { .. }
+            | Cell::Float32Array { .. }
+            | Cell::Float64Array { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
