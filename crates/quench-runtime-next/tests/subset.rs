@@ -907,6 +907,16 @@ fn map_and_set_for_each_preserve_callback_argument_order() {
 }
 
 #[test]
+fn collection_for_each_observes_live_additions_and_deletions() {
+    assert_eq!(
+        output(
+            "var map = new Map([['a', 1], ['b', 2]]); var map_seen = ''; map.forEach(function(value, key) { map_seen = map_seen + key; if (key === 'a') { map.set('c', 3); map.delete('b'); } }); var set = new Set(['a', 'b']); var set_seen = ''; set.forEach(function(value) { set_seen = set_seen + value; if (value === 'a') { set.add('c'); set.delete('b'); } }); print(map_seen); print(set_seen);"
+        ),
+        ["ac", "ac"],
+    );
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(

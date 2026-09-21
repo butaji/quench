@@ -275,12 +275,23 @@ impl<H: Host> Vm<H> {
             Native::MapEntries => self.collection_iterator(this, IteratorKind::MapEntries),
             Native::MapForEach => {
                 let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let entries = match self.heap.get(this) {
-                    Some(Cell::Map { entries, .. }) => entries.clone(),
-                    _ => return Err(JsError("Map method receiver is not a Map".into())),
-                };
-                for (key, value) in entries {
+                if !matches!(self.heap.get(this), Some(Cell::Map { .. })) {
+                    return Err(JsError("Map method receiver is not a Map".into()));
+                }
+                let mut index = 0;
+                while let Some((key, value)) = self.heap.get(this).and_then(|cell| match cell {
+                    Cell::Map { entries, .. } => entries.get(index).copied(),
+                    _ => None,
+                }) {
                     self.call_value(p, callback, Value::UNDEFINED, &[value, key, this])?;
+                    let Some(position) = self.map_entry_index(this, key) else {
+                        continue;
+                    };
+                    index = if position == index {
+                        index + 1
+                    } else {
+                        position
+                    };
                 }
                 Ok(Value::UNDEFINED)
             }
@@ -329,12 +340,23 @@ impl<H: Host> Vm<H> {
             Native::SetEntries => self.collection_iterator(this, IteratorKind::SetEntries),
             Native::SetForEach => {
                 let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let values = match self.heap.get(this) {
-                    Some(Cell::Set { entries, .. }) => entries.clone(),
-                    _ => return Err(JsError("Set method receiver is not a Set".into())),
-                };
-                for value in values {
+                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
+                    return Err(JsError("Set method receiver is not a Set".into()));
+                }
+                let mut index = 0;
+                while let Some(value) = self.heap.get(this).and_then(|cell| match cell {
+                    Cell::Set { entries, .. } => entries.get(index).copied(),
+                    _ => None,
+                }) {
                     self.call_value(p, callback, Value::UNDEFINED, &[value, value, this])?;
+                    let Some(position) = self.set_entry_index(this, value) else {
+                        continue;
+                    };
+                    index = if position == index {
+                        index + 1
+                    } else {
+                        position
+                    };
                 }
                 Ok(Value::UNDEFINED)
             }
