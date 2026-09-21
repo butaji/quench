@@ -14,6 +14,7 @@ impl FunctionCompiler<'_, '_> {
             .heritage
             .as_ref()
             .map(|heritage| self.expression(&heritage.expression));
+        let super_atom = heritage.map(|_| self.hidden_local("\0rqj:super"));
         let scopes = self.capture_scopes();
         let instance_fields: Vec<_> = class
             .body
@@ -54,6 +55,10 @@ impl FunctionCompiler<'_, '_> {
             });
         let class_value = self.reg();
         self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
+
+        if let (Some(base), Some(super_atom)) = (heritage, super_atom) {
+            self.store_atom(super_atom, base);
+        }
 
         if bind_name {
             if let Some(name) = &class.id {

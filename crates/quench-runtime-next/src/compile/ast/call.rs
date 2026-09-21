@@ -49,7 +49,9 @@ impl FunctionCompiler<'_, '_> {
             let (callee, this) = self.callee(&value.callee);
             return self.spread_call(callee, this, &value.arguments);
         }
-        if let Expression::StaticMemberExpression(item) = &value.callee {
+        if let Expression::StaticMemberExpression(item) = &value.callee
+            && !matches!(&item.object, Expression::Super(_))
+        {
             let (receiver, receiver_path) = match &item.object {
                 Expression::ThisExpression(_) => (None, None),
                 Expression::StaticMemberExpression(inner)
@@ -127,7 +129,39 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn callee(&mut self, value: &Expression<'_>) -> (Register, Register) {
         match value {
+            Expression::Super(_) => {
+                let callee = self.expression(value);
+                let this = self.reg();
+                self.emit(Op::LoadThis, this, 0, 0, 0);
+                (callee, this)
+            }
             Expression::StaticMemberExpression(item) => {
+                if matches!(&item.object, Expression::Super(_)) {
+                    let base = self.expression(&item.object);
+                    let prototype = self.reg();
+                    let atom = self.owner.atom("prototype");
+                    let cache = self.owner.cache_site();
+                    self.emit(
+                        Op::GetField,
+                        prototype,
+                        FieldBase::register(base).0,
+                        cache,
+                        atom,
+                    );
+                    let callee = self.reg();
+                    let method_atom = self.owner.atom(item.property.name.as_str());
+                    let method_cache = self.owner.cache_site();
+                    self.emit(
+                        Op::GetField,
+                        callee,
+                        FieldBase::register(prototype).0,
+                        method_cache,
+                        method_atom,
+                    );
+                    let this = self.reg();
+                    self.emit(Op::LoadThis, this, 0, 0, 0);
+                    return (callee, this);
+                }
                 let this = self.expression(&item.object);
                 let dst = self.reg();
                 let atom = self.owner.atom(item.property.name.as_str());
