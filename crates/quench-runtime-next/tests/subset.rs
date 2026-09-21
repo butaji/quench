@@ -638,6 +638,16 @@ fn regexp_global_and_sticky_calls_advance_and_reset_last_index() {
 }
 
 #[test]
+fn regexp_and_string_offsets_use_utf16_code_units() {
+    assert_eq!(
+        output(
+            "var expression = /b/g; var match = expression.exec('😀b'); print(match.index); print(expression.lastIndex); var searched = '😀b'.match(/b/); print(searched.index); print('😀b'.search(/b/)); print('😀b'.replace(/b/, function(value, offset) { return offset; }));"
+        ),
+        ["2", "3", "2", "2", "😀2"],
+    );
+}
+
+#[test]
 fn string_replace_and_split_preserve_order_and_limits() {
     assert_eq!(
         output(
@@ -664,6 +674,16 @@ fn string_replace_calls_function_replacers_with_match_context() {
             "print('a1b2'.replace(/(\\d)/g, function(match, digit, offset, input) { return digit + offset + input.length; }));"
         ),
         ["a114b234"],
+    );
+}
+
+#[test]
+fn string_replace_all_handles_strings_regexes_and_empty_searches() {
+    assert_eq!(
+        output(
+            "print('a-a-a'.replaceAll('a', 'x')); print('a-a'.replaceAll(/a/g, 'x')); print('ab'.replaceAll('', '-')); try { 'a'.replaceAll(/a/, 'x'); } catch (error) { print('global-required'); }"
+        ),
+        ["x-x-x", "x-x", "-a-b-", "global-required"],
     );
 }
 

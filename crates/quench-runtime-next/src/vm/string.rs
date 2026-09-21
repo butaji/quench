@@ -1,5 +1,9 @@
 use super::*;
 
+fn utf16_index(text: &str, byte_index: usize) -> usize {
+    text[..byte_index].encode_utf16().count()
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn string_native_for_atom(&self, atom: Atom) -> Option<Native> {
         [
@@ -13,6 +17,7 @@ impl<H: Host> Vm<H> {
             ("padEnd", Native::StringPadEnd),
             ("match", Native::StringMatch),
             ("search", Native::StringSearch),
+            ("replaceAll", Native::StringReplaceAll),
         ]
         .into_iter()
         .find_map(|(name, native)| (self.lookup_atom(name) == Some(atom)).then_some(native))
@@ -48,9 +53,9 @@ impl<H: Host> Vm<H> {
             });
         };
         if native == Native::StringSearch {
-            return Ok(Value::number(
-                first.get(0).map_or(-1isize, |value| value.start() as isize) as f64,
-            ));
+            return Ok(Value::number(first.get(0).map_or(-1isize, |value| {
+                utf16_index(&receiver, value.start()) as isize
+            }) as f64));
         }
         if flags.contains('g') {
             let values = regex
@@ -80,7 +85,12 @@ impl<H: Host> Vm<H> {
         self.set_property(
             result,
             index,
-            Value::number(first.get(0).map_or(0, |value| value.start()) as f64),
+            Value::number(
+                first
+                    .get(0)
+                    .map_or(0, |value| utf16_index(&receiver, value.start()))
+                    as f64,
+            ),
         )?;
         let input_value = self.heap.alloc(Cell::String(receiver));
         self.set_property(result, input, input_value)?;
@@ -137,6 +147,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
+        replace_all: bool,
     ) -> Result<Value, JsError> {
         let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
@@ -158,7 +169,10 @@ impl<H: Host> Vm<H> {
             let source = self.to_string(p, self.get_property(p, search_value, source_atom)?)?;
             let flags = self.to_string(p, self.get_property(p, search_value, flags_atom)?)?;
             let regex = Self::compile_regexp(&source, &flags)?;
-            let global = flags.contains('g');
+            if replace_all && !flags.contains('g') {
+                return Err(JsError("replaceAll requires a global RegExp".into()));
+            }
+            let global = flags.contains('g') || replace_all;
             let mut result = String::with_capacity(receiver.len());
             let mut cursor = 0;
             let mut replaced = false;
@@ -178,7 +192,7 @@ impl<H: Host> Vm<H> {
                             self.heap.alloc(Cell::String(value.as_str().into()))
                         })
                     }));
-                    callback_args.push(Value::number(whole.start() as f64));
+                    callback_args.push(Value::number(utf16_index(&receiver, whole.start()) as f64));
                     callback_args.push(self.heap.alloc(Cell::String(receiver.clone())));
                     let value =
                         self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
@@ -203,13 +217,71 @@ impl<H: Host> Vm<H> {
             return Ok(self.heap.alloc(Cell::String(result)));
         }
         let search = self.to_string(p, search_value)?;
+        if replace_all && search.is_empty() {
+            let input = self.heap.alloc(Cell::String(receiver.clone()));
+            let units: Vec<u16> = receiver.encode_utf16().collect();
+            let mut output = Vec::new();
+            for (offset, unit) in units.iter().copied().enumerate() {
+                let text = if replacement_function {
+                    let callback_args = [
+                        self.heap.alloc(Cell::String(String::new())),
+                        Value::number(offset as f64),
+                        input,
+                    ];
+                    let value =
+                        self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
+                    self.to_string(p, value)?
+                } else {
+                    replacement.clone()
+                };
+                output.extend(text.encode_utf16());
+                output.push(unit);
+            }
+            let text = if replacement_function {
+                let callback_args = [
+                    self.heap.alloc(Cell::String(String::new())),
+                    Value::number(units.len() as f64),
+                    input,
+                ];
+                let value =
+                    self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
+                self.to_string(p, value)?
+            } else {
+                replacement
+            };
+            output.extend(text.encode_utf16());
+            return self.string_from_units(&output);
+        }
         let Some(index) = receiver.find(&search) else {
             return Ok(self.heap.alloc(Cell::String(receiver)));
         };
+        if replace_all && !search.is_empty() {
+            let mut result = String::with_capacity(receiver.len());
+            let mut cursor = 0;
+            for (index, _) in receiver.match_indices(&search) {
+                result.push_str(&receiver[cursor..index]);
+                let replacement_text = if replacement_function {
+                    let callback_args = [
+                        self.heap.alloc(Cell::String(search.clone())),
+                        Value::number(utf16_index(&receiver, index) as f64),
+                        self.heap.alloc(Cell::String(receiver.clone())),
+                    ];
+                    let value =
+                        self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
+                    self.to_string(p, value)?
+                } else {
+                    replacement.replace("$&", &search)
+                };
+                result.push_str(&replacement_text);
+                cursor = index + search.len();
+            }
+            result.push_str(&receiver[cursor..]);
+            return Ok(self.heap.alloc(Cell::String(result)));
+        }
         let replacement = if replacement_function {
             let callback_args = [
                 self.heap.alloc(Cell::String(search.clone())),
-                Value::number(index as f64),
+                Value::number(utf16_index(&receiver, index) as f64),
                 self.heap.alloc(Cell::String(receiver.clone())),
             ];
             let value = self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;

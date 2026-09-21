@@ -1,6 +1,27 @@
 use super::*;
 use regex::RegexBuilder;
 
+fn utf16_to_byte_index(text: &str, target: usize) -> usize {
+    if target == 0 {
+        return 0;
+    }
+    let mut units = 0;
+    for (byte, character) in text.char_indices() {
+        if units >= target {
+            return byte;
+        }
+        units += character.len_utf16();
+        if units >= target {
+            return byte + character.len_utf8();
+        }
+    }
+    text.len()
+}
+
+fn utf16_index(text: &str, byte_index: usize) -> usize {
+    text[..byte_index].encode_utf16().count()
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn is_regexp(&self, value: Value) -> bool {
         let mut current = value;
@@ -93,12 +114,7 @@ impl<H: Host> Vm<H> {
             let value = self.get_property(p, this, last_index_atom)?;
             let number = self.to_number(p, value)?;
             if number.is_finite() && number > 0.0 {
-                let mut index = number.floor() as usize;
-                index = index.min(input.len());
-                while index > 0 && !input.is_char_boundary(index) {
-                    index -= 1;
-                }
-                index
+                utf16_to_byte_index(&input, number.floor() as usize)
             } else {
                 0
             }
@@ -135,9 +151,13 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),
         });
-        let index = captures.get(0).map_or(0, |value| value.start());
+        let index = captures
+            .get(0)
+            .map_or(0, |value| utf16_index(&input, value.start()));
         if stateful {
-            let end = captures.get(0).map_or(start, |value| value.end());
+            let end = captures.get(0).map_or(utf16_index(&input, start), |value| {
+                utf16_index(&input, value.end())
+            });
             self.set_property(this, last_index_atom, Value::number(end as f64))?;
         }
         let index_atom = self.intern_atom("index");
