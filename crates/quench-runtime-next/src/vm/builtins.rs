@@ -21,6 +21,10 @@ const NATIVES: &[Native] = &[
     Native::StringCharAt,
     Native::StringSubstring,
     Native::StringSubstr,
+    Native::EncodeUri,
+    Native::EncodeUriComponent,
+    Native::DecodeUri,
+    Native::DecodeUriComponent,
     Native::StringFromCharCode,
     Native::ParseInt,
     Native::MathLog,
@@ -66,6 +70,18 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "String", string)?;
         self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
+        self.global(program, "encodeURI", self.native_value(Native::EncodeUri))?;
+        self.global(
+            program,
+            "encodeURIComponent",
+            self.native_value(Native::EncodeUriComponent),
+        )?;
+        self.global(program, "decodeURI", self.native_value(Native::DecodeUri))?;
+        self.global(
+            program,
+            "decodeURIComponent",
+            self.native_value(Native::DecodeUriComponent),
+        )?;
         self.install_json(program)?;
         self.install_math(program)
     }
