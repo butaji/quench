@@ -92,6 +92,16 @@ fn object_keys_reflect_own_shape_order() {
 }
 
 #[test]
+fn object_create_preserves_prototype_lookup_and_own_shape() {
+    assert_eq!(
+        output(
+            "var proto = { answer: 42 }; var object = Object.create(proto); print(object.answer); print(Object.keys(object).length);"
+        ),
+        ["42", "0"],
+    );
+}
+
+#[test]
 fn json_round_trip_uses_runtime_objects_and_arrays() {
     assert_eq!(
         output(
