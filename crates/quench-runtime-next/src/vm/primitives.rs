@@ -274,6 +274,15 @@ impl<H: Host> Vm<H> {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 Ok(Value::number(self.to_number(p, value)?.floor()))
             }
+            Native::MathAbs
+            | Native::MathCeil
+            | Native::MathRound
+            | Native::MathTrunc
+            | Native::MathSqrt
+            | Native::MathSign => {
+                let value = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                Ok(Value::number(super::number::math_unary(native, value)))
+            }
             Native::MathMin | Native::MathMax => {
                 let mut result = if native == Native::MathMin {
                     f64::INFINITY

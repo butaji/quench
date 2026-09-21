@@ -91,7 +91,9 @@ impl<H: Host> Vm<H> {
             return Ok(value.to_string());
         }
         if let Some(value) = value.as_number() {
-            return Ok(if value.fract() == 0.0 {
+            return Ok(if value == 0.0 {
+                "0".into()
+            } else if value.fract() == 0.0 {
                 format!("{value:.0}")
             } else {
                 value.to_string()

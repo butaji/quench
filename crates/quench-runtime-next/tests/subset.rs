@@ -963,6 +963,16 @@ fn number_static_constants_and_parsers_use_numeric_authority() {
 }
 
 #[test]
+fn math_unary_rounding_preserves_ecmascript_edges() {
+    assert_eq!(
+        output(
+            "print(Math.abs(-3)); print(Math.ceil(1.2)); print(Math.round(-1.5)); print(Math.round(-0.25)); print(Math.trunc(-1.9)); print(Math.sqrt(9)); print(Math.sign(-0));"
+        ),
+        ["3", "2", "-1", "0", "-1", "3", "0"],
+    );
+}
+
+#[test]
 fn string_search_methods_use_the_receiver_text() {
     assert_eq!(
         output(

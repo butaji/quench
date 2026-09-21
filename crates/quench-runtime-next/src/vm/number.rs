@@ -133,3 +133,31 @@ pub(super) fn parse_float(text: &str) -> f64 {
     }
     text[..end].parse().unwrap_or(f64::NAN)
 }
+
+pub(super) fn math_unary(native: Native, value: f64) -> f64 {
+    match native {
+        Native::MathAbs => value.abs(),
+        Native::MathCeil => value.ceil(),
+        Native::MathRound => {
+            if value.is_nan() || value == 0.0 || value.is_infinite() {
+                value
+            } else if (-0.5..0.0).contains(&value) {
+                -0.0
+            } else {
+                (value + 0.5).floor()
+            }
+        }
+        Native::MathTrunc => value.trunc(),
+        Native::MathSqrt => value.sqrt(),
+        Native::MathSign => {
+            if value.is_nan() || value == 0.0 {
+                value
+            } else if value.is_sign_negative() {
+                -1.0
+            } else {
+                1.0
+            }
+        }
+        _ => unreachable!("non-unary Math native"),
+    }
+}
