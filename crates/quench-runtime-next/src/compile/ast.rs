@@ -31,7 +31,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) owner: &'a mut Compiler<'b>,
     pub(super) locals: Vec<Atom>,
     pub(super) code: Vec<Instr>,
-    next_reg: Register,
+    pub(super) next_reg: Register,
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
     pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
