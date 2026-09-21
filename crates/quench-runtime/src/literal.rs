@@ -56,7 +56,7 @@ fn string_literal(string: &oxc::ast::ast::StringLiteral<'_>) -> Option<Literal> 
     })
 }
 
-fn decode_unicode_escapes(value: &str, raw: &str) -> Option<Vec<u16>> {
+fn decode_unicode_escapes(_value: &str, raw: &str) -> Option<Vec<u16>> {
     if !has_unicode_escape(raw) {
         return None;
     }

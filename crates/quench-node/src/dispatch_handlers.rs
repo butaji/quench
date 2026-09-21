@@ -2104,7 +2104,7 @@ fn is_child_process_async_capability(value: &Value) -> bool {
 
 pub fn util_promisified_callback(
     _: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
+    _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Value::Promise(promise) = args.first().cloned().unwrap_or(Value::Undefined) else {
@@ -5048,7 +5048,7 @@ pub fn vm_module_link_requests(
     let Some(module) = receiver else {
         return Err(crate::modules::buffer_enc::invalid_this());
     };
-    let mut expected_len = match execute::get_property(module, "moduleRequests") {
+    let expected_len = match execute::get_property(module, "moduleRequests") {
         Value::Array(requests) => requests.logical_len(),
         _ => 0,
     };
@@ -9299,7 +9299,7 @@ pub fn cp_spawn_output_emit(
             Value::Boolean(true)
         ) {
             let line = match &child_args {
-                Value::Array(array) => execute::get_property_result(&child_args, "0")
+                Value::Array(_array) => execute::get_property_result(&child_args, "0")
                     .ok()
                     .and_then(|value| execute::to_js_string(&value).ok())
                     .unwrap_or_default(),
@@ -14037,14 +14037,14 @@ pub fn process_exit_code_set(
 }
 
 pub fn process_getuid(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
     Ok(crate::modules::process::credential("uid"))
 }
 pub fn process_getgid(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
@@ -14074,14 +14074,14 @@ pub fn process_getgroups(
     Ok(host_api::array(Vec::new()))
 }
 pub fn process_geteuid(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
     Ok(crate::modules::process::credential("euid"))
 }
 pub fn process_getegid(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
@@ -15509,7 +15509,7 @@ pub fn test_mock_property(
             quench_runtime::execute::get_property(&descriptor, "writable"),
         ],
     );
-    let replacement = quench_runtime::host_api::object(vec![
+    let _replacement = quench_runtime::host_api::object(vec![
         ("get".into(), getter.clone()),
         ("set".into(), setter.clone()),
         (

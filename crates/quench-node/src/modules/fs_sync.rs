@@ -1203,8 +1203,8 @@ pub fn utimes_sync(
 }
 
 pub fn lutimes_sync(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;

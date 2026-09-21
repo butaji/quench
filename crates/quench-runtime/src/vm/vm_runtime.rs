@@ -5959,7 +5959,7 @@ fn maybe_osr_switch(
 #[inline(always)]
 fn skip_proven_object_coercible(
     code: crate::machine::CodeView<'_>,
-    pc: usize,
+    _pc: usize,
     instruction: crate::ir::Instruction,
     registers: &crate::register_file::RegisterFile,
 ) -> bool {

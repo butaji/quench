@@ -3397,14 +3397,14 @@ mod stubs {
                     sign,
                     &overflow,
                 )?;
-                let mut target = ["year", "month", "day"]
+                let target = ["year", "month", "day"]
                     .iter()
                     .map(|name| crate::execute::get_property_result(&added, name))
                     .collect::<Result<Vec<_>, _>>()?;
                 let target_code = crate::execute::get_property_result(&added, "monthCode")?;
                 let target_year = crate::conversion::to_number(&target[0])?;
                 let target_month = crate::conversion::to_number(&target[1])?;
-                let mut target_day = crate::conversion::to_number(&target[2])?;
+                let target_day = crate::conversion::to_number(&target[2])?;
                 let local_epoch = super::plain_date::calendar_date_serial(
                     target_year,
                     target_month,
@@ -3500,7 +3500,7 @@ mod stubs {
                     let final_serial = target_serial
                         .checked_add(day_count)
                         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-                    let (year, month, day) = super::plain_date::civil_from_serial(final_serial);
+                    let (_year, _month, _day) = super::plain_date::civil_from_serial(final_serial);
                     let old_serial = super::plain_date::date_serial(
                         base_year as f64,
                         base_month as f64,
@@ -3569,7 +3569,7 @@ mod stubs {
                     let final_serial = target_serial
                         .checked_add(day_count as i64)
                         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-                    let (year, month, day) = super::plain_date::civil_from_serial(final_serial);
+                    let (_year, _month, _day) = super::plain_date::civil_from_serial(final_serial);
                     let old_serial = super::plain_date::date_serial(
                         base_year as f64,
                         base_month as f64,
@@ -4623,7 +4623,7 @@ mod stubs {
                 }
                 let years = month_delta / 12;
                 let months = month_delta % 12;
-                let (anchor, days) = if month_delta >= 0 {
+                let (_anchor, days) = if month_delta >= 0 {
                     if direction > 0 {
                         let anchor = start_date
                             .checked_add_months(chrono::Months::new(month_delta as u32))
@@ -4706,7 +4706,7 @@ mod stubs {
                         + (days as i128) * 86_400_000_000_000_i128
                         + time_remainder
                 };
-                let round_adjust = |whole: i32, unit_days: i128| -> i32 {
+                let _round_adjust = |whole: i32, unit_days: i128| -> i32 {
                     let sign = residual.signum();
                     if sign == 0 {
                         return 0;

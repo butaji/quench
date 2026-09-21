@@ -25,7 +25,7 @@ fn fixed_point_register_liveness(
     let conservative = conservative_registers(entries, operand_windows);
     let mut live_in = vec![BTreeSet::new(); entries.len()];
     let mut live_out = live_in.clone();
-    let mut predecessors = match predecessor_table(successors) {
+    let predecessors = match predecessor_table(successors) {
         Some(predecessors) => predecessors,
         None => return vec![conservative; entries.len()],
     };

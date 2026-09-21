@@ -2296,7 +2296,7 @@ pub fn req_end(
             if matches!(socket, Value::Undefined | Value::Null) {
                 return Ok(receiver.cloned().unwrap_or(Value::Undefined));
             }
-            let mut bytes = request_head_with_chunking(
+            let bytes = request_head_with_chunking(
                 &request_host(&target),
                 &method,
                 &path,
@@ -3369,7 +3369,7 @@ fn take_agent_socket(agent: &Value, name: &str) -> Option<Value> {
 }
 
 fn move_agent_socket_to_free(
-    state: &Rc<RefCell<HostState>>,
+    _state: &Rc<RefCell<HostState>>,
     agent: &Value,
     name: &str,
     socket: &Value,

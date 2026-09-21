@@ -935,7 +935,7 @@ pub fn node_emit(
 }
 
 pub(crate) fn node_prototype() -> Value {
-    let mut prototype = host_api::object(Vec::new());
+    let prototype = host_api::object(Vec::new());
     for (name, value) in [
         (
             "addEventListener",
@@ -1415,7 +1415,7 @@ pub fn dispatch_event(
         }
     }
     if event_type == "abort" && is_abort_signal(receiver) {
-        let mut host = state.borrow_mut();
+        let host = state.borrow_mut();
         for target in host.targets.targets.values() {
             for (_, listeners) in &mut target.borrow_mut().events {
                 listeners.retain(|listener| {

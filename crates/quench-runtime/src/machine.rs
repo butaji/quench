@@ -812,7 +812,7 @@ impl CodeArena {
         metadata: &mut Vec<InstructionMeta>,
         operand_windows: &mut Vec<Rc<[u16]>>,
         source: Option<u32>,
-        ternary_dst: Option<u16>,
+        _ternary_dst: Option<u16>,
     ) -> Option<usize> {
         match &body[cursor] {
             Op::Conditional {
@@ -2691,7 +2691,7 @@ impl NativeTruthinessPlan {
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn execute(&mut self, value: f64) -> Result<bool, crate::stencil_arena::ArenaError> {
-        let values = crate::stencil_fact::PatchValues::from_site(&self.site);
+        let _values = crate::stencil_fact::PatchValues::from_site(&self.site);
         if let Some(shared) = self.physical.storage.shared() {
             if let InstalledTruthinessEntry::NumberShared(owned) = self.physical.installed() {
                 if let Ok(result) = invoke_shared_entry!(shared, owned, |entry| entry(value)) {
@@ -2798,7 +2798,7 @@ impl NativeTruthinessPlan {
             let address =
                 slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             slab.make_executable(address)?;
-            let entry = slab.word_bool_entry(address)?;
+            let _entry = slab.word_bool_entry(address)?;
             drop(slab);
             let owned = shared.borrow().owned_word_bool_entry(address)?;
             self.physical
@@ -2872,7 +2872,7 @@ impl NativeTruthinessPlan {
             let address =
                 slab.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             slab.make_executable(address)?;
-            let entry = slab.word_bool_entry(address)?;
+            let _entry = slab.word_bool_entry(address)?;
             drop(slab);
             let owned = shared.borrow().owned_word_bool_entry(address)?;
             self.physical
@@ -5011,7 +5011,7 @@ fn validate_region_window(
 }
 
 fn validate_admitted_region_control(
-    view: crate::stencil_select::PhysicalStencilView,
+    _view: crate::stencil_select::PhysicalStencilView,
     pc: usize,
     operations: &[crate::ir::Opcode],
     control: &crate::stencil_cfg::RegionControlPlan,
