@@ -15,6 +15,7 @@ pub(crate) enum Native {
     ArrayPop,
     FunctionCall,
     Date,
+    DateNow,
     Error,
     String,
     Symbol,

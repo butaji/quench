@@ -117,6 +117,11 @@ fn uri_codecs_preserve_component_and_reserved_character_rules() {
 }
 
 #[test]
+fn date_now_uses_the_host_clock_capability() {
+    assert_eq!(output("print(Date.now());"), ["0"]);
+}
+
+#[test]
 fn base_classes_lower_to_constructor_and_prototype_methods() {
     let source = r#"
       class Box {
