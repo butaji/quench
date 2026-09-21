@@ -257,6 +257,20 @@ fn base_classes_lower_to_constructor_and_prototype_methods() {
 }
 
 #[test]
+fn static_class_fields_initialize_after_methods_are_installed() {
+    let source = r#"
+      class Counter {
+        static answer = Counter.makeAnswer();
+        static makeAnswer() { return 40 + 2; }
+        static unset;
+      }
+      print(Counter.answer);
+      print(Counter.unset === undefined);
+    "#;
+    assert_eq!(output(source), ["42", "true"]);
+}
+
+#[test]
 fn class_methods_capture_the_enclosing_activation() {
     let source = r#"
       function make(offset) {
