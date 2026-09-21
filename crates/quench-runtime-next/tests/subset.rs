@@ -92,6 +92,16 @@ fn object_values_and_entries_follow_shape_order() {
 }
 
 #[test]
+fn object_prototype_has_own_property_uses_receiver() {
+    assert_eq!(
+        output(
+            "var object = { answer: 42 }; print(object.hasOwnProperty('answer')); print(object.hasOwnProperty('missing'));"
+        ),
+        ["true", "false"],
+    );
+}
+
+#[test]
 fn destructuring_defaults_only_evaluate_for_undefined_values() {
     assert_eq!(
         output(
