@@ -13,6 +13,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+mod array;
 mod builtins;
 mod coercion;
 mod collections;

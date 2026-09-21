@@ -194,12 +194,24 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             BindingPattern::ObjectPattern(object) => object
                 .properties
                 .iter()
-                .find_map(|property| Self::first_binding_name(&property.value)),
+                .find_map(|property| Self::first_binding_name(&property.value))
+                .or_else(|| {
+                    object
+                        .rest
+                        .as_ref()
+                        .and_then(|rest| Self::first_binding_name(&rest.argument))
+                }),
             BindingPattern::ArrayPattern(array) => array
                 .elements
                 .iter()
                 .flatten()
-                .find_map(Self::first_binding_name),
+                .find_map(Self::first_binding_name)
+                .or_else(|| {
+                    array
+                        .rest
+                        .as_ref()
+                        .and_then(|rest| Self::first_binding_name(&rest.argument))
+                }),
             BindingPattern::AssignmentPattern(assignment) => {
                 Self::first_binding_name(&assignment.left)
             }
