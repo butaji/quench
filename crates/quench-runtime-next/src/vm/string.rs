@@ -5,6 +5,69 @@ fn utf16_index(text: &str, byte_index: usize) -> usize {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn string_basic_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
+            return Err(JsError("string method receiver is not a string".into()));
+        };
+        match native {
+            Native::StringAt | Native::StringCodePointAt => {
+                let units: Vec<u16> = receiver.encode_utf16().collect();
+                let raw = self
+                    .to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
+                    .trunc() as i64;
+                let index = if raw < 0 {
+                    units.len() as i64 + raw
+                } else {
+                    raw
+                };
+                let Some(index) = usize::try_from(index)
+                    .ok()
+                    .filter(|index| *index < units.len())
+                else {
+                    return Ok(Value::UNDEFINED);
+                };
+                if native == Native::StringAt {
+                    return self.string_from_units(&units[index..index + 1]);
+                }
+                let first = units[index];
+                let code_point = if (0xD800..=0xDBFF).contains(&first)
+                    && units
+                        .get(index + 1)
+                        .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
+                {
+                    0x10000
+                        + ((u32::from(first) - 0xD800) << 10)
+                        + (u32::from(units[index + 1]) - 0xDC00)
+                } else {
+                    u32::from(first)
+                };
+                Ok(Value::number(code_point as f64))
+            }
+            Native::StringToUpperCase | Native::StringToLowerCase => {
+                let text = if native == Native::StringToUpperCase {
+                    receiver.to_uppercase()
+                } else {
+                    receiver.to_lowercase()
+                };
+                Ok(self.heap.alloc(Cell::String(text)))
+            }
+            Native::StringConcat => {
+                let mut text = receiver;
+                for value in args {
+                    text.push_str(&self.to_string(p, *value)?);
+                }
+                Ok(self.heap.alloc(Cell::String(text)))
+            }
+            _ => unreachable!(),
+        }
+    }
+
     pub(super) fn string_native_for_atom(&self, atom: Atom) -> Option<Native> {
         [
             ("replace", Native::StringReplace),
@@ -18,6 +81,11 @@ impl<H: Host> Vm<H> {
             ("match", Native::StringMatch),
             ("search", Native::StringSearch),
             ("replaceAll", Native::StringReplaceAll),
+            ("at", Native::StringAt),
+            ("codePointAt", Native::StringCodePointAt),
+            ("toUpperCase", Native::StringToUpperCase),
+            ("toLowerCase", Native::StringToLowerCase),
+            ("concat", Native::StringConcat),
         ]
         .into_iter()
         .find_map(|(name, native)| (self.lookup_atom(name) == Some(atom)).then_some(native))

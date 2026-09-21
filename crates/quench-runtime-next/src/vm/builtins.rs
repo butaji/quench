@@ -1,4 +1,5 @@
 use super::*;
+#[rustfmt::skip]
 const NATIVES: &[Native] = &[
     Native::Print,
     Native::Object,
@@ -170,6 +171,7 @@ const NATIVES: &[Native] = &[
     Native::StringMatch,
     Native::StringSearch,
     Native::StringReplaceAll,
+    Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringConcat,
     Native::EncodeUri,
     Native::EncodeUriComponent,
     Native::DecodeUri,

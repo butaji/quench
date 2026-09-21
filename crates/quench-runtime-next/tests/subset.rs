@@ -718,6 +718,16 @@ fn string_trim_repeat_and_padding_use_utf16_lengths() {
 }
 
 #[test]
+fn string_modern_index_case_and_concat_methods_use_utf16() {
+    assert_eq!(
+        output(
+            "var text = '😀x'; print(text.at(0).length); print(text.at(-1)); print(text.codePointAt(0)); print(text.codePointAt(-1)); print('ab'.toUpperCase()); print('AB'.toLowerCase()); print('a'.concat('b', 3));"
+        ),
+        ["1", "x", "128512", "120", "AB", "ab", "ab3"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
