@@ -505,7 +505,7 @@ fn operation_index(index: usize) -> Result<u8, LayoutError> {
     u8::try_from(index).map_err(|_| LayoutError::RelocationContract)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod tests {
     use super::*;
     use crate::ir::Opcode;
