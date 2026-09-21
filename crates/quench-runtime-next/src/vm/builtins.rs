@@ -4,10 +4,10 @@ const NATIVES: &[Native] = &[
     Native::Print, Native::Object,
     Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
-    Native::ObjectCreate, Native::ObjectAssign, Native::ObjectGetPrototypeOf,
+    Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectGetPrototypeOf,
     Native::ObjectSetPrototypeOf, Native::ObjectHasOwn,
     Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf,
-    Native::ReflectGet, Native::ReflectGetOwnPropertyDescriptor,
+    Native::ReflectGet, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty,
     Native::ReflectSet,
     Native::ReflectOwnKeys,
     Native::ReflectGetPrototypeOf,
@@ -344,6 +344,7 @@ impl<H: Host> Vm<H> {
                 "getOwnPropertyDescriptor",
                 Native::ReflectGetOwnPropertyDescriptor,
             ),
+            ("defineProperty", Native::ReflectDefineProperty),
         ] {
             self.set_named(program, reflect, name, self.native_value(native))?;
         }
