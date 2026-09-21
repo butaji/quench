@@ -10,6 +10,7 @@ mod statement;
 enum ControlKind {
     Loop,
     Switch,
+    Label,
 }
 
 enum UpdateTarget {
@@ -20,6 +21,7 @@ enum UpdateTarget {
 
 struct ControlTarget {
     kind: ControlKind,
+    label: Option<Atom>,
     breaks: Vec<usize>,
     continues: Vec<usize>,
 }
