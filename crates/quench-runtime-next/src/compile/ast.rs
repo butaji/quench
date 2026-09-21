@@ -157,6 +157,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     Some(&function.params),
                     None,
                     false,
+                    false,
+                    false,
                 );
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
@@ -241,6 +243,34 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .insert(atom, slot);
         self.locals.push(atom);
         atom
+    }
+
+    pub(super) fn emit_implicit_super(&mut self) {
+        let base = self.load_name("\0rqj:super");
+        let apply = self.reg();
+        let atom = self.owner.atom("apply");
+        let cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            apply,
+            FieldBase::register(base).0,
+            cache,
+            atom,
+        );
+        let base_args = self.next_reg;
+        let this = self.reg();
+        self.emit(Op::LoadThis, this, 0, 0, 0);
+        let args = self.load_name("\0rqj:derived-args");
+        let args_arg = self.reg();
+        self.emit(Op::Move, args_arg, args, 0, 0);
+        let result = self.reg();
+        self.emit(
+            Op::Call,
+            result,
+            apply,
+            base,
+            (u32::from(base_args) << 16) | 2,
+        );
     }
 
     fn static_key<'c>(key: &'c PropertyKey<'c>) -> Option<&'c str> {

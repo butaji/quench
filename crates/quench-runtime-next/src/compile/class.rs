@@ -33,6 +33,7 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => None,
         });
+        let implicit_super = constructor.is_none() && heritage.is_some();
         let constructor_id = constructor
             .map(|method| {
                 self.owner.compile_class_method(
@@ -43,15 +44,22 @@ impl FunctionCompiler<'_, '_> {
                 )
             })
             .unwrap_or_else(|| {
+                let params = if implicit_super {
+                    vec!["\0rqj:derived-args".to_owned()]
+                } else {
+                    vec![]
+                };
                 self.owner.compile_function(
                     None,
-                    &[],
+                    &params,
                     &[],
                     &scopes,
                     Some(self.function_id),
                     None,
                     Some(&instance_fields),
                     false,
+                    implicit_super,
+                    implicit_super,
                 )
             });
         let class_value = self.reg();
@@ -309,6 +317,8 @@ impl Compiler<'_> {
             Some(&method.value.params),
             instance_fields,
             method.r#static,
+            false,
+            false,
         )
     }
 
@@ -318,7 +328,18 @@ impl Compiler<'_> {
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
     ) -> u32 {
-        self.compile_function(None, &[], &block.body, scopes, parent, None, None, true)
+        self.compile_function(
+            None,
+            &[],
+            &block.body,
+            scopes,
+            parent,
+            None,
+            None,
+            true,
+            false,
+            false,
+        )
     }
 }
 

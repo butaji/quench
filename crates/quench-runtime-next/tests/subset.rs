@@ -594,9 +594,9 @@ fn method_caches_distinguish_own_methods_and_cached_writes() {
 #[test]
 fn class_heritage_links_constructor_and_prototype_chains() {
     let source = r#"
-      class Base { method() { return 41; } static answer() { return 1; } }
+      class Base { constructor(value) { this.value = value; } method() { return this.value; } static answer() { return 1; } }
       class Child extends Base {}
-      print(new Child().method() + 1);
+      print(new Child(41).method() + 1);
       print(Child.answer() + 1);
     "#;
     assert_eq!(output(source), ["42", "2"]);

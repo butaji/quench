@@ -145,7 +145,18 @@ impl<'a> Compiler<'a> {
     }
 
     fn program(mut self, program: &Program<'_>) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        self.compile_function(None, &[], &program.body, &[], None, None, None, false);
+        self.compile_function(
+            None,
+            &[],
+            &program.body,
+            &[],
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
         if !self.errors.is_empty() {
             return Err(self.errors);
         }
@@ -300,6 +311,8 @@ impl<'a> Compiler<'a> {
         defaults: Option<&FormalParameters<'_>>,
         instance_fields: Option<&[&PropertyDefinition<'_>]>,
         super_static: bool,
+        rest_override: bool,
+        implicit_super: bool,
     ) -> u32 {
         let id = self.functions.len() as u32;
         self.functions.push(None);
@@ -311,6 +324,9 @@ impl<'a> Compiler<'a> {
             function.emit_parameter_bindings(defaults);
         }
         function.emit_hoisted(body);
+        if implicit_super {
+            function.emit_implicit_super();
+        }
         if let Some(fields) = instance_fields {
             function.emit_instance_fields(fields);
         }
@@ -341,7 +357,7 @@ impl<'a> Compiler<'a> {
             parent,
             name: name.map(|value| function.owner.atom(value)),
             params: params.len() as u16,
-            rest: defaults.is_some_and(|value| value.rest.is_some()),
+            rest: rest_override || defaults.is_some_and(|value| value.rest.is_some()),
             locals: function.locals.len() as u16,
             code: function.code,
             registers: function.max_reg,
