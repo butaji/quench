@@ -175,11 +175,32 @@ impl FunctionCompiler<'_, '_> {
                 (dst, this)
             }
             Expression::ComputedMemberExpression(item) => {
-                let this = self.expression(&item.object);
+                let this = if matches!(&item.object, Expression::Super(_)) && !self.super_static {
+                    let base = self.expression(&item.object);
+                    let prototype = self.reg();
+                    let atom = self.owner.atom("prototype");
+                    let cache = self.owner.cache_site();
+                    self.emit(
+                        Op::GetField,
+                        prototype,
+                        FieldBase::register(base).0,
+                        cache,
+                        atom,
+                    );
+                    prototype
+                } else {
+                    self.expression(&item.object)
+                };
                 let key = self.expression(&item.expression);
                 let dst = self.reg();
                 self.emit(Op::GetIndex, dst, this, key, 0);
-                (dst, this)
+                if matches!(&item.object, Expression::Super(_)) {
+                    let receiver = self.reg();
+                    self.emit(Op::LoadThis, receiver, 0, 0, 0);
+                    (dst, receiver)
+                } else {
+                    (dst, this)
+                }
             }
             _ => {
                 let callee = self.expression(value);
