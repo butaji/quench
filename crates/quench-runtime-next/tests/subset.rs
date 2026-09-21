@@ -350,6 +350,19 @@ fn static_class_fields_initialize_after_methods_are_installed() {
 }
 
 #[test]
+fn constructors_accept_array_spreads() {
+    let source = r#"
+      function Box(left, right) { this.total = left + right; }
+      var values = [2, 3];
+      var box = new Box(...values);
+      print(box.total);
+      var other = Reflect.construct(Box, [4, 5]);
+      print(other.total);
+    "#;
+    assert_eq!(output(source), ["5", "9"]);
+}
+
+#[test]
 fn instance_class_fields_initialize_before_constructor_body() {
     let source = r#"
       class Box {

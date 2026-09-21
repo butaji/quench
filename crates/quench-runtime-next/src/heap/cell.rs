@@ -16,6 +16,7 @@ pub(crate) enum Native {
     ReflectOwnKeys,
     ReflectGetPrototypeOf,
     ReflectSetPrototypeOf,
+    ReflectConstruct,
     JsonParse,
     JsonStringify,
     Array,
