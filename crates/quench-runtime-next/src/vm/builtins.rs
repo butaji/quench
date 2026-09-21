@@ -62,6 +62,12 @@ const NATIVES: &[Native] = &[
     Native::AtomicsLoad,
     Native::AtomicsStore,
     Native::AtomicsAdd,
+    Native::AtomicsSub,
+    Native::AtomicsAnd,
+    Native::AtomicsOr,
+    Native::AtomicsXor,
+    Native::AtomicsExchange,
+    Native::AtomicsCompareExchange,
     Native::AtomicsIsLockFree,
     Native::Uint8Array,
     Native::Uint8ArraySet,
@@ -316,7 +322,6 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "JSON", json)
     }
-
     fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let reflect = self.object();
         self.set_named(
@@ -357,7 +362,6 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "Reflect", reflect)
     }
-
     fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let math = self.object();
         self.set_named(program, math, "E", Value::number(std::f64::consts::E))?;
@@ -375,14 +379,12 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "Math", math)
     }
-
     pub(super) fn empty_object(proto: Value) -> Object {
         Object {
             proto,
             properties: ValueVec::new(),
         }
     }
-
     fn native(&mut self, kind: Native) -> Value {
         self.heap.alloc(Cell::Function {
             object: Box::new(Self::empty_object(self.function_proto)),
@@ -390,7 +392,6 @@ impl<H: Host> Vm<H> {
             env: Value::NULL,
         })
     }
-
     pub(super) fn native_value(&self, kind: Native) -> Value {
         self.natives
             .iter()
@@ -398,7 +399,6 @@ impl<H: Host> Vm<H> {
             .unwrap()
             .1
     }
-
     pub(super) fn object(&mut self) -> Value {
         self.heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)))

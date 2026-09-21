@@ -7,6 +7,12 @@ impl<H: Host> Vm<H> {
             ("load", Native::AtomicsLoad),
             ("store", Native::AtomicsStore),
             ("add", Native::AtomicsAdd),
+            ("sub", Native::AtomicsSub),
+            ("and", Native::AtomicsAnd),
+            ("or", Native::AtomicsOr),
+            ("xor", Native::AtomicsXor),
+            ("exchange", Native::AtomicsExchange),
+            ("compareExchange", Native::AtomicsCompareExchange),
             ("isLockFree", Native::AtomicsIsLockFree),
         ] {
             self.set_named(program, atomics, name, self.native_value(native))?;
@@ -50,19 +56,43 @@ impl<H: Host> Vm<H> {
         };
         match native {
             Native::AtomicsLoad => Ok(current),
-            Native::AtomicsStore | Native::AtomicsAdd => {
-                let input = self.to_number(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+            Native::AtomicsStore
+            | Native::AtomicsAdd
+            | Native::AtomicsSub
+            | Native::AtomicsAnd
+            | Native::AtomicsOr
+            | Native::AtomicsXor
+            | Native::AtomicsExchange
+            | Native::AtomicsCompareExchange => {
                 let old = current.as_number().unwrap_or(0.0);
-                let next = if native == Native::AtomicsAdd {
-                    Self::uint8_from_value(old + input)
+                let (next, should_store) = if native == Native::AtomicsCompareExchange {
+                    let expected =
+                        self.to_number(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+                    let replacement =
+                        self.to_number(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?;
+                    (Self::uint8_from_value(replacement), old == expected)
                 } else {
-                    Self::uint8_from_value(input)
+                    let input =
+                        self.to_number(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+                    let next = match native {
+                        Native::AtomicsStore => Self::uint8_from_value(input),
+                        Native::AtomicsAdd => Self::uint8_from_value(old + input),
+                        Native::AtomicsSub => Self::uint8_from_value(old - input),
+                        Native::AtomicsAnd => (old as u8) & Self::uint8_from_value(input),
+                        Native::AtomicsOr => (old as u8) | Self::uint8_from_value(input),
+                        Native::AtomicsXor => (old as u8) ^ Self::uint8_from_value(input),
+                        Native::AtomicsExchange => Self::uint8_from_value(input),
+                        _ => unreachable!(),
+                    };
+                    (next, true)
                 };
-                self.typed_array_set(p, view, index, Value::number(next as f64))?;
-                if native == Native::AtomicsAdd {
-                    Ok(current)
-                } else {
+                if should_store {
+                    self.typed_array_set(p, view, index, Value::number(next as f64))?;
+                }
+                if native == Native::AtomicsStore {
                     Ok(Value::number(next as f64))
+                } else {
+                    Ok(current)
                 }
             }
             _ => unreachable!(),
