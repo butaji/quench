@@ -160,11 +160,17 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         function: &'c oxc_ast::ast::Function<'c>,
         owner: &mut Compiler<'_>,
     ) -> Vec<&'c str> {
-        if function.params.rest.is_some() {
-            owner.reject(function.span, "rest parameters are unsupported");
+        Self::params_from_formals(&function.params, owner)
+    }
+
+    pub(super) fn params_from_formals<'c>(
+        params: &'c oxc_ast::ast::FormalParameters<'c>,
+        owner: &mut Compiler<'_>,
+    ) -> Vec<&'c str> {
+        if params.rest.is_some() {
+            owner.reject(Span::default(), "rest parameters are unsupported");
         }
-        function
-            .params
+        params
             .items
             .iter()
             .filter_map(|item| match &item.pattern {
