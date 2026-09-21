@@ -40,6 +40,15 @@ pub(crate) enum Native {
     SetValues,
     SetEntries,
     IteratorNext,
+    WeakMap,
+    WeakMapGet,
+    WeakMapSet,
+    WeakMapHas,
+    WeakMapDelete,
+    WeakSet,
+    WeakSetAdd,
+    WeakSetHas,
+    WeakSetDelete,
     FunctionCall,
     Date,
     DateNow,
@@ -125,6 +134,14 @@ pub(crate) enum Cell {
         object: Object,
         entries: Vec<Value>,
     },
+    WeakMap {
+        object: Object,
+        entries: Vec<(Value, Value)>,
+    },
+    WeakSet {
+        object: Object,
+        entries: Vec<Value>,
+    },
     Iterator {
         object: Object,
         source: Value,
@@ -154,6 +171,8 @@ impl Cell {
             | Self::Array { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
+            | Self::WeakMap { object, .. }
+            | Self::WeakSet { object, .. }
             | Self::Iterator { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
@@ -166,6 +185,8 @@ impl Cell {
             | Self::Array { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
+            | Self::WeakMap { object, .. }
+            | Self::WeakSet { object, .. }
             | Self::Iterator { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
