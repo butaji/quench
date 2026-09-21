@@ -17,12 +17,29 @@ impl ResidualProgram {
                 return Err(format!("function {index} has an invalid parent"));
             }
             let code_len = function.code.len() as u32;
-            let root_end = function
-                .register_root_offset
-                .checked_add(u32::from(function.registers))
-                .ok_or_else(|| format!("function {index} root map overflows"))?;
-            if root_end as usize > self.register_roots.len() {
-                return Err(format!("function {index} root map is out of bounds"));
+            if function.register_root_offset != u32::MAX {
+                let root_end = function
+                    .register_root_offset
+                    .checked_add(code_len.saturating_add(1))
+                    .ok_or_else(|| format!("function {index} root map overflows"))?;
+                if root_end as usize > self.register_roots.len() {
+                    return Err(format!("function {index} root map is out of bounds"));
+                }
+                if function.registers <= 64 {
+                    let mask = if function.registers == 0 {
+                        0
+                    } else {
+                        u64::MAX >> (64 - u32::from(function.registers))
+                    };
+                    let start = function.register_root_offset as usize;
+                    let end = root_end as usize;
+                    if self.register_roots[start..end]
+                        .iter()
+                        .any(|roots| roots & !mask != 0)
+                    {
+                        return Err(format!("function {index} root map has an invalid register"));
+                    }
+                }
             }
             for (pc, instruction) in function.code.iter().enumerate() {
                 match instruction.op() {
@@ -58,5 +75,64 @@ impl ResidualProgram {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, ResidualProgram};
+
+    fn function(code: Vec<Instr>, registers: u16, root: u32) -> Function {
+        Function {
+            parent: None,
+            name: None,
+            params: 0,
+            locals: 0,
+            code,
+            registers,
+            dispatch: DispatchClass::General,
+            handlers: vec![],
+            register_root_offset: root,
+        }
+    }
+
+    fn program(function: Function, roots: Vec<u64>) -> ResidualProgram {
+        ResidualProgram {
+            atoms: AtomTable::default(),
+            constants: vec![],
+            functions: vec![function],
+            cache_sites: 0,
+            method_sites: vec![],
+            method_arguments: vec![],
+            field_sites: vec![],
+            object_sites: vec![],
+            superinstructions: vec![],
+            register_roots: roots,
+        }
+    }
+
+    #[test]
+    fn unmapped_functions_are_valid_and_mapped_roots_cover_each_pc() {
+        let unmapped = program(
+            function(vec![Instr::new(Op::Return, 0, 0, 0, 0)], 1, u32::MAX),
+            vec![],
+        );
+        assert!(unmapped.validate().is_ok());
+
+        let mapped = program(
+            function(vec![Instr::new(Op::Return, 0, 0, 0, 0)], 1, 0),
+            vec![1, 0],
+        );
+        assert!(mapped.validate().is_ok());
+    }
+
+    #[test]
+    fn root_maps_reject_out_of_range_register_bits() {
+        let invalid = program(
+            function(vec![Instr::new(Op::Return, 0, 0, 0, 0)], 1, 0),
+            vec![2, 0],
+        );
+        assert!(invalid.validate().is_err());
     }
 }
