@@ -48,6 +48,7 @@ impl<H: Host> Vm<H> {
             | Native::ObjectSetPrototypeOf
             | Native::ObjectHasOwn => self.call_object_native(p, native, args),
             Native::ObjectPrototypeHasOwnProperty => {
+                let this = self.box_object(this)?;
                 let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let key = self.intern_atom(&text);
                 Ok(if self.own_property(this, key).is_some() {

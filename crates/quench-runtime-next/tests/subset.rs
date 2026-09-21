@@ -122,6 +122,16 @@ fn array_from_supports_array_like_sources_and_mapping() {
 }
 
 #[test]
+fn object_views_box_primitive_strings_for_indexed_properties() {
+    assert_eq!(
+        output(
+            "print(Object.keys('ab').join(',')); print(Object.values('ab').join(',')); var entries = Object.entries('ab'); print(entries[1][0] + ':' + entries[1][1]); var target = {}; Object.assign(target, 'xy'); print(target[0] + target[1]); print(Object.hasOwn('abc', 1)); print(Object.prototype.hasOwnProperty.call('abc', 2));"
+        ),
+        ["0,1", "a,b", "1:b", "xy", "true", "true"],
+    );
+}
+
+#[test]
 fn destructuring_defaults_only_evaluate_for_undefined_values() {
     assert_eq!(
         output(

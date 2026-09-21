@@ -31,9 +31,8 @@ impl<H: Host> Vm<H> {
             .filter(|value| self.object_data(*value).is_some())
             .ok_or_else(|| JsError("Object.assign target is not an object".into()))?;
         for source in args.iter().copied().skip(1) {
-            let Some(data) = self.object_data(source) else {
-                continue;
-            };
+            let source = self.box_object(source)?;
+            let data = self.object_data(source).expect("boxed source is object");
             let values = self
                 .ordered_shape(data)
                 .into_iter()
@@ -51,9 +50,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn object_keys(&mut self, object: Value) -> Result<Value, JsError> {
-        let Some(data) = self.object_data(object) else {
-            return Err(JsError("Object.keys target is not an object".into()));
-        };
+        let object = self.box_object(object)?;
+        let data = self.object_data(object).expect("boxed target is object");
         let values = self
             .ordered_shape(data)
             .into_iter()
@@ -170,6 +168,7 @@ impl<H: Host> Vm<H> {
                 if target.is_null() || target.is_undefined() {
                     return Err(JsError("Object.hasOwn target is nullish".into()));
                 }
+                let target = self.box_object(target)?;
                 let text = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let key = self.intern_atom(&text);
                 Ok(if self.own_property(target, key).is_some() {
@@ -195,9 +194,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn object_values(&mut self, object: Value) -> Result<Value, JsError> {
-        let Some(data) = self.object_data(object) else {
-            return Err(JsError("Object.values target is not an object".into()));
-        };
+        let object = self.box_object(object)?;
+        let data = self.object_data(object).expect("boxed target is object");
         let shape = self.ordered_shape(data);
         let values = shape
             .iter()
@@ -210,9 +208,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn object_entries(&mut self, object: Value) -> Result<Value, JsError> {
-        let Some(data) = self.object_data(object) else {
-            return Err(JsError("Object.entries target is not an object".into()));
-        };
+        let object = self.box_object(object)?;
+        let data = self.object_data(object).expect("boxed target is object");
         let shape = self.ordered_shape(data);
         let pairs = shape
             .iter()
@@ -257,6 +254,25 @@ impl<H: Host> Vm<H> {
             }
         });
         entries
+    }
+
+    pub(super) fn box_object(&mut self, value: Value) -> Result<Value, JsError> {
+        if self.object_data(value).is_some() {
+            return Ok(value);
+        }
+        if value.is_null() || value.is_undefined() {
+            return Err(JsError("cannot convert nullish value to object".into()));
+        }
+        let object = self.object();
+        if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
+            for (index, unit) in text.encode_utf16().enumerate() {
+                let key = self.intern_atom(&index.to_string());
+                let character = char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}');
+                let value = self.heap.alloc(Cell::String(character.to_string()));
+                self.set_property(object, key, value)?;
+            }
+        }
+        Ok(object)
     }
 }
 
