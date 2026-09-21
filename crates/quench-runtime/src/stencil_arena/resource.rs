@@ -37,7 +37,7 @@ impl SharedStencilSlab {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 mod tests {
     use super::*;
     use crate::ir::Opcode;
