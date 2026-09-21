@@ -82,6 +82,16 @@ fn object_is_uses_same_value_semantics() {
 }
 
 #[test]
+fn object_values_and_entries_follow_shape_order() {
+    assert_eq!(
+        output(
+            "var object = { first: 1, second: 2 }; print(Object.values(object).join(',')); var entries = Object.entries(object); print(entries[0][0] + ':' + entries[0][1]); print(entries[1][0] + ':' + entries[1][1]);"
+        ),
+        ["1,2", "first:1", "second:2"],
+    );
+}
+
+#[test]
 fn destructuring_defaults_only_evaluate_for_undefined_values() {
     assert_eq!(
         output(

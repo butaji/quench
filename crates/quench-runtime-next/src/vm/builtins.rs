@@ -2,7 +2,8 @@ use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
     Native::Print, Native::Object,
-    Native::ObjectKeys, Native::ObjectGetOwnPropertyNames, Native::ObjectFromEntries, Native::ObjectIs,
+    Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames,
+    Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate,
     Native::ObjectAssign,
     Native::ObjectGetPrototypeOf,
