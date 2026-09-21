@@ -141,7 +141,16 @@ impl<H: Host> Vm<H> {
         let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
         };
-        let replacement = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        let replacement_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let replacement_function = matches!(
+            self.heap.get(replacement_value),
+            Some(Cell::Function { .. })
+        );
+        let replacement = if replacement_function {
+            String::new()
+        } else {
+            self.to_string(p, replacement_value)?
+        };
         let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
         if self.is_regexp(search_value) {
             let source_atom = self.intern_atom("source");
@@ -161,13 +170,28 @@ impl<H: Host> Vm<H> {
                     continue;
                 };
                 result.push_str(&receiver[cursor..whole.start()]);
-                let mut replacement_text = replacement.clone();
-                replacement_text = replacement_text.replace("$&", whole.as_str());
-                for (index, capture) in captures.iter().enumerate().skip(1) {
-                    let token = format!("${index}");
-                    replacement_text = replacement_text
-                        .replace(&token, capture.map_or("", |value| value.as_str()));
-                }
+                let replacement_text = if replacement_function {
+                    let mut callback_args = Vec::with_capacity(captures.len() + 3);
+                    callback_args.push(self.heap.alloc(Cell::String(whole.as_str().into())));
+                    callback_args.extend(captures.iter().skip(1).map(|capture| {
+                        capture.map_or(Value::UNDEFINED, |value| {
+                            self.heap.alloc(Cell::String(value.as_str().into()))
+                        })
+                    }));
+                    callback_args.push(Value::number(whole.start() as f64));
+                    callback_args.push(self.heap.alloc(Cell::String(receiver.clone())));
+                    let value =
+                        self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
+                    self.to_string(p, value)?
+                } else {
+                    let mut text = replacement.clone();
+                    text = text.replace("$&", whole.as_str());
+                    for (index, capture) in captures.iter().enumerate().skip(1) {
+                        let token = format!("${index}");
+                        text = text.replace(&token, capture.map_or("", |value| value.as_str()));
+                    }
+                    text
+                };
                 result.push_str(&replacement_text);
                 cursor = whole.end();
                 replaced = true;
@@ -182,7 +206,17 @@ impl<H: Host> Vm<H> {
         let Some(index) = receiver.find(&search) else {
             return Ok(self.heap.alloc(Cell::String(receiver)));
         };
-        let replacement = replacement.replace("$&", &search);
+        let replacement = if replacement_function {
+            let callback_args = [
+                self.heap.alloc(Cell::String(search.clone())),
+                Value::number(index as f64),
+                self.heap.alloc(Cell::String(receiver.clone())),
+            ];
+            let value = self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
+            self.to_string(p, value)?
+        } else {
+            replacement.replace("$&", &search)
+        };
         let mut result =
             String::with_capacity(receiver.len() + replacement.len().saturating_sub(search.len()));
         result.push_str(&receiver[..index]);

@@ -658,6 +658,16 @@ fn string_replace_uses_regexp_global_and_capture_authority() {
 }
 
 #[test]
+fn string_replace_calls_function_replacers_with_match_context() {
+    assert_eq!(
+        output(
+            "print('a1b2'.replace(/(\\d)/g, function(match, digit, offset, input) { return digit + offset + input.length; }));"
+        ),
+        ["a114b234"],
+    );
+}
+
+#[test]
 fn string_split_uses_regexp_captures_and_limit() {
     assert_eq!(
         output(
