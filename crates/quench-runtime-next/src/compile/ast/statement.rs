@@ -85,14 +85,9 @@ impl FunctionCompiler<'_, '_> {
 
     fn variables(&mut self, declaration: &VariableDeclaration<'_>) {
         for item in &declaration.declarations {
-            let BindingPattern::BindingIdentifier(id) = &item.id else {
-                self.owner.reject(item.span, "destructuring is unsupported");
-                continue;
-            };
             if let Some(init) = &item.init {
                 let value = self.expression(init);
-                let atom = self.owner.atom(id.name.as_str());
-                self.store_atom(atom, value);
+                self.bind_pattern(&item.id, value);
             }
         }
     }
