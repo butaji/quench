@@ -12,7 +12,6 @@ pub(crate) use cell::*;
 pub use root::RootId;
 pub(crate) use root::RootTable;
 use slots::SlotArena;
-
 pub(super) struct Slot {
     cell: Option<Cell>,
 }
@@ -159,15 +158,12 @@ impl Heap {
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
-
     pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.roots.insert(value)
     }
-
     pub(crate) fn update_root(&mut self, root: RootId, value: Value) -> bool {
         self.roots.update(root, value)
     }
-
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.roots.remove(root)
     }
@@ -382,6 +378,11 @@ impl Heap {
                 object: value,
                 buffer,
                 ..
+            }
+            | Cell::Uint16Array {
+                object: value,
+                buffer,
+                ..
             } => {
                 object(value);
                 work.push(*buffer);
@@ -443,7 +444,7 @@ impl Heap {
             Cell::Object(_) => 0,
             Cell::Array { .. } => 1,
             Cell::ArrayBuffer { .. } => 0,
-            Cell::Uint8Array { .. } => 0,
+            Cell::Uint8Array { .. } | Cell::Uint16Array { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
@@ -467,7 +468,7 @@ impl Heap {
             Cell::Object(_) | Cell::Iterator { .. } | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
-            Cell::Uint8Array { .. } => 0,
+            Cell::Uint8Array { .. } | Cell::Uint16Array { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
@@ -495,6 +496,5 @@ impl Heap {
         }
     }
 }
-
 #[cfg(test)]
 mod tests;

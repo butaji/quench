@@ -493,6 +493,16 @@ fn data_view_wide_and_float_accessors_preserve_bits() {
 }
 
 #[test]
+fn uint16_array_shares_bytes_and_inherits_typed_methods() {
+    assert_eq!(
+        output(
+            "var values = new Uint16Array([65537, -1, 2]); print(values.length); print(values.byteLength); print(values[0]); print(values[1]); var buffer = new ArrayBuffer(6); var view = new Uint16Array(buffer, 2, 2); view[0] = 4660; view.set([7], 1); print(new Uint8Array(buffer)[2]); print(view.join('-')); print(view.subarray(1)[0]); print(view.buffer === buffer);"
+        ),
+        ["3", "6", "1", "65535", "52", "4660-7", "7", "true"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

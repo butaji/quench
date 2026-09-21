@@ -74,6 +74,7 @@ pub(crate) enum Native {
     AtomicsCompareExchange,
     AtomicsIsLockFree,
     Uint8Array,
+    Uint16Array,
     Uint8ArraySet,
     Uint8ArraySubarray,
     Uint8ArraySlice,
@@ -165,6 +166,21 @@ pub(crate) enum Native {
     NumberIsInteger,
     NumberFixed,
     NumberPrecision,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TypedArrayKind {
+    Uint8,
+    Uint16,
+}
+
+impl TypedArrayKind {
+    pub(crate) const fn width(self) -> usize {
+        match self {
+            Self::Uint8 => 1,
+            Self::Uint16 => 2,
+        }
+    }
 }
 
 impl Native {
@@ -286,6 +302,12 @@ pub(crate) enum Cell {
         offset: usize,
         length: usize,
     },
+    Uint16Array {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
     DataView {
         object: Object,
         buffer: Value,
@@ -341,6 +363,7 @@ impl Cell {
             | Self::Array { object, .. }
             | Self::ArrayBuffer { object, .. }
             | Self::Uint8Array { object, .. }
+            | Self::Uint16Array { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
@@ -359,6 +382,7 @@ impl Cell {
             | Self::Array { object, .. }
             | Self::ArrayBuffer { object, .. }
             | Self::Uint8Array { object, .. }
+            | Self::Uint16Array { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }

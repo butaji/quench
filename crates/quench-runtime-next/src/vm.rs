@@ -3,7 +3,7 @@ use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, NUMERIC_LOCAL_TARGET, Op, Operand,
     REGISTER_MASK, RETURN_REGISTER, Register, ResidualProgram, SET_THIS_REGISTER,
 };
-use crate::heap::{Cell, FunctionKind, Heap, IteratorKind, Native, Object, RootId};
+use crate::heap::{Cell, FunctionKind, Heap, IteratorKind, Native, Object, RootId, TypedArrayKind};
 use crate::host::Host;
 use crate::profile::Profile;
 use crate::value::number_to_u32;
@@ -45,6 +45,8 @@ mod superinstruction;
 mod symbol;
 mod type_predicates;
 mod typed_array;
+mod typed_array_access;
+mod typed_array_uint16;
 #[derive(Debug)]
 pub struct JsError(ErrorMessage);
 #[derive(Debug)]
@@ -102,10 +104,8 @@ impl JsError {
         self.0.payload.text.clone()
     }
 }
-
 #[cfg(test)]
 mod tests;
-
 struct Frame {
     function: u32,
     pc: usize,
@@ -123,7 +123,6 @@ enum NumericArguments<'a> {
         values: &'a [Register],
     },
 }
-
 #[derive(Clone, Copy)]
 struct FieldCache {
     receiver: u32,
@@ -170,7 +169,6 @@ enum CallTarget {
     NumericUser(u32, Value),
     Native(Native),
 }
-
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct MethodCacheKey {
@@ -201,6 +199,7 @@ pub struct Vm<H> {
     array_proto: Value,
     array_buffer_proto: Value,
     uint8_array_proto: Value,
+    uint16_array_proto: Value,
     data_view_proto: Value,
     map_proto: Value,
     set_proto: Value,
@@ -250,6 +249,7 @@ impl<H: Host> Vm<H> {
             array_proto: Value::NULL,
             array_buffer_proto: Value::NULL,
             uint8_array_proto: Value::NULL,
+            uint16_array_proto: Value::NULL,
             data_view_proto: Value::NULL,
             map_proto: Value::NULL,
             set_proto: Value::NULL,
