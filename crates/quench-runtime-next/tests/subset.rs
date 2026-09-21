@@ -361,11 +361,12 @@ fn uint8_array_views_share_buffers_and_coerce_indexed_values() {
       var buffer = new ArrayBuffer(4);
       var view = new Uint8Array(buffer, 1, 2);
       view[0] = 7;
-      print(view.byteLength); print(buffer.byteLength); print(view[0]);
+      print(view.byteLength); print(view.byteOffset); print(view.buffer === buffer);
+      print(buffer.byteLength); print(view[0]);
     "#;
     assert_eq!(
         output(source),
-        ["3", "3", "44", "255", "2", "2", "2", "4", "7"]
+        ["3", "3", "44", "255", "2", "2", "2", "1", "true", "4", "7"]
     );
 }
 

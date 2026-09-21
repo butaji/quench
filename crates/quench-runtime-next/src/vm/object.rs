@@ -105,7 +105,13 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        if !object.is_heap() || atom == self.length_atom || atom == self.size_atom {
+        if !object.is_heap()
+            || atom == self.length_atom
+            || atom == self.size_atom
+            || self.lookup_atom("byteLength") == Some(atom)
+            || self.lookup_atom("byteOffset") == Some(atom)
+            || self.lookup_atom("buffer") == Some(atom)
+        {
             return self.get_property(p, object, atom);
         }
         let Some(receiver) = self.object_data(object) else {
@@ -155,6 +161,16 @@ impl<H: Host> Vm<H> {
             && let Some(Cell::Uint8Array { length, .. }) = self.heap.get(object)
         {
             return Ok(Value::number(*length as f64));
+        }
+        if self.lookup_atom("byteOffset") == Some(atom)
+            && let Some(Cell::Uint8Array { offset, .. }) = self.heap.get(object)
+        {
+            return Ok(Value::number(*offset as f64));
+        }
+        if self.lookup_atom("buffer") == Some(atom)
+            && let Some(Cell::Uint8Array { buffer, .. }) = self.heap.get(object)
+        {
+            return Ok(*buffer);
         }
         let mut owner = object;
         let mut depth = 0u8;
@@ -223,6 +239,16 @@ impl<H: Host> Vm<H> {
                     if self.lookup_atom("byteLength") == Some(atom) =>
                 {
                     return Ok(Value::number(*length as f64));
+                }
+                Some(Cell::Uint8Array { offset, .. })
+                    if self.lookup_atom("byteOffset") == Some(atom) =>
+                {
+                    return Ok(Value::number(*offset as f64));
+                }
+                Some(Cell::Uint8Array { buffer, .. })
+                    if self.lookup_atom("buffer") == Some(atom) =>
+                {
+                    return Ok(*buffer);
                 }
                 Some(Cell::Array { .. }) if atom == self.length_atom => {
                     let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
