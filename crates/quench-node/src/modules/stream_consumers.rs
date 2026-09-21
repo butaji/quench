@@ -158,7 +158,7 @@ fn start(state: &Rc<RefCell<HostState>>, source: Value, mode: u16) -> Result<Val
     Ok(result)
 }
 
-fn read_next(state: &Rc<RefCell<HostState>>, context: &Value) -> Result<Value, VmError> {
+fn read_next(_state: &Rc<RefCell<HostState>>, context: &Value) -> Result<Value, VmError> {
     let reader = get(context, "\0consumer-reader").ok_or(VmError::NotCallable)?;
     let read = get(&reader, "read").ok_or(VmError::NotCallable)?;
     let pending = quench_runtime::execute::call(&read, &reader, &[])?;

@@ -248,7 +248,7 @@ fn state_body_bindings(
     code: CodeView<'_>,
     i: &[Instruction; STATE_REGION_END],
     total: u16,
-    index: u16,
+    _index: u16,
 ) -> Option<()> {
     require_object(code, 14, i[13].a)?;
     (i[16].b == i[13].a && i[16].c == i[15].a).then_some(())?;

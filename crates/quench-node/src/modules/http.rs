@@ -858,7 +858,7 @@ fn emit_request(
         return Ok(Value::Undefined);
     }
     let expect = headers_value(&req, "expect");
-    if let Some(expect) = expect
+    if let Some(_expect) = expect
         .as_ref()
         .filter(|value| !value.eq_ignore_ascii_case("100-continue"))
     {
@@ -1161,7 +1161,7 @@ pub fn request_destroy(
     let Some(receiver) = receiver else {
         return Ok(Value::Undefined);
     };
-    let Some((socket_id, req, _socket)) =
+    let Some((_socket_id, req, _socket)) =
         state
             .borrow()
             .http

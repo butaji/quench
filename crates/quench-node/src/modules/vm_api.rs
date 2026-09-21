@@ -229,8 +229,8 @@ pub fn is_context(
 }
 
 pub fn run_in_context(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let source = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))?;
