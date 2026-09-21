@@ -32,6 +32,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayFill,
     Native::ArrayAt,
     Native::ArrayLastIndexOf,
+    Native::ArrayIndexOf,
     Native::Map,
     Native::MapGet,
     Native::MapSet,

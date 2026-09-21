@@ -193,6 +193,18 @@ fn array_at_and_last_index_of_handle_relative_and_coerced_indices() {
 }
 
 #[test]
+fn array_index_of_uses_strict_equality_and_forward_bounds() {
+    let source = r#"
+      var values = [0, 1, 2, 1, NaN];
+      print(values.indexOf(1));
+      print(values.indexOf(1, -2));
+      print(values.indexOf(1, '2.9'));
+      print(values.indexOf(NaN));
+    "#;
+    assert_eq!(output(source), ["1", "3", "3", "-1"]);
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

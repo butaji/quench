@@ -19,6 +19,7 @@ impl<H: Host> Vm<H> {
             ("fill", Native::ArrayFill),
             ("at", Native::ArrayAt),
             ("lastIndexOf", Native::ArrayLastIndexOf),
+            ("indexOf", Native::ArrayIndexOf),
         ] {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }
