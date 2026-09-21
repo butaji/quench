@@ -723,7 +723,7 @@ fn string_modern_index_case_and_concat_methods_use_utf16() {
         output(
             "var text = '😀x'; print(text.at(0).length); print(text.at(-1)); print(text.codePointAt(0)); print(text.codePointAt(-1)); print('ab'.toUpperCase()); print('AB'.toLowerCase()); print('a'.concat('b', 3));"
         ),
-        ["1", "x", "128512", "120", "AB", "ab", "ab3"],
+        ["1", "x", "128512", "undefined", "AB", "ab", "ab3"],
     );
 }
 
