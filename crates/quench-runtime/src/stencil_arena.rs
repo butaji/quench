@@ -6,8 +6,6 @@
 
 use crate::bounded_resource::{AtomicBudget, BudgetReservation};
 use crate::stencil_fact::{PatchValues, Stencil};
-#[cfg(test)]
-use crate::stencil_layout::FixupKind;
 use crate::stencil_patch::{apply_holes, PatchError};
 use crate::stencil_region_layout::{
     compose_selected_controlled_region, compose_selected_region, finalize_selected_leaf,

@@ -7,10 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aes::{Aes128, Aes192, Aes256};
-use aes_gcm::{
-    aead::Aead,
-    KeyInit,
-};
+use aes_gcm::{aead::Aead, KeyInit};
 use base64::Engine;
 use chacha20poly1305::ChaCha20Poly1305;
 use cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt};

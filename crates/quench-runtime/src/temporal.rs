@@ -1,4 +1,4 @@
-use chrono::{Datelike, Duration, LocalResult, NaiveDateTime, Offset, TimeZone};
+use chrono::{DateTime, Datelike, Duration, LocalResult, Offset, TimeZone};
 
 pub(crate) mod duration;
 pub(crate) mod instant;
@@ -288,7 +288,8 @@ pub(crate) fn timezone_local_epoch(
         return local_epoch;
     };
     let nanos = local_epoch.rem_euclid(1_000_000_000) as u32;
-    let Some(local) = NaiveDateTime::from_timestamp_opt(seconds, nanos) else {
+    let Some(local) = DateTime::from_timestamp(seconds, nanos).map(|value| value.naive_utc())
+    else {
         return local_epoch;
     };
     let Some(zone) = timezone.parse::<chrono_tz::Tz>().ok() else {
@@ -5486,9 +5487,6 @@ mod stubs {
                     precision = 0;
                 }
                 "second" => {
-                    millisecond = 0;
-                    microsecond = 0;
-                    nanosecond = 0;
                     precision = 0;
                 }
                 "millisecond" => precision = 3,
@@ -5618,10 +5616,12 @@ mod stubs {
             if corrected != i128::MIN {
                 let corrected_offset = super::timezone_offset_nanos(&timezone, corrected);
                 let local = corrected + corrected_offset;
-                if let Some(date) = chrono::NaiveDateTime::from_timestamp_opt(
+                if let Some(date) = chrono::DateTime::from_timestamp(
                     local.div_euclid(1_000_000_000) as i64,
                     local.rem_euclid(1_000_000_000) as u32,
-                ) {
+                )
+                .map(|value| value.naive_utc())
+                {
                     year = date.year();
                     month = date.month();
                     day = date.day();

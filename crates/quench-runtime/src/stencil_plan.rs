@@ -4,7 +4,9 @@
 //! semantics. Selected plans refer back to immutable residual operations.
 
 use crate::ir::{Instruction, Opcode, Register};
-pub(crate) use crate::stencil_value_graph::{BlockValueGraph, ValueDefinition, ValueId};
+pub(crate) use crate::stencil_value_graph::BlockValueGraph;
+#[cfg(test)]
+pub(crate) use crate::stencil_value_graph::{ValueDefinition, ValueId};
 use std::collections::BTreeSet;
 
 pub(crate) const MAX_BLOCK_VALUES: usize = 8;
