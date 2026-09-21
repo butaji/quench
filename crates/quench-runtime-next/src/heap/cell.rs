@@ -65,6 +65,12 @@ pub(crate) enum Native {
     AtomicsLoad,
     AtomicsStore,
     AtomicsAdd,
+    AtomicsSub,
+    AtomicsAnd,
+    AtomicsOr,
+    AtomicsXor,
+    AtomicsExchange,
+    AtomicsCompareExchange,
     AtomicsIsLockFree,
     Uint8Array,
     Uint8ArraySet,
@@ -168,7 +174,16 @@ impl Native {
     pub(crate) fn is_atomics_native(self) -> bool {
         matches!(
             self,
-            Self::AtomicsLoad | Self::AtomicsStore | Self::AtomicsAdd | Self::AtomicsIsLockFree
+            Self::AtomicsLoad
+                | Self::AtomicsStore
+                | Self::AtomicsAdd
+                | Self::AtomicsSub
+                | Self::AtomicsAnd
+                | Self::AtomicsOr
+                | Self::AtomicsXor
+                | Self::AtomicsExchange
+                | Self::AtomicsCompareExchange
+                | Self::AtomicsIsLockFree
         )
     }
 }
