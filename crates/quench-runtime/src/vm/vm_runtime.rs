@@ -2467,14 +2467,14 @@ fn record_local_binary(
     code: crate::machine::CodeView<'_>,
     pc: usize,
     plan: &crate::stencil_fusion::NativeLocalBinaryPlan,
-    span: usize,
+    _span: usize,
 ) {
     crate::execution_trace::stencil_observation(code, pc, plan.trace_name(), true);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     #[cfg(test)]
     match plan.profile_route() {
         Some(route) => crate::test_execution_profile::dynamic_region_route(route.iter().copied()),
-        None => crate::test_execution_profile::local_numeric_route(code, pc, span),
+        None => crate::test_execution_profile::local_numeric_route(code, pc, _span),
     }
 }
 

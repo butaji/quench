@@ -391,7 +391,7 @@ fn try_execute_counter_recurrence(
         .or_else(|| fact.execute(arguments).map(|value| (value, false)))
 }
 
-fn record_counter_recurrence(function: &crate::value::FunctionValue, native: bool) {
+fn record_counter_recurrence(function: &crate::value::FunctionValue, _native: bool) {
     crate::execution_trace::kernel("PrecompiledI32CounterRecurrence", false);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     if let Some(code) = function.code.code() {
@@ -399,7 +399,7 @@ fn record_counter_recurrence(function: &crate::value::FunctionValue, native: boo
     }
     #[cfg(test)]
     {
-        if !native {
+        if !_native {
             crate::test_execution_profile::portable_recipe();
         }
         crate::test_execution_profile::dynamic_region_route(["i32_counter_recurrence"]);
