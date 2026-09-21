@@ -162,6 +162,8 @@ pub(crate) enum Native {
     StringIncludes,
     StringStartsWith,
     StringEndsWith,
+    StringReplace,
+    StringSplit,
     EncodeUri,
     EncodeUriComponent,
     DecodeUri,
@@ -295,7 +297,6 @@ pub(crate) struct Object {
     // only the data vector selected by that shape.
     pub properties: ValueVec,
 }
-
 impl Object {
     pub(crate) fn shape(&self) -> u32 {
         self.properties.auxiliary()
@@ -305,7 +306,6 @@ impl Object {
         self.properties.set_auxiliary(shape);
     }
 }
-
 #[derive(Clone, Debug)]
 pub(crate) enum Cell {
     Object(Object),

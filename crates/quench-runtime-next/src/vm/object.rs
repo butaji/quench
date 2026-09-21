@@ -274,6 +274,10 @@ impl<H: Host> Vm<H> {
                         self.native_value(Native::StringStartsWith)
                     } else if atom == self.primitive_atoms[7] {
                         self.native_value(Native::StringEndsWith)
+                    } else if self.lookup_atom("replace") == Some(atom) {
+                        self.native_value(Native::StringReplace)
+                    } else if self.lookup_atom("split") == Some(atom) {
+                        self.native_value(Native::StringSplit)
                     } else {
                         Value::UNDEFINED
                     });
