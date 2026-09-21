@@ -22,6 +22,23 @@ impl<H: Host> Vm<H> {
             } else {
                 Value::FALSE
             }),
+            Native::ReflectPreventExtensions => {
+                if self.object_data(target).is_none() {
+                    return Err(JsError("Reflect target is not an object".into()));
+                }
+                self.non_extensible.insert(target);
+                Ok(Value::TRUE)
+            }
+            Native::ReflectIsExtensible => {
+                if self.object_data(target).is_none() {
+                    return Err(JsError("Reflect target is not an object".into()));
+                }
+                Ok(if !self.non_extensible.contains(&target) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
             Native::ReflectSet => {
                 let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let atom = self.intern_atom(&key);
