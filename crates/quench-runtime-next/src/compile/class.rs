@@ -87,9 +87,12 @@ impl FunctionCompiler<'_, '_> {
 
         for element in &class.body.body {
             let ClassElement::MethodDefinition(method) = element else {
-                if !matches!(element, ClassElement::PropertyDefinition(_)) {
+                if !matches!(
+                    element,
+                    ClassElement::PropertyDefinition(_) | ClassElement::StaticBlock(_)
+                ) {
                     self.owner
-                        .reject(element.span(), "class static blocks are unsupported");
+                        .reject(element.span(), "class element is unsupported");
                 }
                 continue;
             };
@@ -124,29 +127,39 @@ impl FunctionCompiler<'_, '_> {
         }
 
         for element in &class.body.body {
-            let ClassElement::PropertyDefinition(field) = element else {
-                continue;
-            };
-            if !field.r#static {
-                continue;
+            match element {
+                ClassElement::PropertyDefinition(field) if field.r#static => {
+                    if field.computed {
+                        self.owner
+                            .reject(field.span, "computed class fields are unsupported");
+                        continue;
+                    }
+                    let Some(name) = class_method_name(&field.key) else {
+                        self.owner
+                            .reject(field.span, "class field key is unsupported");
+                        continue;
+                    };
+                    let value = match field.value.as_ref() {
+                        Some(value) => self.expression(value),
+                        None => self.literal(Constant::Undefined),
+                    };
+                    let atom = self.owner.atom(name);
+                    let cache = self.owner.cache_site();
+                    self.emit(Op::SetField, value, class_value, cache, atom);
+                }
+                ClassElement::StaticBlock(block) => {
+                    let function_id = self.owner.compile_class_static_block(
+                        block,
+                        &scopes,
+                        Some(self.function_id),
+                    );
+                    let function = self.reg();
+                    self.emit(Op::MakeClosure, function, 0, 0, function_id);
+                    let result = self.reg();
+                    self.emit(Op::Call, result, function, class_value, 0);
+                }
+                _ => {}
             }
-            if field.computed {
-                self.owner
-                    .reject(field.span, "computed class fields are unsupported");
-                continue;
-            }
-            let Some(name) = class_method_name(&field.key) else {
-                self.owner
-                    .reject(field.span, "class field key is unsupported");
-                continue;
-            };
-            let value = match field.value.as_ref() {
-                Some(value) => self.expression(value),
-                None => self.literal(Constant::Undefined),
-            };
-            let atom = self.owner.atom(name);
-            let cache = self.owner.cache_site();
-            self.emit(Op::SetField, value, class_value, cache, atom);
         }
         class_value
     }
@@ -206,6 +219,15 @@ impl Compiler<'_> {
             Some(&method.value.params),
             instance_fields,
         )
+    }
+
+    fn compile_class_static_block(
+        &mut self,
+        block: &StaticBlock<'_>,
+        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        parent: Option<u32>,
+    ) -> u32 {
+        self.compile_function(None, &[], &block.body, scopes, parent, None, None)
     }
 }
 
