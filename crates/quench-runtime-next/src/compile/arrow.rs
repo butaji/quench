@@ -48,6 +48,7 @@ impl Compiler<'_> {
             parent,
             name: None,
             params: params.len() as u16,
+            rest: value.params.rest.is_some(),
             locals: function.locals.len() as u16,
             code: function.code,
             registers: function.max_reg,

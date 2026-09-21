@@ -108,6 +108,7 @@ pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
     pub params: u16,
+    pub rest: bool,
     pub locals: u16,
     pub code: Vec<Instr>,
     pub registers: u16,
@@ -241,7 +242,7 @@ fn local_loads_in_bounds(code: &[Instr], locals: u16) -> bool {
 
 impl ResidualProgram {
     pub const FORMAT_VERSION: u8 = 6;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0006_0001;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0006_0002;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()
@@ -285,6 +286,7 @@ impl ResidualProgram {
             out.option_u32(function.parent);
             out.option_u32(function.name);
             out.u16(function.params);
+            out.u8(u8::from(function.rest));
             out.u16(function.locals);
             out.u16(function.registers);
             out.u8(function.dispatch as u8);
@@ -367,6 +369,11 @@ impl ResidualProgram {
             let parent = input.option_u32()?;
             let name = input.option_u32()?;
             let params = input.u16()?;
+            let rest = match input.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err("invalid residual rest flag".into()),
+            };
             let locals = input.u16()?;
             let registers = input.u16()?;
             let dispatch = match input.u8()? {
@@ -404,6 +411,7 @@ impl ResidualProgram {
                 parent,
                 name,
                 params,
+                rest,
                 locals,
                 code,
                 registers,

@@ -88,6 +88,7 @@ mod tests {
             parent: None,
             name: None,
             params: 0,
+            rest: false,
             locals: 0,
             code,
             registers,

@@ -77,7 +77,8 @@ impl<H: Host> Vm<H> {
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        for index in 0..function.params as usize {
+        let fixed = usize::from(function.params) - usize::from(function.rest);
+        for index in 0..fixed {
             frame.locals[index] = match args {
                 NumericArguments::Values(values) => {
                     values.get(index).copied().unwrap_or(Value::UNDEFINED)
@@ -86,6 +87,23 @@ impl<H: Host> Vm<H> {
                     .get(index)
                     .map_or(Value::UNDEFINED, |register| self.read(frame, *register)),
             };
+        }
+        if function.rest {
+            let elements = match args {
+                NumericArguments::Values(values) => {
+                    values.get(fixed..).unwrap_or_default().to_vec()
+                }
+                NumericArguments::Registers { frame, values } => values
+                    .get(fixed..)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|register| self.read(frame, *register))
+                    .collect(),
+            };
+            frame.locals[fixed] = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(elements),
+            });
         }
         frame.function = id;
         frame.pc = 0;

@@ -25,8 +25,16 @@ impl<H: Host> Vm<H> {
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        for index in 0..function.params as usize {
+        let fixed = usize::from(function.params) - usize::from(function.rest);
+        for index in 0..fixed {
             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+        }
+        if function.rest {
+            let elements = args.get(fixed..).unwrap_or_default().to_vec();
+            frame.locals[fixed] = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(elements),
+            });
         }
         frame.function = id;
         frame.pc = 0;

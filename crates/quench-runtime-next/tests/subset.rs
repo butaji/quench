@@ -410,6 +410,20 @@ fn default_parameters_only_evaluate_for_undefined_arguments() {
 }
 
 #[test]
+fn rest_parameters_collect_trailing_arguments() {
+    let source = r#"
+      function collect(first, ...rest) { return first + rest.join('-'); }
+      var arrow = (first, ...rest) => first + rest.join('-');
+      class Box { method(first, ...rest) { return first + rest.join('-'); } }
+      print(collect('a', 'b', 'c'));
+      print(collect('a'));
+      print(arrow('x', 'y', 'z'));
+      print(new Box().method('m', 'n'));
+    "#;
+    assert_eq!(output(source), ["ab-c", "a", "xy-z", "mn"]);
+}
+
+#[test]
 fn destructured_formal_parameters_bind_nested_defaults() {
     let source = r#"
       function summarize({ answer = 40 }, [extra = 2]) { return answer + extra; }

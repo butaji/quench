@@ -92,6 +92,7 @@ mod tests {
             parent: None,
             name: None,
             params: 0,
+            rest: false,
             locals: 0,
             code: ops.iter().map(|op| Instr::new(*op, 0, 0, 0, 0)).collect(),
             registers: 1,
