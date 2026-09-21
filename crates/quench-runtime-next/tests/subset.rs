@@ -46,6 +46,19 @@ fn closures_prototypes_arrays_and_integer_ops() {
 }
 
 #[test]
+fn lexical_declarations_use_function_local_slots() {
+    let source = r#"
+      let left = 40;
+      const right = 2;
+      {
+        let nested = left + right;
+        print(nested);
+      }
+    "#;
+    assert_eq!(output(source), ["42"]);
+}
+
+#[test]
 fn method_caches_observe_callable_property_replacement() {
     let source = r#"
       function Box() {}
