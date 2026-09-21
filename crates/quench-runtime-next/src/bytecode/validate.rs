@@ -106,9 +106,9 @@ impl ResidualProgram {
                         return Err(format!("function {index} local store is invalid"));
                     }
                     Op::LoadCapture | Op::StoreCapture
-                        if instruction.imm() & u16::MAX as u32 >= u32::from(function.locals) =>
+                        if instruction.imm() >> 16 >= self.functions.len() as u32 =>
                     {
-                        return Err(format!("function {index} capture slot is invalid"));
+                        return Err(format!("function {index} capture depth is invalid"));
                     }
                     Op::LoadName | Op::StoreName
                         if !atom(instruction.imm()) || !cache(instruction.c()) =>
