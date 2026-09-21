@@ -112,6 +112,16 @@ fn array_includes_uses_same_value_zero_and_visits_holes() {
 }
 
 #[test]
+fn array_join_coerces_values_and_preserves_hole_separators() {
+    assert_eq!(
+        output(
+            "print([1, undefined, null, 'x'].join('|')); print(new Array(2).join('-')); print([1, 2].join());"
+        ),
+        ["1|||x", "-", "1,2"],
+    );
+}
+
+#[test]
 fn array_is_array_distinguishes_arrays_from_array_like_objects() {
     assert_eq!(
         output(
