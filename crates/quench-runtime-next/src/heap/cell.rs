@@ -55,6 +55,7 @@ pub(crate) enum Native {
     WeakRef,
     WeakRefDeref,
     FunctionCall,
+    FunctionApply,
     Date,
     DateNow,
     Error,

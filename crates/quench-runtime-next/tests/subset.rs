@@ -424,6 +424,19 @@ fn rest_parameters_collect_trailing_arguments() {
 }
 
 #[test]
+fn single_spread_calls_use_function_apply_semantics() {
+    let source = r#"
+      function add(left, right) { return left + right; }
+      var values = [2, 3];
+      var object = { base: 4 };
+      object.add = function(left, right) { return this.base + left + right; };
+      print(add(...values));
+      print(object.add(...[1, 2]));
+    "#;
+    assert_eq!(output(source), ["5", "7"]);
+}
+
+#[test]
 fn computed_object_keys_use_indexed_property_semantics() {
     let source = r#"
       var key = 'answer';

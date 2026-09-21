@@ -52,6 +52,7 @@ const NATIVES: &[Native] = &[
     Native::WeakRef,
     Native::WeakRefDeref,
     Native::FunctionCall,
+    Native::FunctionApply,
     Native::Date,
     Native::DateNow,
     Native::Error,
@@ -185,6 +186,12 @@ impl<H: Host> Vm<H> {
             self.function_proto,
             "call",
             self.native_value(Native::FunctionCall),
+        )?;
+        self.set_named(
+            program,
+            self.function_proto,
+            "apply",
+            self.native_value(Native::FunctionApply),
         )?;
         self.set_named(
             program,

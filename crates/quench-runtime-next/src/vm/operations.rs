@@ -162,6 +162,24 @@ impl<H: Host> Vm<H> {
                 };
                 self.call_value(p, this, receiver, args.get(1..).unwrap_or_default())
             }
+            Native::FunctionApply => {
+                let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let receiver = if receiver.is_null() || receiver.is_undefined() {
+                    self.globals
+                } else {
+                    receiver
+                };
+                let argument_array = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let arguments = if argument_array.is_undefined() {
+                    vec![]
+                } else {
+                    match self.heap.get(argument_array) {
+                        Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                        _ => return Err(JsError("apply arguments must be an array".into())),
+                    }
+                };
+                self.call_value(p, this, receiver, &arguments)
+            }
             Native::Number
             | Native::NumberIsNaN
             | Native::NumberIsFinite
