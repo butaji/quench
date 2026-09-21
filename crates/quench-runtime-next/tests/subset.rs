@@ -165,6 +165,14 @@ fn symbol_registry_preserves_identity_and_key_round_trip() {
 }
 
 #[test]
+fn typeof_reports_symbol_and_bigint_primitives() {
+    assert_eq!(
+        output("print(typeof Symbol('x')); print(typeof 1n);"),
+        ["symbol", "bigint"]
+    );
+}
+
+#[test]
 fn method_caches_observe_callable_property_replacement() {
     let source = r#"
       function Box() {}
