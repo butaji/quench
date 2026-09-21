@@ -91,6 +91,34 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn construct(&mut self, value: &NewExpression<'_>) -> Register {
         let callee = self.expression(&value.callee);
+        if Self::has_spread(&value.arguments) {
+            let arguments = self.spread_arguments(&value.arguments);
+            let reflect = self.load_name("Reflect");
+            let construct = self.reg();
+            let atom = self.owner.atom("construct");
+            let cache = self.owner.cache_site();
+            self.emit(
+                Op::GetField,
+                construct,
+                FieldBase::register(reflect).0,
+                cache,
+                atom,
+            );
+            let base = self.next_reg;
+            let callee_arg = self.reg();
+            self.emit(Op::Move, callee_arg, callee, 0, 0);
+            let arguments_arg = self.reg();
+            self.emit(Op::Move, arguments_arg, arguments, 0, 0);
+            let dst = self.reg();
+            self.emit(
+                Op::Call,
+                dst,
+                construct,
+                reflect,
+                (u32::from(base) << 16) | 2,
+            );
+            return dst;
+        }
         let (base, count) = self.arguments(&value.arguments);
         let dst = self.reg();
         self.emit(Op::Construct, dst, callee, base, u32::from(count));
@@ -154,6 +182,29 @@ impl FunctionCompiler<'_, '_> {
         this: Register,
         values: &[Argument<'_>],
     ) -> Register {
+        let arguments = self.spread_arguments(values);
+
+        let apply = self.reg();
+        let apply_atom = self.owner.atom("apply");
+        let apply_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            apply,
+            FieldBase::register(callee).0,
+            apply_cache,
+            apply_atom,
+        );
+        let base = self.next_reg;
+        let this_arg = self.reg();
+        self.emit(Op::Move, this_arg, this, 0, 0);
+        let values_arg = self.reg();
+        self.emit(Op::Move, values_arg, arguments, 0, 0);
+        let result = self.reg();
+        self.emit(Op::Call, result, apply, callee, (u32::from(base) << 16) | 2);
+        result
+    }
+
+    pub(super) fn spread_arguments(&mut self, values: &[Argument<'_>]) -> Register {
         let arguments = self.reg();
         self.emit(Op::MakeArray, arguments, 0, 0, 0);
 
@@ -208,24 +259,7 @@ impl FunctionCompiler<'_, '_> {
             );
         }
 
-        let apply = self.reg();
-        let apply_atom = self.owner.atom("apply");
-        let apply_cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            apply,
-            FieldBase::register(callee).0,
-            apply_cache,
-            apply_atom,
-        );
-        let base = self.next_reg;
-        let this_arg = self.reg();
-        self.emit(Op::Move, this_arg, this, 0, 0);
-        let values_arg = self.reg();
-        self.emit(Op::Move, values_arg, arguments, 0, 0);
-        let result = self.reg();
-        self.emit(Op::Call, result, apply, callee, (u32::from(base) << 16) | 2);
-        result
+        arguments
     }
 
     pub(super) fn argument_registers(&mut self, values: &[Argument<'_>]) -> Vec<Register> {
