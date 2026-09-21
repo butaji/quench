@@ -4,6 +4,7 @@ const NATIVES: &[Native] = &[
     Native::Print,
     Native::Object,
     Native::Array,
+    Native::ArrayIsArray,
     Native::ArrayPush,
     Native::ArrayPop,
     Native::FunctionCall,
@@ -109,6 +110,12 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::ArrayPop),
         )?;
         self.set_named(program, array, "prototype", self.array_proto)?;
+        self.set_named(
+            program,
+            array,
+            "isArray",
+            self.native_value(Native::ArrayIsArray),
+        )?;
         self.global(program, "Array", array)
     }
 

@@ -136,6 +136,16 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(Value::number(length as f64))
             }
+            Native::ArrayIsArray => Ok(
+                if matches!(
+                    args.first().and_then(|value| self.heap.get(*value)),
+                    Some(Cell::Array { .. })
+                ) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            ),
             Native::ArrayPop => {
                 let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
                     return Err(JsError("pop receiver is not array".into()));
