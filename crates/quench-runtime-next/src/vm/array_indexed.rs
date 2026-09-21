@@ -21,6 +21,9 @@ impl<H: Host> Vm<H> {
             | Native::ArrayEvery
             | Native::ArrayFind
             | Native::ArrayFindIndex => self.array_callback_native(p, native, this, args),
+            Native::ArrayReduce | Native::ArrayReduceRight => {
+                self.array_reduce_native(p, native, this, args)
+            }
             _ => unreachable!("non-indexed native routed to array index dispatch"),
         }
     }
@@ -313,6 +316,65 @@ impl<H: Host> Vm<H> {
             Native::ArrayFindIndex => Ok(Value::number(-1.0)),
             _ => unreachable!("non-callback native routed to callback dispatch"),
         }
+    }
+
+    pub(super) fn array_reduce_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (elements, length) = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => (
+                Rc::clone(elements),
+                self.heap.sparse_length(this).unwrap_or(elements.len()),
+            ),
+            _ => return Err(JsError("reduce receiver is not array".into())),
+        };
+        let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
+            return Err(JsError("reduce callback is not callable".into()));
+        }
+        if length == 0 && args.get(1).is_none() {
+            return Err(JsError(
+                "reduce of empty array with no initial value".into(),
+            ));
+        }
+        let values = (0..length)
+            .map(|index| {
+                elements
+                    .get(index)
+                    .copied()
+                    .or_else(|| self.heap.sparse_get(this, index))
+                    .unwrap_or(Value::UNDEFINED)
+            })
+            .collect::<Vec<_>>();
+        let reverse = matches!(native, Native::ArrayReduceRight);
+        let (mut accumulator, start) = if let Some(initial) = args.get(1).copied() {
+            (initial, if reverse { length } else { 0 })
+        } else if reverse {
+            (values[length - 1], length - 1)
+        } else {
+            (values[0], 1)
+        };
+        if reverse {
+            for index in (0..start).rev() {
+                let callback_args = [
+                    accumulator,
+                    values[index],
+                    Value::number(index as f64),
+                    this,
+                ];
+                accumulator = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
+            }
+        } else {
+            for (offset, value) in values.iter().copied().enumerate().skip(start) {
+                let callback_args = [accumulator, value, Value::number(offset as f64), this];
+                accumulator = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
+            }
+        }
+        Ok(accumulator)
     }
 
     fn array_strict_equal(&self, left: Value, right: Value) -> bool {

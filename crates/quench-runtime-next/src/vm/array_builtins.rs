@@ -29,6 +29,8 @@ impl<H: Host> Vm<H> {
             ("every", Native::ArrayEvery),
             ("find", Native::ArrayFind),
             ("findIndex", Native::ArrayFindIndex),
+            ("reduce", Native::ArrayReduce),
+            ("reduceRight", Native::ArrayReduceRight),
         ] {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }
