@@ -468,7 +468,7 @@ impl ResidualProgram {
         })?;
         let register_roots = input.list(|input| input.u64())?;
         input.finish()?;
-        Ok(Self {
+        let program = Self {
             atoms,
             constants,
             functions,
@@ -479,7 +479,9 @@ impl ResidualProgram {
             object_sites,
             superinstructions,
             register_roots,
-        })
+        };
+        program.validate()?;
+        Ok(program)
     }
 }
 
