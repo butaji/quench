@@ -423,6 +423,16 @@ fn atomics_use_shared_uint8_views_and_return_previous_values() {
 }
 
 #[test]
+fn atomics_read_modify_write_variants_return_old_values() {
+    assert_eq!(
+        output(
+            "var view = new Uint8Array(new SharedArrayBuffer(1)); Atomics.store(view, 0, 15); print(Atomics.sub(view, 0, 3)); print(Atomics.and(view, 0, 6)); print(Atomics.or(view, 0, 8)); print(Atomics.xor(view, 0, 3)); print(Atomics.exchange(view, 0, 42)); print(Atomics.compareExchange(view, 0, 42, 9)); print(Atomics.load(view, 0));"
+        ),
+        ["15", "12", "4", "12", "15", "42", "9"]
+    );
+}
+
+#[test]
 fn atomics_reject_non_shared_and_out_of_range_views_before_effects() {
     assert_eq!(
         output(
