@@ -132,21 +132,6 @@ impl<H: Host> Vm<H> {
                     self.to_number(p, a)?.powf(self.to_number(p, b)?),
                 ))
             }
-            Native::StringCharCodeAt
-            | Native::StringCharAt
-            | Native::StringSubstring
-            | Native::StringSubstr
-            | Native::EncodeUri
-            | Native::EncodeUriComponent
-            | Native::DecodeUri
-            | Native::DecodeUriComponent
-            | Native::StringFromCharCode
-            | Native::ParseInt
-            | Native::MathFloor
-            | Native::MathMin
-            | Native::MathMax
-            | Native::MathRandom
-            | Native::NumberString => self.call_primitive_native(p, native, this, args),
             Native::ArrayPush => {
                 let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
                     return Err(JsError("push receiver is not array".into()));
@@ -225,6 +210,7 @@ impl<H: Host> Vm<H> {
             Native::Object | Native::Array | Native::Error => {
                 self.construct_native(p, native, args)
             }
+            _ => self.call_primitive_native(p, native, this, args),
         }
     }
     #[inline]
