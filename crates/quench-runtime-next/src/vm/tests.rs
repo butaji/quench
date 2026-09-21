@@ -50,7 +50,11 @@ fn untaken_closure_branch_does_not_allocate_environments() {
     let program = Engine::specialize(source, "lazy-env.js").unwrap();
     let mut vm = Vm::new(SilentHost);
     vm.execute(&program).unwrap();
-    assert!(vm.heap.stats().0 < 100, "unexpected per-call allocation");
+    assert!(
+        vm.heap.stats().0 < 128,
+        "unexpected per-call allocation: {}",
+        vm.heap.stats().0
+    );
 }
 
 #[test]

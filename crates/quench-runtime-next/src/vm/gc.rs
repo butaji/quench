@@ -35,6 +35,7 @@ impl<H: Host> Vm<H> {
                     self.set_proto,
                     self.weak_map_proto,
                     self.weak_set_proto,
+                    self.weak_ref_proto,
                     self.iterator_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))

@@ -49,6 +49,8 @@ pub(crate) enum Native {
     WeakSetAdd,
     WeakSetHas,
     WeakSetDelete,
+    WeakRef,
+    WeakRefDeref,
     FunctionCall,
     Date,
     DateNow,
@@ -142,6 +144,10 @@ pub(crate) enum Cell {
         object: Object,
         entries: Vec<Value>,
     },
+    WeakRef {
+        object: Object,
+        target: Value,
+    },
     Iterator {
         object: Object,
         source: Value,
@@ -173,6 +179,7 @@ impl Cell {
             | Self::Set { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
+            | Self::WeakRef { object, .. }
             | Self::Iterator { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
@@ -187,6 +194,7 @@ impl Cell {
             | Self::Set { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
+            | Self::WeakRef { object, .. }
             | Self::Iterator { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,

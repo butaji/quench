@@ -41,9 +41,9 @@ pub(crate) struct Heap {
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GcProfile {
-    pub allocated_kinds: [u64; 14],
-    pub allocated_payload_bytes: [u64; 14],
-    pub allocated_size_buckets: [[u64; 8]; 14],
+    pub allocated_kinds: [u64; 15],
+    pub allocated_payload_bytes: [u64; 15],
+    pub allocated_size_buckets: [[u64; 8]; 15],
     pub roots: u64,
     pub work_items: u64,
     pub max_worklist: u64,
@@ -52,7 +52,7 @@ pub(crate) struct GcProfile {
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
-    pub marked_kinds: [u64; 14],
+    pub marked_kinds: [u64; 15],
 }
 
 #[derive(Default)]
@@ -410,6 +410,7 @@ impl Heap {
             Cell::WeakMap { object: value, .. } | Cell::WeakSet { object: value, .. } => {
                 object(value);
             }
+            Cell::WeakRef { object: value, .. } => object(value),
             Cell::Iterator {
                 object: value,
                 source,
@@ -446,13 +447,14 @@ impl Heap {
             Cell::Iterator { .. } => 4,
             Cell::WeakMap { .. } => 5,
             Cell::WeakSet { .. } => 6,
-            Cell::Function { .. } => 7,
-            Cell::Environment { .. } => 8,
-            Cell::String(_) => 9,
-            Cell::BigInt(_) => 10,
-            Cell::Symbol(_) => 11,
-            Cell::Date(_) => 12,
-            Cell::Error(_) => 13,
+            Cell::WeakRef { .. } => 7,
+            Cell::Function { .. } => 8,
+            Cell::Environment { .. } => 9,
+            Cell::String(_) => 10,
+            Cell::BigInt(_) => 11,
+            Cell::Symbol(_) => 12,
+            Cell::Date(_) => 13,
+            Cell::Error(_) => 14,
         }
     }
 
@@ -465,6 +467,7 @@ impl Heap {
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+            Cell::WeakRef { .. } => 0,
             Cell::Function { .. } => size_of::<Object>(),
             Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
             Cell::String(value) | Cell::BigInt(value) | Cell::Error(value) => value.capacity(),

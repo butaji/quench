@@ -27,6 +27,7 @@ impl<H: Host> Vm<H> {
                 | Native::WeakSetAdd
                 | Native::WeakSetHas
                 | Native::WeakSetDelete
+                | Native::WeakRefDeref
         )
     }
 
@@ -46,6 +47,17 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("invalid weak collection constructor".into())),
         };
         Ok(self.heap.alloc(cell))
+    }
+
+    pub(super) fn construct_weak_ref_native(&mut self, args: &[Value]) -> Result<Value, JsError> {
+        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if self.object_data(target).is_none() {
+            return Err(JsError("WeakRef target must be an object".into()));
+        }
+        Ok(self.heap.alloc(Cell::WeakRef {
+            object: Self::empty_object(self.weak_ref_proto),
+            target,
+        }))
     }
 
     pub(super) fn install_weak_collections(
@@ -85,7 +97,18 @@ impl<H: Host> Vm<H> {
             )?;
         }
         self.set_named(program, weak_set, "prototype", self.weak_set_proto)?;
-        self.global(program, "WeakSet", weak_set)
+        self.global(program, "WeakSet", weak_set)?;
+
+        let weak_ref = self.native_value(Native::WeakRef);
+        self.weak_ref_proto = self.object();
+        self.set_named(
+            program,
+            self.weak_ref_proto,
+            "deref",
+            self.native_value(Native::WeakRefDeref),
+        )?;
+        self.set_named(program, weak_ref, "prototype", self.weak_ref_proto)?;
+        self.global(program, "WeakRef", weak_ref)
     }
 
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -316,6 +339,12 @@ impl<H: Host> Vm<H> {
                 };
                 entries.remove(index);
                 Ok(Value::TRUE)
+            }
+            Native::WeakRefDeref => {
+                let Some(Cell::WeakRef { target, .. }) = self.heap.get(this) else {
+                    return Err(JsError("WeakRef method receiver is not a WeakRef".into()));
+                };
+                Ok(*target)
             }
             _ => Err(JsError("invalid collection native".into())),
         }

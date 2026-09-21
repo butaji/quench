@@ -242,6 +242,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::WeakMap { object: x, .. }) | Some(Cell::WeakSet { object: x, .. }) => {
                     object = x.proto
                 }
+                Some(Cell::WeakRef { object: x, .. }) => object = x.proto,
                 Some(Cell::Iterator { object: x, .. }) => object = x.proto,
                 Some(Cell::Function { object: x, .. }) => object = x.proto,
                 _ => return Ok(Value::UNDEFINED),
