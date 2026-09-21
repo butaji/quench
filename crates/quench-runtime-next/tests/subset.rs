@@ -585,6 +585,16 @@ fn typed_array_reverse_and_fill_mutate_all_numeric_views() {
 }
 
 #[test]
+fn typed_array_copy_within_snapshots_overlapping_source() {
+    assert_eq!(
+        output(
+            "var values = new Uint32Array([1, 2, 3, 4]); print(values.copyWithin(1, 0, 3) === values); print(values.join('-')); var floats = new Float32Array([1, 2, 3, 4]); floats.copyWithin(0, 2); print(floats.join('-'));"
+        ),
+        ["true", "1-1-2-3", "3-4-3-4"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

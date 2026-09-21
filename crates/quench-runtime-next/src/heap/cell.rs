@@ -85,6 +85,7 @@ pub(crate) enum Native {
     Uint8ArraySet,
     Uint8ArrayReverse,
     Uint8ArrayFill,
+    Uint8ArrayCopyWithin,
     Uint8ArraySubarray,
     Uint8ArraySlice,
     Uint8ArrayIncludes,
@@ -213,6 +214,7 @@ impl Native {
             Self::Uint8ArraySet
                 | Self::Uint8ArrayReverse
                 | Self::Uint8ArrayFill
+                | Self::Uint8ArrayCopyWithin
                 | Self::Uint8ArraySubarray
                 | Self::Uint8ArraySlice
                 | Self::Uint8ArrayIncludes

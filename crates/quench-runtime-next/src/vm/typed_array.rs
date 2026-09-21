@@ -39,6 +39,7 @@ impl<H: Host> Vm<H> {
             ("set", Native::Uint8ArraySet),
             ("reverse", Native::Uint8ArrayReverse),
             ("fill", Native::Uint8ArrayFill),
+            ("copyWithin", Native::Uint8ArrayCopyWithin),
             ("subarray", Native::Uint8ArraySubarray),
             ("slice", Native::Uint8ArraySlice),
             ("includes", Native::Uint8ArrayIncludes),
@@ -82,34 +83,6 @@ impl<H: Host> Vm<H> {
             }
             _ => None,
         }
-    }
-
-    pub(super) fn typed_array_values(&self, source: Value) -> Option<Vec<Value>> {
-        if let Some(length) = self.typed_array_length(source) {
-            return Some(
-                (0..length)
-                    .map(|index| {
-                        self.typed_array_get(source, index)
-                            .unwrap_or(Value::UNDEFINED)
-                    })
-                    .collect(),
-            );
-        }
-        let Some(Cell::Array { elements, .. }) = self.heap.get(source) else {
-            return None;
-        };
-        let length = self.heap.sparse_length(source).unwrap_or(elements.len());
-        Some(
-            (0..length)
-                .map(|index| {
-                    elements
-                        .get(index)
-                        .copied()
-                        .or_else(|| self.heap.sparse_get(source, index))
-                        .unwrap_or(Value::UNDEFINED)
-                })
-                .collect(),
-        )
     }
 
     pub(super) fn typed_array_native(
@@ -175,6 +148,26 @@ impl<H: Host> Vm<H> {
                 };
                 for index in start.min(end)..start.max(end) {
                     self.typed_array_set(p, this, index, value)?;
+                }
+                Ok(this)
+            }
+            Native::Uint8ArrayCopyWithin => {
+                let target = self.typed_array_relative_index(p, args.first(), length)?;
+                let start = self.typed_array_relative_index(p, args.get(1), length)?;
+                let end = if args.get(2).is_none() {
+                    length
+                } else {
+                    self.typed_array_relative_index(p, args.get(2), length)?
+                };
+                let count = end.saturating_sub(start).min(length.saturating_sub(target));
+                let values = (0..count)
+                    .map(|index| {
+                        self.typed_array_get(this, start + index)
+                            .unwrap_or(Value::UNDEFINED)
+                    })
+                    .collect::<Vec<_>>();
+                for (index, value) in values.into_iter().enumerate() {
+                    self.typed_array_set(p, this, target + index, value)?;
                 }
                 Ok(this)
             }

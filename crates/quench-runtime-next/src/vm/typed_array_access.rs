@@ -1,6 +1,34 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn typed_array_values(&self, source: Value) -> Option<Vec<Value>> {
+        if let Some(length) = self.typed_array_length(source) {
+            return Some(
+                (0..length)
+                    .map(|index| {
+                        self.typed_array_get(source, index)
+                            .unwrap_or(Value::UNDEFINED)
+                    })
+                    .collect(),
+            );
+        }
+        let Some(Cell::Array { elements, .. }) = self.heap.get(source) else {
+            return None;
+        };
+        let length = self.heap.sparse_length(source).unwrap_or(elements.len());
+        Some(
+            (0..length)
+                .map(|index| {
+                    elements
+                        .get(index)
+                        .copied()
+                        .or_else(|| self.heap.sparse_get(source, index))
+                        .unwrap_or(Value::UNDEFINED)
+                })
+                .collect(),
+        )
+    }
+
     pub(super) fn typed_array_get(&self, object: Value, index: usize) -> Option<Value> {
         let (buffer, offset, length, kind) = match self.heap.get(object) {
             Some(Cell::Uint8Array {
