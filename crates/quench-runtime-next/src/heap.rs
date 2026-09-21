@@ -40,9 +40,9 @@ pub(crate) struct Heap {
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GcProfile {
-    pub allocated_kinds: [u64; 9],
-    pub allocated_payload_bytes: [u64; 9],
-    pub allocated_size_buckets: [[u64; 8]; 9],
+    pub allocated_kinds: [u64; 11],
+    pub allocated_payload_bytes: [u64; 11],
+    pub allocated_size_buckets: [[u64; 8]; 11],
     pub roots: u64,
     pub work_items: u64,
     pub max_worklist: u64,
@@ -51,7 +51,7 @@ pub(crate) struct GcProfile {
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
-    pub marked_kinds: [u64; 9],
+    pub marked_kinds: [u64; 11],
 }
 
 #[derive(Default)]
@@ -386,6 +386,20 @@ impl Heap {
                 object(value);
                 work.extend(elements.iter().copied());
             }
+            Cell::Map {
+                object: value,
+                entries,
+            } => {
+                object(value);
+                work.extend(entries.iter().flat_map(|(key, value)| [*key, *value]));
+            }
+            Cell::Set {
+                object: value,
+                entries,
+            } => {
+                object(value);
+                work.extend(entries.iter().copied());
+            }
             Cell::Function {
                 object: value, env, ..
             } => {
@@ -409,13 +423,15 @@ impl Heap {
         match cell {
             Cell::Object(_) => 0,
             Cell::Array { .. } => 1,
-            Cell::Function { .. } => 2,
-            Cell::Environment { .. } => 3,
-            Cell::String(_) => 4,
-            Cell::BigInt(_) => 5,
-            Cell::Symbol(_) => 6,
-            Cell::Date(_) => 7,
-            Cell::Error(_) => 8,
+            Cell::Map { .. } => 2,
+            Cell::Set { .. } => 3,
+            Cell::Function { .. } => 4,
+            Cell::Environment { .. } => 5,
+            Cell::String(_) => 6,
+            Cell::BigInt(_) => 7,
+            Cell::Symbol(_) => 8,
+            Cell::Date(_) => 9,
+            Cell::Error(_) => 10,
         }
     }
 
@@ -424,6 +440,8 @@ impl Heap {
         match cell {
             Cell::Object(_) | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
+            Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::Function { .. } => size_of::<Object>(),
             Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
             Cell::String(value) | Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
