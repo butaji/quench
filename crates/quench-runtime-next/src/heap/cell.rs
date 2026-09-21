@@ -60,6 +60,7 @@ pub(crate) enum Native {
     ArrayOf,
     ArrayBuffer,
     ArrayBufferSlice,
+    Uint8Array,
     Map,
     MapGet,
     MapSet,
@@ -176,6 +177,12 @@ pub(crate) enum Cell {
         object: Object,
         bytes: Rc<Vec<u8>>,
     },
+    Uint8Array {
+        object: Object,
+        buffer: Value,
+        offset: usize,
+        length: usize,
+    },
     Map {
         object: Object,
         entries: Vec<(Value, Value)>,
@@ -224,6 +231,7 @@ impl Cell {
             Self::Object(object)
             | Self::Array { object, .. }
             | Self::ArrayBuffer { object, .. }
+            | Self::Uint8Array { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
             | Self::WeakMap { object, .. }
@@ -240,6 +248,7 @@ impl Cell {
             Self::Object(object)
             | Self::Array { object, .. }
             | Self::ArrayBuffer { object, .. }
+            | Self::Uint8Array { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
             | Self::WeakMap { object, .. }

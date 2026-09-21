@@ -105,6 +105,7 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::Map { .. })
             | Some(Cell::ArrayBuffer { .. })
+            | Some(Cell::Uint8Array { .. })
             | Some(Cell::Set { .. })
             | Some(Cell::WeakMap { .. })
             | Some(Cell::WeakSet { .. })

@@ -343,21 +343,17 @@ impl Heap {
         }
         value
     }
-
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
         self.properties.get(object.properties, slot)
     }
-
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
         // SAFETY: forwarded immutable-shape slot invariant.
         unsafe { self.properties.get_unchecked(object.properties, slot) }
     }
-
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         let vector = self.get(object).unwrap().object().unwrap().properties;
         self.properties.set(vector, slot, value);
     }
-
     pub(crate) unsafe fn property_set_unchecked(
         &mut self,
         object: Value,
@@ -368,7 +364,6 @@ impl Heap {
         // SAFETY: forwarded immutable-shape slot invariant.
         unsafe { self.properties.set_unchecked(vector, slot, value) };
     }
-
     pub(crate) fn property_push(&mut self, object: Value, value: Value) {
         let mut vector = self.get(object).unwrap().object().unwrap().properties;
         self.properties.push(&mut vector, value);
@@ -378,7 +373,6 @@ impl Heap {
             .unwrap()
             .properties = vector;
     }
-
     fn children(cell: &Cell, properties: &ValueArena, work: &mut Vec<Value>) {
         let mut object = |object: &Object| {
             work.push(object.proto);
@@ -394,6 +388,14 @@ impl Heap {
                 work.extend(elements.iter().copied());
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
+            Cell::Uint8Array {
+                object: value,
+                buffer,
+                ..
+            } => {
+                object(value);
+                work.push(*buffer);
+            }
             Cell::Map {
                 object: value,
                 entries,
@@ -437,13 +439,13 @@ impl Heap {
             | Cell::Error(_) => {}
         }
     }
-
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_kind(cell: &Cell) -> usize {
         match cell {
             Cell::Object(_) => 0,
             Cell::Array { .. } => 1,
             Cell::ArrayBuffer { .. } => 0,
+            Cell::Uint8Array { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
             Cell::Iterator { .. } => 4,
@@ -466,6 +468,7 @@ impl Heap {
             Cell::Object(_) | Cell::Iterator { .. } | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
+            Cell::Uint8Array { .. } => 0,
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
