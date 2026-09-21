@@ -738,6 +738,16 @@ fn string_modern_index_case_and_concat_methods_use_utf16() {
 }
 
 #[test]
+fn string_normalize_supports_unicode_normalization_forms() {
+    assert_eq!(
+        output(
+            "var composed = '\u{00e9}'; var decomposed = 'e\\u0301'; print(composed === decomposed); print(decomposed.normalize() === composed); print(composed.normalize('NFD').length); print(composed.normalize('NFKC')); try { composed.normalize('bad'); } catch (error) { print('invalid-form'); }"
+        ),
+        ["false", "true", "2", "é", "invalid-form"],
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

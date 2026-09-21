@@ -167,7 +167,7 @@ const NATIVES: &[Native] = &[
     Native::StringMatch,
     Native::StringSearch,
     Native::StringReplaceAll,
-    Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringConcat,
+    Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringConcat, Native::StringNormalize,
     Native::EncodeUri,
     Native::EncodeUriComponent,
     Native::DecodeUri,
