@@ -40,6 +40,7 @@ impl<H: Host> Vm<H> {
             | Native::ObjectValues
             | Native::ObjectEntries
             | Native::ObjectGetOwnPropertyNames
+            | Native::ObjectGetOwnPropertyDescriptor
             | Native::ObjectFromEntries
             | Native::ObjectIs
             | Native::ObjectCreate
@@ -47,17 +48,7 @@ impl<H: Host> Vm<H> {
             | Native::ObjectGetPrototypeOf
             | Native::ObjectSetPrototypeOf
             | Native::ObjectHasOwn => self.call_object_native(p, native, args),
-            Native::ObjectPrototypeHasOwnProperty => {
-                let this = self.box_object(this)?;
-                let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let key = self.intern_atom(&text);
-                Ok(if self.own_property(this, key).is_some() {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
-            }
-            Native::ObjectPrototypePropertyIsEnumerable => {
+            Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let this = self.box_object(this)?;
                 let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let key = self.intern_atom(&text);
@@ -85,6 +76,7 @@ impl<H: Host> Vm<H> {
                 Ok(if found { Value::TRUE } else { Value::FALSE })
             }
             Native::ReflectGet
+            | Native::ReflectGetOwnPropertyDescriptor
             | Native::ReflectSet
             | Native::ReflectOwnKeys
             | Native::ReflectGetPrototypeOf

@@ -14,6 +14,9 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&key);
                 self.get_property(p, target, atom)
             }
+            Native::ReflectGetOwnPropertyDescriptor => {
+                self.object_get_own_property_descriptor(p, args)
+            }
             Native::ReflectSet => {
                 let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let atom = self.intern_atom(&key);

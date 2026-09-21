@@ -122,6 +122,16 @@ fn object_prototype_is_prototype_of_walks_canonical_links() {
 }
 
 #[test]
+fn own_property_descriptors_come_from_shape_slots() {
+    assert_eq!(
+        output(
+            "var object = { answer: 42 }; var descriptor = Object.getOwnPropertyDescriptor(object, 'answer'); print(descriptor.value); print(descriptor.writable); print(descriptor.enumerable); print(descriptor.configurable); print(Object.getOwnPropertyDescriptor(object, 'missing') === undefined); print(Reflect.getOwnPropertyDescriptor(object, 'answer').value);"
+        ),
+        ["42", "true", "true", "true", "true", "42"],
+    );
+}
+
+#[test]
 fn object_keyed_views_put_integer_indices_first() {
     assert_eq!(
         output(
