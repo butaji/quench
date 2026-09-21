@@ -7,6 +7,7 @@ pub(crate) enum Native {
     Print,
     Object,
     Array,
+    ArrayIsArray,
     ArrayPush,
     ArrayPop,
     FunctionCall,
