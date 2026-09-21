@@ -119,4 +119,39 @@ impl<H: Host> Vm<H> {
         }
         Ok(Value::FALSE)
     }
+
+    pub(super) fn array_join_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let elements = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => Rc::clone(elements),
+            _ => return Err(JsError("join receiver is not array".into())),
+        };
+        let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+        let separator = match args.first().copied() {
+            None | Some(Value::UNDEFINED) => ",".to_owned(),
+            Some(value) => self.to_string(p, value)?,
+        };
+        let mut output = String::new();
+        for index in 0..length {
+            if index != 0 {
+                output.push_str(&separator);
+            }
+            let Some(value) = elements
+                .get(index)
+                .copied()
+                .or_else(|| self.heap.sparse_get(this, index))
+            else {
+                continue;
+            };
+            if value.is_null() || value.is_undefined() {
+                continue;
+            }
+            output.push_str(&self.to_string(p, value)?);
+        }
+        Ok(self.heap.alloc(Cell::String(output)))
+    }
 }
