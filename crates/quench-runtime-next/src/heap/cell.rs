@@ -179,9 +179,7 @@ pub(crate) enum Native {
     MathRandom,
     NumberString,
     Number,
-    NumberIsNaN,
-    NumberIsFinite,
-    NumberIsInteger,
+    NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat,
     NumberFixed,
     NumberPrecision,
 }
