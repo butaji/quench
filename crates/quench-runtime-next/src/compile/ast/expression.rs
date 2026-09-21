@@ -112,6 +112,7 @@ impl FunctionCompiler<'_, '_> {
             Some(self.function_id),
             Some(&value.params),
             None,
+            false,
         );
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);

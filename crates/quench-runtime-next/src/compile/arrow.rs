@@ -15,7 +15,7 @@ impl Compiler<'_> {
         if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body {
             self.collect_locals(&body.statements, &mut locals);
         }
-        let mut function = FunctionCompiler::new(self, locals, scopes.to_vec(), id);
+        let mut function = FunctionCompiler::new(self, locals, scopes.to_vec(), id, false);
         function.emit_parameter_bindings(&value.params);
         match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {

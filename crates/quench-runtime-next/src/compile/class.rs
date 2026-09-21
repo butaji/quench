@@ -51,6 +51,7 @@ impl FunctionCompiler<'_, '_> {
                     Some(self.function_id),
                     None,
                     Some(&instance_fields),
+                    false,
                 )
             });
         let class_value = self.reg();
@@ -307,6 +308,7 @@ impl Compiler<'_> {
             parent,
             Some(&method.value.params),
             instance_fields,
+            method.r#static,
         )
     }
 
@@ -316,7 +318,7 @@ impl Compiler<'_> {
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
     ) -> u32 {
-        self.compile_function(None, &[], &block.body, scopes, parent, None, None)
+        self.compile_function(None, &[], &block.body, scopes, parent, None, None, true)
     }
 }
 

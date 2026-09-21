@@ -145,7 +145,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn program(mut self, program: &Program<'_>) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        self.compile_function(None, &[], &program.body, &[], None, None, None);
+        self.compile_function(None, &[], &program.body, &[], None, None, None, false);
         if !self.errors.is_empty() {
             return Err(self.errors);
         }
@@ -299,13 +299,14 @@ impl<'a> Compiler<'a> {
         parent: Option<u32>,
         defaults: Option<&FormalParameters<'_>>,
         instance_fields: Option<&[&PropertyDefinition<'_>]>,
+        super_static: bool,
     ) -> u32 {
         let id = self.functions.len() as u32;
         self.functions.push(None);
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         self.collect_locals(body, &mut locals);
-        let mut function = FunctionCompiler::new(self, locals, scopes.to_vec(), id);
+        let mut function = FunctionCompiler::new(self, locals, scopes.to_vec(), id, super_static);
         if let Some(defaults) = defaults {
             function.emit_parameter_bindings(defaults);
         }
