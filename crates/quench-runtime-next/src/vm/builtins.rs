@@ -46,6 +46,8 @@ const NATIVES: &[Native] = &[
     Native::WeakSetAdd,
     Native::WeakSetHas,
     Native::WeakSetDelete,
+    Native::WeakRef,
+    Native::WeakRefDeref,
     Native::FunctionCall,
     Native::Date,
     Native::DateNow,
