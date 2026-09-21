@@ -74,6 +74,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.set_named(
             program,
+            self.object_proto,
+            "hasOwnProperty",
+            self.native_value(Native::ObjectPrototypeHasOwnProperty),
+        )?;
+        self.set_named(
+            program,
             object,
             "getOwnPropertyNames",
             self.native_value(Native::ObjectGetOwnPropertyNames),
