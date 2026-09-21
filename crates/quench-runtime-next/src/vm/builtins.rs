@@ -2,12 +2,12 @@ use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
     Native::Print, Native::Object,
-    Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames,
+    Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertyDescriptor,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectGetPrototypeOf,
     Native::ObjectSetPrototypeOf, Native::ObjectHasOwn,
     Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf,
-    Native::ReflectGet,
+    Native::ReflectGet, Native::ReflectGetOwnPropertyDescriptor,
     Native::ReflectSet,
     Native::ReflectOwnKeys,
     Native::ReflectGetPrototypeOf,
@@ -338,12 +338,15 @@ impl<H: Host> Vm<H> {
     }
     fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let reflect = self.object();
-        self.set_named(
-            program,
-            reflect,
-            "get",
-            self.native_value(Native::ReflectGet),
-        )?;
+        for (name, native) in [
+            ("get", Native::ReflectGet),
+            (
+                "getOwnPropertyDescriptor",
+                Native::ReflectGetOwnPropertyDescriptor,
+            ),
+        ] {
+            self.set_named(program, reflect, name, self.native_value(native))?;
+        }
         self.set_named(
             program,
             reflect,

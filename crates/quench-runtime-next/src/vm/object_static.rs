@@ -95,6 +95,12 @@ impl<H: Host> Vm<H> {
         self.set_named(
             program,
             object,
+            "getOwnPropertyDescriptor",
+            self.native_value(Native::ObjectGetOwnPropertyDescriptor),
+        )?;
+        self.set_named(
+            program,
+            object,
             "values",
             self.native_value(Native::ObjectValues),
         )?;
@@ -125,6 +131,9 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectGetOwnPropertyNames => {
                 self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
+            Native::ObjectGetOwnPropertyDescriptor => {
+                self.object_get_own_property_descriptor(p, args)
             }
             Native::ObjectValues => {
                 self.object_values(args.first().copied().unwrap_or(Value::UNDEFINED))
@@ -285,6 +294,30 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(object)
+    }
+
+    pub(super) fn object_get_own_property_descriptor(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let target = self.box_object(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        let atom = self.intern_atom(&key);
+        let Some(value) = self.own_property(target, atom) else {
+            return Ok(Value::UNDEFINED);
+        };
+        let descriptor = self.object();
+        for (name, value) in [
+            ("value", value),
+            ("writable", Value::TRUE),
+            ("enumerable", Value::TRUE),
+            ("configurable", Value::TRUE),
+        ] {
+            let atom = self.intern_atom(name);
+            self.set_property(descriptor, atom, value)?;
+        }
+        Ok(descriptor)
     }
 }
 
