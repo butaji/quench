@@ -41,6 +41,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    #[expect(clippy::wrong_self_convention)]
     pub(super) fn to_number(
         &mut self,
         program: &ResidualProgram,
@@ -74,6 +75,7 @@ impl<H: Host> Vm<H> {
         Ok(f64::NAN)
     }
 
+    #[expect(clippy::wrong_self_convention)]
     pub(super) fn to_string(
         &mut self,
         program: &ResidualProgram,

@@ -9,10 +9,10 @@ impl<H: Host> Vm<H> {
         let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let parsed: serde_json::Value = serde_json::from_str(&text)
             .map_err(|error| JsError(format!("JSON parse: {error}").into()))?;
-        self.from_json(&parsed)
+        self.parse_json_value(&parsed)
     }
 
-    fn from_json(&mut self, value: &serde_json::Value) -> Result<Value, JsError> {
+    fn parse_json_value(&mut self, value: &serde_json::Value) -> Result<Value, JsError> {
         Ok(match value {
             serde_json::Value::Null => Value::NULL,
             serde_json::Value::Bool(value) => {
@@ -27,7 +27,7 @@ impl<H: Host> Vm<H> {
             serde_json::Value::Array(values) => {
                 let values = values
                     .iter()
-                    .map(|value| self.from_json(value))
+                    .map(|value| self.parse_json_value(value))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.heap.alloc(Cell::Array {
                     object: Self::empty_object(self.array_proto),
@@ -38,7 +38,7 @@ impl<H: Host> Vm<H> {
                 let object = self.object();
                 for (key, value) in values {
                     let atom = self.intern_atom(key);
-                    let value = self.from_json(value)?;
+                    let value = self.parse_json_value(value)?;
                     self.set_property(object, atom, value)?;
                 }
                 object
@@ -48,11 +48,11 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn json_stringify(
         &mut self,
-        p: &ResidualProgram,
+        _p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let Some(value) = self.to_json(p, value, false)? else {
+        let Some(value) = self.to_json(value, false)? else {
             return Ok(Value::UNDEFINED);
         };
         let text = serde_json::to_string(&value)
@@ -60,9 +60,9 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::String(text)))
     }
 
+    #[expect(clippy::wrong_self_convention)]
     fn to_json(
         &mut self,
-        p: &ResidualProgram,
         value: Value,
         array_element: bool,
     ) -> Result<Option<serde_json::Value>, JsError> {
@@ -97,7 +97,7 @@ impl<H: Host> Vm<H> {
                 let mut output = Vec::with_capacity(elements.len());
                 for value in elements.iter().copied() {
                     output.push(
-                        self.to_json(p, value, true)?
+                        self.to_json(value, true)?
                             .unwrap_or(serde_json::Value::Null),
                     );
                 }
@@ -129,7 +129,7 @@ impl<H: Host> Vm<H> {
                     let Some(value) = self.heap.property_get(&object, slot) else {
                         continue;
                     };
-                    if let Some(value) = self.to_json(p, value, false)? {
+                    if let Some(value) = self.to_json(value, false)? {
                         output.insert(self.atom_name(atom).into(), value);
                     }
                 }
@@ -137,7 +137,7 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::Date(value)) => Ok(serde_json::Number::from_f64(value)
                 .map(serde_json::Value::Number)
-                .or_else(|| Some(serde_json::Value::Null))),
+                .or(Some(serde_json::Value::Null))),
             Some(Cell::Error(value)) => Ok(Some(serde_json::Value::String(value))),
             Some(Cell::Environment { .. }) | Some(Cell::Iterator { .. }) | None => Ok(None),
         }

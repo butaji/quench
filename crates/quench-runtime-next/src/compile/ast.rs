@@ -154,11 +154,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     &body.statements,
                     &scopes,
                     Some(self.function_id),
-                    Some(&function.params),
-                    None,
-                    false,
-                    false,
-                    false,
+                    FunctionOptions {
+                        defaults: Some(&function.params),
+                        instance_fields: None,
+                        super_static: false,
+                        rest_override: false,
+                        implicit_super: false,
+                    },
                 );
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
