@@ -67,6 +67,14 @@ fn template_literals_lower_to_string_addition() {
 }
 
 #[test]
+fn sequence_expressions_preserve_order_and_return_the_tail() {
+    assert_eq!(
+        output("var seen = 0; print((seen = 1, seen + 41));"),
+        ["42"]
+    );
+}
+
+#[test]
 fn method_caches_observe_callable_property_replacement() {
     let source = r#"
       function Box() {}
