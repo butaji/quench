@@ -33,6 +33,8 @@ impl<H: Host> Vm<H> {
             ("reduceRight", Native::ArrayReduceRight),
             ("toReversed", Native::ArrayToReversed),
             ("toSpliced", Native::ArrayToSpliced),
+            ("sort", Native::ArraySort),
+            ("toSorted", Native::ArrayToSorted),
         ] {
             self.set_named(program, self.array_proto, name, self.native_value(native))?;
         }
