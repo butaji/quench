@@ -242,6 +242,16 @@ fn array_callback_methods_share_user_function_invocation() {
 }
 
 #[test]
+fn array_flat_map_flattens_callback_arrays_one_level() {
+    assert_eq!(
+        output(
+            "print([1, 2, 3].flatMap(function (value) { return [value, value * 2]; }).join('-'));"
+        ),
+        ["1-2-2-4-3-6"]
+    );
+}
+
+#[test]
 fn array_reduce_methods_handle_initial_values_and_direction() {
     let source = r#"
       var values = [1, 2, 3];
