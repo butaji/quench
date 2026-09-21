@@ -122,6 +122,16 @@ fn object_prototype_controls_follow_the_object_proto_slot() {
 }
 
 #[test]
+fn maps_and_sets_preserve_identity_and_insertion_size() {
+    assert_eq!(
+        output(
+            "var key = {}; var map = new Map(); map.set(key, 42); map.set('x', 7); print(map.get(key)); print(map.has('x')); print(map.size); print(map.delete(key)); print(map.size); var set = new Set(); set.add(key); set.add(key); print(set.has(key)); print(set.size);"
+        ),
+        ["42", "true", "2", "true", "1", "true", "1"],
+    );
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(

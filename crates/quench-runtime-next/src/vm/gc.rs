@@ -31,6 +31,8 @@ impl<H: Host> Vm<H> {
                     self.object_proto,
                     self.function_proto,
                     self.array_proto,
+                    self.map_proto,
+                    self.set_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(self.symbol_registry.values().copied())
