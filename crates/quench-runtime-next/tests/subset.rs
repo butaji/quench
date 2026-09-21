@@ -85,9 +85,9 @@ fn destructuring_defaults_only_evaluate_for_undefined_values() {
 fn array_destructuring_rest_uses_array_slice_semantics() {
     assert_eq!(
         output(
-            "const [head, ...tail] = [1, 2, 3]; print(head); print(tail.length); print(tail[0]); print(tail[1]); var values = [0, 1, 2, 3]; var middle = values.slice(1, -1); print(middle.length); print(middle[0]); print(middle[1]);"
+            "const [head, ...tail] = [1, 2, 3]; print(head); print(tail.length); print(tail[0]); print(tail[1]); var values = [0, 1, 2, 3]; var middle = values.slice(1, -1); print(middle.length); print(middle[0]); print(middle[1]); var coerced = values.slice('1.9', '3.8'); print(coerced.length); print(coerced[0]); print(coerced[1]);"
         ),
-        ["1", "2", "2", "3", "2", "1", "2"],
+        ["1", "2", "2", "3", "2", "1", "2", "2", "1", "2"],
     );
 }
 
