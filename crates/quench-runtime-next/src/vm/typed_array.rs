@@ -1,5 +1,4 @@
 use super::*;
-
 impl<H: Host> Vm<H> {
     pub(super) fn maybe_call_typed_array_native(
         &mut self,
@@ -16,7 +15,6 @@ impl<H: Host> Vm<H> {
             None
         }
     }
-
     pub(super) fn install_typed_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.intern_atom("value");
         self.intern_atom("done");
@@ -67,7 +65,6 @@ impl<H: Host> Vm<H> {
         self.install_float32_array(program)?;
         self.install_float64_array(program)
     }
-
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
         match self.heap.get(object) {
             Some(Cell::Uint8Array { buffer, offset, .. })
@@ -84,7 +81,6 @@ impl<H: Host> Vm<H> {
             _ => None,
         }
     }
-
     pub(super) fn typed_array_native(
         &mut self,
         p: &ResidualProgram,
@@ -226,6 +222,8 @@ impl<H: Host> Vm<H> {
                     bytes: Rc::new(bytes),
                     shared: false,
                     detached: false,
+                    max_byte_length: count * width,
+                    resizable: false,
                 });
                 self.new_typed_view(copied, 0, count, kind)
             }
@@ -303,54 +301,63 @@ impl<H: Host> Vm<H> {
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
             TypedArrayKind::Uint8Clamped => self.heap.alloc(Cell::Uint8ClampedArray {
                 object: Self::empty_object(self.uint8_clamped_array_proto),
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
             TypedArrayKind::Uint16 => self.heap.alloc(Cell::Uint16Array {
                 object: Self::empty_object(self.uint16_array_proto),
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
             TypedArrayKind::Uint32 => self.heap.alloc(Cell::Uint32Array {
                 object: Self::empty_object(self.uint32_array_proto),
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
             TypedArrayKind::Int8 => self.heap.alloc(Cell::Int8Array {
                 object: Self::empty_object(self.int8_array_proto),
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
             TypedArrayKind::Int16 => self.heap.alloc(Cell::Int16Array {
                 object: Self::empty_object(self.int16_array_proto),
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
             TypedArrayKind::Int32 => self.heap.alloc(Cell::Int32Array {
                 object: Self::empty_object(self.int32_array_proto),
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
             TypedArrayKind::Float32 => self.heap.alloc(Cell::Float32Array {
                 object: Self::empty_object(self.float32_array_proto),
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
             TypedArrayKind::Float64 => self.heap.alloc(Cell::Float64Array {
                 object: Self::empty_object(self.float64_array_proto),
                 buffer,
                 offset,
                 length,
+                length_tracking: false,
             }),
         })
     }
@@ -408,6 +415,8 @@ impl<H: Host> Vm<H> {
                     bytes: Rc::new(vec![0; length]),
                     shared: false,
                     detached: false,
+                    max_byte_length: length,
+                    resizable: false,
                 });
                 (buffer, 0, length, values)
             } else {
@@ -422,6 +431,8 @@ impl<H: Host> Vm<H> {
                     bytes: Rc::new(vec![0; length]),
                     shared: false,
                     detached: false,
+                    max_byte_length: length,
+                    resizable: false,
                 });
                 (buffer, 0, length, Vec::new())
             };
@@ -443,6 +454,7 @@ impl<H: Host> Vm<H> {
             buffer,
             offset,
             length,
+            length_tracking: self.array_buffer_resizable(buffer) && args.get(2).is_none(),
         }))
     }
 
