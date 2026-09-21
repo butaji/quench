@@ -19,12 +19,9 @@ impl FunctionCompiler<'_, '_> {
             Expression::ClassExpression(value) => self.class_expression(value),
             Expression::ArrayExpression(value) => self.array_expression(value),
             Expression::ObjectExpression(value) => self.object_expression(value),
-            Expression::StaticMemberExpression(value) => {
-                self.static_get(&value.object, value.property.name.as_str())
-            }
-            Expression::ComputedMemberExpression(value) => {
-                self.computed_get(&value.object, &value.expression)
-            }
+            Expression::StaticMemberExpression(value) => self.static_member(value),
+            Expression::ComputedMemberExpression(value) => self.computed_member(value),
+            Expression::ChainExpression(value) => self.chain_expression(&value.expression),
             Expression::AssignmentExpression(value) => self.assignment(value),
             Expression::UpdateExpression(value) => self.update(value),
             Expression::BinaryExpression(value) => self.binary(value),
