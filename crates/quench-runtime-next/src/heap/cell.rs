@@ -62,6 +62,10 @@ pub(crate) enum Native {
     ArrayBufferSlice,
     ArrayBufferIsView,
     SharedArrayBuffer,
+    AtomicsLoad,
+    AtomicsStore,
+    AtomicsAdd,
+    AtomicsIsLockFree,
     Uint8Array,
     Uint8ArraySet,
     Uint8ArraySubarray,
@@ -158,6 +162,13 @@ impl Native {
         matches!(
             self,
             Self::Uint8ArrayKeys | Self::Uint8ArrayValues | Self::Uint8ArrayEntries
+        )
+    }
+
+    pub(crate) fn is_atomics_native(self) -> bool {
+        matches!(
+            self,
+            Self::AtomicsLoad | Self::AtomicsStore | Self::AtomicsAdd | Self::AtomicsIsLockFree
         )
     }
 }

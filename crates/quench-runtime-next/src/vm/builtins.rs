@@ -59,6 +59,10 @@ const NATIVES: &[Native] = &[
     Native::ArrayBufferSlice,
     Native::ArrayBufferIsView,
     Native::SharedArrayBuffer,
+    Native::AtomicsLoad,
+    Native::AtomicsStore,
+    Native::AtomicsAdd,
+    Native::AtomicsIsLockFree,
     Native::Uint8Array,
     Native::Uint8ArraySet,
     Native::Uint8ArraySubarray,
@@ -135,7 +139,6 @@ const NATIVES: &[Native] = &[
     Native::NumberFixed,
     Native::NumberPrecision,
 ];
-
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.install_prototypes();
@@ -171,6 +174,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "SharedArrayBuffer", shared_array_buffer)?;
         self.install_typed_array(program)?;
+        self.install_atomics(program)?;
         self.install_collections(program)?;
         self.install_weak_collections(program)?;
         self.install_iterators(program)?;
@@ -240,7 +244,6 @@ impl<H: Host> Vm<H> {
         self.install_reflect(program)?;
         self.install_math(program)
     }
-
     fn install_prototypes(&mut self) {
         self.object_proto = self
             .heap
@@ -250,7 +253,6 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
         self.object_data_mut(self.globals).unwrap().proto = self.object_proto;
     }
-
     fn install_object(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let object = self.native_value(Native::Object);
         self.set_named(program, object, "prototype", self.object_proto)?;
@@ -298,13 +300,11 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "Object", object)
     }
-
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let console = self.object();
         self.set_named(program, console, "log", self.native_value(Native::Print))?;
         self.global(program, "console", console)
     }
-
     fn install_json(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let json = self.object();
         self.set_named(program, json, "parse", self.native_value(Native::JsonParse))?;

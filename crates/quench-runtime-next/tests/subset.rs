@@ -413,6 +413,16 @@ fn shared_array_buffer_owns_shared_kind_and_typed_views() {
 }
 
 #[test]
+fn atomics_use_shared_uint8_views_and_return_previous_values() {
+    assert_eq!(
+        output(
+            "var buffer = new SharedArrayBuffer(2); var view = new Uint8Array(buffer); print(Atomics.store(view, 0, 260)); print(Atomics.load(view, 0)); print(Atomics.add(view, 0, 3)); print(Atomics.load(view, 0)); print(Atomics.isLockFree(1)); print(Atomics.isLockFree(16));"
+        ),
+        ["4", "4", "4", "7", "true", "false"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
