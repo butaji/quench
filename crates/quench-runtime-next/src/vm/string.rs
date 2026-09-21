@@ -118,6 +118,8 @@ impl<H: Host> Vm<H> {
             ("normalize", Native::StringNormalize),
             ("indexOf", Native::StringIndexOf),
             ("lastIndexOf", Native::StringLastIndexOf),
+            ("toString", Native::StringToString),
+            ("valueOf", Native::StringValueOf),
         ]
         .into_iter()
         .find_map(|(name, native)| (self.lookup_atom(name) == Some(atom)).then_some(native))
