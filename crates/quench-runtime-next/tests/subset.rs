@@ -192,6 +192,18 @@ fn array_for_of_binds_each_element_in_order() {
 }
 
 #[test]
+fn array_for_of_assigns_identifier_and_member_targets() {
+    let source = r#"
+      var current = 0;
+      var box = {};
+      for (current of [1, 2]) { box.value = current; }
+      print(current);
+      print(box.value);
+    "#;
+    assert_eq!(output(source), ["2", "2"]);
+}
+
+#[test]
 fn reflect_forwards_to_property_and_prototype_authorities() {
     assert_eq!(
         output(
