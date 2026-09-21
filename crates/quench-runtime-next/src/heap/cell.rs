@@ -58,6 +58,7 @@ pub(crate) enum Native {
     ArrayEntries,
     ArrayFrom,
     ArrayOf,
+    ArrayBuffer,
     Map,
     MapGet,
     MapSet,
@@ -170,6 +171,10 @@ pub(crate) enum Cell {
         object: Object,
         elements: Rc<Vec<Value>>,
     },
+    ArrayBuffer {
+        object: Object,
+        bytes: Rc<Vec<u8>>,
+    },
     Map {
         object: Object,
         entries: Vec<(Value, Value)>,
@@ -217,6 +222,7 @@ impl Cell {
         match self {
             Self::Object(object)
             | Self::Array { object, .. }
+            | Self::ArrayBuffer { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
             | Self::WeakMap { object, .. }
@@ -232,6 +238,7 @@ impl Cell {
         match self {
             Self::Object(object)
             | Self::Array { object, .. }
+            | Self::ArrayBuffer { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
             | Self::WeakMap { object, .. }
