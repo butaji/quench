@@ -403,6 +403,16 @@ fn array_buffer_view_detection_and_element_size_are_observable() {
 }
 
 #[test]
+fn shared_array_buffer_owns_shared_kind_and_typed_views() {
+    assert_eq!(
+        output(
+            "var buffer = new SharedArrayBuffer(2); var view = new Uint8Array(buffer); view[0] = 11; print(buffer.byteLength); print(view.buffer === buffer); print(view[0]); print(ArrayBuffer.isView(view));"
+        ),
+        ["2", "true", "11", "true"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(

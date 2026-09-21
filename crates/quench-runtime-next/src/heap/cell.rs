@@ -61,6 +61,7 @@ pub(crate) enum Native {
     ArrayBuffer,
     ArrayBufferSlice,
     ArrayBufferIsView,
+    SharedArrayBuffer,
     Uint8Array,
     Uint8ArraySet,
     Uint8ArraySubarray,
@@ -210,6 +211,7 @@ pub(crate) enum Cell {
     ArrayBuffer {
         object: Object,
         bytes: Rc<Vec<u8>>,
+        shared: bool,
     },
     Uint8Array {
         object: Object,

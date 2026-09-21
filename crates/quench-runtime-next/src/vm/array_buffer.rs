@@ -1,11 +1,13 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn construct_array_buffer_native(
+    pub(super) fn construct_buffer_native(
         &mut self,
         p: &ResidualProgram,
+        native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let shared = native == Native::SharedArrayBuffer;
         let number = self.to_number(p, args.first().copied().unwrap_or(Value::number(0.0)))?;
         let length = if number.is_nan() || number.is_sign_negative() {
             0
@@ -15,6 +17,7 @@ impl<H: Host> Vm<H> {
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
             object: Self::empty_object(self.array_buffer_proto),
             bytes: Rc::new(vec![0; length]),
+            shared,
         });
         self.intern_atom("byteLength");
         Ok(buffer)
@@ -57,6 +60,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::ArrayBuffer {
             object: Self::empty_object(self.array_buffer_proto),
             bytes: Rc::new(bytes[start.min(end)..end].to_vec()),
+            shared: false,
         }))
     }
 }
