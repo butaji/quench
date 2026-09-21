@@ -156,6 +156,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayJoin => self.array_join_native(p, this, args),
             Native::ArrayConcat => self.array_concat_native(this, args),
             Native::ArrayFlat => self.array_flat_native(p, this, args),
+            Native::ArrayReverse => self.array_reverse_native(this),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let receiver = if receiver.is_null() || receiver.is_undefined() {
