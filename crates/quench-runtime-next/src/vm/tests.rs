@@ -1,5 +1,5 @@
 use super::{CallTarget, JsError, MethodCache, Vm};
-use crate::{Engine, Host};
+use crate::{Engine, Host, Value};
 
 struct SilentHost;
 impl Host for SilentHost {
@@ -49,11 +49,16 @@ fn untaken_closure_branch_does_not_allocate_environments() {
     "#;
     let program = Engine::specialize(source, "lazy-env.js").unwrap();
     let mut vm = Vm::new(SilentHost);
-    vm.execute(&program).unwrap();
+    vm.initialize(&program).unwrap();
+    let baseline = vm.heap.stats().0;
+    let root = vm.closure(&program, 0, Value::NULL).unwrap();
+    let globals = vm.globals;
+    vm.call_value(&program, root, globals, &[]).unwrap();
+    let execution_allocations = vm.heap.stats().0 - baseline;
     assert!(
-        vm.heap.stats().0 < 128,
+        execution_allocations < 128,
         "unexpected per-call allocation: {}",
-        vm.heap.stats().0
+        execution_allocations
     );
 }
 

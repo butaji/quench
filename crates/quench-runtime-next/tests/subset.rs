@@ -257,6 +257,24 @@ fn array_reduce_methods_handle_initial_values_and_direction() {
 }
 
 #[test]
+fn array_immutable_methods_preserve_the_original_receiver() {
+    let source = r#"
+      var values = [0, 1, 2, 3];
+      var reversed = values.toReversed();
+      var spliced = values.toSpliced(1, 2, 'a', 'b');
+      print(reversed.join('-'));
+      print(spliced.join('-'));
+      print(values.join('-'));
+      print(reversed === values);
+      print(spliced === values);
+    "#;
+    assert_eq!(
+        output(source),
+        ["3-2-1-0", "0-a-b-3", "0-1-2-3", "false", "false"]
+    );
+}
+
+#[test]
 fn array_join_coerces_values_and_preserves_hole_separators() {
     assert_eq!(
         output(
