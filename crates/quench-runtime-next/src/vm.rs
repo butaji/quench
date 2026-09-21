@@ -28,6 +28,7 @@ mod primitives;
 #[cfg(feature = "profile-aggregate")]
 mod profile_edges;
 mod superinstruction;
+mod symbol;
 
 #[derive(Debug)]
 pub struct JsError(ErrorMessage);
@@ -171,6 +172,7 @@ pub struct Vm<H> {
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
     dynamic_atoms: Vec<Rc<str>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
+    symbol_registry: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
     megamorphic_field_indices: Vec<u32>,
@@ -209,6 +211,7 @@ impl<H: Host> Vm<H> {
             atom_collisions: FxHashMap::default(),
             dynamic_atoms: vec![],
             dynamic_strings: None,
+            symbol_registry: FxHashMap::default(),
             string_concats: None,
             field_caches: vec![],
             megamorphic_field_indices: vec![],
@@ -323,6 +326,7 @@ impl<H: Host> Vm<H> {
         self.atom_collisions.clear();
         self.dynamic_atoms.clear();
         self.dynamic_strings = None;
+        self.symbol_registry.clear();
         self.string_concats = None;
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {

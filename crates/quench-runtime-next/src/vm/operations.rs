@@ -182,6 +182,7 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(self.heap.alloc(Cell::Symbol(description)))
             }
+            Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
             Native::Date => Ok(self.heap.alloc(Cell::Date(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             ))),
@@ -399,7 +400,6 @@ impl<H: Host> Vm<H> {
         };
         Ok(if answer { Value::TRUE } else { Value::FALSE })
     }
-
     #[inline(always)]
     pub(super) fn binary_truthy(
         &mut self,
