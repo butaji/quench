@@ -53,6 +53,28 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    pub(super) fn array_iterator_native(
+        &mut self,
+        native: Native,
+        source: Value,
+    ) -> Result<Value, JsError> {
+        let kind = match native {
+            Native::ArrayKeys => IteratorKind::ArrayKeys,
+            Native::ArrayValues => IteratorKind::ArrayValues,
+            Native::ArrayEntries => IteratorKind::ArrayEntries,
+            _ => return Err(JsError("invalid array iterator native".into())),
+        };
+        if !matches!(self.heap.get(source), Some(Cell::Array { .. })) {
+            return Err(JsError("array iterator receiver is not array".into()));
+        }
+        Ok(self.heap.alloc(Cell::Iterator {
+            object: Self::empty_object(self.iterator_proto),
+            source,
+            kind,
+            index: 0,
+        }))
+    }
+
     pub(super) fn iterator_next(&mut self, this: Value) -> Result<Value, JsError> {
         let (source, kind, index) = match self.heap.get(this) {
             Some(Cell::Iterator {
@@ -63,30 +85,33 @@ impl<H: Host> Vm<H> {
             }) => (*source, *kind, *index),
             _ => return Err(JsError("iterator next receiver is not an iterator".into())),
         };
-        let selected = match (kind, self.heap.get(source)) {
-            (IteratorKind::Array, Some(Cell::Array { elements, .. })) => {
-                elements.get(index).copied().map(|value| (value, None))
-            }
-            (IteratorKind::String, Some(Cell::String(text))) => text
-                .chars()
-                .nth(index)
-                .map(|value| (self.heap.alloc(Cell::String(value.to_string())), None)),
-            (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
-                entries.get(index).map(|(key, _)| (*key, None))
-            }
-            (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
-                entries.get(index).map(|(_, value)| (*value, None))
-            }
-            (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
-                entries.get(index).map(|(key, value)| (*key, Some(*value)))
-            }
-            (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
-                entries.get(index).map(|value| (*value, None))
-            }
-            (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
-                entries.get(index).map(|value| (*value, Some(*value)))
-            }
-            _ => None,
+        let selected = match kind {
+            IteratorKind::Array
+            | IteratorKind::ArrayKeys
+            | IteratorKind::ArrayValues
+            | IteratorKind::ArrayEntries => self.array_iterator_item(source, kind, index),
+            _ => match (kind, self.heap.get(source)) {
+                (IteratorKind::String, Some(Cell::String(text))) => text
+                    .chars()
+                    .nth(index)
+                    .map(|value| (self.heap.alloc(Cell::String(value.to_string())), None)),
+                (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
+                    entries.get(index).map(|(key, _)| (*key, None))
+                }
+                (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
+                    entries.get(index).map(|(_, value)| (*value, None))
+                }
+                (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
+                    entries.get(index).map(|(key, value)| (*key, Some(*value)))
+                }
+                (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
+                    entries.get(index).map(|value| (*value, None))
+                }
+                (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
+                    entries.get(index).map(|value| (*value, Some(*value)))
+                }
+                _ => None,
+            },
         };
         let item = selected.map(|(value, second)| {
             second.map_or(value, |second| {
@@ -103,6 +128,41 @@ impl<H: Host> Vm<H> {
             self.iterator_result(value, false)
         } else {
             self.iterator_result(Value::UNDEFINED, true)
+        }
+    }
+
+    fn array_iterator_item(
+        &mut self,
+        source: Value,
+        kind: IteratorKind,
+        index: usize,
+    ) -> Option<(Value, Option<Value>)> {
+        let (elements, length) = match self.heap.get(source) {
+            Some(Cell::Array { elements, .. }) => (
+                Rc::clone(elements),
+                self.heap.sparse_length(source).unwrap_or(elements.len()),
+            ),
+            _ => return None,
+        };
+        if index >= length {
+            return None;
+        }
+        let value = elements
+            .get(index)
+            .copied()
+            .or_else(|| self.heap.sparse_get(source, index))
+            .unwrap_or(Value::UNDEFINED);
+        match kind {
+            IteratorKind::ArrayKeys => Some((Value::number(index as f64), None)),
+            IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
+            IteratorKind::ArrayEntries => {
+                let entry = self.heap.alloc(Cell::Array {
+                    object: Self::empty_object(self.array_proto),
+                    elements: Rc::new(vec![Value::number(index as f64), value]),
+                });
+                Some((entry, None))
+            }
+            _ => None,
         }
     }
 

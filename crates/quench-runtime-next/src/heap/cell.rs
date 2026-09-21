@@ -52,6 +52,9 @@ pub(crate) enum Native {
     ArraySort,
     ArrayToSorted,
     ArrayToString,
+    ArrayKeys,
+    ArrayValues,
+    ArrayEntries,
     Map,
     MapGet,
     MapSet,
@@ -128,6 +131,9 @@ pub(crate) enum FunctionKind {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum IteratorKind {
     Array,
+    ArrayKeys,
+    ArrayValues,
+    ArrayEntries,
     String,
     MapKeys,
     MapValues,
