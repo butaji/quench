@@ -176,9 +176,6 @@ fn resume_iterator_frame_mode(
 }
 
 struct ForOfConditional<'a> {
-    conditional: &'a Op,
-    body: crate::machine::CodeView<'a>,
-    body_index: usize,
     branch: crate::machine::CodeView<'a>,
     yield_index: usize,
 }
@@ -197,8 +194,8 @@ fn suspended_for_of_conditional<'a>(
     };
     let body = body.code()?;
     let (
-        body_index,
-        conditional @ Op::Conditional {
+        _body_index,
+        Op::Conditional {
             condition,
             consequent,
             alternate,
@@ -217,9 +214,6 @@ fn suspended_for_of_conditional<'a>(
     .code()?;
     let yield_index = branch.position_cold(|op| matches!(op, Op::Yield { .. }))?;
     Some(ForOfConditional {
-        conditional,
-        body,
-        body_index,
         branch,
         yield_index,
     })
