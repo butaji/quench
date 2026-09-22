@@ -143,4 +143,27 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["42"]);
     }
+
+    #[test]
+    fn generic_reference_matches_specialized_output() {
+        let source = "var object = { answer: 41 }; print(object['answer'] + 1);";
+        let optimized_host = Capture::default();
+        let optimized_view = optimized_host.clone();
+        let mut optimized = Runtime::new(optimized_host);
+        optimized
+            .execute(&Engine::specialize(source, "optimized.js").unwrap())
+            .unwrap();
+
+        let generic_host = Capture::default();
+        let generic_view = generic_host.clone();
+        let mut generic = Runtime::new(generic_host);
+        generic
+            .execute(&Engine::specialize_unspecialized(source, "generic.js").unwrap())
+            .unwrap();
+
+        assert_eq!(
+            optimized_view.0.borrow().as_slice(),
+            generic_view.0.borrow().as_slice()
+        );
+    }
 }
