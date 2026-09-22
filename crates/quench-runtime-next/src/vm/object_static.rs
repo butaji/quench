@@ -385,7 +385,25 @@ impl<H: Host> Vm<H> {
         let set_atom = self.intern_atom("set");
         let descriptor_getter = self.own_property(descriptor, get_atom);
         let descriptor_setter = self.own_property(descriptor, set_atom);
-        let accessor = descriptor_getter.is_some() || descriptor_setter.is_some();
+        let writable_atom = self.intern_atom("writable");
+        let descriptor_writable = self.own_property(descriptor, writable_atom);
+        let descriptor_accessor = descriptor_getter.is_some() || descriptor_setter.is_some();
+        let descriptor_data = descriptor_value.is_some() || descriptor_writable.is_some();
+        if descriptor_accessor && descriptor_data {
+            return Err(JsError(
+                "property descriptor mixes data and accessor fields".into(),
+            ));
+        }
+        if !is_new
+            && !current.configurable
+            && descriptor_accessor != current.accessor
+            && (descriptor_accessor || descriptor_data)
+        {
+            return Err(JsError(
+                "cannot change non-configurable property kind".into(),
+            ));
+        }
+        let accessor = descriptor_accessor;
         if accessor {
             let getter = descriptor_getter
                 .map(|value| (!value.is_undefined()).then_some(value))
@@ -429,7 +447,16 @@ impl<H: Host> Vm<H> {
             return Err(JsError("cannot write non-writable property".into()));
         }
         let value = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
+        if descriptor_data {
+            attributes.accessor = false;
+            attributes.getter = None;
+            attributes.setter = None;
+        }
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
+            if current.accessor && descriptor_data {
+                self.descriptors
+                    .remove(&(target, PropertyKey::string(atom)));
+            }
             self.set_property(target, atom, value)?;
         }
         self.descriptors
