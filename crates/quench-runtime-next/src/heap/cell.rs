@@ -171,6 +171,7 @@ pub(crate) enum Native {
     RegExpExec,
     RegExpTest,
     String,
+    Boolean,
     Symbol, SymbolToString, SymbolValueOf,
     SymbolFor,
     SymbolKeyFor,
@@ -244,7 +245,8 @@ impl Native {
     }
 
     pub(crate) fn is_host_control_native(self) -> bool {
-        matches!(self, Self::HostDone | Self::CreateRealm) || self.is_function_native()
+        matches!(self, Self::HostDone | Self::CreateRealm | Self::Boolean)
+            || self.is_function_native()
     }
 
     pub(crate) fn is_error_constructor(self) -> bool {
@@ -262,7 +264,7 @@ impl Native {
     }
 
     #[rustfmt::skip]
-    pub(crate) fn is_object_static(self) -> bool { matches!(self, Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries | Native::ObjectGetOwnPropertyNames | Native::ObjectGetOwnPropertySymbols | Native::ObjectGetOwnPropertyDescriptor | Native::ObjectGetOwnPropertyDescriptors | Native::ObjectFromEntries | Native::ObjectIs | Native::ObjectCreate | Native::ObjectAssign | Native::ObjectDefineProperty | Native::ObjectDefineProperties | Native::ObjectGetPrototypeOf | Native::ObjectSetPrototypeOf | Native::ObjectHasOwn | Native::ObjectPreventExtensions | Native::ObjectIsExtensible | Native::ObjectSeal | Native::ObjectIsSealed | Native::ObjectFreeze | Native::ObjectIsFrozen) }
+    pub(crate) fn is_object_static(self) -> bool { matches!(self, Native::Object | Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries | Native::ObjectGetOwnPropertyNames | Native::ObjectGetOwnPropertySymbols | Native::ObjectGetOwnPropertyDescriptor | Native::ObjectGetOwnPropertyDescriptors | Native::ObjectFromEntries | Native::ObjectIs | Native::ObjectCreate | Native::ObjectAssign | Native::ObjectDefineProperty | Native::ObjectDefineProperties | Native::ObjectGetPrototypeOf | Native::ObjectSetPrototypeOf | Native::ObjectHasOwn | Native::ObjectPreventExtensions | Native::ObjectIsExtensible | Native::ObjectSeal | Native::ObjectIsSealed | Native::ObjectFreeze | Native::ObjectIsFrozen) }
     pub(crate) fn is_typed_array_method(self) -> bool {
         matches!(
             self,

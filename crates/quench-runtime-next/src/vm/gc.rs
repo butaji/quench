@@ -19,7 +19,7 @@ impl<H: Host> Vm<H> {
 
     #[cold]
     #[inline(never)]
-    pub(super) fn collect_slow(&mut self, program: &ResidualProgram) {
+    pub(super) fn collect_slow(&mut self, _program: &ResidualProgram) {
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -169,20 +169,15 @@ impl<H: Host> Vm<H> {
                         .flatten(),
                 )
                 .chain(self.frames.iter().flat_map(|frame| {
-                    let function = &program.functions[frame.function as usize];
-                    let roots = (function.register_root_offset != u32::MAX).then(|| {
-                        program.register_roots[function.register_root_offset as usize + frame.pc]
-                    });
                     [frame.env, frame.this]
                         .into_iter()
                         .chain(frame.locals.iter().copied())
-                        .chain(frame.registers.iter().enumerate().filter_map(
-                            move |(index, value)| {
-                                roots
-                                    .is_none_or(|mask| mask & (1 << index) != 0)
-                                    .then_some(*value)
-                            },
-                        ))
+                        // Register-root masks are an optimization over the
+                        // canonical activation state. Keep every live-frame
+                        // register rooted until the mask proof is complete;
+                        // dropping a closure still referenced by a call-site
+                        // argument is a semantic use-after-collection.
+                        .chain(frame.registers.iter().copied())
                 }));
         self.jobs.extend(
             self.heap

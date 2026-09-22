@@ -7,6 +7,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::BigIntLiteral(value) => self.bigint_literal(value),
             Expression::RegExpLiteral(value) => self.regexp_literal(value),
             Expression::TemplateLiteral(value) => self.template_literal(value),
+            Expression::TaggedTemplateExpression(value) => self.tagged_template(value),
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
             Expression::NullLiteral(_) => self.literal(Constant::Null),
             Expression::Identifier(value) => self.load_name(value.name.as_str()),
