@@ -344,4 +344,18 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["mixed", "4", "6"]);
     }
+
+    #[test]
+    fn define_properties_uses_one_snapshot_of_descriptor_keys() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var target = {}; var descriptors = { a: { value: 1 }, b: { value: 2, enumerable: true } }; Object.defineProperties(target, descriptors); print(target.a); print(target.b); print(Object.keys(target).join(','));",
+                "define-properties.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["1", "2", "b"]);
+    }
 }

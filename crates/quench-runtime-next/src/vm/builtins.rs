@@ -5,7 +5,7 @@ const NATIVES: &[Native] = &[
     Native::Print, Native::Object,
     Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
-    Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectGetPrototypeOf,
+    Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
     Native::ObjectSetPrototypeOf, Native::ObjectHasOwn, Native::ObjectPreventExtensions,
     Native::ObjectIsExtensible, Native::ObjectSeal, Native::ObjectIsSealed,
     Native::ObjectFreeze, Native::ObjectIsFrozen,
