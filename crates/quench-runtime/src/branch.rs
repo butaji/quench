@@ -8,6 +8,7 @@ fn missing_return() -> Result<Completion, VmError> {
 }
 
 #[inline]
+#[cfg(test)]
 pub(crate) fn execute(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,

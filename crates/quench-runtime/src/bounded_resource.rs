@@ -28,6 +28,7 @@ impl AtomicBudget {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn used(&self) -> usize {
         self.used.load(Ordering::Acquire)
     }
