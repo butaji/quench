@@ -1254,7 +1254,7 @@ impl Environment {
         self.eval_name_binding(name).map(|binding| binding.load())
     }
 
-    pub(crate) fn eval_name_aliases_slot(&self, name: &str, slot: u16) -> bool {
+    pub(crate) fn eval_name_aliases_slot(&self, name: &str) -> bool {
         if self
             .eval_names
             .borrow()
@@ -1265,7 +1265,7 @@ impl Environment {
         }
         self.caller
             .as_ref()
-            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
+            .is_some_and(|caller| caller.eval_name_aliases_slot(name))
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {

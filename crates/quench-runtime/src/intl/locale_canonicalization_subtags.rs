@@ -96,7 +96,7 @@ fn reorder_extensions(parts: Vec<String>) -> Vec<String> {
     result
 }
 
-fn reorder_base_variants(parts: &mut Vec<String>) {
+fn reorder_base_variants(parts: &mut [String]) {
     let mut index = 1;
     if parts.get(index).is_some_and(|part| part.len() == 4) {
         index += 1;

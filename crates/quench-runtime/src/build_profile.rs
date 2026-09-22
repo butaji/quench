@@ -62,6 +62,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn production_profile_is_fat_lto() {
         if PROFILE == "production" {
             assert_eq!(LTO, "fat");

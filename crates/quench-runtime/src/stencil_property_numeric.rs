@@ -210,8 +210,13 @@ pub(crate) fn select_property_numeric_return(
     start: usize,
 ) -> Option<PropertyNumericSelection> {
     let mut builder = RecipeBuilder::new(start);
-    for pc in start..entries.len().min(start + MAX_PROPERTY_NUMERIC_VALUES) {
-        let instruction = entries[pc].instruction;
+    for (pc, entry) in entries
+        .iter()
+        .enumerate()
+        .take(entries.len().min(start + MAX_PROPERTY_NUMERIC_VALUES))
+        .skip(start)
+    {
+        let instruction = entry.instruction;
         if instruction.opcode == Opcode::Return {
             return builder.finish(code, cfg, pc, instruction.a);
         }

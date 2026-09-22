@@ -499,12 +499,16 @@ impl<T> ExecutionCell<T> {
         Self(UnsafeCell::new(value), PhantomData)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn borrow(&self) -> &T {
         // SAFETY: generator execution is single-threaded and guarded by the
         // owning GeneratorData state machine.
         unsafe { &*self.0.get() }
     }
 
+    // This cell is the generator's explicit single-threaded state machine;
+    // the shared handle is the ownership token for that state transition.
+    #[allow(clippy::mut_from_ref)]
     pub fn borrow_mut(&self) -> &mut T {
         // SAFETY: generator execution is single-threaded and guarded by the
         // owning GeneratorData state machine.
