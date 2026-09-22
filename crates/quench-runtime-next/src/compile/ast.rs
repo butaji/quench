@@ -219,10 +219,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         super_home_atom: None,
                         rest_override: false,
                         implicit_super: false,
-                        strict: body
-                            .directives
-                            .iter()
-                            .any(|directive| directive.directive == "use strict"),
+                        strict: self.strict
+                            || body
+                                .directives
+                                .iter()
+                                .any(|directive| directive.directive == "use strict"),
                     },
                 );
                 let dst = self.reg();
