@@ -116,7 +116,6 @@ struct Compiler<'a> {
     object_sites: Vec<ObjectSite>,
     superinstructions: Vec<Superinstruction>,
 }
-
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
 
 #[derive(Default)]
@@ -125,7 +124,7 @@ struct FunctionOptions<'a> {
     async_function: bool,
     generator: bool,
     instance_fields: Option<&'a [&'a PropertyDefinition<'a>]>,
-    super_static: bool,
+    super_static: bool, super_home: bool, super_home_atom: Option<Atom>,
     rest_override: bool,
     implicit_super: bool,
     strict: bool,
@@ -202,9 +201,8 @@ impl<'a> Compiler<'a> {
                 async_function: false,
                 generator: false,
                 instance_fields: None,
-                super_static: false,
-                rest_override: false,
-                implicit_super: false,
+                super_static: false, super_home: false, super_home_atom: None,
+                rest_override: false, implicit_super: false,
                 strict: self.root_strict,
             },
         );
@@ -381,10 +379,11 @@ impl<'a> Compiler<'a> {
             locals,
             scopes.to_vec(),
             id,
-            options.super_static,
+            (options.super_static, options.super_home),
             options.async_function,
             options.generator,
         );
+        function.super_home_atom = options.super_home_atom;
         function.strict = root_strict;
         if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);

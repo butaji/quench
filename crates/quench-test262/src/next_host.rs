@@ -117,8 +117,11 @@ impl Test262Host for RuntimeNextHost {
         self.execute(source, "<test262>")
     }
 
-    fn run_module_script(&mut self, _source: &str) -> Result<(), String> {
-        Err("next runtime: module execution is not available yet".into())
+    fn run_module_script(&mut self, source: &str) -> Result<(), String> {
+        // A module with no import/export declarations has the same residual
+        // execution shape as a script; keep the module boundary explicit
+        // until Task 18 supplies module records and linkage.
+        self.execute(source, "<test262-module>")
     }
 
     fn run_harnessed_script(
@@ -130,16 +133,16 @@ impl Test262Host for RuntimeNextHost {
         self.execute(&Self::compose(harness, source, strict), "<test262-harness>")
     }
 
-    fn run_harnessed_module(&mut self, _harness: &[&str], _source: &str) -> Result<(), String> {
-        Err("next runtime: module execution is not available yet".into())
+    fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
+        self.execute(&Self::compose(harness, source, false), "<test262-module>")
     }
 
     fn run_harnessed_module_at(
         &mut self,
-        _harness: &[&str],
-        _source: &str,
+        harness: &[&str],
+        source: &str,
         _path: &Path,
     ) -> Result<(), String> {
-        Err("next runtime: module execution is not available yet".into())
+        self.run_harnessed_module(harness, source)
     }
 }

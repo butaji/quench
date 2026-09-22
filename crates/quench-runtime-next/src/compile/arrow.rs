@@ -21,7 +21,7 @@ impl Compiler<'_> {
             locals,
             scopes.to_vec(),
             id,
-            false,
+            (false, false),
             value.r#async,
             false,
         );

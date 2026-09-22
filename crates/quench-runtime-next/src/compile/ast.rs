@@ -8,6 +8,7 @@ mod expression;
 mod iteration;
 mod object;
 mod optional;
+mod super_ops;
 mod statement;
 mod try_statement;
 
@@ -60,6 +61,8 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) finally_contexts: Vec<FinallyContext>,
     packed_domain_error: bool,
     pub(super) super_static: bool,
+    pub(super) super_home: bool,
+    pub(super) super_home_atom: Option<Atom>,
     pub(super) async_function: bool,
     pub(super) generator: bool,
     pub(super) strict: bool,
@@ -73,7 +76,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         locals: Vec<Atom>,
         scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
         function_id: u32,
-        super_static: bool,
+        super_flags: (bool, bool),
         async_function: bool,
         generator: bool,
     ) -> Self {
@@ -102,7 +105,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             iterator_closures: vec![],
             finally_contexts: vec![],
             packed_domain_error: false,
-            super_static,
+            super_static: super_flags.0,
+            super_home: super_flags.1,
+            super_home_atom: None,
             async_function,
             generator,
             strict: false,
@@ -208,6 +213,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         generator: function.generator,
                         instance_fields: None,
                         super_static: false,
+                        super_home: false,
+                        super_home_atom: None,
                         rest_override: false,
                         implicit_super: false,
                         strict: body

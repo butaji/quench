@@ -158,7 +158,7 @@ const NATIVES: &[Native] = &[
     Native::FinalizationRegistryUnregister,
     Native::DisposableStack, Native::DisposableStackUse, Native::DisposableStackAdopt, Native::DisposableStackDefer, Native::DisposableStackDispose,
     Native::DisposableStackUseAsync, Native::DisposableStackDisposeAsync,
-    Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall,
+    Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall, Native::AsyncFunction, Native::GeneratorFunction, Native::AsyncGeneratorFunction,
     Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateGetTimezoneOffset, Native::DateToISOString, Native::DateToJSON, Native::DateParse, Native::DateUTC,
     Native::Error, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,

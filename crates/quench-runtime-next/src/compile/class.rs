@@ -61,6 +61,8 @@ impl FunctionCompiler<'_, '_> {
                         generator: false,
                         instance_fields: Some(&instance_fields),
                         super_static: false,
+                        super_home: false,
+                        super_home_atom: None,
                         rest_override: implicit_super,
                         implicit_super,
                         strict: false,
@@ -94,15 +96,7 @@ impl FunctionCompiler<'_, '_> {
             prototype_cache,
             prototype_atom,
         );
-        let constructor_atom = self.owner.atom("constructor");
-        let constructor_cache = self.owner.cache_site();
-        self.emit(
-            Op::SetField,
-            class_value,
-            prototype,
-            constructor_cache,
-            constructor_atom,
-        );
+        self.define_class_method(prototype, class_value, None, Some("constructor"));
 
         if let Some(base) = heritage {
             let base_prototype = self.reg();
@@ -170,7 +164,6 @@ impl FunctionCompiler<'_, '_> {
             } else {
                 None
             };
-            let name = name_text.as_deref().map(|name| self.owner.atom(name));
             let function_id =
                 self.owner
                     .compile_class_method(method, &scopes, Some(self.function_id), None);
@@ -189,11 +182,8 @@ impl FunctionCompiler<'_, '_> {
                     name_text.as_deref(),
                     accessor,
                 );
-            } else if let Some(key) = computed_key {
-                self.emit(Op::SetIndex, function, target, key, 0);
             } else {
-                let cache = self.owner.cache_site();
-                self.emit(Op::SetField, function, target, cache, name.unwrap());
+                self.define_class_method(target, function, computed_key, name_text.as_deref());
             }
         }
 
@@ -246,6 +236,42 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         class_value
+    }
+
+    fn define_class_method(
+        &mut self,
+        target: Register,
+        function: Register,
+        computed_key: Option<Register>,
+        name: Option<&str>,
+    ) {
+        let descriptor = self.reg();
+        self.emit(Op::MakeObject, descriptor, 0, 0, 0);
+        for (field, value) in [
+            ("value", function),
+            ("writable", self.literal(Constant::Boolean(true))),
+            ("enumerable", self.literal(Constant::Boolean(false))),
+            ("configurable", self.literal(Constant::Boolean(true))),
+        ] {
+            let atom = self.owner.atom(field);
+            let cache = self.owner.cache_site();
+            self.emit(Op::SetField, value, descriptor, cache, atom);
+        }
+        let object = self.load_name("Object");
+        let define = self.reg();
+        let define_atom = self.owner.atom("defineProperty");
+        let define_cache = self.owner.cache_site();
+        self.emit(Op::GetField, define, FieldBase::register(object).0, define_cache, define_atom);
+        let key = computed_key.unwrap_or_else(|| self.literal(Constant::String(name.unwrap().into())));
+        let base = self.next_reg;
+        let target_arg = self.reg();
+        self.emit(Op::Move, target_arg, target, 0, 0);
+        let key_arg = self.reg();
+        self.emit(Op::Move, key_arg, key, 0, 0);
+        let descriptor_arg = self.reg();
+        self.emit(Op::Move, descriptor_arg, descriptor, 0, 0);
+        let result = self.reg();
+        self.emit(Op::Call, result, define, object, (u32::from(base) << 16) | 3);
     }
 
     fn define_class_accessor(
@@ -401,6 +427,8 @@ impl Compiler<'_> {
                 generator: method.value.generator,
                 instance_fields,
                 super_static: method.r#static,
+                super_home: false,
+                super_home_atom: None,
                 rest_override: false,
                 implicit_super: false,
                 strict: method.value.body.as_ref().is_some_and(|body| {
@@ -430,6 +458,8 @@ impl Compiler<'_> {
                 generator: false,
                 instance_fields: None,
                 super_static: true,
+                super_home: false,
+                super_home_atom: None,
                 rest_override: false,
                 implicit_super: false,
                 strict: false,

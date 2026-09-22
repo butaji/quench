@@ -119,13 +119,7 @@ impl<H: Host> Vm<H> {
             return Ok(value.to_string());
         }
         if let Some(value) = value.as_number() {
-            return Ok(if value == 0.0 {
-                "0".into()
-            } else if value.fract() == 0.0 {
-                format!("{value:.0}")
-            } else {
-                value.to_string()
-            });
+            return Ok(number_string(value));
         }
         match self.heap.get(value) {
             Some(Cell::Function { .. }) => return Ok("function () { [native code] }".into()),
@@ -140,9 +134,18 @@ impl<H: Host> Vm<H> {
         }
         if let Some(atom) = self.lookup_atom("toString") {
             let function = self.get_property(program, value, atom)?;
-            if !function.is_undefined() {
+            if self.is_function(function) {
                 let result = self.call_value(program, function, value, &[])?;
                 return self.to_string(program, result);
+            }
+        }
+        if let Some(atom) = self.lookup_atom("valueOf") {
+            let function = self.get_property(program, value, atom)?;
+            if self.is_function(function) {
+                let result = self.call_value(program, function, value, &[])?;
+                if !result.is_heap() || matches!(self.heap.get(result), Some(Cell::String(_))) {
+                    return self.to_string(program, result);
+                }
             }
         }
         Ok("[object Object]".into())
@@ -165,5 +168,30 @@ impl<H: Host> Vm<H> {
             || v.is_deleted()
             || v == Value::FALSE
             || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan()))
+    }
+}
+
+fn number_string(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".into();
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() { "-Infinity" } else { "Infinity" }.into();
+    }
+    if value == 0.0 {
+        return "0".into();
+    }
+    let magnitude = value.abs();
+    if magnitude >= 1e21 || magnitude < 1e-6 {
+        let scientific = format!("{value:e}");
+        let (mantissa, exponent) = scientific.split_once('e').unwrap();
+        let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
+        let exponent = exponent.parse::<i32>().unwrap();
+        return format!("{mantissa}e{:+}", exponent);
+    }
+    if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        value.to_string()
     }
 }

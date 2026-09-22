@@ -240,19 +240,22 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        for argument in args {
+            let text = self.to_string(program, *argument)?;
+            if text.trim().starts_with("#!") {
+                let message = self
+                    .heap
+                    .alloc(Cell::String("hashbang is not allowed in Function source".into()));
+                let error = self.construct_error_native(program, Native::SyntaxError, &[message])?;
+                return Err(JsError::thrown(
+                    error,
+                    "SyntaxError: hashbang is not allowed in Function source".into(),
+                ));
+            }
+        }
         let source = args.last().copied().unwrap_or(Value::UNDEFINED);
         let source = self.to_string(program, source)?;
         let source = source.trim();
-        if source.starts_with("#!") {
-            let message = self
-                .heap
-                .alloc(Cell::String("hashbang is not allowed in Function source".into()));
-            let error = self.construct_error_native(program, Native::SyntaxError, &[message])?;
-            return Err(JsError::thrown(
-                error,
-                "SyntaxError: hashbang is not allowed in Function source".into(),
-            ));
-        }
         if source == "return this;" {
             return Ok(self.native_with_env(Native::FunctionReturnThis, Value::NULL));
         }

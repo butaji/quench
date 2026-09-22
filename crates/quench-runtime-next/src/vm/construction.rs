@@ -21,6 +21,9 @@ impl<H: Host> Vm<H> {
                 FunctionKind::Native(native) => matches!(
                     native,
                     Native::Function
+                        | Native::AsyncFunction
+                        | Native::GeneratorFunction
+                        | Native::AsyncGeneratorFunction
                         | Native::Object
                         | Native::Proxy
                         | Native::Array
@@ -78,14 +81,43 @@ impl<H: Host> Vm<H> {
             env,
         });
         self.function_values.insert((id, env), function);
+        let length = self.intern_atom("length");
+        self.set_property(function, length, Value::number(p.functions[id as usize].params as f64))?;
+        self.descriptors.insert(
+            (function, property_key::PropertyKey::string(length)),
+            PropertyAttributes { writable: false, enumerable: false, configurable: true, accessor: false, getter: None, setter: None },
+        );
+        let name = self.intern_atom("name");
+        let name_value = p.functions[id as usize]
+            .name
+            .map(|atom| self.heap.alloc(Cell::String(JsString::from_str(self.atom_name(atom)))))
+            .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
+        self.set_property(function, name, name_value)?;
+        self.descriptors.insert(
+            (function, property_key::PropertyKey::string(name)),
+            PropertyAttributes { writable: false, enumerable: false, configurable: true, accessor: false, getter: None, setter: None },
+        );
         let arrow = p.functions[id as usize]
             .name
             .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow");
         if !arrow && let Some(atom) = self.lookup_atom("prototype") {
             self.set_property(function, atom, prototype)?;
+            self.descriptors.insert(
+                (function, property_key::PropertyKey::string(atom)),
+                PropertyAttributes { writable: true, enumerable: false, configurable: false, accessor: false, getter: None, setter: None },
+            );
         }
         let constructor_atom = self.intern_atom("constructor");
-        self.set_property(prototype, constructor_atom, function)?;
+        let constructor = match (p.functions[id as usize].is_async, p.functions[id as usize].is_generator) {
+            (true, true) => self.native_value(Native::AsyncGeneratorFunction),
+            (true, false) => self.native_value(Native::AsyncFunction),
+            (false, true) => self.native_value(Native::GeneratorFunction),
+            (false, false) => function,
+        };
+        self.set_property(prototype, constructor_atom, constructor)?;
+        if p.functions[id as usize].is_async || p.functions[id as usize].is_generator {
+            self.set_property(function, constructor_atom, constructor)?;
+        }
         Ok(function)
     }
 
@@ -141,7 +173,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::Function => self.function_native(p, args),
+            Native::Function | Native::AsyncFunction | Native::GeneratorFunction
+            | Native::AsyncGeneratorFunction => self.function_native(p, args),
             Native::Object => {
                 if let Some(value) = args.first().copied()
                     && self.object_data(value).is_some()

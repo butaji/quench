@@ -216,6 +216,14 @@ impl<H: Host> Vm<H> {
             {
                 return self.proxy_set_symbol(p, target, handler, object, key, value);
             }
+            if let Some(attributes) = self.descriptors.get(&(object, PropertyKey::symbol(key)))
+                && attributes.accessor
+            {
+                if let Some(setter) = attributes.setter {
+                    self.call_value(p, setter, object, &[value])?;
+                }
+                return Ok(());
+            }
             return self.set_symbol_property(object, key, value);
         }
         if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {

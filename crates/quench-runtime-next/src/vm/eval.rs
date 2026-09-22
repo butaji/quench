@@ -36,6 +36,13 @@ impl<H: Host> Vm<H> {
             self.store_name(p, atom, Value::number(-1.0), 0)?;
             return Ok(Value::UNDEFINED);
         }
+        let numeric = trimmed
+            .split_once("//")
+            .map_or(trimmed, |(head, _)| head)
+            .trim();
+        if let Ok(number) = numeric.parse::<f64>() {
+            return Ok(Value::number(number));
+        }
         let identifier = trimmed.chars().next().is_some_and(|character| {
             (character == '_' || character.is_ascii_alphabetic())
                 && trimmed[character.len_utf8()..]
@@ -60,7 +67,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn store_eval_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) {
-        let Some(frame) = self.frames.last_mut() else { return };
+        let Some(frame) = self.frames.last() else { return };
         let Some(function) = p.functions.get(frame.function as usize) else {
             return;
         };
@@ -71,7 +78,17 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        if let Some(local) = frame.locals.get_mut(slot) {
+        if frame.captured {
+            if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(frame.env)
+                && let Some(local) = slots.get_mut(slot)
+            {
+                *local = value;
+            }
+        } else if let Some(local) = self
+            .frames
+            .last_mut()
+            .and_then(|frame| frame.locals.get_mut(slot))
+        {
             *local = value;
         }
     }
