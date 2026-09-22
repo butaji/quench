@@ -225,6 +225,7 @@ pub struct Vm<H> {
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Vec<Atom>>,
+    shape_slots: Vec<FxHashMap<Atom, u16>>,
     transitions: FxHashMap<(u32, Atom), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
@@ -345,6 +346,7 @@ impl<H: Host> Vm<H> {
         self.jobs.clear();
         self.numeric_sites.clear();
         self.shapes.truncate(1);
+        self.shape_slots.truncate(1);
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
         self.atoms.clear();

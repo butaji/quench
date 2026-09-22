@@ -254,10 +254,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.object_data(object) else {
             return false;
         };
-        let Some(slot) = self.shapes[data.shape() as usize]
-            .iter()
-            .position(|candidate| *candidate == atom)
-        else {
+        let Some(slot) = self.shape_slot(data.shape(), atom) else {
             return false;
         };
         if self.heap.property_get(data, slot).is_none() {

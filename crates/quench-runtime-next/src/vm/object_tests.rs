@@ -30,3 +30,16 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
     assert!(table.get(1).is_some() && table.get(4).is_some());
     assert_eq!(vm.megamorphic_field_indices, [0]);
 }
+
+#[test]
+fn shape_slot_index_is_derived_from_immutable_shape_keys() {
+    let mut vm = Vm::new(SilentHost);
+    let first = vm.intern_atom("first");
+    let second = vm.intern_atom("second");
+    let first_shape = vm.transition_shape(0, first);
+    let shape = vm.transition_shape(first_shape, second);
+    assert_eq!(vm.shape_slot(shape, first), Some(0));
+    assert_eq!(vm.shape_slot(shape, second), Some(1));
+    let missing = vm.intern_atom("missing");
+    assert_eq!(vm.shape_slot(shape, missing), None);
+}
