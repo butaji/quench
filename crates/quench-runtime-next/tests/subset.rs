@@ -189,6 +189,20 @@ fn proxy_seal_and_freeze_forward_integrity_to_target() {
 }
 
 #[test]
+fn symbol_descriptors_follow_seal_freeze_and_write_guards() {
+    let source = r#"
+      var key = Symbol('key'); var sealed = {}; sealed[key] = 1;
+      Object.seal(sealed); print(Object.isSealed(sealed));
+      sealed[key] = 2; print(sealed[key]);
+      var frozen = {}; frozen[key] = 3; Object.freeze(frozen);
+      print(Object.isFrozen(frozen));
+      try { frozen[key] = 4; } catch (error) { print('readonly'); }
+      print(frozen[key]);
+    "#;
+    assert_eq!(output(source), ["true", "2", "true", "readonly", "3"]);
+}
+
+#[test]
 fn proxy_own_keys_enforces_target_key_invariants() {
     let source = r#"
       var target = {};

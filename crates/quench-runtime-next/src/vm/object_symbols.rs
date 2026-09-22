@@ -133,6 +133,13 @@ impl<H: Host> Vm<H> {
                 "cannot add property to non-extensible object".into(),
             ));
         }
+        if self
+            .symbol_descriptors
+            .get(&(object, key))
+            .is_some_and(|attributes| !attributes.writable)
+        {
+            return Err(JsError("cannot write non-writable symbol property".into()));
+        }
         let fresh = self
             .symbol_properties
             .insert((object, key), value)
