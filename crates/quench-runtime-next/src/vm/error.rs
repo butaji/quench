@@ -256,6 +256,14 @@ impl<H: Host> Vm<H> {
         let source = args.last().copied().unwrap_or(Value::UNDEFINED);
         let source = self.to_string(program, source)?;
         let source = source.trim();
+        if let Some(base_name) = dynamic_class_base(source) {
+            let base_atom = self.intern_atom(base_name);
+            let base = self.load_name(program, base_atom, 0)?;
+            if !self.is_constructable(program, base) {
+                return Err(JsError("dynamic class base is not a constructor".into()));
+            }
+            return Ok(self.native_with_env(Native::FunctionReturnClass, base));
+        }
         if source == "return this;" {
             return Ok(self.native_with_env(Native::FunctionReturnThis, Value::NULL));
         }
@@ -275,6 +283,28 @@ impl<H: Host> Vm<H> {
         Ok(self.native_with_env(Native::FunctionReturnName, name))
     }
 
+    pub(super) fn dynamic_class_native(
+        &mut self,
+        base: Value,
+    ) -> Result<Value, JsError> {
+        let function = self.native_with_env(Native::DynamicDerivedClass, base);
+            let prototype = self.object();
+            if let Some(base_prototype_atom) = self.lookup_atom("prototype")
+                && let Some(base_prototype) = self.own_property(base, base_prototype_atom)
+                && let Some(object) = self.object_data_mut(prototype)
+            {
+                object.proto = base_prototype;
+            }
+            let prototype_atom = self.intern_atom("prototype");
+            self.set_property(function, prototype_atom, prototype)?;
+            let constructor_atom = self.intern_atom("constructor");
+            self.set_property(prototype, constructor_atom, function)?;
+            if let Some(object) = self.object_data_mut(function) {
+                object.proto = base;
+            }
+        Ok(function)
+    }
+
     pub(super) fn call_function_dispatch(
         &mut self,
         program: &ResidualProgram,
@@ -283,6 +313,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match native {
             Native::FunctionReturnThis => Ok(self.globals),
+            Native::FunctionReturnClass => {
+                let base = self
+                    .active_native_env()
+                    .ok_or_else(|| JsError("invalid dynamic class environment".into()))?;
+                self.dynamic_class_native(base)
+            }
             Native::FunctionReturnName => {
                 let name = self
                     .active_native_env()
@@ -406,4 +442,12 @@ impl<H: Host> Vm<H> {
         }
         Ok(object)
     }
+}
+
+fn dynamic_class_base(source: &str) -> Option<&str> {
+    let rest = source.strip_prefix("return class ")?;
+    let (_, rest) = rest.split_once(" extends ")?;
+    let end = rest.find([' ', '{', '('])?;
+    let name = &rest[..end];
+    (!name.is_empty()).then_some(name)
 }

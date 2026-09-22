@@ -35,6 +35,7 @@ impl<H: Host> Vm<H> {
             return self.data_view_native(p, native, this, args);
         }
         match native {
+            Native::DynamicDerivedClass => Err(JsError("class constructor cannot be called without new".into())),
             Native::WithEnter => {
                 self.with_stack
                     .push(args.first().copied().unwrap_or(Value::UNDEFINED));
