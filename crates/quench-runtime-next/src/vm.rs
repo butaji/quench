@@ -277,7 +277,6 @@ pub struct Vm<H> {
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     symbol_properties: FxHashMap<(Value, property_key::PropertyKey), Value>,
     symbol_property_order: FxHashMap<Value, Vec<property_key::PropertyKey>>,
-    symbol_descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -422,7 +421,6 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.symbol_properties.clear();
         self.symbol_property_order.clear();
-        self.symbol_descriptors.clear();
         self.finalization_registry_proto = Value::NULL;
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.globals = self
