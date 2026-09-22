@@ -59,6 +59,23 @@ pub struct Engine;
 
 impl Engine {
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode(source, name, SpecializationMode::Enabled)
+    }
+
+    /// Compile through the same OXC pipeline without binding-time or opcode
+    /// rewrites, providing the generic reference path for differential gates.
+    pub fn specialize_unspecialized(
+        source: &str,
+        name: &str,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode(source, name, SpecializationMode::Disabled)
+    }
+
+    fn specialize_with_mode(
+        source: &str,
+        name: &str,
+        mode: SpecializationMode,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         // OXC's default geometric growth keeps several chunks alive during
         // parsing. Source-sized staging starts with one representative chunk
         // and still grows normally for unusually dense syntax.
@@ -75,7 +92,7 @@ impl Engine {
                 })
                 .collect());
         }
-        let program = Compiler::new(name).program(&parsed.program);
+        let program = Compiler::new_with_mode(name, mode).program(&parsed.program);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
             eprintln!(
@@ -88,8 +105,15 @@ impl Engine {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SpecializationMode {
+    Enabled,
+    Disabled,
+}
+
 struct Compiler<'a> {
     source: &'a str,
+    mode: SpecializationMode,
     atoms: Vec<Rc<str>>,
     atom_index: FxHashMap<Rc<str>, Atom>,
     constants: Vec<Constant>,
@@ -138,9 +162,10 @@ impl From<&Constant> for ConstantKey {
 }
 
 impl<'a> Compiler<'a> {
-    fn new(source: &'a str) -> Self {
+    fn new_with_mode(source: &'a str, mode: SpecializationMode) -> Self {
         Self {
             source,
+            mode,
             atoms: vec![],
             atom_index: FxHashMap::default(),
             constants: vec![],
@@ -174,18 +199,24 @@ impl<'a> Compiler<'a> {
             return Err(self.errors);
         }
         let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
-        binding_time::apply(&mut functions);
-        Self::apply_rewrites(
-            &mut functions,
-            &mut self.field_sites,
-            &mut self.superinstructions,
-        );
+        if self.mode == SpecializationMode::Enabled {
+            binding_time::apply(&mut functions);
+            Self::apply_rewrites(
+                &mut functions,
+                &mut self.field_sites,
+                &mut self.superinstructions,
+            );
+        }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
             capture_profile::report(&functions);
         }
         for function in &mut functions {
-            function.dispatch = Self::dispatch_class(&function.code);
+            function.dispatch = if self.mode == SpecializationMode::Enabled {
+                Self::dispatch_class(&function.code)
+            } else {
+                DispatchClass::General
+            };
             if function.dispatch == DispatchClass::Numeric {
                 let live = liveness::analyze(
                     function,
