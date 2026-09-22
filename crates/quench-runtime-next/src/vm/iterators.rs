@@ -14,7 +14,11 @@ impl<H: Host> Vm<H> {
         if !self.is_function(method) {
             return Err(JsError("iterator return method is not callable".into()));
         }
-        self.call_value(p, method, iterator, &[])
+        let result = self.call_value(p, method, iterator, &[])?;
+        if !self.is_object_like(result) {
+            return Err(JsError("iterator return result is not an object".into()));
+        }
+        Ok(result)
     }
     pub(super) fn install_iterators(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.iterator_proto = self.object();
@@ -63,7 +67,11 @@ impl<H: Host> Vm<H> {
                 if !self.is_function(method) {
                     return Err(JsError("iterator method is not callable".into()));
                 }
-                return self.call_value(p, method, source, &[]);
+                let iterator = self.call_value(p, method, source, &[])?;
+                if !self.is_object_like(iterator) {
+                    return Err(JsError("iterator method did not return an object".into()));
+                }
+                return Ok(iterator);
             }
         }
         let kind = match self.heap.get(source) {
@@ -127,7 +135,11 @@ impl<H: Host> Vm<H> {
                 if !self.is_function(method) {
                     return Err(JsError("iterator next method is not callable".into()));
                 }
-                return self.call_value(p, method, this, &[]);
+                let result = self.call_value(p, method, this, &[])?;
+                if !self.is_object_like(result) {
+                    return Err(JsError("iterator next result is not an object".into()));
+                }
+                return Ok(result);
             }
         };
         let selected = match kind {
@@ -244,5 +256,28 @@ impl<H: Host> Vm<H> {
             if done { Value::TRUE } else { Value::FALSE },
         )?;
         Ok(result)
+    }
+
+    fn is_object_like(&self, value: Value) -> bool {
+        matches!(
+            self.heap.get(value),
+            Some(
+                Cell::Object(_)
+                    | Cell::Array { .. }
+                    | Cell::ArrayBuffer { .. }
+                    | Cell::TypedArray { .. }
+                    | Cell::DataView { .. }
+                    | Cell::Map { .. }
+                    | Cell::Set { .. }
+                    | Cell::WeakMap { .. }
+                    | Cell::WeakSet { .. }
+                    | Cell::WeakRef { .. }
+                    | Cell::Iterator { .. }
+                    | Cell::Proxy { .. }
+                    | Cell::Function { .. }
+                    | Cell::Date(_)
+                    | Cell::Error(_)
+            )
+        )
     }
 }

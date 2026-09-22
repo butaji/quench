@@ -1586,6 +1586,26 @@ fn array_from_closes_custom_iterator_on_abrupt_completion() {
 }
 
 #[test]
+fn iterator_protocol_rejects_primitive_results() {
+    let source = r#"
+      var iterable = {};
+      iterable[Symbol.iterator] = function() { return 1; };
+      try { Array.from(iterable); } catch (error) { print(error); }
+      var iterator = {};
+      iterator[Symbol.iterator] = function() { return iterator; };
+      iterator.next = function() { return 1; };
+      try { Array.from(iterator); } catch (error) { print(error); }
+    "#;
+    assert_eq!(
+        output(source),
+        [
+            "iterator method did not return an object",
+            "iterator next result is not an object"
+        ]
+    );
+}
+
+#[test]
 fn computed_object_keys_use_indexed_property_semantics() {
     let source = r#"
       var key = 'answer';
