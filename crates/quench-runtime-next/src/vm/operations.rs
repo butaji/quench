@@ -267,6 +267,17 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
+        let primitive_operands = (8..=19).contains(&op);
+        let left = if primitive_operands && self.object_data(left).is_some() {
+            self.to_primitive(p, left, "default")?
+        } else {
+            left
+        };
+        let right = if primitive_operands && self.object_data(right).is_some() {
+            self.to_primitive(p, right, "default")?
+        } else {
+            right
+        };
         if let Some((a, b)) = Value::int_pair(left, right) {
             return Ok(match op {
                 0 | 2 => {
@@ -338,7 +349,65 @@ impl<H: Host> Vm<H> {
                 _ => return Err(JsError(format!("unsupported binary operator {op}").into())),
             });
         }
+        if op >= 8
+            && (matches!(self.heap.get(left), Some(Cell::BigInt(_)))
+            || matches!(self.heap.get(right), Some(Cell::BigInt(_)))
+            )
+        {
+            return self.binary_bigint(p, op, left, right);
+        }
         self.binary_slow(p, op, left, right)
+    }
+
+    fn binary_bigint(
+        &mut self,
+        p: &ResidualProgram,
+        op: u32,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, JsError> {
+        let Some(Cell::BigInt(left)) = self.heap.get(left) else {
+            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+        };
+        let Some(Cell::BigInt(right)) = self.heap.get(right) else {
+            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+        };
+        let result = match op {
+            8 => crate::bigint::binary(left, right, |a, b| Ok(a + b)),
+            9 => crate::bigint::binary(left, right, |a, b| Ok(a - b)),
+            10 => crate::bigint::binary(left, right, |a, b| Ok(a * b)),
+            11 => crate::bigint::binary(left, right, |a, b| {
+                if b == 0.into() { Err(crate::bigint::Error::DivisionByZero) } else { Ok(a / b) }
+            }),
+            12 => crate::bigint::binary(left, right, |a, b| {
+                if b == 0.into() { Err(crate::bigint::Error::DivisionByZero) } else { Ok(a % b) }
+            }),
+            13 => crate::bigint::binary(left, right, |a, b| {
+                if b.sign() == num_bigint::Sign::Minus {
+                    return Err(crate::bigint::Error::NegativeExponent);
+                }
+                let exponent = b.to_str_radix(10).parse::<u32>().map_err(|_| crate::bigint::Error::ExponentTooLarge)?;
+                Ok(a.pow(exponent))
+            }),
+            14 => crate::bigint::shift(left, right, true),
+            15 => crate::bigint::shift(left, right, false),
+            17 => crate::bigint::binary(left, right, |a, b| Ok(a | b)),
+            18 => crate::bigint::binary(left, right, |a, b| Ok(a ^ b)),
+            19 => crate::bigint::binary(left, right, |a, b| Ok(a & b)),
+            _ => return Err(self.type_error(p, "BigInt operation is not supported".into())),
+        };
+        match result {
+            Ok(value) => Ok(self.heap.alloc(Cell::BigInt(value))),
+            Err(crate::bigint::Error::DivisionByZero) => {
+                Err(self.type_error(p, "Division by zero".into()))
+            }
+            Err(crate::bigint::Error::NegativeExponent) => {
+                Err(self.type_error(p, "Negative exponent".into()))
+            }
+            Err(crate::bigint::Error::ExponentTooLarge | crate::bigint::Error::InvalidDecimal) => {
+                Err(self.type_error(p, "Invalid BigInt operation".into()))
+            }
+        }
     }
     #[cold]
     #[inline(never)]
