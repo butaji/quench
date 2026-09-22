@@ -517,9 +517,7 @@ impl ControlFlowFacts {
         start: usize,
         operations: &[crate::ir::Opcode],
     ) -> Option<RegionControlPlan> {
-        let Some(end) = start.checked_add(operations.len()) else {
-            return None;
-        };
+        let end = start.checked_add(operations.len())?;
         (!operations.is_empty()
             && end <= entries.len()
             && operations.iter().enumerate().all(|(offset, opcode)| {
@@ -546,9 +544,7 @@ impl ControlFlowFacts {
         start: usize,
         operations: &[crate::ir::Opcode],
     ) -> Option<RegionControlPlan> {
-        let Some(end) = start.checked_add(operations.len()) else {
-            return None;
-        };
+        let end = start.checked_add(operations.len())?;
         (!operations.is_empty()
             && end <= entries.len()
             && operations.iter().enumerate().all(|(offset, opcode)| {

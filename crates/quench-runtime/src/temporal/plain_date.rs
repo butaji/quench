@@ -416,7 +416,9 @@ pub(crate) struct CalendarDateFields {
     pub era_year: Option<f64>,
 }
 
-const CALENDAR_EXTREME_FIELDS: &[(&str, i32, u32, u32, i32, u32, u32, &str)] = &[
+type CalendarField = (&'static str, i32, u32, u32, i32, u32, u32, &'static str);
+
+const CALENDAR_EXTREME_FIELDS: &[CalendarField] = &[
     ("buddhist", -271_821, 4, 19, -271_278, 4, 19, "M04"),
     ("buddhist", 275_760, 9, 13, 276_303, 9, 13, "M09"),
     ("coptic", -271_821, 4, 19, -272_099, 3, 23, "M03"),
@@ -443,7 +445,7 @@ const CALENDAR_EXTREME_FIELDS: &[(&str, i32, u32, u32, i32, u32, u32, &str)] = &
     ("roc", 275_760, 9, 13, 273_849, 9, 13, "M09"),
 ];
 
-const CALENDAR_APPROXIMATION_FIELDS: &[(&str, i32, u32, u32, i32, u32, u32, &str)] = &[
+const CALENDAR_APPROXIMATION_FIELDS: &[CalendarField] = &[
     ("chinese", 1900, 1, 31, 1900, 1, 1, "M01"),
     ("chinese", 2101, 1, 28, 2100, 12, 29, "M12"),
     ("dangi", 1900, 1, 31, 1900, 1, 1, "M01"),

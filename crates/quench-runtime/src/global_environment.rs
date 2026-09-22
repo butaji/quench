@@ -10,10 +10,13 @@ struct Descriptor {
     data: bool,
 }
 
+type GlobalBindingKey = (crate::ops::RealmId, String);
+type DescriptorFlags = (bool, bool, bool);
+
 thread_local! {
-    static GLOBAL_BINDINGS: RefCell<HashMap<(crate::ops::RealmId, String), Rc<crate::value::BindingCell>>> =
+    static GLOBAL_BINDINGS: RefCell<HashMap<GlobalBindingKey, Rc<crate::value::BindingCell>>> =
         RefCell::new(HashMap::new());
-    static GLOBAL_DESCRIPTOR_FLAGS: RefCell<HashMap<(crate::ops::RealmId, String), (bool, bool, bool)>> =
+    static GLOBAL_DESCRIPTOR_FLAGS: RefCell<HashMap<GlobalBindingKey, DescriptorFlags>> =
         RefCell::new(HashMap::new());
 }
 
