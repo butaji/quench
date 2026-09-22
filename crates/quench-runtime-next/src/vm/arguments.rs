@@ -32,11 +32,15 @@ impl<H: Host> Vm<H> {
                 .copied()
                 .unwrap_or(Value::UNDEFINED)
         };
-        let Some(index) = self.argument_maps.get(&arguments).and_then(|mapping| {
+        let Some(index) = self
+            .object_data(arguments)
+            .and_then(|object| object.arguments_map.as_ref())
+            .and_then(|mapping| {
             mapping
                 .iter()
                 .position(|mapped| *mapped != u16::MAX && usize::from(*mapped) == slot)
-        }) else {
+            })
+        else {
             return fallback;
         };
         match self.heap.get(arguments) {
@@ -79,11 +83,15 @@ impl<H: Host> Vm<H> {
                 .copied()
                 .unwrap_or(Value::UNDEFINED)
         };
-        let Some(index) = self.argument_maps.get(&arguments).and_then(|mapping| {
+        let Some(index) = self
+            .object_data(arguments)
+            .and_then(|object| object.arguments_map.as_ref())
+            .and_then(|mapping| {
             mapping
                 .iter()
                 .position(|mapped| *mapped != u16::MAX && usize::from(*mapped) == slot)
-        }) else {
+            })
+        else {
             return;
         };
         let _ = self.set_array_element(arguments, index, value);
@@ -99,8 +107,8 @@ impl<H: Host> Vm<H> {
             };
             if has_arguments
                 && let Some(slot) = self
-                    .argument_maps
-                    .get(&object)
+                    .object_data(object)
+                    .and_then(|object| object.arguments_map.as_ref())
                     .and_then(|mapping| mapping.get(index).copied())
                     .filter(|slot| *slot != u16::MAX)
             {
@@ -122,7 +130,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn unmap_argument_index(&mut self, object: Value, index: usize) {
-        if let Some(mapping) = self.argument_maps.get_mut(&object)
+        if let Some(mapping) = self
+            .object_data_mut(object)
+            .and_then(|object| object.arguments_map.as_mut())
             && let Some(slot) = mapping.get_mut(index)
         {
             *slot = u16::MAX;

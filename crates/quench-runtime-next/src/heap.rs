@@ -123,7 +123,12 @@ impl Heap {
         second: Value,
     ) -> Value {
         let properties = self.properties.pair(shape, first, second);
-        self.alloc(Cell::Object(Object { proto, properties }))
+        self.alloc(Cell::Object(Object {
+            proto,
+            properties,
+            arguments_map: None,
+            arguments_object: false,
+        }))
     }
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
         self.properties.register_shape(shape, length);

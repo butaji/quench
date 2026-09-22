@@ -422,6 +422,8 @@ impl<H: Host> Vm<H> {
         Object {
             proto,
             properties: ValueVec::new(),
+            arguments_map: None,
+            arguments_object: false,
         }
     }
     fn native(&mut self, kind: Native) -> Value {
