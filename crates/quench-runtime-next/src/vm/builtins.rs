@@ -213,7 +213,8 @@ const NATIVES: &[Native] = &[
     Native::PromiseCatch,
     Native::PromiseFinally, Native::PromiseAll, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAny,
     Native::PromiseReactionJob, Native::PromiseThenableJob,
-    Native::PromiseFinallyJob, Native::PromiseFinallyContinuationJob, Native::PromiseAggregateJob, ];
+    Native::PromiseFinallyJob, Native::PromiseFinallyContinuationJob, Native::PromiseAggregateJob,
+    Native::PromiseAsyncResumeJob, ];
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.install_prototypes();
@@ -443,7 +444,6 @@ impl<H: Host> Vm<H> {
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
         self.intern_js_atom(&JsString::from_str(name))
     }
-
     pub(super) fn intern_js_atom(&mut self, name: &JsString) -> Atom {
         if let Some(atom) = self.lookup_js_atom(name) {
             return atom;

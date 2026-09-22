@@ -230,6 +230,9 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         locals: vec![],
         registers: vec![],
         completion: Completion::Yield(Value::UNDEFINED),
+        captured: false,
+        resume_register: None,
+        promise: Value::UNDEFINED,
     });
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_some());

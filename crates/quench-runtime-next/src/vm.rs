@@ -31,6 +31,7 @@ mod date;
 mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
+mod dynamic_strings;
 mod environment;
 mod error;
 mod field_cache;
@@ -63,7 +64,9 @@ mod primitives;
 mod profile_edges;
 mod promise;
 mod promise_aggregate;
+mod promise_async;
 mod promise_jobs;
+mod promise_state;
 mod proxy;
 mod reflect;
 mod regexp;
@@ -86,7 +89,7 @@ pub use error::JsError;
 use wtf16::JsString;
 #[cfg(test)]
 mod tests;
-struct Frame {
+pub(super) struct Frame {
     function: u32,
     pc: usize,
     env: Value,
@@ -158,6 +161,21 @@ enum CallTarget {
     User(u32, Value),
     NumericUser(u32, Value),
     Native(Native),
+}
+
+pub(super) enum StepResult {
+    Continue,
+    Return(Value),
+    Await { value: Value, destination: Register },
+}
+
+pub(super) enum FrameOutcome {
+    Complete(Value),
+    Await {
+        value: Value,
+        destination: Register,
+        frame: Option<Frame>,
+    },
 }
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -472,29 +490,5 @@ impl<H: Host> Vm<H> {
             }) => Ok(CallTarget::Native(*native)),
             other => self.non_callable_target(callee, other),
         }
-    }
-    pub(super) fn intern_dynamic_value(&mut self, text: JsString) -> Value {
-        let mut hasher = rustc_hash::FxHasher::default();
-        text.hash(&mut hasher);
-        let hash = hasher.finish();
-        if let Some(value) = self
-            .dynamic_strings
-            .as_ref()
-            .and_then(|strings| strings.get(&hash))
-            .copied()
-            && matches!(self.heap.get(value), Some(Cell::String(candidate)) if candidate == &text)
-        {
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.dynamic_string(true);
-            return value;
-        }
-        #[cfg(feature = "profile-aggregate")]
-        self.profile.dynamic_string(false);
-        // A hash collision only evicts this weak canonical entry; content checks prevent semantic changes.
-        let value = self.heap.alloc(Cell::String(text));
-        self.dynamic_strings
-            .get_or_insert_with(|| Box::new(FxHashMap::default()))
-            .insert(hash, value);
-        value
     }
 }

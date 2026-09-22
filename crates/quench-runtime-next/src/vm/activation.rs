@@ -23,6 +23,9 @@ pub(crate) struct Continuation {
     pub locals: Vec<Value>,
     pub registers: Vec<Value>,
     pub completion: Completion,
+    pub captured: bool,
+    pub resume_register: Option<u16>,
+    pub promise: Value,
 }
 
 /// A generation-checked slot for a suspended activation. Resumption consumes
@@ -50,6 +53,7 @@ impl Continuation {
                 | Completion::Yield(value)
                 | Completion::Await(value) => std::iter::once(value),
             })
+            .chain(std::iter::once(self.promise))
     }
 }
 
@@ -67,6 +71,9 @@ mod tests {
             locals: vec![Value::heap(4)],
             registers: vec![Value::heap(5)],
             completion: Completion::Await(Value::heap(6)),
+            captured: false,
+            resume_register: Some(1),
+            promise: Value::heap(7),
         };
         assert_eq!(
             continuation.roots().collect::<Vec<_>>(),
@@ -75,7 +82,8 @@ mod tests {
                 Value::heap(2),
                 Value::heap(4),
                 Value::heap(5),
-                Value::heap(6)
+                Value::heap(6),
+                Value::heap(7)
             ]
         );
     }

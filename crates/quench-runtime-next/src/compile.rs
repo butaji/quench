@@ -364,8 +364,14 @@ impl<'a> Compiler<'a> {
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         self.collect_locals(body, &mut locals);
-        let mut function =
-            FunctionCompiler::new(self, locals, scopes.to_vec(), id, options.super_static);
+        let mut function = FunctionCompiler::new(
+            self,
+            locals,
+            scopes.to_vec(),
+            id,
+            options.super_static,
+            options.async_function,
+        );
         if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);
         }

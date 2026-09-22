@@ -68,7 +68,7 @@ macro_rules! execute_specialized_numeric {
         let right = $vm.resolve_operand($program, $frame, Operand($ins.c()))?;
         let value = specialized_numeric_value!($vm, $program, $operator, $semantic, left, right);
         if $ins.a() & RETURN_REGISTER != 0 {
-            return Ok(Some(value));
+            return Ok(StepResult::Return(value));
         }
         if $ins.a() & NUMERIC_LOCAL_TARGET != 0 {
             $vm.frames[$frame].locals[($ins.a() & REGISTER_MASK) as usize] = value;
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
                 .opcode(ins.op() as usize, frame, function as u32, _instruction_pc);
             #[cfg(not(feature = "profile-aggregate"))]
             self.profile.opcode(ins.op() as usize);
-            let outcome = (|| -> Result<Option<Value>, JsError> {
+            let outcome = (|| -> Result<StepResult, JsError> {
                 match ins.op() {
                     Op::LoadLocal => {
                         let value = self.frames[frame].locals[ins.imm() as usize];
@@ -237,7 +237,7 @@ impl<H: Host> Vm<H> {
                             None => self.binary(p, ins.imm(), left, right)?,
                         };
                         if ins.a() & RETURN_REGISTER != 0 {
-                            return Ok(Some(value));
+                            return Ok(StepResult::Return(value));
                         }
                         if ins.a() & NUMERIC_LOCAL_TARGET != 0 {
                             self.frames[frame].locals[(ins.a() & REGISTER_MASK) as usize] = value;
@@ -292,7 +292,7 @@ impl<H: Host> Vm<H> {
                     }
                     Op::Return => {
                         self.frames[frame].pc = pc;
-                        return Ok(Some(self.read(frame, ins.a())));
+                        return Ok(StepResult::Return(self.read(frame, ins.a())));
                     }
                     _ => {
                         self.frames[frame].pc = pc;
@@ -301,11 +301,14 @@ impl<H: Host> Vm<H> {
                         return result;
                     }
                 }
-                Ok(None)
+                Ok(StepResult::Continue)
             })();
             match outcome {
-                Ok(Some(value)) => return Ok(value),
-                Ok(None) => {}
+                Ok(StepResult::Return(value)) => return Ok(value),
+                Ok(StepResult::Continue) => {}
+                Ok(StepResult::Await { .. }) => {
+                    return Err(JsError("await is not valid in numeric dispatch".into()));
+                }
                 Err(error) => {
                     let throwing_pc = pc as u32 - 1;
                     let handler = p.functions[function]
@@ -343,7 +346,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
         instruction: Instr,
-    ) -> Result<Option<Value>, JsError> {
+    ) -> Result<StepResult, JsError> {
         let mut pc = self.frames[frame].pc;
         let result = self.step(p, frame, instruction.as_wide(), &mut pc);
         self.frames[frame].pc = pc;

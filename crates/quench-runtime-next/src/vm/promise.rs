@@ -1,3 +1,4 @@
+use super::activation::ContinuationId;
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +81,13 @@ pub(super) struct AggregateJob {
     pub(super) rejected: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct AsyncResumeJob {
+    pub(super) continuation: ContinuationId,
+    pub(super) promise: Value,
+    pub(super) rejected: bool,
+}
+
 pub(super) struct PromiseRuntime {
     pub(super) proto: Value,
     pub(super) records: FxHashMap<Value, PromiseRecord>,
@@ -89,6 +97,7 @@ pub(super) struct PromiseRuntime {
     pub(super) finally_continuation_jobs: FxHashMap<Value, FinallyContinuationJob>,
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
+    pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) active_native: Vec<Value>,
 }
 
@@ -103,6 +112,7 @@ impl Default for PromiseRuntime {
             finally_continuation_jobs: FxHashMap::default(),
             aggregates: FxHashMap::default(),
             aggregate_jobs: FxHashMap::default(),
+            async_resume_jobs: FxHashMap::default(),
             active_native: vec![],
         }
     }
@@ -316,6 +326,9 @@ impl<H: Host> Vm<H> {
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
+            Native::PromiseAsyncResumeJob => {
+                self.promise_async_resume_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
             _ => unreachable!(),
         }
     }
@@ -466,35 +479,5 @@ impl<H: Host> Vm<H> {
             self.enqueue_promise_finally(reaction, record.state, record.result);
         }
         Ok(next)
-    }
-
-    pub(super) fn promise_settle(
-        &mut self,
-        p: &ResidualProgram,
-        promise: Value,
-        state: PromiseState,
-        result: Value,
-    ) -> Result<(), JsError> {
-        let (reactions, finally_reactions) = {
-            let Some(record) = self.promise.records.get_mut(&promise) else {
-                return Err(JsError("invalid Promise state".into()));
-            };
-            if record.state != PromiseState::Pending {
-                return Ok(());
-            }
-            record.state = state;
-            record.result = result;
-            (
-                std::mem::take(&mut record.reactions),
-                std::mem::take(&mut record.finally_reactions),
-            )
-        };
-        for reaction in reactions {
-            self.enqueue_promise_reaction(p, reaction, state, result);
-        }
-        for reaction in finally_reactions {
-            self.enqueue_promise_finally(reaction, state, result);
-        }
-        Ok(())
     }
 }

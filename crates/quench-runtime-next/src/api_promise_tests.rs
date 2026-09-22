@@ -150,3 +150,45 @@ fn async_functions_wrap_return_and_throw_in_promises() {
     runtime.execute(&decoded).unwrap();
     assert_eq!(view.0.borrow().as_slice(), ["7", "8"]);
 }
+
+#[test]
+fn async_await_resumes_through_the_promise_job_queue() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "async function value() { return await 7; } value().then(print); print('sync');",
+            "async-await.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["sync", "7"]);
+}
+
+#[test]
+fn async_await_rejection_enters_catch() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "async function value() { try { await Promise.reject(3); } catch (error) { return error + 1; } } value().then(print);",
+            "async-await-catch.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["4"]);
+}
+
+#[test]
+fn async_await_waits_for_pending_promises_and_propagates_rejection() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "var resolve; var pending = new Promise(function(next) { resolve = next; }); async function value() { return await pending; } value().then(print); print('before'); resolve(9); async function fail() { return await Promise.reject(6); } fail().catch(print);",
+            "async-await-pending.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["before", "9", "6"]);
+}
