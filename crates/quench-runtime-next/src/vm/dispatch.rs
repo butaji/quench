@@ -311,6 +311,27 @@ impl<H: Host> Vm<H> {
                 let previous_parameter_eval = self.parameter_eval;
                 self.direct_eval = direct_eval;
                 self.parameter_eval = parameter_eval;
+                let terminal = i.a() & RETURN_REGISTER != 0
+                    || p.functions[self.frames[f].function as usize]
+                        .code
+                        .get(*pc)
+                        .is_some_and(|packed| {
+                            if packed.is_wide() {
+                                p.functions[self.frames[f].function as usize].wide
+                                    [packed.wide_index()]
+                                .op()
+                                    == Op::Return
+                            } else {
+                                packed.op() == Op::Return
+                            }
+                        });
+                if terminal && let Some(CallTarget::User(id, env)) = self.call_target(callee).ok() {
+                    self.prepare_user_tail(p, f, id, env, this, args)?;
+                    self.direct_eval = previous_direct_eval;
+                    self.parameter_eval = previous_parameter_eval;
+                    self.profile.terminal_call(0);
+                    return Ok(StepResult::TailCall);
+                }
                 let value = match self.call_value(p, callee, this, args) {
                     Ok(value) => value,
                     Err(error) => {
@@ -336,6 +357,25 @@ impl<H: Host> Vm<H> {
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, n as usize);
                 self.frames[f].pc = *pc;
+                let terminal = i.a() & RETURN_REGISTER != 0
+                    || p.functions[self.frames[f].function as usize]
+                        .code
+                        .get(*pc)
+                        .is_some_and(|packed| {
+                            if packed.is_wide() {
+                                p.functions[self.frames[f].function as usize].wide
+                                    [packed.wide_index()]
+                                .op()
+                                    == Op::Return
+                            } else {
+                                packed.op() == Op::Return
+                            }
+                        });
+                if terminal {
+                    self.prepare_user_tail(p, f, u32::from(i.b()), parent, Value::UNDEFINED, args)?;
+                    self.profile.terminal_call(0);
+                    return Ok(StepResult::TailCall);
+                }
                 let value = self.call_user_maybe_async(
                     p,
                     u32::from(i.b()),

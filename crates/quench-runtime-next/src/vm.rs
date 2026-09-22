@@ -185,6 +185,7 @@ enum CallTarget {
 }
 pub(super) enum StepResult {
     Continue,
+    TailCall,
     Return(Value),
     Await { value: Value, destination: Register },
     Yield { value: Value, destination: Register },

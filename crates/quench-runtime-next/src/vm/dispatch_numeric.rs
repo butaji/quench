@@ -315,6 +315,9 @@ impl<H: Host> Vm<H> {
             match outcome {
                 Ok(StepResult::Return(value)) => return Ok(value),
                 Ok(StepResult::Continue) => {}
+                Ok(StepResult::TailCall) => {
+                    return Err(JsError("tail call is not valid in numeric dispatch".into()));
+                }
                 Ok(StepResult::Await { .. }) => {
                     return Err(JsError("await is not valid in numeric dispatch".into()));
                 }
