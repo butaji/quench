@@ -99,8 +99,9 @@ impl<H: Host> Vm<H> {
             if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
                 let existing =
                     index < elements.len() || self.heap.sparse_get(object, index).is_some();
-                if self.frozen.contains(&object)
-                    || self.non_extensible.contains(&object) && !existing
+                let integrity = self.object_data(object);
+                if integrity.is_some_and(Object::is_frozen)
+                    || integrity.is_some_and(|object| !object.is_extensible()) && !existing
                 {
                     return Err(JsError("cannot write sealed or frozen array".into()));
                 }
@@ -211,7 +212,10 @@ impl<H: Host> Vm<H> {
             return Err(JsError("array receiver is not array".into()));
         };
         let existing = index < elements.len() || self.heap.sparse_get(object, index).is_some();
-        if self.frozen.contains(&object) || self.non_extensible.contains(&object) && !existing {
+        let integrity = self.object_data(object);
+        if integrity.is_some_and(Object::is_frozen)
+            || integrity.is_some_and(|object| !object.is_extensible()) && !existing
+        {
             return Err(JsError("cannot write sealed or frozen array".into()));
         }
         Ok(())
@@ -224,10 +228,14 @@ impl<H: Host> Vm<H> {
         adds: bool,
         removes: bool,
     ) -> Result<(), JsError> {
-        if self.frozen.contains(&object) && (writes || adds || removes) {
+        if self.object_data(object).is_some_and(Object::is_frozen) && (writes || adds || removes) {
             return Err(JsError("cannot mutate frozen array".into()));
         }
-        if self.non_extensible.contains(&object) && (adds || removes) {
+        if self
+            .object_data(object)
+            .is_some_and(|object| !object.is_extensible())
+            && (adds || removes)
+        {
             return Err(JsError("cannot change sealed array length".into()));
         }
         Ok(())
