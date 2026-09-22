@@ -5,6 +5,40 @@ use super::promise::{
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn async_result(
+        &mut self,
+        p: &ResidualProgram,
+        result: Result<Value, JsError>,
+    ) -> Result<Value, JsError> {
+        let promise = self.promise_object();
+        match result {
+            Ok(value) => self.promise_resolve_value(p, promise, value)?,
+            Err(error) => {
+                let reason = error
+                    .thrown_value()
+                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+            }
+        }
+        Ok(promise)
+    }
+
+    pub(super) fn call_user_maybe_async(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        env: Value,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let result = self.call_user(p, id, env, this, args);
+        if p.functions[id as usize].is_async {
+            self.async_result(p, result)
+        } else {
+            result
+        }
+    }
+
     fn enqueue_finally_continuation(
         &mut self,
         p: &ResidualProgram,

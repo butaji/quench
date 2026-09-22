@@ -134,6 +134,7 @@ type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
 #[derive(Default)]
 struct FunctionOptions<'a> {
     defaults: Option<&'a FormalParameters<'a>>,
+    async_function: bool,
     instance_fields: Option<&'a [&'a PropertyDefinition<'a>]>,
     super_static: bool,
     rest_override: bool,
@@ -193,6 +194,7 @@ impl<'a> Compiler<'a> {
             None,
             FunctionOptions {
                 defaults: None,
+                async_function: false,
                 instance_fields: None,
                 super_static: false,
                 rest_override: false,
@@ -409,6 +411,7 @@ impl<'a> Compiler<'a> {
             params: params.len() as u16,
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
+            is_async: options.async_function,
             locals: function.locals.len() as u16,
             code: function.code,
             wide: function.wide,

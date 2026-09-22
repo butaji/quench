@@ -370,6 +370,7 @@ mod tests {
             name: None,
             params: 0,
             rest: false,
+            is_async: false,
             locals: 0,
             code,
             wide: vec![],

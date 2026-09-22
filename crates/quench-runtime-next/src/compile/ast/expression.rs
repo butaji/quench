@@ -137,6 +137,7 @@ impl FunctionCompiler<'_, '_> {
             Some(self.function_id),
             FunctionOptions {
                 defaults: Some(&value.params),
+                async_function: value.r#async,
                 ..FunctionOptions::default()
             },
         );
