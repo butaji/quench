@@ -2695,7 +2695,7 @@ mod layout_tests {
         let size = std::mem::size_of::<ObjectShape>();
         let alignment = std::mem::align_of::<ObjectShape>();
         assert!(size <= HOT_HEADER_BYTES);
-        assert!(HOT_HEADER_BYTES <= CACHE_LINE_BYTES);
+        const { assert!(HOT_HEADER_BYTES <= CACHE_LINE_BYTES) };
         assert!(alignment <= HOT_HEADER_BYTES);
         // The fields used by the hot lookup are all contained in the record;
         // this catches accidental tail growth or a cache-line-sized padding

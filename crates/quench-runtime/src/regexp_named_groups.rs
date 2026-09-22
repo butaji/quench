@@ -12,6 +12,9 @@ struct GroupAlternative {
     branch: usize,
 }
 
+type GroupPath = Vec<(usize, usize)>;
+type GroupOccurrence = (String, GroupPath);
+
 fn validate_duplicate_group_names(body: &str) -> Result<(), String> {
     let occurrences = named_group_occurrences(body)?;
     for (index, (name, path)) in occurrences.iter().enumerate() {
@@ -25,7 +28,7 @@ fn validate_duplicate_group_names(body: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn named_group_occurrences(body: &str) -> Result<Vec<(String, Vec<(usize, usize)>)>, String> {
+fn named_group_occurrences(body: &str) -> Result<Vec<GroupOccurrence>, String> {
     let bytes = body.as_bytes();
     let mut stack = vec![GroupAlternative { id: 0, branch: 0 }];
     let mut occurrences = Vec::new();

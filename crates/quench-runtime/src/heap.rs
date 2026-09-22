@@ -1737,7 +1737,7 @@ mod tests {
             std::mem::offset_of!(HeapStats, size_classes),
             HEAP_HOT_PREFIX_BYTES
         );
-        assert!(HEAP_HOT_PREFIX_BYTES <= CACHE_LINE_BYTES);
+        const { assert!(HEAP_HOT_PREFIX_BYTES <= CACHE_LINE_BYTES) };
     }
     #[test]
     fn heap_stats_snapshots_are_isolate_owned_and_do_not_alias() {
