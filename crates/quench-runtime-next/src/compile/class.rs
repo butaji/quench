@@ -159,7 +159,13 @@ impl FunctionCompiler<'_, '_> {
                         .reject(method.span, "class method key is unsupported");
                     continue;
                 };
-                Some(name.to_owned())
+                Some(
+                    if matches!(&method.key, PropertyKey::PrivateIdentifier(_)) {
+                        format!("#{name}")
+                    } else {
+                        name.to_owned()
+                    },
+                )
             } else {
                 None
             };
@@ -434,6 +440,7 @@ impl Compiler<'_> {
 fn class_method_name<'a>(key: &'a PropertyKey<'a>) -> Option<&'a str> {
     match key {
         PropertyKey::StaticIdentifier(id) => Some(id.name.as_str()),
+        PropertyKey::PrivateIdentifier(id) => Some(id.name.as_str()),
         PropertyKey::StringLiteral(value)
             if !matches!(super::string::constant(value), Constant::StringUnits(_)) =>
         {

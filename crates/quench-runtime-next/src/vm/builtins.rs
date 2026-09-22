@@ -2,7 +2,7 @@ use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::RealmTypeError, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::Object,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::Object,
     Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
@@ -160,7 +160,7 @@ const NATIVES: &[Native] = &[
     Native::DisposableStackUseAsync, Native::DisposableStackDisposeAsync,
     Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall,
     Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateGetTimezoneOffset, Native::DateToISOString, Native::DateToJSON, Native::DateParse, Native::DateUTC,
-    Native::Error, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError,
+    Native::Error, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
     Native::RegExpExec,
     Native::RegExpTest,
@@ -244,6 +244,7 @@ impl<H: Host> Vm<H> {
         self.global(program, "NaN", Value::number(f64::NAN))?;
         self.global(program, "Infinity", Value::number(f64::INFINITY))?;
         self.global(program, "print", self.native_value(Native::Print))?;
+        self.global(program, "eval", self.native_value(Native::Eval))?;
         self.install_date(program)?;
         self.install_host_globals(program)?;
         self.install_errors(program)?;

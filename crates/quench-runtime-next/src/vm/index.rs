@@ -156,6 +156,12 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&index.to_string());
                 return self.set_property_with_program(p, object, atom, value);
             }
+            if self
+                .array_descriptor(object, index)
+                .is_some_and(|attributes| !attributes.writable)
+            {
+                return Ok(());
+            }
             if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
                 let existing = index < elements.len()
                     && elements.get(index).is_some_and(|value| !value.is_deleted())
@@ -186,6 +192,7 @@ impl<H: Host> Vm<H> {
                 self.profile
                     .array_write_ownership(Rc::strong_count(elements) != 1);
                 mutable_array_elements(elements)[index] = value;
+                self.sync_mapped_argument(object, index, value);
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.index_set(0);
                 return Ok(());
@@ -240,6 +247,19 @@ impl<H: Host> Vm<H> {
             self.profile.index_set(7);
         }
         let key = self.coerce_js_string(p, key)?;
+        if let Some(index) = super::object_static::array_index(key.host_string())
+            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+        {
+            if self
+                .array_descriptor(object, index as usize)
+                .is_some_and(|attributes| !attributes.writable)
+            {
+                return Ok(());
+            }
+            if self.set_array_element(object, index as usize, value) {
+                return Ok(());
+            }
+        }
         let atom = self.intern_js_atom(&key);
         self.set_property_with_program(p, object, atom, value)
     }
@@ -260,6 +280,7 @@ impl<H: Host> Vm<H> {
             self.profile
                 .array_write_ownership(Rc::strong_count(elements) != 1);
             mutable_array_elements(elements)[index] = value;
+            self.sync_mapped_argument(object, index, value);
             return true;
         }
         let sparse = self.heap.sparse_length(object).is_some()
@@ -274,6 +295,7 @@ impl<H: Host> Vm<H> {
             elements.resize(index + 1, Value::DELETED);
             elements[index] = value;
         }
+        self.sync_mapped_argument(object, index, value);
         true
     }
 

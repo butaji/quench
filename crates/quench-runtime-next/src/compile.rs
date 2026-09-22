@@ -1,24 +1,22 @@
-use std::fmt;
-
+use crate::bytecode::{
+    Atom, AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
+    MAPPED_ARGUMENTS_BIT, MethodSite, ObjectSite, Op, Operand, Register, ResidualProgram,
+    SET_THIS_REGISTER, Superinstruction, WideInstruction,
+};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::FxHashMap;
+use std::fmt;
 use std::rc::Rc;
-
-use crate::bytecode::{
-    Atom, AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
-    MethodSite, ObjectSite, Op, Operand, Register, ResidualProgram, SET_THIS_REGISTER,
-    Superinstruction, WideInstruction,
-};
-
 mod arrow;
 mod ast;
 mod binding_time;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
 mod class;
+mod early;
 mod liveness;
 mod locals;
 mod numeric;
@@ -29,14 +27,12 @@ mod sequence;
 mod string;
 mod template;
 use ast::FunctionCompiler;
-
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     source: String,
     message: String,
     span: Span,
 }
-
 impl Diagnostic {
     pub(crate) fn unsupported(source: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
@@ -46,7 +42,6 @@ impl Diagnostic {
         }
     }
 }
-
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -56,7 +51,6 @@ impl fmt::Display for Diagnostic {
         )
     }
 }
-
 pub struct Engine;
 
 impl Engine {
@@ -64,8 +58,6 @@ impl Engine {
         Self::specialize_with_mode(source, name, SpecializationMode::Enabled)
     }
 
-    /// Compile through the same OXC pipeline without binding-time or opcode
-    /// rewrites, providing the generic reference path for differential gates.
     pub fn specialize_unspecialized(
         source: &str,
         name: &str,
@@ -78,9 +70,6 @@ impl Engine {
         name: &str,
         mode: SpecializationMode,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        // OXC's default geometric growth keeps several chunks alive during
-        // parsing. Source-sized staging starts with one representative chunk
-        // and still grows normally for unusually dense syntax.
         let allocator = Allocator::with_capacity(source.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
         if !parsed.diagnostics.is_empty() {
@@ -94,7 +83,7 @@ impl Engine {
                 })
                 .collect());
         }
-        let program = Compiler::new_with_mode(name, mode).program(&parsed.program);
+        let program = Compiler::new_with_mode(name, source, mode).program(&parsed.program);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
             eprintln!(
@@ -115,7 +104,9 @@ enum SpecializationMode {
 
 struct Compiler<'a> {
     source: &'a str,
+    text: &'a str,
     mode: SpecializationMode,
+    root_strict: bool,
     atoms: Vec<Rc<str>>,
     atom_index: FxHashMap<Rc<str>, Atom>,
     constants: Vec<Constant>,
@@ -168,10 +159,12 @@ impl From<&Constant> for ConstantKey {
 }
 
 impl<'a> Compiler<'a> {
-    fn new_with_mode(source: &'a str, mode: SpecializationMode) -> Self {
+    fn new_with_mode(source: &'a str, text: &'a str, mode: SpecializationMode) -> Self {
         Self {
             source,
+            text,
             mode,
+            root_strict: false,
             atoms: vec![],
             atom_index: FxHashMap::default(),
             constants: vec![],
@@ -187,6 +180,16 @@ impl<'a> Compiler<'a> {
     }
 
     fn program(mut self, program: &Program<'_>) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        self.root_strict = program
+            .directives
+            .iter()
+            .any(|directive| directive.directive == "use strict");
+        if self.root_strict && early::strict_arguments_early_error(self.text) {
+            self.reject(
+                Span::default(),
+                "SyntaxError: assignment to arguments is not allowed in strict mode",
+            );
+        }
         self.compile_function(
             None,
             &[],
@@ -372,6 +375,7 @@ impl<'a> Compiler<'a> {
             locals.push(self.atom("arguments"));
             Some((locals.len() - 1) as u16)
         };
+        let root_strict = self.root_strict;
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -428,6 +432,20 @@ impl<'a> Compiler<'a> {
                 instruction.set_op(op);
             }
         }
+        let simple_parameters = options.defaults.is_none_or(|formal| {
+            formal.rest.is_none()
+                && formal.items.iter().all(|item| {
+                    item.initializer.is_none()
+                        && matches!(item.pattern, BindingPattern::BindingIdentifier(_))
+                })
+        });
+        let arguments_slot = arguments_slot.map(|slot| {
+            if !root_strict && !options.rest_override && simple_parameters {
+                slot | MAPPED_ARGUMENTS_BIT
+            } else {
+                slot
+            }
+        });
         let result = BcFunction {
             parent,
             name: name.map(|value| function.owner.atom(value)),
