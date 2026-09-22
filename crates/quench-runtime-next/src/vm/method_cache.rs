@@ -13,7 +13,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_function(&self, value: Value) -> bool {
-        matches!(self.heap.get(value), Some(Cell::Function { .. }))
+        match self.heap.get(value) {
+            Some(Cell::Function { .. }) => true,
+            Some(Cell::Proxy {
+                target, handler, ..
+            }) if !handler.is_null() => self.is_function(*target),
+            _ => false,
+        }
     }
 
     #[cfg(feature = "profile-aggregate")]
