@@ -36,6 +36,7 @@ mod dynamic_strings;
 mod environment;
 mod equality;
 mod error;
+mod eval;
 mod field_cache;
 mod finalization;
 mod function;
