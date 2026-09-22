@@ -70,6 +70,16 @@ fn array_index_accessor_descriptors_share_index_authority() {
 }
 
 #[test]
+fn array_index_ownership_predicates_use_descriptor_authority() {
+    assert_eq!(
+        output(
+            "var array = [1]; Object.defineProperty(array, '1', { value: 2, enumerable: false, configurable: true }); print(Object.hasOwn(array, 0)); print(Object.hasOwn(array, '1')); print(array.hasOwnProperty('1')); print(array.propertyIsEnumerable('1')); print(Object.hasOwn(new Array(2), 1));"
+        ),
+        ["true", "true", "true", "false", "false"],
+    );
+}
+
+#[test]
 fn proxy_revocable_revoke_closes_the_shared_handler_state() {
     assert_eq!(
         output(
