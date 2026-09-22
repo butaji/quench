@@ -19,7 +19,23 @@ impl FunctionCompiler<'_, '_> {
             Statement::ExpressionStatement(item) => {
                 self.expression(&item.expression);
             }
-            Statement::BlockStatement(block) => self.statements(&block.body),
+            Statement::BlockStatement(block) => {
+                let has_using = block.body.iter().any(|statement| {
+                    matches!(
+                        statement,
+                        Statement::VariableDeclaration(declaration)
+                            if matches!(
+                                declaration.kind,
+                                VariableDeclarationKind::Using
+                                    | VariableDeclarationKind::AwaitUsing
+                            )
+                    )
+                });
+                self.statements(&block.body);
+                if has_using {
+                    self.emit_disposal();
+                }
+            }
             Statement::VariableDeclaration(item) => self.variables(item),
             Statement::ReturnStatement(item) => self.return_statement(item),
             Statement::IfStatement(item) => self.if_statement(item),
@@ -118,6 +134,27 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn variables(&mut self, declaration: &VariableDeclaration<'_>) {
+        if matches!(
+            declaration.kind,
+            VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+        ) {
+            if declaration.kind == VariableDeclarationKind::AwaitUsing {
+                self.owner
+                    .reject(declaration.span, "await using is not supported yet");
+                return;
+            }
+            let stack = self.ensure_disposable_stack();
+            for item in &declaration.declarations {
+                let value = if let Some(init) = &item.init {
+                    self.expression(init)
+                } else {
+                    self.literal(Constant::Undefined)
+                };
+                let registered = self.call_disposable_method(stack, "use", value);
+                self.bind_pattern(&item.id, registered);
+            }
+            return;
+        }
         for item in &declaration.declarations {
             if let Some(init) = &item.init {
                 let value = self.expression(init);

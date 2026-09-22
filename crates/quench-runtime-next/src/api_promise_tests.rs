@@ -285,3 +285,17 @@ fn disposable_stack_disposes_entries_in_lifo_order() {
         ["true", "deferred", "3", "resource", "disposed"]
     );
 }
+
+#[test]
+fn using_declaration_registers_and_disposes_on_normal_scope_exit() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "var resource = { [Symbol.dispose]: function() { print('disposed'); } }; { using value = resource; print(value === resource); } print('after');",
+            "using.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["true", "disposed", "after"]);
+}
