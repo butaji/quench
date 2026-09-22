@@ -212,7 +212,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::StaticMemberExpression(item) => {
                 if matches!(&item.object, Expression::Super(_)) {
                     let base = self.expression(&item.object);
-                    let target = if self.super_static {
+                    let target = if self.super_static || self.super_home {
                         base
                     } else {
                         let prototype = self.reg();
@@ -249,7 +249,7 @@ impl FunctionCompiler<'_, '_> {
                 (dst, this)
             }
             Expression::ComputedMemberExpression(item) => {
-                let this = if matches!(&item.object, Expression::Super(_)) && !self.super_static {
+                let this = if matches!(&item.object, Expression::Super(_)) && !self.super_static && !self.super_home {
                     let base = self.expression(&item.object);
                     let prototype = self.reg();
                     let atom = self.owner.atom("prototype");

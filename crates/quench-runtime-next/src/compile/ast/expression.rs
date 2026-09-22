@@ -16,7 +16,7 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::LoadThis, dst, 0, 0, 0);
                 dst
             }
-            Expression::Super(_) => self.load_name("\0rqj:super"),
+            Expression::Super(_) => self.super_base(),
             Expression::FunctionExpression(value) => self.function_expression(value),
             Expression::ArrowFunctionExpression(value) => self.arrow_function_expression(value),
             Expression::ClassExpression(value) => self.class_expression(value),
@@ -241,7 +241,7 @@ impl FunctionCompiler<'_, '_> {
         object: &Expression<'_>,
         key: &Expression<'_>,
     ) -> Register {
-        let object = if matches!(object, Expression::Super(_)) && !self.super_static {
+        let object = if matches!(object, Expression::Super(_)) && !self.super_static && !self.super_home {
             let base = self.expression(object);
             let prototype = self.reg();
             let atom = self.owner.atom("prototype");
@@ -282,6 +282,7 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::GetIndex, dst, object, key, 0);
         dst
     }
+
     pub(super) fn assign_target(
         &mut self,
         target: &SimpleAssignmentTarget<'_>,
