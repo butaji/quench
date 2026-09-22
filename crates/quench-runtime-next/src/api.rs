@@ -73,6 +73,33 @@ impl<H: Host> Runtime<H> {
         self.vm.release_root(root)
     }
 
+    pub fn root_value(&self, root: RootId) -> Option<Value> {
+        self.vm.root_value(root)
+    }
+
+    /// Queue a callback using only generation-checked persistent roots. The
+    /// queue owns the values until `run_jobs` drains them through the VM.
+    pub fn enqueue_rooted_job(&mut self, callback: RootId, args: &[RootId]) -> bool {
+        let Some(callback) = self.vm.root_value(callback) else {
+            return false;
+        };
+        let Some(args) = args
+            .iter()
+            .copied()
+            .map(|root| self.vm.root_value(root))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        self.vm.enqueue_job(callback, args);
+        true
+    }
+
+    pub fn run_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        program.validate().map_err(JsError::validation)?;
+        self.vm.drain_jobs(program)
+    }
+
     pub fn compile_and_execute(
         &mut self,
         request: ExecutionRequest<'_>,
@@ -294,5 +321,13 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["1", "3", "cycle"]);
+    }
+
+    #[test]
+    fn stale_root_cannot_enqueue_a_job() {
+        let mut runtime = Runtime::new(Capture::default());
+        let root = runtime.root(Value::UNDEFINED);
+        assert!(runtime.release_root(root));
+        assert!(!runtime.enqueue_rooted_job(root, &[]));
     }
 }

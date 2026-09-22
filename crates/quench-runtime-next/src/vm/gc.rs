@@ -136,7 +136,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+    pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         let mut index = 0;
         while index < self.jobs.len() {
             let job = &self.jobs[index];
