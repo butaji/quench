@@ -1,5 +1,48 @@
 use super::{Effect, Op, RETURN_REGISTER, Register, SET_THIS_REGISTER};
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WideInstruction {
+    op: Op,
+    a: u16,
+    b: u16,
+    c: u16,
+    imm: u32,
+}
+
+impl WideInstruction {
+    pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
+        Self { op, a, b, c, imm }
+    }
+
+    pub(crate) const fn op(self) -> Op {
+        self.op
+    }
+
+    pub(crate) const fn a(self) -> u16 {
+        self.a
+    }
+
+    pub(crate) const fn b(self) -> u16 {
+        self.b
+    }
+
+    pub(crate) const fn c(self) -> u16 {
+        self.c
+    }
+
+    pub(crate) const fn imm(self) -> u32 {
+        self.imm
+    }
+
+    pub(crate) fn set_op(&mut self, op: Op) {
+        self.op = op;
+    }
+
+    pub(crate) fn set_imm(&mut self, imm: u32) {
+        self.imm = imm;
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Instr(u64);
@@ -21,7 +64,6 @@ const _: () = assert!(std::mem::size_of::<Instr>() == 8);
 const _: () = assert!(Op::COUNT <= 1 << Instr::OP_BITS);
 
 impl Instr {
-    pub(crate) const MAX_PAYLOAD: u16 = 0x0fff;
     const OP_BITS: u32 = 6;
     const FIELD_BITS: u32 = 14;
     const FIELD_MASK: u64 = (1 << Self::FIELD_BITS) - 1;
@@ -48,6 +90,34 @@ impl Instr {
         ))
     }
 
+    pub(crate) fn wide(index: usize) -> Option<Self> {
+        let index = u64::try_from(index).ok()?;
+        let max = (1_u64 << (Self::FIELD_BITS * 3 + 16)) - 1;
+        (index <= max).then_some(Self(
+            Op::Wide as u64
+                | ((index & Self::FIELD_MASK) << Self::A_SHIFT)
+                | (((index >> Self::FIELD_BITS) & Self::FIELD_MASK) << Self::B_SHIFT)
+                | (((index >> (Self::FIELD_BITS * 2)) & Self::FIELD_MASK) << Self::C_SHIFT)
+                | ((index >> (Self::FIELD_BITS * 3)) << Self::IMM_SHIFT),
+        ))
+    }
+
+    pub(crate) const fn is_wide(self) -> bool {
+        matches!(self.op(), Op::Wide)
+    }
+
+    pub(crate) const fn wide_index(self) -> usize {
+        let index = ((self.0 >> Self::A_SHIFT) & Self::FIELD_MASK)
+            | (((self.0 >> Self::B_SHIFT) & Self::FIELD_MASK) << Self::FIELD_BITS)
+            | (((self.0 >> Self::C_SHIFT) & Self::FIELD_MASK) << (Self::FIELD_BITS * 2))
+            | ((self.0 >> Self::IMM_SHIFT) << (Self::FIELD_BITS * 3));
+        index as usize
+    }
+
+    pub(crate) const fn as_wide(self) -> WideInstruction {
+        WideInstruction::new(self.op(), self.a(), self.b(), self.c(), self.imm())
+    }
+
     pub(crate) const fn op(self) -> Op {
         // SAFETY: construction and residual decoding reject IDs outside the
         // contiguous macro-generated opcode range.
@@ -55,18 +125,30 @@ impl Instr {
     }
 
     pub(crate) const fn a(self) -> u16 {
+        if self.is_wide() {
+            return ((self.0 >> Self::A_SHIFT) & Self::FIELD_MASK) as u16;
+        }
         Self::unpack_field(self.op(), 0, (self.0 >> Self::A_SHIFT) as u16)
     }
 
     pub(crate) const fn b(self) -> u16 {
+        if self.is_wide() {
+            return ((self.0 >> Self::B_SHIFT) & Self::FIELD_MASK) as u16;
+        }
         Self::unpack_field(self.op(), 1, (self.0 >> Self::B_SHIFT) as u16)
     }
 
     pub(crate) const fn c(self) -> u16 {
+        if self.is_wide() {
+            return ((self.0 >> Self::C_SHIFT) & Self::FIELD_MASK) as u16;
+        }
         Self::unpack_field(self.op(), 2, (self.0 >> Self::C_SHIFT) as u16)
     }
 
     pub(crate) const fn imm(self) -> u32 {
+        if self.is_wide() {
+            return (self.0 >> Self::IMM_SHIFT) as u32;
+        }
         Self::unpack_immediate(self.op(), (self.0 >> Self::IMM_SHIFT) as u16)
     }
 
@@ -200,5 +282,17 @@ mod tests {
         assert!(Instr::try_new(Op::Binary, 0, 0, 0, 65536).is_none());
         assert!(Instr::try_new(Op::Call, 0, 0, 0, 256 << 16).is_none());
         assert!(Instr::try_new(Op::Call, 0, 0, 0, 256).is_none());
+    }
+
+    #[test]
+    fn wide_marker_round_trips_the_full_side_table_index() {
+        let index = (1_usize << 56) | (0x1234 << 28) | (0x2345 << 14) | 0x3456;
+        let instruction = Instr::wide(index).unwrap();
+        assert!(instruction.is_wide());
+        assert_eq!(instruction.wide_index(), index);
+        assert_eq!(
+            (instruction.a(), instruction.b(), instruction.c()),
+            (0x3456, 0x2345, 0x1234)
+        );
     }
 }

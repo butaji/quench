@@ -6,11 +6,12 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         f: usize,
-        i: Instr,
+        i: WideInstruction,
         pc: &mut usize,
     ) -> Result<Option<Value>, JsError> {
         match i.op() {
             Op::Nop => {}
+            Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => self.write(f, i.a(), self.constants[i.imm() as usize]),
             Op::LoadLocal => {
                 // SAFETY: compiler construction and residual decoding establish
