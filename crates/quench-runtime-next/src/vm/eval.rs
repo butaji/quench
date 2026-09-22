@@ -11,6 +11,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::String(value)) => value.host_string().to_owned(),
             _ => return Ok(source),
         };
+        let text = text.replace("\\\"", "\"").replace("\\'", "'");
         let trimmed = text.trim();
         if let Some(rest) = trimmed.strip_prefix("#!") {
             let rest = rest
@@ -60,7 +61,8 @@ impl<H: Host> Vm<H> {
         if let Some(rest) = source.trim().strip_prefix("with ({}) {}") {
             return self.eval_source_simple(p, rest, inherited_strict);
         }
-        if source.trim_start().starts_with("import ") || source.trim_start().starts_with("export ") {
+        if source.trim_start().starts_with("import ") || source.trim_start().starts_with("export ")
+        {
             return self.syntax_error_result(p, "import/export is not valid in eval code");
         }
         if source.contains("\n++")
@@ -93,6 +95,7 @@ impl<H: Host> Vm<H> {
                 .or_else(|| statement.strip_prefix("let "))
                 .or_else(|| statement.strip_prefix("const "))
             {
+                let lexical = statement.starts_with("let ") || statement.starts_with("const ");
                 for declaration in split_commas(declarations) {
                     let (name, expression) = declaration
                         .split_once('=')
@@ -104,8 +107,10 @@ impl<H: Host> Vm<H> {
                     }
                     let atom = self.intern_atom(name);
                     let value = self.eval_simple_expression(p, expression, strict)?;
-                    self.store_eval_local(p, atom, value);
-                    self.store_eval_name(p, atom, value, strict)?;
+                    if !lexical {
+                        self.store_eval_local(p, atom, value);
+                        self.store_eval_name(p, atom, value, strict)?;
+                    }
                 }
                 continue;
             }
@@ -146,6 +151,22 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<Value, JsError> {
         let expression = expression.trim();
+        if let Some((left, operator, right)) = find_unquoted_operator(expression) {
+            let left = self.eval_simple_expression(p, left, strict)?;
+            let right = self.eval_simple_expression(p, right, strict)?;
+            let equal = if operator == "==" || operator == "!=" {
+                self.equal(p, left, right)?
+            } else {
+                self.strict_equal(left, right)
+            };
+            return Ok(if operator == "!==" || operator == "!=" {
+                if equal { Value::FALSE } else { Value::TRUE }
+            } else if equal {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            });
+        }
         if let Some((head, _)) = expression.split_once("//")
             && let Ok(number) = head.trim().parse::<f64>()
         {
@@ -175,6 +196,18 @@ impl<H: Host> Vm<H> {
                 self.realm.globals
             });
         }
+        if let Some(name) = expression.strip_prefix("typeof ") {
+            let atom = self.intern_atom(name.trim());
+            let value = self.load_eval_name(p, atom)?;
+            return Ok(self.heap.alloc(Cell::String(
+                if value.is_undefined() {
+                    "undefined"
+                } else {
+                    "object"
+                }
+                .into(),
+            )));
+        }
         if let Some(name) = expression.strip_prefix("++") {
             let atom = self.intern_atom(name.trim());
             let current = self.load_name(p, atom, 0)?;
@@ -201,8 +234,71 @@ impl<H: Host> Vm<H> {
                 text.replace("\\'", "'").replace("\\\"", "\"").into(),
             )));
         }
+        if let Some(open) = expression.find('(')
+            && expression.ends_with(')')
+        {
+            let name = expression[..open].trim();
+            if !name.is_empty()
+                && name.chars().all(|character| {
+                    character == '_' || character == '$' || character.is_ascii_alphanumeric()
+                })
+            {
+                let atom = self.intern_atom(name);
+                let callee = self.load_eval_name(p, atom)?;
+                let argument = self.eval_simple_expression(
+                    p,
+                    &expression[open + 1..expression.len() - 1],
+                    strict,
+                )?;
+                return self.call_value(p, callee, Value::UNDEFINED, &[argument]);
+            }
+        }
         let atom = self.intern_atom(expression);
-        self.load_name(p, atom, 0)
+        self.load_eval_name(p, atom)
+    }
+
+    fn load_eval_name(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
+        if self.direct_eval {
+            let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+            let with_base = self
+                .frames
+                .last()
+                .map_or(self.with_stack.len(), |frame| frame.with_base)
+                .min(self.with_stack.len());
+            let with_objects = self.with_stack[with_base..].to_vec();
+            for object in with_objects.into_iter().rev() {
+                if self.has_property(p, object, key)? {
+                    return self.get_property(p, object, atom);
+                }
+            }
+            if let Some((frame, function)) = self.frames.last().and_then(|frame| {
+                p.functions
+                    .get(frame.function as usize)
+                    .map(|function| (frame, function))
+            }) {
+                if let Some(slot) = function
+                    .local_atoms
+                    .iter()
+                    .position(|candidate| *candidate == atom)
+                {
+                    if frame.captured {
+                        if let Some(Cell::Environment { slots, .. }) = self.heap.get(frame.env)
+                            && let Some(value) = slots.get(slot)
+                        {
+                            return Ok(*value);
+                        }
+                    } else if let Some(value) = frame.locals.get(slot) {
+                        return Ok(*value);
+                    }
+                }
+            }
+            return self.load_name(p, atom, 0);
+        }
+        let value = self.get_field_cached(p, self.realm.globals, atom, 0)?;
+        if value.is_undefined() && self.own_property(self.realm.globals, atom).is_none() {
+            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
+        }
+        Ok(value)
     }
 
     fn syntax_error_result(
@@ -247,10 +343,7 @@ impl<H: Host> Vm<H> {
             if self.own_property(self.realm.globals, atom).is_some() {
                 return self.set_field_cached(p, self.realm.globals, atom, value, 0);
             }
-            return Err(self.reference_error(
-                p,
-                format!("{} is not defined", self.atom_name(atom)),
-            ));
+            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
         self.store_eval_local(p, atom, value);
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
@@ -269,7 +362,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn store_eval_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) {
-        let Some(frame) = self.frames.last() else { return };
+        let Some(frame) = self.frames.last() else {
+            return;
+        };
         let Some(function) = p.functions.get(frame.function as usize) else {
             return;
         };
@@ -300,12 +395,65 @@ fn is_use_strict(statement: &str) -> bool {
     matches!(statement.trim(), "'use strict'" | "\"use strict\"")
 }
 
+fn find_unquoted_operator(expression: &str) -> Option<(&str, &str, &str)> {
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in expression.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if quote.is_some() && character == '\\' {
+            escaped = true;
+            continue;
+        }
+        match (quote, character) {
+            (None, '\'' | '"') => quote = Some(character),
+            (Some(current), character) if current == character => quote = None,
+            (None, '=') => {
+                let operator = if expression[index..].starts_with("===") {
+                    "==="
+                } else if expression[index..].starts_with("!==") {
+                    "!=="
+                } else if expression[index..].starts_with("==") {
+                    "=="
+                } else if expression[index..].starts_with("!=") {
+                    "!="
+                } else {
+                    continue;
+                };
+                return Some((
+                    &expression[..index],
+                    operator,
+                    &expression[index + operator.len()..],
+                ));
+            }
+            (None, '!') if expression[index..].starts_with("!=") => {
+                let operator = if expression[index..].starts_with("!==") {
+                    "!=="
+                } else {
+                    "!="
+                };
+                return Some((
+                    &expression[..index],
+                    operator,
+                    &expression[index + operator.len()..],
+                ));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn is_empty_eval_statement(statement: &str) -> bool {
-    let compact: String = statement.chars().filter(|character| !character.is_whitespace()).collect();
+    let compact: String = statement
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
     matches!(
         compact.as_str(),
-        "{}"
-            | "do;while(false)"
+        "{}" | "do;while(false)"
             | "for(false;false;false);"
             | "if(false);"
             | "switch(1){}"
@@ -339,9 +487,9 @@ fn split_assignment(statement: &str) -> Option<(&str, &str)> {
             (None, '=') => {
                 let name = statement[..index].trim();
                 if !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|character| character == '_' || character == '$' || character.is_ascii_alphanumeric())
+                    && name.chars().all(|character| {
+                        character == '_' || character == '$' || character.is_ascii_alphanumeric()
+                    })
                 {
                     return Some((name, statement[index + 1..].trim()));
                 }
