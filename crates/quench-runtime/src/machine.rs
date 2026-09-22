@@ -1032,65 +1032,6 @@ impl CodeArena {
         }
     }
 
-    fn emit_try(
-        &mut self,
-        body: &[Op],
-        handler: Option<&[Op]>,
-        finalizer: Option<&[Op]>,
-        catch_slot: Option<u16>,
-        range_start: u32,
-        constants: &ConstantPool,
-        metadata: &mut Vec<InstructionMeta>,
-        operand_windows: &mut Vec<Rc<[u16]>>,
-        source: Option<u32>,
-        ternary_dst: Option<u16>,
-    ) {
-        let start = self.relative_pc(range_start);
-        self.encode_linear(
-            body,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-            ternary_dst,
-        );
-        let jump = self.instructions.len();
-        self.instructions.push(crate::ir::Instruction::jump(0));
-        metadata.push(InstructionMeta::empty());
-        let handler_pc = self.relative_pc(range_start);
-        self.pending_catches.push(CatchRange {
-            start,
-            end: handler_pc,
-            handler: handler_pc,
-            catch_slot,
-        });
-        if let Some(handler) = handler {
-            self.encode_linear(
-                handler,
-                range_start,
-                constants,
-                metadata,
-                operand_windows,
-                source,
-                ternary_dst,
-            );
-        }
-        let after = self.relative_pc(range_start);
-        self.instructions[jump].a = after;
-        if let Some(finalizer) = finalizer {
-            self.encode_linear(
-                finalizer,
-                range_start,
-                constants,
-                metadata,
-                operand_windows,
-                source,
-                ternary_dst,
-            );
-        }
-    }
-
     fn encode_fragment(
         &mut self,
         body: &[Op],
@@ -1697,7 +1638,6 @@ enum InstalledBinaryEntry {
     Unpublished,
     F64Local(usize),
     F64Shared(crate::stencil_arena::EntryToken<extern "C" fn(f64, f64) -> f64>),
-    BoolLocal(usize),
     BoolShared(crate::stencil_arena::EntryToken<extern "C" fn(f64, f64) -> u64>),
     I32Local(usize),
     I32Shared(crate::stencil_arena::EntryToken<extern "C" fn(i32, i32) -> i32>),
