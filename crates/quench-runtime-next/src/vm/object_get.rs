@@ -132,10 +132,7 @@ impl<H: Host> Vm<H> {
             {
                 return self.proxy_get(p, target, handler, receiver, atom);
             }
-            if let Some(attributes) = self
-                .descriptors
-                .get(&(object, PropertyKey::string(atom)))
-                .copied()
+            if let Some(attributes) = self.property_attributes(object, PropertyKey::string(atom))
                 && attributes.accessor
             {
                 return match attributes.getter {

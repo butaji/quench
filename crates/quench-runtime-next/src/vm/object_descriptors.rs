@@ -146,9 +146,7 @@ impl<H: Host> Vm<H> {
         {
             let atom = self.intern_js_atom(&key);
             let attributes = self
-                .descriptors
-                .get(&(target, PropertyKey::string(atom)))
-                .copied()
+                .property_attributes(target, PropertyKey::string(atom))
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             if attributes.accessor {
                 let descriptor = self.object();
@@ -200,9 +198,7 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         };
         let attributes = self
-            .descriptors
-            .get(&(target, PropertyKey::string(atom)))
-            .copied()
+            .property_attributes(target, PropertyKey::string(atom))
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let descriptor = self.object();
         if attributes.accessor {

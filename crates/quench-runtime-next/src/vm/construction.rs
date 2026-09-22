@@ -86,8 +86,9 @@ impl<H: Host> Vm<H> {
         self.function_values.insert((id, env), function);
         let length = self.intern_atom("length");
         self.set_property(function, length, Value::number(p.functions[id as usize].params as f64))?;
-        self.descriptors.insert(
-            (function, property_key::PropertyKey::string(length)),
+        self.set_property_attributes(
+            function,
+            property_key::PropertyKey::string(length),
             PropertyAttributes { writable: false, enumerable: false, configurable: true, accessor: false, getter: None, setter: None },
         );
         let name = self.intern_atom("name");
@@ -96,8 +97,9 @@ impl<H: Host> Vm<H> {
             .map(|atom| self.heap.alloc(Cell::String(JsString::from_str(self.atom_name(atom)))))
             .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
         self.set_property(function, name, name_value)?;
-        self.descriptors.insert(
-            (function, property_key::PropertyKey::string(name)),
+        self.set_property_attributes(
+            function,
+            property_key::PropertyKey::string(name),
             PropertyAttributes { writable: false, enumerable: false, configurable: true, accessor: false, getter: None, setter: None },
         );
         let arrow = p.functions[id as usize]
@@ -105,8 +107,9 @@ impl<H: Host> Vm<H> {
             .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow");
         if !arrow && let Some(atom) = self.lookup_atom("prototype") {
             self.set_property(function, atom, prototype)?;
-            self.descriptors.insert(
-                (function, property_key::PropertyKey::string(atom)),
+            self.set_property_attributes(
+                function,
+                property_key::PropertyKey::string(atom),
                 PropertyAttributes { writable: true, enumerable: false, configurable: false, accessor: false, getter: None, setter: None },
             );
         }

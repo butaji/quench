@@ -51,6 +51,7 @@ impl<H: Host> Vm<H> {
             shapes: vec![Shape {
                 keys: vec![],
                 slots: FxHashMap::default(),
+                descriptors: vec![],
             }],
             transitions: FxHashMap::default(),
             atom_text: AtomTable::default(),

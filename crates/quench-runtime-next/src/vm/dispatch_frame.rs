@@ -122,8 +122,9 @@ impl<H: Host> Vm<H> {
         self.argument_objects.insert(arguments);
         let length = self.intern_atom("length");
         self.set_property(arguments, length, Value::number(args.len() as f64))?;
-        self.descriptors.insert(
-            (arguments, property_key::PropertyKey::string(length)),
+        self.set_property_attributes(
+            arguments,
+            property_key::PropertyKey::string(length),
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -144,8 +145,9 @@ impl<H: Host> Vm<H> {
         };
         self.set_property(arguments, callee, value)?;
         if mapped {
-            self.descriptors.insert(
-                (arguments, property_key::PropertyKey::string(callee)),
+            self.set_property_attributes(
+                arguments,
+                property_key::PropertyKey::string(callee),
                 PropertyAttributes {
                     writable: true,
                     enumerable: false,
@@ -157,8 +159,9 @@ impl<H: Host> Vm<H> {
             );
         } else {
             let thrower = self.native_value(Native::ThrowTypeError);
-            self.descriptors.insert(
-                (arguments, property_key::PropertyKey::string(callee)),
+            self.set_property_attributes(
+                arguments,
+                property_key::PropertyKey::string(callee),
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,

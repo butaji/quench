@@ -154,7 +154,15 @@ struct StringConcatCache {
     result: Value,
 }
 #[derive(Clone)]
-struct Shape { keys: Vec<Atom>, slots: FxHashMap<Atom, u16> }
+struct Shape {
+    keys: Vec<Atom>,
+    slots: FxHashMap<Atom, u16>,
+    // Descriptor attributes are part of the immutable shape authority for
+    // ordinary string properties. Symbol and indexed-exotic descriptors stay
+    // in their keyed side tables until those exotic cells are folded into the
+    // same representation.
+    descriptors: Vec<PropertyAttributes>,
+}
 const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
     left: Value::UNDEFINED,
     right: Value::UNDEFINED,
