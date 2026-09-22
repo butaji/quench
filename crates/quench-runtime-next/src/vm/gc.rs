@@ -57,6 +57,9 @@ impl<H: Host> Vm<H> {
                         ))
                 }));
         self.heap.collect(roots);
+        self.field_caches.fill(EMPTY_CACHE);
+        self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
+        self.megamorphic_fields.clear();
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
         self.retain_live_method_caches();
