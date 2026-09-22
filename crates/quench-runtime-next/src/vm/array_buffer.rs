@@ -235,13 +235,18 @@ impl<H: Host> Vm<H> {
             max_byte_length: length,
             resizable: false,
         });
-        if let Some(Cell::ArrayBuffer {
+        let released = if let Some(Cell::ArrayBuffer {
             bytes, detached, ..
         }) = self.heap.get_mut(this)
         {
+            let released = bytes.capacity();
             *bytes = Rc::new(Vec::new());
             *detached = true;
-        }
+            released
+        } else {
+            0
+        };
+        self.heap.adjust_external_bytes(released, 0);
         Ok(result)
     }
 
@@ -256,22 +261,26 @@ impl<H: Host> Vm<H> {
             return Err(JsError("ArrayBuffer resize length is invalid".into()));
         }
         let requested = requested.trunc() as usize;
-        let Some(Cell::ArrayBuffer {
-            bytes,
-            shared,
-            detached,
-            max_byte_length,
-            resizable,
-            ..
-        }) = self.heap.get_mut(this)
-        else {
-            return Err(JsError("ArrayBuffer.resize receiver is invalid".into()));
+        let (before, after) = {
+            let Some(Cell::ArrayBuffer {
+                bytes,
+                shared,
+                detached,
+                max_byte_length,
+                resizable,
+                ..
+            }) = self.heap.get_mut(this)
+            else {
+                return Err(JsError("ArrayBuffer.resize receiver is invalid".into()));
+            };
+            if *shared || *detached || !*resizable || requested > *max_byte_length {
+                return Err(JsError("ArrayBuffer is not resizable".into()));
+            }
+            let before = bytes.capacity();
+            Rc::make_mut(bytes).resize(requested, 0);
+            (before, bytes.capacity())
         };
-        if *shared || *detached || !*resizable || requested > *max_byte_length {
-            return Err(JsError("ArrayBuffer is not resizable".into()));
-        }
-        let target = Rc::make_mut(bytes);
-        target.resize(requested, 0);
+        self.heap.adjust_external_bytes(before, after);
         Ok(Value::UNDEFINED)
     }
 
@@ -286,26 +295,31 @@ impl<H: Host> Vm<H> {
             return Err(JsError("SharedArrayBuffer grow length is invalid".into()));
         }
         let requested = requested.trunc() as usize;
-        let Some(Cell::ArrayBuffer {
-            bytes,
-            shared,
-            detached,
-            max_byte_length,
-            resizable,
-            ..
-        }) = self.heap.get_mut(this)
-        else {
-            return Err(JsError("SharedArrayBuffer.grow receiver is invalid".into()));
+        let (before, after) = {
+            let Some(Cell::ArrayBuffer {
+                bytes,
+                shared,
+                detached,
+                max_byte_length,
+                resizable,
+                ..
+            }) = self.heap.get_mut(this)
+            else {
+                return Err(JsError("SharedArrayBuffer.grow receiver is invalid".into()));
+            };
+            if !*shared
+                || *detached
+                || !*resizable
+                || requested < bytes.len()
+                || requested > *max_byte_length
+            {
+                return Err(JsError("SharedArrayBuffer is not growable".into()));
+            }
+            let before = bytes.capacity();
+            Rc::make_mut(bytes).resize(requested, 0);
+            (before, bytes.capacity())
         };
-        if !*shared
-            || *detached
-            || !*resizable
-            || requested < bytes.len()
-            || requested > *max_byte_length
-        {
-            return Err(JsError("SharedArrayBuffer is not growable".into()));
-        }
-        Rc::make_mut(bytes).resize(requested, 0);
+        self.heap.adjust_external_bytes(before, after);
         Ok(Value::UNDEFINED)
     }
 
@@ -338,7 +352,7 @@ impl<H: Host> Vm<H> {
             max_byte_length: length,
             resizable: false,
         });
-        if let Some(Cell::ArrayBuffer {
+        let released = if let Some(Cell::ArrayBuffer {
             bytes,
             detached,
             max_byte_length,
@@ -346,11 +360,16 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get_mut(this)
         {
+            let released = bytes.capacity();
             *bytes = Rc::new(Vec::new());
             *detached = true;
             *max_byte_length = 0;
             *resizable = false;
-        }
+            released
+        } else {
+            0
+        };
+        self.heap.adjust_external_bytes(released, 0);
         Ok(result)
     }
 }

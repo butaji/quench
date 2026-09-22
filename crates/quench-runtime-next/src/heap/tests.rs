@@ -1,5 +1,6 @@
 use super::*;
 use crate::value_vec::ValueVec;
+use std::rc::Rc;
 
 #[test]
 fn compact_object_header_reduces_gc_slot() {
@@ -29,6 +30,27 @@ fn forged_heap_indices_are_rejected_at_the_access_boundary() {
     let mut heap = Heap::new();
     assert!(heap.get(Value::heap(99_999)).is_none());
     assert!(heap.get_mut(Value::heap(99_999)).is_none());
+}
+
+#[test]
+fn array_buffer_backing_is_accounted_until_owner_collection() {
+    let mut heap = Heap::new();
+    let buffer = heap.alloc(Cell::ArrayBuffer {
+        object: Object {
+            proto: Value::NULL,
+            properties: ValueVec::new(),
+        },
+        bytes: Rc::new(vec![0; 16]),
+        shared: false,
+        detached: false,
+        max_byte_length: 16,
+        resizable: false,
+    });
+    assert_eq!(heap.stats().5, 16);
+    heap.collect([buffer]);
+    assert_eq!(heap.stats().5, 16);
+    heap.collect([]);
+    assert_eq!(heap.stats().5, 0);
 }
 
 #[test]
