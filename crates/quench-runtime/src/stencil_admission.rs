@@ -67,12 +67,12 @@ impl<A> AdmissionStorage<A> {
         entries.get(index)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn spans_len(&self) -> usize {
         self.spans.len()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn entries_len(&self) -> usize {
         self.entries.len()
     }

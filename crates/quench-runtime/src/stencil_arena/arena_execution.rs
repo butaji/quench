@@ -172,7 +172,7 @@ impl StencilArena {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn render_selected_f64x3<const N: usize>(
         &mut self,
         cache: &mut RenderedRegionCache,
@@ -277,6 +277,7 @@ impl StencilArena {
     }
 
     #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(super) fn byte(&self, offset: usize) -> u8 {
         assert!(offset < self.cursor);
         unsafe { *self.ptr.add(offset) }

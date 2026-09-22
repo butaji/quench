@@ -501,7 +501,7 @@ fn is_low_surrogate(unit: u16) -> bool {
     (0xDC00..0xE000).contains(&unit)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn is_surrogate(code: u32) -> bool {
     (0xD800..0xE000).contains(&code)
 }

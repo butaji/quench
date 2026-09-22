@@ -222,7 +222,7 @@ impl RegionControlPlan {
             && self.blocks_match_edges()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn permits_operation_transfer(
         &self,
         operations: &[crate::ir::Opcode],

@@ -101,7 +101,7 @@ impl NativeLocalPredicatePlan {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         match &self.physical {
             LocalPredicatePhysical::Truthiness(plan) => plan.native_entry_count(),
@@ -112,7 +112,7 @@ impl NativeLocalPredicatePlan {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn composed_identity(
         &self,
     ) -> Option<crate::stencil_region_layout::RegionImageIdentity> {
@@ -124,7 +124,7 @@ impl NativeLocalPredicatePlan {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn composed_entry_count(&self) -> u64 {
         match &self.physical {
             LocalPredicatePhysical::TruthinessWithConstantBranch { branch, .. } => {
@@ -134,7 +134,7 @@ impl NativeLocalPredicatePlan {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn selection(&self) -> LocalPredicateSelection {
         self.selection
     }

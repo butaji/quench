@@ -70,7 +70,7 @@ impl VerifiedRegionImage {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn from_test_parts(
         view: PhysicalStencilView,
         cache_signature: u64,
@@ -79,7 +79,7 @@ impl VerifiedRegionImage {
         Self::from_test_parts_at(view, cache_signature, 0, bytes)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn from_test_parts_at(
         view: PhysicalStencilView,
         cache_signature: u64,
