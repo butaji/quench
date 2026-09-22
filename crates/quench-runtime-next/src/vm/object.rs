@@ -1,6 +1,14 @@
 use super::property_key::PropertyKey;
 use super::*;
 impl<H: Host> Vm<H> {
+    #[inline(always)]
+    pub(super) fn shape_slot(&self, shape: u32, atom: Atom) -> Option<usize> {
+        self.shape_slots
+            .get(shape as usize)
+            .and_then(|slots| slots.get(&atom).copied())
+            .map(usize::from)
+    }
+
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
@@ -88,9 +96,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
         let object = self.object_data(object)?;
-        let slot = self.shapes[object.shape() as usize]
-            .iter()
-            .position(|key| *key == atom)?;
+        let slot = self.shape_slot(object.shape(), atom)?;
         self.heap.property_get(object, slot)
     }
     pub(super) fn object_data(&self, value: Value) -> Option<&Object> {
@@ -200,9 +206,7 @@ impl<H: Host> Vm<H> {
             let Some(current) = self.object_data(owner) else {
                 return Ok(Value::UNDEFINED);
             };
-            if let Some(slot) = self.shapes[current.shape() as usize]
-                .iter()
-                .position(|key| *key == atom)
+            if let Some(slot) = self.shape_slot(current.shape(), atom)
                 && let Some(value) = self.heap.property_get(current, slot)
             {
                 if slot <= u16::MAX as usize {
@@ -240,9 +244,7 @@ impl<H: Host> Vm<H> {
             let data = self
                 .object_data(object)
                 .ok_or_else(|| JsError("property write on non-object".into()))?;
-            let slot = self.shapes[data.shape() as usize]
-                .iter()
-                .position(|key| *key == atom);
+            let slot = self.shape_slot(data.shape(), atom);
             let exists = slot.is_some_and(|slot| self.heap.property_get(data, slot).is_some());
             self.check_property_write(object, atom, exists)?;
             let old_is_function = slot
@@ -299,11 +301,9 @@ impl<H: Host> Vm<H> {
                 "cannot write inherited non-writable property".into(),
             ));
         }
-        let existing = self.object_data(object).and_then(|data| {
-            self.shapes[data.shape() as usize]
-                .iter()
-                .position(|key| *key == atom)
-        });
+        let existing = self
+            .object_data(object)
+            .and_then(|data| self.shape_slot(data.shape(), atom));
         self.check_property_write(object, atom, existing.is_some())?;
         let shape = self
             .object_data(object)
@@ -341,10 +341,9 @@ impl<H: Host> Vm<H> {
         self.profile.field_cache(false);
         self.set_property(object, atom, value)?;
         let data = self.object_data(object).unwrap();
-        let slot = self.shapes[data.shape() as usize]
-            .iter()
-            .position(|key| *key == atom)
-            .unwrap();
+        let slot = self
+            .shape_slot(data.shape(), atom)
+            .expect("property transition records the new shape slot");
         let data_shape = data.shape();
         if slot <= u16::MAX as usize {
             self.record_field_cache(
@@ -478,9 +477,12 @@ impl<H: Host> Vm<H> {
         }
         self.profile.shape_transition(false);
         let mut fields = self.shapes[shape as usize].clone();
+        let mut slots = self.shape_slots[shape as usize].clone();
+        slots.insert(atom, fields.len() as u16);
         fields.push(atom);
         let next = self.shapes.len() as u32;
         self.shapes.push(fields);
+        self.shape_slots.push(slots);
         self.heap
             .register_property_shape(next, self.shapes[next as usize].len());
         self.transitions.insert((shape, atom), next);

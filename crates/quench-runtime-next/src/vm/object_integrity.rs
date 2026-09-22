@@ -70,9 +70,8 @@ impl<H: Host> Vm<H> {
             return Ok(self.delete_array_index(target, index));
         }
         let atom = self.intern_js_atom(&key);
-        let Some(slot) = self.shapes[self.object_data(target).unwrap().shape() as usize]
-            .iter()
-            .position(|candidate| *candidate == atom)
+        let Some(slot) = self
+            .shape_slot(self.object_data(target).unwrap().shape(), atom)
             .filter(|_| self.own_property(target, atom).is_some())
         else {
             return Ok(Value::TRUE);
