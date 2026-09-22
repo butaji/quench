@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
                     promise,
                 };
                 let id = self.suspend_continuation(continuation);
-                self.enqueue_async_resume(p, id, promise, value)?;
+                self.enqueue_async_resume(p, id, promise, None, value)?;
             }
             super::FrameOutcome::Await { frame: None, .. } => {
                 return Err(JsError("async frame lost at suspension".into()));
@@ -62,11 +62,12 @@ impl<H: Host> Vm<H> {
         Ok(promise)
     }
 
-    fn enqueue_async_resume(
+    pub(super) fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
         continuation: ContinuationId,
         promise: Value,
+        generator: Option<Value>,
         awaited: Value,
     ) -> Result<(), JsError> {
         let source = self.promise_for_value(p, awaited)?;
@@ -77,6 +78,7 @@ impl<H: Host> Vm<H> {
             AsyncResumeJob {
                 continuation,
                 promise,
+                generator,
                 rejected: false,
             },
         );
@@ -85,6 +87,7 @@ impl<H: Host> Vm<H> {
             AsyncResumeJob {
                 continuation,
                 promise,
+                generator,
                 rejected: true,
             },
         );
@@ -140,9 +143,18 @@ impl<H: Host> Vm<H> {
         resume: AsyncResumeJob,
         value: Value,
     ) -> Result<(), JsError> {
-        let continuation = self
-            .resume_continuation(resume.continuation)
-            .ok_or_else(|| JsError("stale async continuation".into()))?;
+        let Some(continuation) = self.resume_continuation(resume.continuation) else {
+            if let Some(generator) = resume.generator {
+                self.fail_async_generator(
+                    p,
+                    generator,
+                    resume.promise,
+                    JsError("stale async generator continuation".into()),
+                )?;
+                return Ok(());
+            }
+            return Err(JsError("stale async continuation".into()));
+        };
         let mut frame = super::Frame {
             function: continuation.function,
             pc: continuation.pc,
@@ -170,17 +182,25 @@ impl<H: Host> Vm<H> {
             Ok(result) => result,
             Err(error) => {
                 self.frame_pool.push(Self::recycle_frame(frame));
-                let reason = error
-                    .thrown_value()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                self.promise_settle(p, resume.promise, PromiseState::Rejected, reason)?;
+                if let Some(generator) = resume.generator {
+                    self.fail_async_generator(p, generator, resume.promise, error)?;
+                } else {
+                    let reason = error
+                        .thrown_value()
+                        .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                    self.promise_settle(p, resume.promise, PromiseState::Rejected, reason)?;
+                }
                 return Ok(());
             }
         };
         match result {
             super::FrameOutcome::Complete(value) => {
                 self.frame_pool.push(Self::recycle_frame(frame));
-                self.promise_resolve_value(p, resume.promise, value)?;
+                if let Some(generator) = resume.generator {
+                    self.finish_async_generator(p, generator, resume.promise, value, true)?;
+                } else {
+                    self.promise_resolve_value(p, resume.promise, value)?;
+                }
             }
             super::FrameOutcome::Await {
                 value,
@@ -200,23 +220,56 @@ impl<H: Host> Vm<H> {
                     promise: resume.promise,
                 };
                 let id = self.suspend_continuation(continuation);
-                self.enqueue_async_resume(p, id, resume.promise, value)?;
+                self.enqueue_async_resume(p, id, resume.promise, resume.generator, value)?;
             }
             super::FrameOutcome::Await {
                 frame: Some(frame), ..
             } => {
                 self.frame_pool.push(Self::recycle_frame(frame));
-                return Err(JsError("resumed async frame retained unexpectedly".into()));
+                if let Some(generator) = resume.generator {
+                    self.fail_async_generator(
+                        p,
+                        generator,
+                        resume.promise,
+                        JsError("resumed async generator frame retained unexpectedly".into()),
+                    )?;
+                } else {
+                    return Err(JsError("resumed async frame retained unexpectedly".into()));
+                }
             }
             super::FrameOutcome::Yield {
                 frame: Some(frame), ..
             } => {
                 self.frame_pool.push(Self::recycle_frame(frame));
-                return Err(JsError("yield is not valid in an async function".into()));
+                if let Some(generator) = resume.generator {
+                    self.fail_async_generator(
+                        p,
+                        generator,
+                        resume.promise,
+                        JsError("resumed async generator frame retained unexpectedly".into()),
+                    )?;
+                } else {
+                    return Err(JsError("yield is not valid in an async function".into()));
+                }
             }
-            super::FrameOutcome::Yield { frame: None, .. } => {
-                self.frame_pool.push(Self::recycle_frame(frame));
-                return Err(JsError("yield is not valid in an async function".into()));
+            super::FrameOutcome::Yield {
+                value,
+                destination,
+                frame: None,
+            } => {
+                if let Some(generator) = resume.generator {
+                    self.async_generator_yield(
+                        p,
+                        generator,
+                        resume.promise,
+                        frame,
+                        value,
+                        destination,
+                    )?;
+                } else {
+                    self.frame_pool.push(Self::recycle_frame(frame));
+                    return Err(JsError("yield is not valid in an async function".into()));
+                }
             }
         }
         Ok(())
