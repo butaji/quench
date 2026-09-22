@@ -99,6 +99,7 @@ impl<H: Host> Vm<H> {
             env: Value::NULL,
             this: Value::UNDEFINED,
             locals: vec![],
+            dynamic_bindings: vec![],
             captured: false,
             registers: vec![],
             with_base: self.with_stack.len(),

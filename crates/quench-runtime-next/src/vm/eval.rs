@@ -81,6 +81,28 @@ impl<H: Host> Vm<H> {
             || statements
                 .first()
                 .is_some_and(|statement| is_use_strict(statement));
+        for statement in &statements {
+            if statement.trim_start().starts_with("function ") {
+                self.install_eval_function(p, statement.trim(), strict)?;
+            }
+        }
+        if !strict {
+            for statement in &statements {
+                let statement = statement.trim();
+                let Some(declarations) = statement.strip_prefix("var ") else {
+                    continue;
+                };
+                for declaration in split_commas(declarations) {
+                    let name = declaration
+                        .split_once('=')
+                        .map_or(declaration.trim(), |(name, _)| name.trim());
+                    let atom = self.intern_atom(name);
+                    if self.load_eval_name(p, atom).is_err() {
+                        self.store_eval_name(p, atom, Value::UNDEFINED, false)?;
+                    }
+                }
+            }
+        }
         let mut result = Value::UNDEFINED;
         for statement in statements {
             let statement = statement.trim();
@@ -91,6 +113,10 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             if is_empty_eval_statement(statement) {
+                continue;
+            }
+            if let Some(rest) = statement.strip_prefix("function ") {
+                let _ = rest;
                 continue;
             }
             if let Some(declarations) = statement
@@ -128,6 +154,14 @@ impl<H: Host> Vm<H> {
                 result = self.eval_source_simple(p, &source, strict)?;
                 continue;
             }
+            if let Some(name) = statement.strip_prefix("delete ") {
+                let atom = self.intern_atom(name.trim());
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.dynamic_bindings.retain(|(candidate, _)| *candidate != atom);
+                }
+                result = Value::TRUE;
+                continue;
+            }
             if let Some(expression) = statement.strip_prefix("throw ") {
                 let value = self.eval_simple_expression(p, expression, strict)?;
                 return Err(JsError::thrown(value, "eval throw".into()));
@@ -147,7 +181,7 @@ impl<H: Host> Vm<H> {
         Ok(result)
     }
 
-    fn eval_simple_expression(
+    pub(super) fn eval_simple_expression(
         &mut self,
         p: &ResidualProgram,
         expression: &str,
@@ -198,6 +232,18 @@ impl<H: Host> Vm<H> {
             } else {
                 self.realm.globals
             });
+        }
+        if expression.starts_with("function") {
+            let Some(body_start) = expression.find('{') else {
+                return Ok(Value::UNDEFINED);
+            };
+            let Some(body_end) = expression.rfind('}') else {
+                return Ok(Value::UNDEFINED);
+            };
+            let body = self.heap.alloc(Cell::String(
+                expression[body_start + 1..body_end].trim().into(),
+            ));
+            return Ok(self.native_with_env(Native::DynamicFunction, body));
         }
         if let Some(name) = expression.strip_prefix("typeof ") {
             let atom = self.intern_atom(name.trim());
@@ -260,8 +306,33 @@ impl<H: Host> Vm<H> {
         self.load_eval_name(p, atom)
     }
 
+    fn install_eval_function(
+        &mut self,
+        p: &ResidualProgram,
+        statement: &str,
+        strict: bool,
+    ) -> Result<(), JsError> {
+        let rest = statement.strip_prefix("function ").unwrap_or_default();
+        let Some(open) = rest.find('(') else { return Ok(()) };
+        let name = rest[..open].trim();
+        let Some(body_start) = statement.find('{') else { return Ok(()) };
+        let Some(body_end) = statement.rfind('}') else { return Ok(()) };
+        if name.is_empty() || body_end <= body_start {
+            return Ok(());
+        }
+        if strict {
+            return Ok(());
+        }
+        let body = self.heap.alloc(Cell::String(
+            statement[body_start + 1..body_end].trim().into(),
+        ));
+        let function = self.native_with_env(Native::DynamicFunction, body);
+        let atom = self.intern_atom(name);
+        self.store_eval_name(p, atom, function, false)
+    }
+
     fn load_eval_name(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
-        if self.direct_eval {
+            if self.direct_eval {
             let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
             let with_base = self
                 .frames
@@ -274,26 +345,17 @@ impl<H: Host> Vm<H> {
                     return self.get_property(p, object, atom);
                 }
             }
-            if let Some((frame, function)) = self.frames.last().and_then(|frame| {
-                p.functions
-                    .get(frame.function as usize)
-                    .map(|function| (frame, function))
-            }) {
-                if let Some(slot) = function
-                    .local_atoms
+            if let Some(value) = self.frames.last().and_then(|frame| {
+                frame
+                    .dynamic_bindings
                     .iter()
-                    .position(|candidate| *candidate == atom)
-                {
-                    if frame.captured {
-                        if let Some(Cell::Environment { slots, .. }) = self.heap.get(frame.env)
-                            && let Some(value) = slots.get(slot)
-                        {
-                            return Ok(*value);
-                        }
-                    } else if let Some(value) = frame.locals.get(slot) {
-                        return Ok(*value);
-                    }
-                }
+                    .rev()
+                    .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
+            }) {
+                return Ok(value);
+            }
+            if let Some(value) = self.load_frame_local(p, atom) {
+                return Ok(value);
             }
             return self.load_name(p, atom, 0);
         }
@@ -334,13 +396,17 @@ impl<H: Host> Vm<H> {
                     return self.set_property_with_program(p, object, atom, value);
                 }
             }
-            let local = self
-                .frames
-                .last()
-                .and_then(|frame| p.functions.get(frame.function as usize))
-                .is_some_and(|function| function.local_atoms.contains(&atom));
-            if local {
-                self.store_eval_local(p, atom, value);
+            if self.store_frame_local(p, atom, value) {
+                return Ok(());
+            }
+            if let Some(frame) = self.frames.last_mut()
+                && let Some((_, current)) = frame
+                    .dynamic_bindings
+                    .iter_mut()
+                    .rev()
+                    .find(|(candidate, _)| *candidate == atom)
+            {
+                *current = value;
                 return Ok(());
             }
             if self.own_property(self.realm.globals, atom).is_some() {
@@ -348,7 +414,32 @@ impl<H: Host> Vm<H> {
             }
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
-        self.store_eval_local(p, atom, value);
+        if self.direct_eval {
+            let global_frame = self
+                .frames
+                .last()
+                .is_some_and(|frame| frame.function == 0);
+            if global_frame {
+                self.store_eval_local(p, atom, value);
+                return self.define_global_eval_binding(p, atom, value);
+            }
+            if self.store_frame_local(p, atom, value) {
+            } else if self.own_property(self.realm.globals, atom).is_some() {
+                return self.set_field_cached(p, self.realm.globals, atom, value, 0);
+            } else if let Some(frame) = self.frames.last_mut()
+                && let Some((_, current)) = frame
+                    .dynamic_bindings
+                    .iter_mut()
+                    .rev()
+                    .find(|(candidate, _)| *candidate == atom)
+            {
+                *current = value;
+            } else if let Some(frame) = self.frames.last_mut() {
+                frame.dynamic_bindings.push((atom, value));
+            }
+        } else {
+            self.store_eval_local(p, atom, value);
+        }
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
         let with_base = self
             .frames
@@ -361,7 +452,32 @@ impl<H: Host> Vm<H> {
                 return self.set_property_with_program(p, object, atom, value);
             }
         }
-        self.set_field_cached(p, self.realm.globals, atom, value, 0)
+        if self.direct_eval {
+            Ok(())
+        } else {
+            self.set_field_cached(p, self.realm.globals, atom, value, 0)
+        }
+    }
+
+    fn define_global_eval_binding(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let descriptor = self.object();
+        for (name, field) in [
+            ("value", value),
+            ("writable", Value::TRUE),
+            ("enumerable", Value::TRUE),
+            ("configurable", Value::TRUE),
+        ] {
+            let atom = self.intern_atom(name);
+            self.set_property(descriptor, atom, field)?;
+        }
+        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        self.object_define_property(p, &[self.realm.globals, key, descriptor])
+            .map(|_| ())
     }
 
     fn store_eval_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) {
@@ -391,6 +507,69 @@ impl<H: Host> Vm<H> {
         {
             *local = value;
         }
+    }
+
+    fn load_frame_local(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
+        let current = self.frames.len().saturating_sub(1);
+        for index in (0..self.frames.len()).rev() {
+            let frame = &self.frames[index];
+            if index != current
+                && (frame.function != 0
+                    || self.own_property(self.realm.globals, atom).is_none())
+            {
+                continue;
+            }
+            let Some(function) = p.functions.get(frame.function as usize) else {
+                continue;
+            };
+            let Some(slot) = function.local_atoms.iter().position(|candidate| *candidate == atom) else {
+                continue;
+            };
+            if frame.captured {
+                if let Some(Cell::Environment { slots, .. }) = self.heap.get(frame.env) {
+                    if let Some(value) = slots.get(slot) {
+                        return Some(*value);
+                    }
+                }
+            } else if let Some(value) = frame.locals.get(slot) {
+                return Some(*value);
+            }
+        }
+        None
+    }
+
+    fn store_frame_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) -> bool {
+        let current = self.frames.len().saturating_sub(1);
+        for index in (0..self.frames.len()).rev() {
+            let (captured, env, slot) = {
+                let frame = &self.frames[index];
+                if index != current
+                    && (frame.function != 0
+                        || self.own_property(self.realm.globals, atom).is_none())
+                {
+                    continue;
+                }
+                let Some(function) = p.functions.get(frame.function as usize) else {
+                    continue;
+                };
+                let Some(slot) = function.local_atoms.iter().position(|candidate| *candidate == atom) else {
+                    continue;
+                };
+                (frame.captured, frame.env, slot)
+            };
+            if captured {
+                if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env)
+                    && let Some(local) = slots.get_mut(slot)
+                {
+                    *local = value;
+                    return true;
+                }
+            } else if let Some(local) = self.frames[index].locals.get_mut(slot) {
+                *local = value;
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -528,6 +707,7 @@ fn split_statements(source: &str) -> Vec<&str> {
     let mut start = 0;
     let mut quote = None;
     let mut escaped = false;
+    let mut braces = 0usize;
     for (index, character) in source.char_indices() {
         if escaped {
             escaped = false;
@@ -540,7 +720,19 @@ fn split_statements(source: &str) -> Vec<&str> {
         match (quote, character) {
             (None, '\'' | '"') => quote = Some(character),
             (Some(current), character) if current == character => quote = None,
-            (None, ';') => {
+            (None, '{') => braces = braces.saturating_add(1),
+            (None, '}') => {
+                braces = braces.saturating_sub(1);
+                if braces == 0
+                    && source[index + character.len_utf8()..]
+                        .trim_start()
+                        .starts_with("function ")
+                {
+                    result.push(source[start..=index].trim());
+                    start = index + character.len_utf8();
+                }
+            }
+            (None, ';') if braces == 0 => {
                 result.push(source[start..index].trim());
                 start = index + 1;
             }
