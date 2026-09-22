@@ -120,6 +120,21 @@ fn proxy_define_property_trap_receives_descriptor_and_controls_result() {
 }
 
 #[test]
+fn proxy_define_property_trap_enforces_target_invariants() {
+    let source = r#"
+      var fixed = {};
+      Object.defineProperty(fixed, 'value', { value: 1, writable: false, configurable: false });
+      var fixedProxy = new Proxy(fixed, { defineProperty: function() { return true; } });
+      try { Object.defineProperty(fixedProxy, 'value', { value: 2 }); } catch (error) { print('fixed'); }
+      Object.defineProperty(fixedProxy, 'value', {}); print('partial');
+      var sealed = {}; Object.preventExtensions(sealed);
+      var sealedProxy = new Proxy(sealed, { defineProperty: function() { return true; } });
+      try { Object.defineProperty(sealedProxy, 'new', { value: 1 }); } catch (error) { print('sealed'); }
+    "#;
+    assert_eq!(output(source), ["fixed", "partial", "sealed"]);
+}
+
+#[test]
 fn proxy_prototype_traps_control_reflective_operations() {
     let source = r#"
       var parent = { answer: 42 }; var target = {};
