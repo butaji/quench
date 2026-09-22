@@ -105,6 +105,22 @@ impl<H: Host> Vm<H> {
             return Ok(descriptor);
         }
         let key = self.coerce_js_string(p, key_value)?;
+        if key.host_string() == "length"
+            && let Some(Cell::Array { elements, .. }) = self.heap.get(target)
+        {
+            let length = self.heap.sparse_length(target).unwrap_or(elements.len());
+            let descriptor = self.object();
+            for (name, value) in [
+                ("value", Value::number(length as f64)),
+                ("writable", Value::TRUE),
+                ("enumerable", Value::FALSE),
+                ("configurable", Value::FALSE),
+            ] {
+                let atom = self.intern_atom(name);
+                self.set_property(descriptor, atom, value)?;
+            }
+            return Ok(descriptor);
+        }
         if let Some(index) =
             super::object_static::array_index(key.host_string()).map(|index| index as usize)
         {
