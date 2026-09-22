@@ -20,7 +20,7 @@ pub(crate) enum CallReturnSelection {
 }
 
 enum InstalledBody {
-    Constant(crate::machine::NativeLoadConstPlan),
+    Constant(Box<crate::machine::NativeLoadConstPlan>),
     Affine(crate::function_physical::NumericAffineI32),
 }
 
@@ -180,7 +180,7 @@ impl NativeCallReturnPlan {
             self.policy,
             Rc::clone(&self.owner),
         )
-        .map(InstalledBody::Constant)
+        .map(|plan| InstalledBody::Constant(Box::new(plan)))
     }
 
     fn affine_body(

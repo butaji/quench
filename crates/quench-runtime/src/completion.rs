@@ -326,7 +326,7 @@ pub enum Completion {
 pub(crate) enum LoopTransition {
     Continue(Option<Value>),
     Break(Option<Value>),
-    Propagate(Completion),
+    Propagate(Box<Completion>),
 }
 
 impl Completion {
@@ -369,7 +369,7 @@ impl Completion {
                 label: target,
                 value,
             } if target == *label || target.is_none() => LoopTransition::Break(value),
-            completion => LoopTransition::Propagate(completion),
+            completion => LoopTransition::Propagate(Box::new(completion)),
         }
     }
 
