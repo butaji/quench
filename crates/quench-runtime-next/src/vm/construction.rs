@@ -249,12 +249,27 @@ impl<H: Host> Vm<H> {
             Native::String => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                let value = self.heap.alloc(Cell::String(text.into()));
+                self.box_primitive_object(value)
             }
-            Native::Number => Ok(Value::number(
-                self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?,
-            )),
-            Native::Boolean => Err(JsError("Boolean object construction is unsupported".into())),
+            Native::Number => {
+                let value = Value::number(
+                    self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?,
+                );
+                self.box_primitive_object(value)
+            }
+            Native::Boolean => {
+                let value = if args
+                    .first()
+                    .copied()
+                    .is_some_and(|value| self.truthy(value))
+                {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                };
+                self.box_primitive_object(value)
+            }
             _ => Err(JsError("native is not constructible".into())),
         }
     }

@@ -303,7 +303,13 @@ impl<H: Host> Vm<H> {
                 let direct_eval = i.imm() & 0x8000_0000 != 0;
                 let previous_direct_eval = self.direct_eval;
                 self.direct_eval = direct_eval;
-                let value = self.call_value(p, callee, this, args)?;
+                let value = match self.call_value(p, callee, this, args) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.direct_eval = previous_direct_eval;
+                        return Err(error);
+                    }
+                };
                 self.direct_eval = previous_direct_eval;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(0);
