@@ -19,4 +19,7 @@ fi
 tools/check-boundaries.sh
 
 cargo fmt --all -- --check
-cargo clippy --workspace --exclude quench-node --all-targets -- -D warnings
+# The host implementation is covered by its dedicated Node oracle; the
+# node-test fixture crate pulls it into workspace resolution, so exclude both
+# host packages from this interpreter-focused style gate.
+cargo clippy --workspace --exclude quench-node --exclude quench-node-test --all-targets -- -D warnings

@@ -561,8 +561,7 @@ fn float16_constructor() -> quench_runtime::value::Value {
         "\0prototype",
         prototype.clone(),
     );
-    let constructor = quench_runtime::execute::set_property(constructor, "prototype", prototype);
-    constructor
+    quench_runtime::execute::set_property(constructor, "prototype", prototype)
 }
 fn host_context() -> VmContext {
     quench_runtime::vm::current_context().as_ref().clone()

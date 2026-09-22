@@ -231,7 +231,7 @@ fn settle_wave(units: &LinkedModuleGraph, ids: &[ModuleId]) {
             units
                 .units
                 .get(id)
-                .map_or(true, |unit| unit.evaluated.get() || unit.thrown.borrow().is_some())
+                .is_none_or(|unit| unit.evaluated.get() || unit.thrown.borrow().is_some())
         }) {
             return;
         }
@@ -362,4 +362,3 @@ fn gather_async_transitive(
         }
     }
 }
-
