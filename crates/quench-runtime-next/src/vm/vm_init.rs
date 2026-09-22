@@ -41,6 +41,7 @@ impl<H: Host> Vm<H> {
             profile: Profile,
             numeric_sites: FxHashMap::default(),
             shapes: vec![vec![]],
+            shape_slots: vec![FxHashMap::default()],
             transitions: FxHashMap::default(),
             atom_text: AtomTable::default(),
             atoms: FxHashMap::default(),
