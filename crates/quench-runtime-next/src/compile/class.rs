@@ -130,7 +130,16 @@ impl FunctionCompiler<'_, '_> {
             if method.kind == MethodDefinitionKind::Constructor {
                 continue;
             }
-            if method.kind != MethodDefinitionKind::Method {
+            let accessor_name = match method.kind {
+                MethodDefinitionKind::Get => Some("get"),
+                MethodDefinitionKind::Set => Some("set"),
+                MethodDefinitionKind::Method => None,
+                MethodDefinitionKind::Constructor => None,
+            };
+            if method.kind == MethodDefinitionKind::Constructor {
+                continue;
+            }
+            if method.kind != MethodDefinitionKind::Method && accessor_name.is_none() {
                 self.owner
                     .reject(method.span, "class accessors are unsupported");
                 continue;
@@ -145,16 +154,17 @@ impl FunctionCompiler<'_, '_> {
             } else {
                 None
             };
-            let name = if computed_key.is_none() {
+            let name_text = if computed_key.is_none() {
                 let Some(name) = class_method_name(&method.key) else {
                     self.owner
                         .reject(method.span, "class method key is unsupported");
                     continue;
                 };
-                Some(self.owner.atom(name))
+                Some(name.to_owned())
             } else {
                 None
             };
+            let name = name_text.as_deref().map(|name| self.owner.atom(name));
             let function_id =
                 self.owner
                     .compile_class_method(method, &scopes, Some(self.function_id), None);
@@ -165,7 +175,15 @@ impl FunctionCompiler<'_, '_> {
             } else {
                 prototype
             };
-            if let Some(key) = computed_key {
+            if let Some(accessor) = accessor_name {
+                self.define_class_accessor(
+                    target,
+                    function,
+                    computed_key,
+                    name_text.as_deref(),
+                    accessor,
+                );
+            } else if let Some(key) = computed_key {
                 self.emit(Op::SetIndex, function, target, key, 0);
             } else {
                 let cache = self.owner.cache_site();
@@ -222,6 +240,57 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         class_value
+    }
+
+    fn define_class_accessor(
+        &mut self,
+        target: Register,
+        function: Register,
+        computed_key: Option<Register>,
+        name: Option<&str>,
+        accessor: &str,
+    ) {
+        let descriptor = self.reg();
+        self.emit(Op::MakeObject, descriptor, 0, 0, 0);
+        let accessor_atom = self.owner.atom(accessor);
+        let descriptor_cache = self.owner.cache_site();
+        self.emit(
+            Op::SetField,
+            function,
+            descriptor,
+            descriptor_cache,
+            accessor_atom,
+        );
+
+        let object = self.load_name("Object");
+        let define = self.reg();
+        let define_atom = self.owner.atom("defineProperty");
+        let define_cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            define,
+            FieldBase::register(object).0,
+            define_cache,
+            define_atom,
+        );
+        let key = computed_key.unwrap_or_else(|| {
+            self.literal(Constant::String(name.expect("named class accessor").into()))
+        });
+        let base = self.next_reg;
+        let target_arg = self.reg();
+        self.emit(Op::Move, target_arg, target, 0, 0);
+        let key_arg = self.reg();
+        self.emit(Op::Move, key_arg, key, 0, 0);
+        let descriptor_arg = self.reg();
+        self.emit(Op::Move, descriptor_arg, descriptor, 0, 0);
+        let result = self.reg();
+        self.emit(
+            Op::Call,
+            result,
+            define,
+            object,
+            (u32::from(base) << 16) | 3,
+        );
     }
 
     fn set_prototype(&mut self, target: Register, prototype: Register) {

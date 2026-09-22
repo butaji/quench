@@ -396,8 +396,14 @@ impl<H: Host> Vm<H> {
         let descriptor_setter = self.own_property(descriptor, set_atom);
         let accessor = descriptor_getter.is_some() || descriptor_setter.is_some();
         if accessor {
-            let getter = descriptor_getter.filter(|value| !value.is_undefined());
-            let setter = descriptor_setter.filter(|value| !value.is_undefined());
+            let getter = descriptor_getter
+                .map(|value| (!value.is_undefined()).then_some(value))
+                .or_else(|| current.accessor.then_some(current.getter))
+                .flatten();
+            let setter = descriptor_setter
+                .map(|value| (!value.is_undefined()).then_some(value))
+                .or_else(|| current.accessor.then_some(current.setter))
+                .flatten();
             if getter.is_some_and(|value| !self.is_function(value))
                 || setter.is_some_and(|value| !self.is_function(value))
             {
