@@ -7,6 +7,13 @@ pub struct RootId {
     generation: u32,
 }
 
+/// A non-owning heap reference whose slot generation must still match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct WeakHandle {
+    pub(crate) slot: u32,
+    pub(crate) generation: u32,
+}
+
 #[derive(Default)]
 pub(crate) struct RootTable {
     entries: Vec<Entry>,
