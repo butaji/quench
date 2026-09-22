@@ -252,7 +252,7 @@ impl Profile {
     pub fn method_args(&mut self, argc: usize) {
         #[cfg(feature = "profile-aggregate")]
         {
-            self.method_argc[argc] += 1;
+            self.method_argc[argc.min(8)] += 1;
         }
         #[cfg(not(feature = "profile-aggregate"))]
         let _ = argc;
