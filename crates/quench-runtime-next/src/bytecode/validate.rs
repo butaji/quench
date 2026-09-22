@@ -384,6 +384,7 @@ mod tests {
             arguments_slot: None,
             strict: false,
             locals: 0,
+            local_atoms: vec![],
             code,
             wide: vec![],
             registers,

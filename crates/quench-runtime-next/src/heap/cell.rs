@@ -191,7 +191,7 @@ pub(crate) enum Native {
     StringFromCharCode, StringFromCodePoint, ParseInt,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
     MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, NumberString, Number, NumberValueOf,
-    NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat,
+    NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat, GlobalIsNaN,
     NumberFixed,
     NumberPrecision,
     Promise,

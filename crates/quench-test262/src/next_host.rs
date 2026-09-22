@@ -93,11 +93,17 @@ impl RuntimeNextHost {
         if strict {
             composed.push_str("\"use strict\";\n");
         }
+        if source.starts_with("#!") {
+            composed.push_str(source);
+            composed.push('\n');
+        }
         for script in harness {
             composed.push_str(script);
             composed.push('\n');
         }
-        composed.push_str(source);
+        if !source.starts_with("#!") {
+            composed.push_str(source);
+        }
         composed
     }
 }

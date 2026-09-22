@@ -201,7 +201,7 @@ const NATIVES: &[Native] = &[
     Native::MathSqrt, Native::MathSign,
     Native::NumberString,
     Native::Number, Native::NumberValueOf,
-    Native::NumberIsNaN,
+    Native::GlobalIsNaN, Native::NumberIsNaN,
     Native::NumberIsFinite,
     Native::NumberIsInteger,
     Native::NumberIsSafeInteger,
@@ -296,7 +296,7 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::StringFromCodePoint),
         )?;
         self.global(program, "String", string)?;
-        self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
+        self.global(program, "parseInt", self.native_value(Native::ParseInt))?; self.global(program, "isNaN", self.native_value(Native::GlobalIsNaN))?;
         self.install_number(program)?;
         self.global(program, "encodeURI", self.native_value(Native::EncodeUri))?;
         self.global(

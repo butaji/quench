@@ -57,6 +57,7 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::Throw, value, 0, 0, 0);
             }
             Statement::TryStatement(item) => self.try_statement(item),
+            Statement::WithStatement(item) => self.statement(&item.body),
             _ => self.owner.reject(
                 statement.span(),
                 "statement is outside the supported subset",

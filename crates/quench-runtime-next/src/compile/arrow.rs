@@ -79,6 +79,7 @@ impl Compiler<'_> {
             arguments_slot: None,
             strict: matches!(&value.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict")),
             locals: function.locals.len() as u16,
+            local_atoms: function.locals.clone(),
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,

@@ -101,6 +101,14 @@ impl<H: Host> Vm<H> {
             | Native::ReflectConstruct => self.call_reflect_native(p, native, args),
             Native::JsonParse => self.json_parse(p, args),
             Native::JsonStringify => self.json_stringify(p, args),
+            Native::GlobalIsNaN => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                Ok(if self.to_number(p, value)?.is_nan() {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
             Native::MathLog => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 Ok(Value::number(self.to_number(p, v)?.ln()))
