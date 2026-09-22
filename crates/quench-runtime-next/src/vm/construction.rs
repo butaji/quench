@@ -36,6 +36,11 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function { kind, .. }) => *kind,
             _ => return Err(JsError("not a constructor".into())),
         };
+        if let FunctionKind::User(id) = kind
+            && p.functions[id as usize].is_async
+        {
+            return Err(JsError("async function is not a constructor".into()));
+        }
         if let FunctionKind::Native(native) = kind {
             return self.construct_native(p, native, args);
         }

@@ -278,7 +278,14 @@ impl<H: Host> Vm<H> {
         let arguments =
             CallArguments::from_values(args.iter().map(|register| self.read(frame, *register)));
         match target {
-            CallTarget::User(id, env) => self.call_user(p, id, env, this, arguments.as_slice()),
+            CallTarget::User(id, env) => {
+                let result = self.call_user(p, id, env, this, arguments.as_slice());
+                if p.functions[id as usize].is_async {
+                    self.async_result(p, result)
+                } else {
+                    result
+                }
+            }
             CallTarget::NumericUser(..) => unreachable!(),
             CallTarget::Native(native) => self.call_native(p, native, this, arguments.as_slice()),
         }

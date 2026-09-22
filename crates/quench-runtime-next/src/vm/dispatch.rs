@@ -252,7 +252,8 @@ impl<H: Host> Vm<H> {
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, n as usize);
                 self.frames[f].pc = *pc;
-                let value = self.call_user(p, u32::from(i.b()), parent, self.globals, args)?;
+                let value =
+                    self.call_user_maybe_async(p, u32::from(i.b()), parent, self.globals, args)?;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(0);
                     return Ok(Some(value));

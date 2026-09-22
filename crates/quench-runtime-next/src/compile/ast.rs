@@ -190,6 +190,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: Some(&function.params),
+                        async_function: function.r#async,
                         instance_fields: None,
                         super_static: false,
                         rest_override: false,

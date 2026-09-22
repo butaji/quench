@@ -227,6 +227,7 @@ mod tests {
             name: None,
             params: 0,
             rest: false,
+            is_async: false,
             locals: 0,
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),

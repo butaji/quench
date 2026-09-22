@@ -113,6 +113,7 @@ pub struct Function {
     pub name: Option<Atom>,
     pub params: u16,
     pub rest: bool,
+    pub is_async: bool,
     pub locals: u16,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
@@ -249,8 +250,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 9;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0009_0003;
+    pub const FORMAT_VERSION: u8 = 10;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_000a_0003;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

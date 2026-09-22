@@ -103,6 +103,7 @@ mod tests {
             name: None,
             params: 0,
             rest: false,
+            is_async: false,
             locals: 0,
             code: ops.iter().map(|op| Instr::new(*op, 0, 0, 0, 0)).collect(),
             wide: Vec::new(),

@@ -8,7 +8,7 @@ pub(super) fn write_program(
     path: &std::path::Path,
 ) -> Result<(), String> {
     let mut out = BinaryWriter::new();
-    out.bytes.extend_from_slice(b"RQJ\0\x09");
+    out.bytes.extend_from_slice(b"RQJ\0\x0a");
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
     out.u8(u8::from(program.specialized));
     out.strings(&program.atoms);
@@ -44,6 +44,7 @@ pub(super) fn write_program(
         out.option_u32(function.name);
         out.u16(function.params);
         out.u8(u8::from(function.rest));
+        out.u8(u8::from(function.is_async));
         out.u16(function.locals);
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
@@ -114,7 +115,7 @@ pub(super) fn write_program(
 pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let mut input = BinaryReader::new(&bytes);
-    input.magic(b"RQJ\0\x09")?;
+    input.magic(b"RQJ\0\x0a")?;
     let abi = input.u64()?;
     if abi != super::ResidualProgram::RUNTIME_ABI_FINGERPRINT {
         return Err("residual runtime ABI mismatch".into());
@@ -144,6 +145,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             0 => false,
             1 => true,
             _ => return Err("invalid residual rest flag".into()),
+        };
+        let is_async = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid async function flag".into()),
         };
         let locals = input.u16()?;
         let registers = input.u16()?;
@@ -211,6 +217,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             name,
             params,
             rest,
+            is_async,
             locals,
             code,
             wide,

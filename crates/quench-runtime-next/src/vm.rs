@@ -446,7 +446,7 @@ impl<H: Host> Vm<H> {
             }
             CallTarget::User(id, env) => {
                 self.profile.call_target(1, args.len());
-                self.call_user(p, id, env, this, args)
+                self.call_user_maybe_async(p, id, env, this, args)
             }
             CallTarget::NumericUser(id, env) => {
                 self.profile.call_target(2, args.len());
