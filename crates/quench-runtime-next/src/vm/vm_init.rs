@@ -37,6 +37,7 @@ impl<H: Host> Vm<H> {
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]
             profile: Profile,
+            numeric_sites: FxHashMap::default(),
             shapes: vec![vec![]],
             transitions: FxHashMap::default(),
             atom_text: AtomTable::default(),
