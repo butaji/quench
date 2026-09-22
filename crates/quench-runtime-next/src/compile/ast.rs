@@ -6,6 +6,7 @@ mod expression;
 mod object;
 mod optional;
 mod statement;
+mod try_statement;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ControlKind {

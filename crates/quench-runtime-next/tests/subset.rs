@@ -1872,6 +1872,23 @@ fn try_finally_runs_before_rethrowing_a_thrown_completion() {
 }
 
 #[test]
+fn try_catch_finally_runs_finalizer_after_both_paths() {
+    let source = r#"
+      var order = '';
+      try { throw 3; }
+      catch (error) { order = order + 'catch' + error; }
+      finally { order = order + ':finally'; }
+      print(order);
+      try {
+        try { throw 4; }
+        catch (error) { throw error + 1; }
+        finally { print('inner-finally'); }
+      } catch (error) { print(error); }
+    "#;
+    assert_eq!(output(source), ["catch3:finally", "inner-finally", "5"]);
+}
+
+#[test]
 fn class_static_blocks_run_with_the_class_as_this() {
     let source = r#"
       var order = 0;
