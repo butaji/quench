@@ -71,15 +71,27 @@ impl<H: Host> Vm<H> {
         let mut values = Vec::new();
         match self.get_iterator(p, source) {
             Ok(iterator) => loop {
-                let step = self.iterator_next(p, iterator)?;
-                let done = self.get_property(p, step, done_atom)?;
+                let step = match self.iterator_next(p, iterator) {
+                    Ok(step) => step,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                let done = match self.get_property(p, step, done_atom) {
+                    Ok(done) => done,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
                 if self.truthy(done) {
                     break;
                 }
-                let mut value = self.get_property(p, step, value_atom)?;
+                let mut value = match self.get_property(p, step, value_atom) {
+                    Ok(value) => value,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
                 if let Some(mapfn) = mapfn {
                     let index = Value::number(values.len() as f64);
-                    value = self.call_value(p, mapfn, map_this, &[value, index])?;
+                    value = match self.call_value(p, mapfn, map_this, &[value, index]) {
+                        Ok(value) => value,
+                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                    };
                 }
                 values.push(value);
             },
@@ -112,6 +124,10 @@ impl<H: Host> Vm<H> {
             Err(error) => return Err(error),
         }
         Ok(self.new_array(values))
+    }
+
+    fn iterator_abrupt(&mut self, p: &ResidualProgram, iterator: Value, error: JsError) -> JsError {
+        self.iterator_close(p, iterator).err().unwrap_or(error)
     }
 
     fn array_to_spliced_native(
