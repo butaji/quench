@@ -344,7 +344,33 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(source).cloned()
+        {
+            if handler.is_null() {
+                return Err(JsError("cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("defineProperty");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+                    key_value
+                } else {
+                    let text = self.to_string(p, key_value)?;
+                    self.heap.alloc(Cell::String(text))
+                };
+                let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+                let result = self.call_value(p, trap, handler, &[target, key, descriptor])?;
+                if !self.truthy(result) {
+                    return Err(JsError("proxy defineProperty trap returned false".into()));
+                }
+                return Ok(source);
+            }
+        }
+        let target = self.proxy_target(source);
         let target = self
             .object_data(target)
             .map(|_| target)
