@@ -133,7 +133,18 @@ impl<H: Host> Vm<H> {
         let set = self.intern_atom("set");
         let descriptor_getter = self.own_property(descriptor, get);
         let descriptor_setter = self.own_property(descriptor, set);
-        if descriptor_getter.is_some() || descriptor_setter.is_some() {
+        let value_atom = self.intern_atom("value");
+        let writable_atom = self.intern_atom("writable");
+        let descriptor_value = self.own_property(descriptor, value_atom);
+        let descriptor_writable = self.own_property(descriptor, writable_atom);
+        let descriptor_accessor = descriptor_getter.is_some() || descriptor_setter.is_some();
+        let descriptor_data = descriptor_value.is_some() || descriptor_writable.is_some();
+        if descriptor_accessor && descriptor_data {
+            return Err(JsError(
+                "array descriptor mixes data and accessor fields".into(),
+            ));
+        }
+        if descriptor_accessor {
             let getter = descriptor_getter
                 .map(|value| (!value.is_undefined()).then_some(value))
                 .or_else(|| current.accessor.then_some(current.getter))
@@ -168,12 +179,11 @@ impl<H: Host> Vm<H> {
             );
             return Ok(target);
         }
-        if !is_new && current.accessor {
+        if !is_new && current.accessor && !current.configurable {
             return Err(JsError(
                 "cannot change array accessor to data property".into(),
             ));
         }
-        let value_atom = self.intern_atom("value");
         let next = self
             .own_property(descriptor, value_atom)
             .or(existing)

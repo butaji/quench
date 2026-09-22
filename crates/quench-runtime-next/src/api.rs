@@ -330,4 +330,18 @@ mod tests {
         assert!(runtime.release_root(root));
         assert!(!runtime.enqueue_rooted_job(root, &[]));
     }
+
+    #[test]
+    fn descriptor_transitions_reject_mixed_fields_and_allow_configurable_kind_changes() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var object = {}; try { Object.defineProperty(object, 'mixed', { value: 1, get: function() { return 2; } }); print('bad'); } catch (error) { print('mixed'); } Object.defineProperty(object, 'value', { get: function() { return 3; }, configurable: true }); Object.defineProperty(object, 'value', { value: 4 }); print(object.value); var array = []; Object.defineProperty(array, '0', { get: function() { return 5; }, configurable: true }); Object.defineProperty(array, '0', { value: 6 }); print(array[0]);",
+                "descriptor-transition.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["mixed", "4", "6"]);
+    }
 }
