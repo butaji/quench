@@ -7,22 +7,78 @@
 
 use std::path::Path;
 
-use rqj::{Engine, Runtime, SystemHost};
+use rqj::{CapabilityId, Engine, Host, HostGlobal, Runtime, SystemHost};
 
 use crate::Test262Host;
 
+static TEST262_GLOBALS: [HostGlobal; 1] = [HostGlobal {
+    name: "$DONE",
+    capability: CapabilityId::Done,
+}];
+
 #[derive(Debug, Default)]
-pub struct RuntimeNextHost;
+pub struct RuntimeNextHost {
+    async_test: bool,
+    done: Option<String>,
+}
+
+impl Host for RuntimeNextHost {
+    fn write_line(&mut self, text: &str) {
+        if let Some(error) = text.strip_prefix("Test262:AsyncTestFailure:") {
+            self.done = Some(error.to_string());
+            return;
+        }
+        if text == "Test262:AsyncTestComplete" {
+            self.done = Some(String::new());
+            return;
+        }
+        println!("{text}");
+    }
+
+    fn clock_millis(&mut self) -> f64 {
+        SystemHost.clock_millis()
+    }
+
+    fn globals(&self) -> &'static [HostGlobal] {
+        if self.async_test {
+            &TEST262_GLOBALS
+        } else {
+            &[]
+        }
+    }
+
+    fn done(&mut self, text: Option<&str>) {
+        self.done = Some(text.unwrap_or_default().to_string());
+    }
+}
 
 impl RuntimeNextHost {
     fn execute(&mut self, source: &str, name: &str) -> Result<(), String> {
-        let mut runtime = Runtime::new(SystemHost);
-        let program = Engine::specialize_unspecialized(source, name)
-            .map_err(|errors| format!("next runtime diagnostics: {errors:?}"))?;
-        runtime
-            .execute(&program)
-            .map(|_| ())
-            .map_err(|error| format!("next runtime: {error:?}"))
+        self.done = None;
+        let async_test = self.async_test;
+        let mut runtime = Runtime::new(std::mem::take(self));
+        let result = (|| {
+            let program = Engine::specialize_unspecialized(source, name)
+                .map_err(|errors| format!("next runtime diagnostics: {errors:?}"))?;
+            runtime
+                .execute(&program)
+                .map_err(|error| format!("next runtime: {error:?}"))?;
+            if async_test {
+                runtime
+                    .run_jobs(&program)
+                    .map_err(|error| format!("next runtime jobs: {error:?}"))?;
+                if let Some(error) = runtime.host_mut().done.clone() {
+                    if !error.is_empty() {
+                        return Err(format!("next runtime async: {error}"));
+                    }
+                } else {
+                    return Err("next runtime async: $DONE was not called".into());
+                }
+            }
+            Ok(())
+        })();
+        *self = runtime.into_host();
+        result
     }
 
     fn compose(harness: &[&str], source: &str, strict: bool) -> String {
@@ -40,6 +96,10 @@ impl RuntimeNextHost {
 }
 
 impl Test262Host for RuntimeNextHost {
+    fn configure(&mut self, metadata: &crate::TestMetadata) {
+        self.async_test = metadata.is_async;
+    }
+
     fn run_script(&mut self, source: &str) -> Result<(), String> {
         self.execute(source, "<test262>")
     }

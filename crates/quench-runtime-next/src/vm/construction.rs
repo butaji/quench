@@ -1,5 +1,4 @@
 use super::*;
-use crate::host::{CapabilityId, HostContext};
 
 impl<H: Host> Vm<H> {
     pub(super) fn closure(
@@ -112,20 +111,14 @@ impl<H: Host> Vm<H> {
             Native::DisposableStack => self.construct_disposable_stack_native(p),
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args),
-            Native::Date => {
-                let milliseconds = match args.first().copied() {
-                    None => {
-                        HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None)
-                    }
-                    Some(value) => self.to_number(p, value)?,
-                };
-                Ok(self.heap.alloc(Cell::Date(milliseconds)))
-            }
-            Native::Error => {
-                let v = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let text = self.to_string(p, v)?;
-                Ok(self.heap.alloc(Cell::Error(text)))
-            }
+            Native::Date => self.date_construct_native(p, args),
+            Native::Error
+            | Native::EvalError
+            | Native::RangeError
+            | Native::ReferenceError
+            | Native::SyntaxError
+            | Native::TypeError
+            | Native::URIError => self.construct_error_native(p, native, args),
             Native::String => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, value)?;

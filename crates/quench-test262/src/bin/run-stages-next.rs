@@ -35,7 +35,7 @@ fn run() -> Result<(), String> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
     let stages = resolve_stages(&root)?;
-    let mut runner = Test262Runner::new(RuntimeNextHost);
+    let mut runner = Test262Runner::new(RuntimeNextHost::default());
     for stage in stages
         .into_iter()
         .filter(|stage| stage.id >= from && stage.id <= to)

@@ -14,7 +14,7 @@ mod vm;
 pub use bytecode::ResidualProgram;
 pub use compile::{Diagnostic, Engine};
 pub use heap::RootId;
-pub use host::{CapabilityId, Host, HostContext, SystemHost};
+pub use host::{CapabilityId, Host, HostContext, HostGlobal, SystemHost};
 #[cfg(feature = "profile-memory")]
 pub use memory_edge::report_allocator_memory;
 pub use value::Value;

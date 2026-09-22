@@ -7,11 +7,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum CapabilityId {
     WriteLine = 1,
     ClockMillis = 2,
+    Done = 3,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostGlobal {
+    pub name: &'static str,
+    pub capability: CapabilityId,
 }
 
 pub trait Host {
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
+
+    /// Optional host-owned globals. The evaluator installs these only when
+    /// the host explicitly advertises them; ordinary production hosts remain
+    /// free of conformance or embedding-specific names.
+    fn globals(&self) -> &'static [HostGlobal] {
+        &[]
+    }
+
+    fn done(&mut self, _text: Option<&str>) {}
 }
 
 /// Borrowed capability context. It exposes typed host effects without
@@ -32,6 +48,10 @@ impl<'a, H: Host> HostContext<'a, H> {
                 0.0
             }
             CapabilityId::ClockMillis => self.host.clock_millis(),
+            CapabilityId::Done => {
+                self.host.done(text);
+                0.0
+            }
         }
     }
 }
