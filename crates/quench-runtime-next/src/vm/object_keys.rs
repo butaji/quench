@@ -6,12 +6,13 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(object), Some(Cell::Array { .. })) {
             return None;
         }
-        Some(
-            self.array_present_indices(object)
-                .into_iter()
-                .map(|index| self.heap.alloc(Cell::String(index.to_string().into())))
-                .collect(),
-        )
+        let mut keys = self
+            .array_present_indices(object)
+            .into_iter()
+            .map(|index| self.heap.alloc(Cell::String(index.to_string().into())))
+            .collect::<Vec<_>>();
+        keys.push(self.heap.alloc(Cell::String("length".into())));
+        Some(keys)
     }
 
     pub(super) fn object_values(
@@ -115,6 +116,9 @@ impl<H: Host> Vm<H> {
             let Some(Cell::String(name)) = self.heap.get(*key).cloned() else {
                 return false;
             };
+            if name.host_string() == "length" {
+                return false;
+            }
             let atom = self.intern_js_atom(&name);
             self.descriptors
                 .get(&(object, PropertyKey::string(atom)))

@@ -393,6 +393,23 @@ mod tests {
     }
 
     #[test]
+    fn array_length_is_visible_only_to_non_enumerable_own_key_views() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var array = [1, 2]; print(Object.keys(array).join(',')); print(Object.getOwnPropertyNames(array).join(',')); print(Reflect.ownKeys(array).join(','));",
+                "array-own-keys.js",
+            ))
+            .unwrap();
+        assert_eq!(
+            view.0.borrow().as_slice(),
+            ["0,1", "0,1,length", "0,1,length"]
+        );
+    }
+
+    #[test]
     fn promises_use_the_vm_job_queue_for_reactions_and_chains() {
         let host = Capture::default();
         let view = host.clone();
