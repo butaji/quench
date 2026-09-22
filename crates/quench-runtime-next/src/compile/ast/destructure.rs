@@ -9,15 +9,19 @@ impl FunctionCompiler<'_, '_> {
             }
             BindingPattern::ObjectPattern(object) => {
                 for property in &object.properties {
-                    let Some(key) = Self::binding_key(&property.key) else {
+                    let dst = self.reg();
+                    if let Some(expression) = property.key.as_expression() {
+                        let key = self.expression(expression);
+                        self.emit(Op::GetIndex, dst, value, key, 0);
+                    } else if let Some(key) = Self::binding_key(&property.key) {
+                        let atom = self.owner.atom(key);
+                        let cache = self.owner.cache_site();
+                        self.emit(Op::GetField, dst, FieldBase::register(value).0, cache, atom);
+                    } else {
                         self.owner
                             .reject(property.span, "destructuring key is unsupported");
                         continue;
-                    };
-                    let dst = self.reg();
-                    let atom = self.owner.atom(key);
-                    let cache = self.owner.cache_site();
-                    self.emit(Op::GetField, dst, FieldBase::register(value).0, cache, atom);
+                    }
                     self.bind_pattern(&property.value, dst);
                 }
                 if let Some(rest) = &object.rest {

@@ -72,6 +72,16 @@ fn variable_destructuring_reads_object_fields_and_array_indices() {
 }
 
 #[test]
+fn destructuring_computed_keys_use_indexed_property_lookup() {
+    assert_eq!(
+        output(
+            "var key = 'answer'; var { [key]: value } = { answer: 42 }; var { 1: second } = { 1: 2 }; print(value); print(second);"
+        ),
+        ["42", "2"],
+    );
+}
+
+#[test]
 fn object_is_uses_same_value_semantics() {
     assert_eq!(
         output(
