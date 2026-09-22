@@ -71,6 +71,34 @@ impl JsError {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
+        let (constructor, marker) = match self.heap.get(value) {
+            Some(Cell::String(_)) => (Native::String, "\0rqj:string-value"),
+            Some(Cell::Symbol(_)) => (Native::Symbol, "\0rqj:symbol-value"),
+            Some(Cell::BigInt(_)) => (Native::BigInt, "\0rqj:bigint-value"),
+            _ if value.as_number().is_some() => (Native::Number, "\0rqj:number-value"),
+            _ if value.as_bool().is_some() => (Native::Boolean, "\0rqj:boolean-value"),
+            _ => return Ok(self.object()),
+        };
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self
+            .own_property(self.native_value(constructor), prototype_atom)
+            .unwrap_or(self.object_proto);
+        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
+            for (index, unit) in text.units().iter().copied().enumerate() {
+                let key = self.intern_atom(&index.to_string());
+                let character = self
+                    .heap
+                    .alloc(Cell::String(super::wtf16::JsString::from_units(&[unit])));
+                self.set_property(object, key, character)?;
+            }
+        }
+        let marker_atom = self.intern_atom(marker);
+        self.set_property(object, marker_atom, value)?;
+        Ok(object)
+    }
+
     pub(super) fn box_bigint_object(
         &mut self,
         p: &ResidualProgram,
@@ -94,16 +122,34 @@ impl<H: Host> Vm<H> {
         let symbol_prototype = self.object();
         self.set_named(program, symbol, "prototype", symbol_prototype)?;
         self.set_named(program, symbol_prototype, "constructor", symbol)?;
+        self.set_named(
+            program,
+            symbol_prototype,
+            "valueOf",
+            self.native_value(Native::SymbolValueOf),
+        )?;
         for native in [Native::String, Native::Number] {
             let constructor = self.native_value(native);
             let prototype = self.object();
             self.set_named(program, constructor, "prototype", prototype)?;
             self.set_named(program, prototype, "constructor", constructor)?;
+            let value_of = match native {
+                Native::String => Native::StringValueOf,
+                Native::Number => Native::NumberValueOf,
+                _ => unreachable!(),
+            };
+            self.set_named(program, prototype, "valueOf", self.native_value(value_of))?;
         }
         let boolean = self.native_value(Native::Boolean);
         let boolean_prototype = self.object();
         self.set_named(program, boolean, "prototype", boolean_prototype)?;
         self.set_named(program, boolean_prototype, "constructor", boolean)?;
+        self.set_named(
+            program,
+            boolean_prototype,
+            "valueOf",
+            self.native_value(Native::BooleanValueOf),
+        )?;
         self.global(program, "Boolean", boolean)?;
         let bigint = self.native_value(Native::BigInt);
         let bigint_prototype = self.object();
