@@ -34,7 +34,7 @@ impl<H: Host> Vm<H> {
             natives: vec![],
             frames: vec![],
             frame_pool: vec![],
-            finalization_jobs: vec![],
+            jobs: vec![],
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]
