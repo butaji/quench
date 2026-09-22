@@ -151,6 +151,9 @@ pub(crate) enum Native {
     WeakSetDelete,
     WeakRef,
     WeakRefDeref,
+    FinalizationRegistry,
+    FinalizationRegistryRegister,
+    FinalizationRegistryUnregister,
     FunctionCall,
     FunctionApply,
     Date,
@@ -300,6 +303,26 @@ pub(crate) struct Object {
     // only the data vector selected by that shape.
     pub properties: ValueVec,
 }
+#[derive(Clone, Debug)]
+pub(crate) struct FinalizationEntry {
+    pub target: WeakHandle,
+    pub held: Value,
+    pub token: Option<WeakHandle>,
+}
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FinalizationEntries(pub(crate) Vec<FinalizationEntry>);
+impl std::ops::Deref for FinalizationEntries {
+    type Target = Vec<FinalizationEntry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for FinalizationEntries {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 impl Object {
     pub(crate) fn shape(&self) -> u32 {
         self.properties.auxiliary()
@@ -369,6 +392,11 @@ pub(crate) enum Cell {
     WeakRef {
         object: Object,
         target: Option<WeakHandle>,
+    },
+    FinalizationRegistry {
+        object: Object,
+        callback: Value,
+        entries: Box<FinalizationEntries>,
     },
     Iterator {
         object: Object,
