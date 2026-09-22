@@ -2450,7 +2450,7 @@ fn record_string_concat(code: crate::machine::CodeView<'_>, pc: usize, constant_
             "Add",
             "Return",
         ];
-        let route = constant_call.then_some(call.as_slice()).unwrap_or(direct);
+        let route = if constant_call { call.as_slice() } else { direct };
         crate::test_execution_profile::dynamic_region_route(route.iter().copied());
     }
     #[cfg(not(test))]
