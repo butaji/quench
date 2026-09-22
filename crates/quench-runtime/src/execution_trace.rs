@@ -61,14 +61,26 @@ heap_lifecycles! {
 
 macro_rules! execution_events {
     ($($name:ident => $wire:literal),+ $(,)?) => {
+        #[cfg(feature = "execution-trace")]
         #[derive(Clone, Copy)]
         #[repr(usize)]
         pub(crate) enum Event { $($name),+ }
+        #[cfg(not(feature = "execution-trace"))]
+        #[derive(Clone, Copy)]
+        pub(crate) struct Event;
+        #[cfg(feature = "execution-trace")]
         const EVENT_NAMES: &[&str] = &[$($wire),+];
+        #[cfg(feature = "execution-trace")]
         impl Event {
             pub(crate) const fn name(self) -> &'static str {
                 match self { $(Self::$name => $wire),+ }
             }
+        }
+        #[cfg(not(feature = "execution-trace"))]
+        #[allow(dead_code, non_upper_case_globals)]
+        impl Event {
+            $(pub(crate) const $name: Self = Self;)+
+            pub(crate) const fn name(self) -> &'static str { "" }
         }
     };
 }
