@@ -5,6 +5,7 @@ mod call;
 mod destructure;
 mod disposal;
 mod expression;
+mod iteration;
 mod object;
 mod optional;
 mod statement;

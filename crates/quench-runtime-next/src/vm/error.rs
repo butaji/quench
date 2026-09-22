@@ -77,6 +77,21 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.global(program, "globalThis", self.globals)?;
         self.global(program, "Function", self.native_value(Native::Function))?;
+        let symbol = self.native_value(Native::Symbol);
+        let symbol_prototype = self.object();
+        self.set_named(program, symbol, "prototype", symbol_prototype)?;
+        self.set_named(program, symbol_prototype, "constructor", symbol)?;
+        for native in [Native::String, Native::Number] {
+            let constructor = self.native_value(native);
+            let prototype = self.object();
+            self.set_named(program, constructor, "prototype", prototype)?;
+            self.set_named(program, prototype, "constructor", constructor)?;
+        }
+        let boolean = self.native_value(Native::Boolean);
+        let boolean_prototype = self.object();
+        self.set_named(program, boolean, "prototype", boolean_prototype)?;
+        self.set_named(program, boolean_prototype, "constructor", boolean)?;
+        self.global(program, "Boolean", boolean)?;
         for global in self.host.globals() {
             let native = match global.capability {
                 CapabilityId::Done => Native::HostDone,
@@ -149,6 +164,18 @@ impl<H: Host> Vm<H> {
             self.call_host_done(program, args)
         } else if native == Native::CreateRealm {
             self.create_realm(program)
+        } else if native == Native::Boolean {
+            Ok(
+                if args
+                    .first()
+                    .copied()
+                    .is_some_and(|value| self.truthy(value))
+                {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            )
         } else {
             self.call_function_dispatch(program, native, args)
         }

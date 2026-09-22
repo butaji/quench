@@ -1,6 +1,44 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
+    pub(super) fn tagged_template(
+        &mut self,
+        value: &oxc_ast::ast::TaggedTemplateExpression<'_>,
+    ) -> Register {
+        let tag = self.expression(&value.tag);
+        let strings = self.reg();
+        self.emit(
+            Op::MakeArray,
+            strings,
+            0,
+            0,
+            value.quasi.quasis.len() as u32,
+        );
+        for (index, quasi) in value.quasi.quasis.iter().enumerate() {
+            let key = self.literal(Constant::Number(index as f64));
+            let string = self.literal(super::string::template_constant(&quasi.value));
+            self.emit(Op::SetIndex, string, strings, key, 0);
+        }
+        let this = self.literal(Constant::Undefined);
+        let base = self.next_reg;
+        let strings_arg = self.reg();
+        self.emit(Op::Move, strings_arg, strings, 0, 0);
+        for expression in &value.quasi.expressions {
+            let argument = self.reg();
+            let value = self.expression(expression);
+            self.emit(Op::Move, argument, value, 0, 0);
+        }
+        let result = self.reg();
+        self.emit(
+            Op::Call,
+            result,
+            tag,
+            this,
+            (u32::from(base) << 16) | (1 + value.quasi.expressions.len() as u32),
+        );
+        result
+    }
+
     pub(super) fn string_literal(&mut self, value: &oxc_ast::ast::StringLiteral<'_>) -> Register {
         self.literal(super::string::constant(value))
     }

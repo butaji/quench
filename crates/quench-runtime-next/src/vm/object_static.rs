@@ -128,6 +128,14 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
+            Native::Object => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if value.is_null() || value.is_undefined() {
+                    Ok(self.object())
+                } else {
+                    self.box_object(value)
+                }
+            }
             Native::ObjectKeys => {
                 self.object_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }

@@ -129,6 +129,7 @@ impl<H: Host> Vm<H> {
             Native::Number => Ok(Value::number(
                 self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?,
             )),
+            Native::Boolean => Err(JsError("Boolean object construction is unsupported".into())),
             _ => Err(JsError("native is not constructible".into())),
         }
     }
