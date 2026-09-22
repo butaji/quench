@@ -42,20 +42,6 @@ pub(crate) fn remember_descriptor_flags(
     });
 }
 
-pub(crate) fn binding_cells() -> Vec<Rc<crate::value::BindingCell>> {
-    GLOBAL_BINDINGS.with(|bindings| {
-        let mut seen = std::collections::HashSet::new();
-        bindings
-            .borrow()
-            .values()
-            .filter_map(|cell| {
-                seen.insert(Rc::as_ptr(cell) as usize)
-                    .then(|| Rc::clone(cell))
-            })
-            .collect()
-    })
-}
-
 pub(crate) fn store_global_binding(name: &str, value: Value) -> bool {
     let realm = crate::vm::current_context_or_default().realm();
     GLOBAL_BINDINGS.with(|bindings| {
