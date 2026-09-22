@@ -241,16 +241,6 @@ impl CallContinuation {
         self
     }
 
-    /// Validate the compact caller address against the immutable code store
-    /// before a tier or helper transition resumes it.
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn has_valid_caller_address(&self, store: &crate::machine::CodeStore) -> bool {
-        store
-            .range_len(self.caller_code)
-            .is_some_and(|length| self.caller_pc < length)
-    }
-
     /// Restore the caller's register window at a tier boundary. The
     /// continuation owns this window while the callee runs; consumers must
     /// not reconstruct it from a callee frame or clone a second activation.
