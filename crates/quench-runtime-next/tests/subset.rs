@@ -135,6 +135,28 @@ fn proxy_define_property_trap_enforces_target_invariants() {
 }
 
 #[test]
+fn delete_property_uses_one_named_symbol_and_proxy_authority() {
+    let source = r#"
+      var key = Symbol('key'); var target = { answer: 42 }; target[key] = 7;
+      print(delete target.answer); print(Object.hasOwn(target, 'answer'));
+      target.answer = 8; print(target.answer); print(Object.keys(target).join(','));
+      print(delete target[key]); print(Object.getOwnPropertySymbols(target).length);
+      print(delete target.missing); print(Reflect.deleteProperty(target, 'missing'));
+      Object.defineProperty(target, 'fixed', { value: 1, configurable: false });
+      print(Reflect.deleteProperty(target, 'fixed'));
+      var proxy = new Proxy({ value: 9 }, { deleteProperty: function(t, property) { print(property); return true; } });
+      print(delete proxy.value); print(proxy.value);
+    "#;
+    assert_eq!(
+        output(source),
+        [
+            "true", "false", "8", "answer", "true", "0", "true", "true", "false", "value", "true",
+            "9"
+        ]
+    );
+}
+
+#[test]
 fn proxy_prototype_traps_control_reflective_operations() {
     let source = r#"
       var parent = { answer: 42 }; var target = {};

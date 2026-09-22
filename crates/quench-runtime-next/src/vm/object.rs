@@ -127,6 +127,10 @@ impl<H: Host> Vm<H> {
         if cache.receiver == receiver_shape
             && let Some(owner) = self.field_cache_owner(object, cache)
             && let Some(owner_data) = self.object_data(owner)
+            && self
+                .heap
+                .property_get(owner_data, cache.slot as usize)
+                .is_some()
         {
             // SAFETY: receiver shape, owner identity, owner shape, and slot
             // were recorded together on the cache miss path.
@@ -140,6 +144,10 @@ impl<H: Host> Vm<H> {
         if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape)
             && let Some(owner) = self.field_cache_owner(object, cache)
             && let Some(owner_data) = self.object_data(owner)
+            && self
+                .heap
+                .property_get(owner_data, cache.slot as usize)
+                .is_some()
         {
             // SAFETY: the table is keyed by the immutable receiver shape.
             let value = unsafe {
@@ -188,8 +196,8 @@ impl<H: Host> Vm<H> {
             if let Some(slot) = self.shapes[current.shape() as usize]
                 .iter()
                 .position(|key| *key == atom)
+                && let Some(value) = self.heap.property_get(current, slot)
             {
-                let value = self.heap.property_get(current, slot).unwrap();
                 if slot <= u16::MAX as usize {
                     let receiver = self
                         .object_data(object)
@@ -228,7 +236,8 @@ impl<H: Host> Vm<H> {
             let slot = self.shapes[data.shape() as usize]
                 .iter()
                 .position(|key| *key == atom);
-            self.check_property_write(object, atom, slot.is_some())?;
+            let exists = slot.is_some_and(|slot| self.heap.property_get(data, slot).is_some());
+            self.check_property_write(object, atom, exists)?;
             let old_is_function = slot
                 .and_then(|slot| self.heap.property_get(data, slot))
                 .is_some_and(|old| self.is_function(old));

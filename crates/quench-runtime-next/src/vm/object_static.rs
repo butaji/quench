@@ -257,6 +257,18 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_enumerable(&self, object: Value, atom: Atom) -> bool {
+        let Some(data) = self.object_data(object) else {
+            return false;
+        };
+        let Some(slot) = self.shapes[data.shape() as usize]
+            .iter()
+            .position(|candidate| *candidate == atom)
+        else {
+            return false;
+        };
+        if self.heap.property_get(data, slot).is_none() {
+            return false;
+        }
         self.descriptors
             .get(&(object, atom))
             .copied()

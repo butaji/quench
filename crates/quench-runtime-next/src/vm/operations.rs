@@ -82,6 +82,7 @@ impl<H: Host> Vm<H> {
             Native::ReflectGet
             | Native::ReflectGetOwnPropertyDescriptor
             | Native::ReflectDefineProperty
+            | Native::ReflectDeleteProperty
             | Native::ReflectPreventExtensions
             | Native::ReflectIsExtensible
             | Native::ReflectSet

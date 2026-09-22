@@ -215,7 +215,10 @@ impl<H: Host> Vm<H> {
             .symbol_property_order
             .get(&object)
             .cloned()
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|symbol| self.symbol_property(object, *symbol).is_some())
+            .collect();
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),
@@ -244,7 +247,8 @@ impl<H: Host> Vm<H> {
                 .get(&target)
                 .into_iter()
                 .flatten()
-                .copied(),
+                .copied()
+                .filter(|symbol| self.symbol_property(target, *symbol).is_some()),
         );
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),

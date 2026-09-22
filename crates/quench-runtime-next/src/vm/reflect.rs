@@ -26,6 +26,7 @@ impl<H: Host> Vm<H> {
             } else {
                 Value::FALSE
             }),
+            Native::ReflectDeleteProperty => self.object_delete_property(p, args),
             Native::ReflectPreventExtensions => {
                 if self.object_data(target).is_none() {
                     return Err(JsError("Reflect target is not an object".into()));

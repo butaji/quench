@@ -123,10 +123,15 @@ impl<H: Host> Vm<H> {
         let object = self.proxy_target(object);
         let object = self.box_object(object)?;
         let data = self.object_data(object).expect("boxed target is object");
-        let values = self
+        let atoms = self
             .ordered_shape(data)
             .into_iter()
-            .map(|(atom, _)| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
+            .filter(|(_, slot)| self.heap.property_get(data, *slot).is_some())
+            .map(|(atom, _)| atom)
+            .collect::<Vec<_>>();
+        let values = atoms
+            .into_iter()
+            .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
