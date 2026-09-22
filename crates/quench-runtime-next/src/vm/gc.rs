@@ -44,6 +44,7 @@ impl<H: Host> Vm<H> {
                         .chain(std::iter::once(job.this))
                         .chain(job.args.iter().copied())
                 }))
+                .chain(self.suspended.iter().flat_map(Continuation::roots))
                 .chain(self.symbol_registry.values().copied())
                 .chain(self.well_known_symbols.values().copied())
                 .chain(
