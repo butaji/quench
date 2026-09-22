@@ -60,6 +60,18 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(self.object())
             }
+            Native::Proxy => {
+                let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let handler = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                if self.object_data(target).is_none() || self.object_data(handler).is_none() {
+                    return Err(JsError("Proxy target and handler must be objects".into()));
+                }
+                Ok(self.heap.alloc(Cell::Proxy {
+                    object: Self::empty_object(self.object_proto),
+                    target,
+                    handler,
+                }))
+            }
             Native::Array => {
                 let len = args.first().and_then(|v| v.as_number()).unwrap_or(0.0) as usize;
                 Ok(self.heap.alloc(Cell::Array {

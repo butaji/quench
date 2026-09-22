@@ -177,7 +177,7 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::WeakMap { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
         Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
         Cell::WeakRef { .. } => 0,
-        Cell::Iterator { .. } => 0,
+        Cell::Iterator { .. } | Cell::Proxy { .. } => 0,
         Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
         Cell::String(value) | Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
         Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
