@@ -141,6 +141,7 @@ const NATIVES: &[Native] = &[
     Native::SetEntries,
     Native::SetForEach,
     Native::IteratorNext, Native::IteratorClose, Native::IteratorSelf,
+    Native::IteratorReturn, Native::IteratorThrow,
     Native::WeakMap,
     Native::WeakMapGet,
     Native::WeakMapSet,
@@ -458,7 +459,6 @@ impl<H: Host> Vm<H> {
     pub(super) fn atom_hash(name: &str) -> u64 {
         Self::atom_hash_units(&name.encode_utf16().collect::<Vec<_>>())
     }
-
     pub(super) fn index_atom(&mut self, hash: u64, atom: Atom) {
         if let std::collections::hash_map::Entry::Vacant(entry) = self.atoms.entry(hash) {
             entry.insert(atom);

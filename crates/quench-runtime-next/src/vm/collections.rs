@@ -1,5 +1,4 @@
 use super::*;
-
 impl<H: Host> Vm<H> {
     pub(super) fn is_collection_native(native: Native) -> bool {
         matches!(
@@ -24,6 +23,8 @@ impl<H: Host> Vm<H> {
                 | Native::IteratorNext
                 | Native::IteratorClose
                 | Native::IteratorSelf
+                | Native::IteratorReturn
+                | Native::IteratorThrow
                 | Native::WeakMapGet
                 | Native::WeakMapSet
                 | Native::WeakMapHas
@@ -65,7 +66,6 @@ impl<H: Host> Vm<H> {
             target: Some(target),
         }))
     }
-
     pub(super) fn install_weak_collections(
         &mut self,
         program: &ResidualProgram,
@@ -365,6 +365,8 @@ impl<H: Host> Vm<H> {
             Native::IteratorNext => self.iterator_next_with_args(p, this, args),
             Native::IteratorClose => self.iterator_close(p, this),
             Native::IteratorSelf => Ok(this),
+            Native::IteratorReturn => self.generator_return(p, this, args),
+            Native::IteratorThrow => self.generator_throw(p, this, args),
             Native::WeakMapGet => {
                 let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let Some(index) = self.weak_map_entry_index(this, key) else {
@@ -457,7 +459,6 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|(candidate, _)| self.same_value_zero(*candidate, key))
     }
-
     fn set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
         let Some(Cell::Set { entries, .. }) = self.heap.get(set) else {
             return None;
@@ -488,7 +489,6 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|(candidate, _)| self.same_value_zero(*candidate, key))
     }
-
     fn weak_set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
         let Some(Cell::WeakSet { entries, .. }) = self.heap.get(set) else {
             return None;
