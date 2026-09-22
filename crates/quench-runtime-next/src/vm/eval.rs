@@ -83,6 +83,9 @@ impl<H: Host> Vm<H> {
             return self.syntax_error_result(p, "super call is not valid in eval code");
         }
         if source.contains("super.") || source.contains("super[") {
+            if !self.direct_eval {
+                return self.syntax_error_result(p, "super property is not valid in eval code");
+            }
             let expression = source.trim().trim_end_matches(';').trim();
             if let Some(property) = expression.strip_prefix("super.")
                 && property.chars().all(|character| character == '_' || character == '$' || character.is_ascii_alphanumeric())
