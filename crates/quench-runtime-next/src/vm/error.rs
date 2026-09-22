@@ -80,6 +80,17 @@ impl<H: Host> Vm<H> {
         for global in self.host.globals() {
             let native = match global.capability {
                 CapabilityId::Done => Native::HostDone,
+                CapabilityId::CreateRealm => {
+                    let realm = self.object();
+                    self.set_named(
+                        program,
+                        realm,
+                        "createRealm",
+                        self.native_value(Native::CreateRealm),
+                    )?;
+                    self.global(program, global.name, realm)?;
+                    continue;
+                }
                 CapabilityId::WriteLine | CapabilityId::ClockMillis => continue,
             };
             self.global(program, global.name, self.native_value(native))?;
@@ -136,9 +147,24 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if native == Native::HostDone {
             self.call_host_done(program, args)
+        } else if native == Native::CreateRealm {
+            self.create_realm(program)
         } else {
             self.call_function_dispatch(program, native, args)
         }
+    }
+
+    fn create_realm(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        let global = self.object();
+        self.set_named(
+            program,
+            global,
+            "TypeError",
+            self.native_value(Native::RealmTypeError),
+        )?;
+        let realm = self.object();
+        self.set_named(program, realm, "global", global)?;
+        Ok(realm)
     }
 
     pub(super) fn install_errors(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -166,6 +192,16 @@ impl<H: Host> Vm<H> {
             self.set_named(program, prototype, "name", name_value)?;
             self.global(program, name, constructor)?;
         }
+        let realm_constructor = self.native_value(Native::RealmTypeError);
+        let realm_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(error_prototype)));
+        self.set_named(program, realm_constructor, "prototype", realm_prototype)?;
+        self.set_named(program, realm_prototype, "constructor", realm_constructor)?;
+        let realm_name = self
+            .heap
+            .alloc(Cell::String(JsString::from_str("TypeError")));
+        self.set_named(program, realm_prototype, "name", realm_name)?;
         Ok(())
     }
 
