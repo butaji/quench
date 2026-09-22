@@ -189,20 +189,10 @@ impl<H: Host> Vm<H> {
             Native::ArrayFrom | Native::ArrayOf => self.array_modern_native(p, native, this, args),
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let receiver = if receiver.is_null() || receiver.is_undefined() {
-                    self.globals
-                } else {
-                    receiver
-                };
                 self.call_value(p, this, receiver, args.get(1..).unwrap_or_default())
             }
             Native::FunctionApply => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let receiver = if receiver.is_null() || receiver.is_undefined() {
-                    self.globals
-                } else {
-                    receiver
-                };
                 let argument_array = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let arguments = if argument_array.is_undefined() {
                     vec![]

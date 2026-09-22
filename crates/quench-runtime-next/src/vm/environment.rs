@@ -140,9 +140,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         cache: u16,
     ) -> Result<(), JsError> {
-        let name = self.atom_name(atom);
+        let name = self.atom_name(atom).to_owned();
         if !name.starts_with('\0') {
-            let key = self.heap.alloc(Cell::String(name.into()));
+            let key = self.heap.alloc(Cell::String(name.as_str().into()));
             let with_base = self
                 .frames
                 .last()
@@ -154,6 +154,16 @@ impl<H: Host> Vm<H> {
                     return self.set_property_with_program(p, object, atom, value);
                 }
             }
+        }
+        let strict_local = self
+            .frames
+            .last()
+            .and_then(|frame| p.functions.get(frame.function as usize))
+            .map_or(false, |function| {
+                function.strict && !function.local_atoms.contains(&atom)
+            });
+        if strict_local && self.own_property(self.globals, atom).is_none() {
+            return Err(self.reference_error(p, format!("{} is not defined", name)));
         }
         self.set_field_cached(p, self.globals, atom, value, cache)
     }

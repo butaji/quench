@@ -111,9 +111,10 @@ impl FunctionCompiler<'_, '_> {
                 generator: function.generator,
                 super_home: true,
                 super_home_atom: Some(super_atom),
-                strict: function.body.as_ref().is_some_and(|body| {
-                    body.directives.iter().any(|directive| directive.directive == "use strict")
-                }),
+                strict: self.strict
+                    || function.body.as_ref().is_some_and(|body| {
+                        body.directives.iter().any(|directive| directive.directive == "use strict")
+                    }),
                 ..FunctionOptions::default()
             },
         );
