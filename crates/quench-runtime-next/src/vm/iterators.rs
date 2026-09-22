@@ -44,7 +44,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
             let method = self.get_index(p, source, symbol)?;
-            if !method.is_undefined() && !method.is_null() {
+            if !method.is_undefined() {
                 if !self.is_function(method) {
                     return Err(JsError("iterator method is not callable".into()));
                 }
