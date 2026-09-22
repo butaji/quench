@@ -138,8 +138,11 @@ impl ResidualProgram {
                     Op::GetField
                         if !destination(instruction.a())
                             || !field_base_in_bounds(instruction.b(), function.registers)
-                            || instruction.imm() as usize >= self.field_sites.len()
-                            || !cache(instruction.c()) =>
+                            || if instruction.b() == FieldBase::NESTED {
+                                instruction.imm() as usize >= self.field_sites.len()
+                            } else {
+                                !atom(instruction.imm()) || !cache(instruction.c())
+                            } =>
                     {
                         return Err(format!("function {index} field load is invalid"));
                     }
