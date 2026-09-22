@@ -184,7 +184,13 @@ impl<H: Host> Vm<H> {
                 if !proto.is_null() && self.object_data(proto).is_none() {
                     return Err(JsError("Object prototype is not an object".into()));
                 }
-                Ok(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
+                let object = self.heap.alloc(Cell::Object(Self::empty_object(proto)));
+                if let Some(descriptors) = args.get(1).copied()
+                    && !descriptors.is_undefined()
+                {
+                    self.object_define_properties(p, &[object, descriptors])?;
+                }
+                Ok(object)
             }
             Native::ObjectAssign => self.object_assign(p, args),
             Native::ObjectGetPrototypeOf => {
