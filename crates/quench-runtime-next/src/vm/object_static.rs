@@ -211,11 +211,11 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectPreventExtensions => self.object_prevent_extensions(p, args),
             Native::ObjectIsExtensible => self.object_is_extensible(p, args),
-            Native::ObjectSeal => self.object_set_integrity(args, false),
+            Native::ObjectSeal => self.object_set_integrity(p, args, false),
             Native::ObjectIsSealed => Ok(Self::integrity_bool(
                 self.object_is_integrity_level(args, false),
             )),
-            Native::ObjectFreeze => self.object_set_integrity(args, true),
+            Native::ObjectFreeze => self.object_set_integrity(p, args, true),
             Native::ObjectIsFrozen => Ok(Self::integrity_bool(
                 self.object_is_integrity_level(args, true),
             )),
