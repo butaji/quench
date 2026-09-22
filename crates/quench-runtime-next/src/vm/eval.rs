@@ -87,6 +87,9 @@ impl<H: Host> Vm<H> {
             if statement.is_empty() || is_use_strict(statement) {
                 continue;
             }
+            if statement.starts_with("class ") {
+                continue;
+            }
             if is_empty_eval_statement(statement) {
                 continue;
             }
