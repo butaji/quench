@@ -30,7 +30,7 @@ impl<H: Host> Vm<H> {
                         self.set_index(p, target, key, value)?;
                     }
                     Some(Cell::String(name)) => {
-                        let atom = self.intern_atom(name.host_string());
+                        let atom = self.intern_js_atom(&name);
                         let value = self.get_property(p, source, atom)?;
                         self.set_property_with_program(p, target, atom, value)?;
                     }

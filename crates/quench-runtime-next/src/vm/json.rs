@@ -306,7 +306,7 @@ impl<H: Host> Vm<H> {
             JsonValue::Object(values) => {
                 let object = self.object();
                 for (key, value) in values {
-                    let atom = self.intern_atom(key.host_string());
+                    let atom = self.intern_js_atom(key);
                     let value = self.parse_json_value(value)?;
                     self.set_property(object, atom, value)?;
                 }

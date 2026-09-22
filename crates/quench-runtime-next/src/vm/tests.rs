@@ -1,3 +1,4 @@
+use super::wtf16::JsString;
 use super::{CallTarget, JsError, MethodCache, Vm};
 use crate::{Engine, Host, Value};
 use std::cell::RefCell;
@@ -48,6 +49,16 @@ fn repeated_string_concatenations_use_the_bounded_cache() {
         vm.string_concats.as_ref().unwrap().len(),
         super::STRING_CONCAT_CACHE_SIZE
     );
+}
+
+#[test]
+fn dynamic_atoms_distinguish_lone_surrogate_units() {
+    let mut vm = Vm::new(SilentHost);
+    let first = vm.intern_js_atom(&JsString::from_units(&[0xD800]));
+    let second = vm.intern_js_atom(&JsString::from_units(&[0xD800]));
+    let other = vm.intern_js_atom(&JsString::from_units(&[0xD801]));
+    assert_eq!(first, second);
+    assert_ne!(first, other);
 }
 
 #[test]

@@ -17,6 +17,7 @@ mod array_builtins;
 mod array_group;
 mod array_indexed;
 mod array_modern;
+mod atom_keys;
 mod atomics;
 mod builtins;
 mod call_arguments;
@@ -219,7 +220,7 @@ pub struct Vm<H> {
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
-    dynamic_atoms: Vec<Rc<str>>,
+    dynamic_atoms: Vec<JsString>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: FxHashMap<String, Value>,
