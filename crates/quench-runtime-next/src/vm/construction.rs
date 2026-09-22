@@ -83,7 +83,7 @@ impl<H: Host> Vm<H> {
             },
             env,
         });
-        self.function_values.insert((id, env), function);
+        self.function_values[id as usize].push((env, function));
         let length = self.intern_atom("length");
         self.set_property(function, length, Value::number(p.functions[id as usize].params as f64))?;
         self.set_property_attributes(
