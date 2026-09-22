@@ -57,9 +57,7 @@ impl<H: Host> Vm<H> {
                     let atom = self.intern_js_atom(&name);
                     self.own_property(target, atom).is_some_and(|_| {
                         !self
-                            .descriptors
-                            .get(&(target, PropertyKey::string(atom)))
-                            .copied()
+                            .property_attributes(target, PropertyKey::string(atom))
                             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
                             .configurable
                     })
