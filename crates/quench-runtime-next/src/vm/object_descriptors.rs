@@ -104,6 +104,38 @@ impl<H: Host> Vm<H> {
             return Ok(descriptor);
         }
         let key = self.to_string(p, key_value)?;
+        if let Some(index) = super::object_static::array_index(&key).map(|index| index as usize) {
+            let value = match self.heap.get(target) {
+                Some(Cell::Array { elements, .. }) => elements
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_deleted()),
+                _ => None,
+            }
+            .or_else(|| self.heap.sparse_get(target, index));
+            if let Some(value) = value {
+                let atom = self.intern_atom(&key);
+                let attributes = self
+                    .descriptors
+                    .get(&(target, atom))
+                    .copied()
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                let descriptor = self.object();
+                for (name, value) in [
+                    ("value", value),
+                    ("writable", Self::integrity_bool(attributes.writable)),
+                    ("enumerable", Self::integrity_bool(attributes.enumerable)),
+                    (
+                        "configurable",
+                        Self::integrity_bool(attributes.configurable),
+                    ),
+                ] {
+                    let atom = self.intern_atom(name);
+                    self.set_property(descriptor, atom, value)?;
+                }
+                return Ok(descriptor);
+            }
+        }
         let atom = self.intern_atom(&key);
         let Some(value) = self.own_property(target, atom) else {
             return Ok(Value::UNDEFINED);
@@ -176,24 +208,20 @@ impl<H: Host> Vm<H> {
         }
         let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
         let target = self.box_object(target)?;
-        let data = self.object_data(target).expect("boxed target is object");
-        let keys = self.ordered_shape(data);
         let result = self.object();
-        for (atom, _) in keys {
-            let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        for key in self.object_own_key_values(p, target)? {
             let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
-            if !descriptor.is_undefined() {
-                self.set_property(result, atom, descriptor)?;
+            if descriptor.is_undefined() {
+                continue;
             }
-        }
-        for symbol in self
-            .symbol_property_order
-            .get(&target)
-            .cloned()
-            .unwrap_or_default()
-        {
-            let descriptor = self.object_get_own_property_descriptor(p, &[target, symbol])?;
-            self.set_symbol_property(result, symbol, descriptor)?;
+            match self.heap.get(key).cloned() {
+                Some(Cell::Symbol(_)) => self.set_symbol_property(result, key, descriptor)?,
+                Some(Cell::String(name)) => {
+                    let atom = self.intern_atom(&name);
+                    self.set_property(result, atom, descriptor)?;
+                }
+                _ => unreachable!("validated own property key"),
+            }
         }
         Ok(result)
     }
