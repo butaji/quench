@@ -269,19 +269,12 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        let mut inline = [std::mem::MaybeUninit::<Value>::uninit(); 8];
-        debug_assert!(args.len() <= inline.len());
-        for (index, register) in args.iter().enumerate() {
-            inline[index].write(self.read(frame, *register));
-        }
-        // SAFETY: method-site argument registers are compiler-issued, capped
-        // at eight, and initialize exactly this prefix.
         let arguments =
-            unsafe { std::slice::from_raw_parts(inline.as_ptr().cast::<Value>(), args.len()) };
+            CallArguments::from_values(args.iter().map(|register| self.read(frame, *register)));
         match target {
-            CallTarget::User(id, env) => self.call_user(p, id, env, this, arguments),
+            CallTarget::User(id, env) => self.call_user(p, id, env, this, arguments.as_slice()),
             CallTarget::NumericUser(..) => unreachable!(),
-            CallTarget::Native(native) => self.call_native(p, native, this, arguments),
+            CallTarget::Native(native) => self.call_native(p, native, this, arguments.as_slice()),
         }
     }
 }

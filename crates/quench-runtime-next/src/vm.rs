@@ -8,7 +8,6 @@ use crate::host::Host;
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
-use numeric_site::NumericSite;
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -21,6 +20,7 @@ mod array_indexed;
 mod array_modern;
 mod atomics;
 mod builtins;
+mod call_arguments;
 mod coercion;
 mod collections;
 mod construction;
@@ -46,6 +46,8 @@ mod object_integrity;
 mod object_static;
 #[cfg(test)]
 mod object_tests;
+use call_arguments::CallArguments;
+use numeric_site::NumericSite;
 mod operations;
 mod primitives;
 mod profile_edges;
@@ -449,7 +451,6 @@ impl<H: Host> Vm<H> {
             }
         }
     }
-
     fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
         match self.heap.get(callee) {
             Some(Cell::Function {
