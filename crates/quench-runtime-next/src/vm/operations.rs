@@ -45,7 +45,11 @@ impl<H: Host> Vm<H> {
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let this = self.box_object(this)?;
-                let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let key_value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+                    return Ok(self.symbol_prototype_property(this, key_value, native));
+                }
+                let text = self.to_string(p, key_value)?;
                 let key = self.intern_atom(&text);
                 Ok(
                     if self.own_property(this, key).is_some()

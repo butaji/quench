@@ -60,9 +60,9 @@ fn proxy_revocable_revoke_closes_the_shared_handler_state() {
 fn symbol_keys_remain_identity_values_across_property_reflection() {
     assert_eq!(
         output(
-            "var key = Symbol('key'); var object = {}; object[key] = 42; print(object[key]); print(Object.getOwnPropertySymbols(object).length); print(Object.getOwnPropertyDescriptor(object, key).value); print(Reflect.get(object, key)); print(Reflect.ownKeys(object).length); print(Object.hasOwn(object, key));"
+            "var key = Symbol('key'); var object = {}; object[key] = 42; print(object[key]); print(Object.getOwnPropertySymbols(object).length); print(Object.getOwnPropertyDescriptor(object, key).value); print(Reflect.get(object, key)); print(Reflect.ownKeys(object).length); print(Object.hasOwn(object, key)); print(object.hasOwnProperty(key)); print(object.propertyIsEnumerable(key));"
         ),
-        ["42", "1", "42", "42", "1", "true"],
+        ["42", "1", "42", "42", "1", "true", "true", "true"],
     );
 }
 
