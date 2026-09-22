@@ -188,6 +188,21 @@ fn proxy_descriptor_trap_enforces_target_invariants() {
 }
 
 #[test]
+fn proxy_descriptor_map_uses_own_keys_and_descriptor_traps() {
+    let source = r#"
+      var target = {};
+      var proxy = new Proxy(target, {
+        ownKeys: function() { return ['virtual']; },
+        getOwnPropertyDescriptor: function(t, key) {
+          return { value: 7, enumerable: true, configurable: true, writable: true };
+        }
+      });
+      print(Object.getOwnPropertyDescriptors(proxy).virtual.value);
+    "#;
+    assert_eq!(output(source), ["7"]);
+}
+
+#[test]
 fn callable_and_constructable_proxies_share_apply_and_construct_traps() {
     let source = r#"
       function target(value) { return value + 1; }
