@@ -69,8 +69,8 @@ impl<H: Host> Vm<H> {
         }
         let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         let mut values = Vec::new();
-        if let Ok(iterator) = self.get_iterator(p, source) {
-            loop {
+        match self.get_iterator(p, source) {
+            Ok(iterator) => loop {
                 let step = self.iterator_next(p, iterator)?;
                 let done = self.get_property(p, step, done_atom)?;
                 if self.truthy(done) {
@@ -82,28 +82,34 @@ impl<H: Host> Vm<H> {
                     value = self.call_value(p, mapfn, map_this, &[value, index])?;
                 }
                 values.push(value);
-            }
-        } else {
-            let length_atom = self.intern_atom("length");
-            let length_value = self.get_property(p, source, length_atom)?;
-            let length = self.to_number(p, length_value)?;
-            let length = if !length.is_finite() || length <= 0.0 {
-                if length.is_infinite() && length.is_sign_positive() {
-                    return Err(JsError("Array.from length is too large".into()));
+            },
+            Err(error) if error.to_string() == "value is not iterable" => {
+                let length_atom = self.intern_atom("length");
+                let length_value = self.get_property(p, source, length_atom)?;
+                let length = self.to_number(p, length_value)?;
+                let length = if !length.is_finite() || length <= 0.0 {
+                    if length.is_infinite() && length.is_sign_positive() {
+                        return Err(JsError("Array.from length is too large".into()));
+                    }
+                    0
+                } else {
+                    length.floor().min(usize::MAX as f64) as usize
+                };
+                values.reserve(length);
+                for index in 0..length {
+                    let mut value = self.get_index(p, source, Value::number(index as f64))?;
+                    if let Some(mapfn) = mapfn {
+                        value = self.call_value(
+                            p,
+                            mapfn,
+                            map_this,
+                            &[value, Value::number(index as f64)],
+                        )?;
+                    }
+                    values.push(value);
                 }
-                0
-            } else {
-                length.floor().min(usize::MAX as f64) as usize
-            };
-            values.reserve(length);
-            for index in 0..length {
-                let mut value = self.get_index(p, source, Value::number(index as f64))?;
-                if let Some(mapfn) = mapfn {
-                    value =
-                        self.call_value(p, mapfn, map_this, &[value, Value::number(index as f64)])?;
-                }
-                values.push(value);
             }
+            Err(error) => return Err(error),
         }
         Ok(self.new_array(values))
     }
