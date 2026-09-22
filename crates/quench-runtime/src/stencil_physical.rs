@@ -103,10 +103,10 @@ mod aarch64 {
 pub(crate) fn contains_call(bytes: &[u8]) -> bool {
     #[cfg(target_arch = "aarch64")]
     {
-        return bytes.chunks_exact(4).any(|word| {
+        bytes.as_chunks::<4>().0.iter().any(|word| {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
             aarch64::DIRECT_CALL.matches(encoded) || aarch64::INDIRECT_CALL.matches(encoded)
-        });
+        })
     }
     #[cfg(target_arch = "x86_64")]
     {
@@ -132,10 +132,12 @@ pub(crate) fn contains_interrupt_checkpoint(bytes: &[u8]) -> bool {
     #[cfg(target_arch = "aarch64")]
     {
         let words: Vec<u32> = bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
             .collect();
-        return words.windows(3).any(aarch64_interrupt_poll);
+        words.windows(3).any(aarch64_interrupt_poll)
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
@@ -162,8 +164,10 @@ fn aarch64_interrupt_poll(window: &[u32]) -> bool {
 pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
     #[cfg(target_arch = "aarch64")]
     {
-        return bytes
-            .chunks_exact(4)
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter_map(|word| {
                 let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
                 let fp_load = aarch64::LOAD_D.matches(encoded);
@@ -191,7 +195,7 @@ pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
                 } else {
                     u16::MAX
                 }
-            });
+            })
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
@@ -203,8 +207,10 @@ pub(crate) fn simd_clobber_mask(bytes: &[u8]) -> u16 {
 pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
     #[cfg(target_arch = "aarch64")]
     {
-        return bytes
-            .chunks_exact(4)
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter_map(|word| {
                 let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
                 let load = aarch64::LOAD_X.matches(encoded) || aarch64::LOAD_W.matches(encoded);
@@ -246,7 +252,7 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
                 } else {
                     u16::MAX
                 }
-            });
+            })
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
@@ -262,10 +268,10 @@ pub(crate) fn gpr_clobber_mask(bytes: &[u8]) -> u16 {
 pub(crate) fn validate_raw_instruction_stream(bytes: &[u8]) -> Result<(), String> {
     #[cfg(target_arch = "aarch64")]
     {
-        if bytes.len() % 4 != 0 {
+        if !bytes.len().is_multiple_of(4) {
             return Err("raw stencil is not instruction aligned".into());
         }
-        for (index, word) in bytes.chunks_exact(4).enumerate() {
+        for (index, word) in bytes.as_chunks::<4>().0.iter().enumerate() {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
             if !known_aarch64_raw_instruction(encoded) {
                 return Err(format!(
@@ -313,10 +319,10 @@ fn branch_target_is_local(encoded: u32, index: usize, length: usize) -> bool {
 pub(crate) fn validate_aarch64_instruction_stream(bytes: &[u8]) -> Result<(), String> {
     #[cfg(target_arch = "aarch64")]
     {
-        if bytes.len() % 4 != 0 {
+        if !bytes.len().is_multiple_of(4) {
             return Err("AArch64 stencil is not instruction aligned".into());
         }
-        for (index, word) in bytes.chunks_exact(4).enumerate() {
+        for (index, word) in bytes.as_chunks::<4>().0.iter().enumerate() {
             let encoded = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
             if !known_aarch64_instruction(encoded) {
                 return Err(format!(

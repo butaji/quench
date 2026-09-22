@@ -31,7 +31,7 @@ pub fn capability_function_with_properties(
     capability: HostCapabilityRef,
     properties: Vec<(String, Value)>,
 ) -> Value {
-    let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability.clone())));
+    let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability)));
     Value::BoundFunction(Rc::new(BoundFunctionValue {
         realm: capability.realm,
         target: Value::Builtin(Builtin::HostCapability(capability.kind)),
@@ -68,7 +68,7 @@ pub fn bound_capability_with_arguments(
     capability: HostCapabilityRef,
     arguments: Vec<Value>,
 ) -> Value {
-    bound_capability_with_arguments_in_realm(capability.clone(), arguments, capability.realm)
+    bound_capability_with_arguments_in_realm(capability, arguments, capability.realm)
 }
 
 pub fn bound_capability_with_arguments_in_realm(
@@ -76,7 +76,7 @@ pub fn bound_capability_with_arguments_in_realm(
     arguments: Vec<Value>,
     realm: crate::ops::RealmId,
 ) -> Value {
-    let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability.clone())));
+    let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability)));
     let mut bound = BoundFunctionValue::new(
         realm,
         Value::Builtin(Builtin::HostCapability(capability.kind)),

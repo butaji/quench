@@ -47,7 +47,7 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         // COW object path. Remove the deletion marker before rebuilding the
         // property so own-property and descriptor lookups see the new state.
         let deleted = super::deleted_key(key);
-        values.retain(|(name, _)| name != &deleted);
+        values.retain(|(name, _)| name != deleted);
         for (name, mut value) in values.iter_mut() {
             if name == crate::intl::SLOT {
                 continue;

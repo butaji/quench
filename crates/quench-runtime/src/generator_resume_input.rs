@@ -6,7 +6,7 @@ fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, i
         return;
     }
     if let Some((_, Op::Yield { src }, _)) = suspended_try(generator, state) {
-        crate::execute::write_value(&mut registers_mut(generator), *src, input);
+        crate::execute::write_value(registers_mut(generator), *src, input);
         return;
     }
     install_scanned_resume_input(generator, state, input);
@@ -37,7 +37,7 @@ fn install_direct_resume_input(
             return install_nested_point_input(generator, &inner, input);
         }
     };
-    crate::execute::write_value(&mut registers_mut(generator), src, input.clone());
+    crate::execute::write_value(registers_mut(generator), src, input.clone());
     true
 }
 
@@ -57,7 +57,7 @@ fn install_nested_point_input(
             return install_nested_point_input(generator, inner, input);
         }
     };
-    crate::execute::write_value(&mut registers_mut(generator), slot, input.clone());
+    crate::execute::write_value(registers_mut(generator), slot, input.clone());
     true
 }
 
@@ -69,14 +69,14 @@ fn install_frame_resume_input(
     if let Some(crate::machine::Frame::Await { destination, .. }) =
         generator.machine.borrow().frames.frames.last()
     {
-        crate::execute::write_value(&mut registers_mut(generator), *destination, input.clone());
+        crate::execute::write_value(registers_mut(generator), *destination, input.clone());
         return true;
     }
     let code = generator.function.code.code();
     if let Some(Op::YieldStar { dst, .. }) =
         code.and_then(|code| code.cold_at(machine_pc(generator)))
     {
-        crate::execute::write_value(&mut registers_mut(generator), *dst, input.clone());
+        crate::execute::write_value(registers_mut(generator), *dst, input.clone());
         return true;
     }
     install_delegate_frame_input(generator, input)
@@ -105,5 +105,5 @@ fn install_scanned_resume_input(
         install_nested_resume_input(generator, state, input);
         return;
     };
-    crate::execute::write_value(&mut registers_mut(generator), *src, input);
+    crate::execute::write_value(registers_mut(generator), *src, input);
 }

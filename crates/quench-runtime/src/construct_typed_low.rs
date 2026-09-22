@@ -1,5 +1,6 @@
 fn array_iteration_is_intrinsic() -> bool {
-    let result = !crate::builtins::builtin_prototype_property_is_removed(
+
+    !crate::builtins::builtin_prototype_property_is_removed(
         crate::ops::Builtin::ArrayPrototype,
         "Symbol.iterator",
     ) && crate::builtins::read_intrinsic_override(
@@ -11,8 +12,7 @@ fn array_iteration_is_intrinsic() -> bool {
             crate::ops::Builtin::ArrayIteratorPrototype,
             "next",
         )
-        .is_none();
-    result
+        .is_none()
 }
 
 fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {

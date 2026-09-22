@@ -541,13 +541,12 @@ impl<T> HeapArena<T> {
         if self.free.is_empty() && self.values.len() >= u32::MAX as usize {
             return Err(AllocationFailure::capacity());
         }
-        if self.free.is_empty() {
-            if self.values.try_reserve(1).is_err()
+        if self.free.is_empty()
+            && (self.values.try_reserve(1).is_err()
                 || self.sizes.try_reserve(1).is_err()
-                || self.generations.try_reserve(1).is_err()
-            {
-                return Err(AllocationFailure::capacity());
-            }
+                || self.generations.try_reserve(1).is_err())
+        {
+            return Err(AllocationFailure::capacity());
         }
         Ok(self.allocate_sized(value, bytes))
     }
@@ -703,7 +702,7 @@ impl<T> HeapArena<T> {
     /// that same reserved total; it is never an independent counter.
     pub fn page_accounting_consistent(&self) -> bool {
         let page = self.page_size.max(1) as u64;
-        self.stats.reserved_bytes % page == 0
+        self.stats.reserved_bytes.is_multiple_of(page)
             && self.stats.committed_bytes <= self.stats.reserved_bytes
             && self.page_count() == (self.stats.reserved_bytes / page) as usize
             && self.counters_consistent()

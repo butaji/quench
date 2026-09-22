@@ -419,19 +419,7 @@ fn format_unit_text(number: &str, unit: &str, style: &str, _value: i64) -> Strin
         return number.to_string();
     }
     let label = if style == "long" {
-        match unit {
-            "years" => "years",
-            "months" => "months",
-            "weeks" => "weeks",
-            "days" => "days",
-            "hours" => "hours",
-            "minutes" => "minutes",
-            "seconds" => "seconds",
-            "milliseconds" => "milliseconds",
-            "microseconds" => "microseconds",
-            "nanoseconds" => "nanoseconds",
-            _ => unit,
-        }
+        unit
     } else {
         match unit {
             "years" => "yr",
@@ -491,7 +479,7 @@ fn fractional_number(
     let requested = slots
         .iter()
         .find_map(|(key, value)| {
-            (key == "fractionalDigits").then(|| match value {
+            (key == "fractionalDigits").then_some(match value {
                 Value::Number(n) => *n as usize,
                 _ => 9,
             })

@@ -387,8 +387,8 @@ fn float16_constructor_for_realm(realm: crate::ops::RealmId) -> Value {
         "\0prototype",
         prototype.clone(),
     );
-    let constructor = crate::execute::set_property(constructor, "prototype", prototype);
-    constructor
+
+    crate::execute::set_property(constructor, "prototype", prototype)
 }
 
 fn create_realm_value() -> Value {

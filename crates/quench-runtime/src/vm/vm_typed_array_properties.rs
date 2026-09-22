@@ -52,11 +52,11 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
             let value = buffer
                 .prototype()
                 .unwrap_or_else(|| crate::vm::realm_intrinsic(Builtin::ArrayBufferPrototype));
-            let normalized = match value {
+
+            match value {
                 Value::Builtin(builtin) => crate::vm::realm_intrinsic(builtin),
                 value => value,
-            };
-            normalized
+            }
         }
         "constructor" => buffer
             .prototype()

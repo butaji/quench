@@ -398,10 +398,10 @@ impl FrameStack {
         let Some(target) = target else {
             return false;
         };
-        if target > self.frames.capacity() {
-            if self.frames.try_reserve(target - self.frames.len()).is_err() {
-                return false;
-            }
+        if target > self.frames.capacity()
+            && self.frames.try_reserve(target - self.frames.len()).is_err()
+        {
+            return false;
         }
         true
     }
@@ -1732,10 +1732,10 @@ impl NativeBinaryPlan {
                     returns_boolean: false,
                 },
             )
-        } else if let Some(operator) = opcode
-            .numeric_operator()
-            .or_else(|| opcode.binary_operator(instruction.flags))
-        {
+        } else {
+            let operator = opcode
+                .numeric_operator()
+                .or_else(|| opcode.binary_operator(instruction.flags))?;
             // Resolve both dedicated and legacy flagged spellings through the
             // generated opcode catalog. `Binary(Add)` therefore shares the
             // same physical row as `Add`, while unsupported operators stop at
@@ -1766,8 +1766,6 @@ impl NativeBinaryPlan {
                     },
                 ),
             }
-        } else {
-            return None;
         };
         let tagged_key = match opcode.binary_operator(instruction.flags) {
             Some(crate::ops::BinaryOp::StrictEqual) => {
@@ -2113,7 +2111,7 @@ impl NativeBinaryPlan {
                         left as u32,
                         right as u32,
                     )
-                    .map(|value| f64::from(value))
+                    .map(f64::from)
             } else {
                 arena
                     .render_selected_i32(
@@ -2123,7 +2121,7 @@ impl NativeBinaryPlan {
                         left,
                         right,
                     )
-                    .map(|value| f64::from(value))
+                    .map(f64::from)
             };
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if result.is_ok() {
@@ -2211,10 +2209,13 @@ impl NativeBinaryPlan {
             }
         }
         let values = crate::stencil_fact::PatchValues::from_site(&self.site);
-        let values = (self.opcode == crate::ir::Opcode::AddConst
-            || self.opcode == crate::ir::Opcode::IncI)
-            .then(|| values.with_constant_bits(rhs.to_bits()))
-            .unwrap_or(values);
+        let values = if self.opcode == crate::ir::Opcode::AddConst
+            || self.opcode == crate::ir::Opcode::IncI
+        {
+            values.with_constant_bits(rhs.to_bits())
+        } else {
+            values
+        };
         let key = self.key;
         // Check the generated admission row before mapping any pages.  This
         // makes the ARM/non-executable path allocation-free and leaves the
@@ -3440,9 +3441,8 @@ impl NativeUnaryPlan {
                 slab.make_executable(address)?;
                 Ok(address)
             })();
-            let address = rendered.map_err(|error| {
+            let address = rendered.inspect_err(|_error| {
                 self.physical.clear(InstalledUnaryEntry::Unpublished);
-                error
             })?;
             let owned = shared.borrow().owned_i32_unary_entry(address)?;
             let result = match invoke_shared_entry!(shared, owned, |entry| entry(operand)) {
@@ -3728,7 +3728,7 @@ impl NativeAddChainPlan {
             if let Some(arena) = self.physical.storage.local() {
                 let signature = crate::stencil_select::select_physical(key)
                     .expect("installed view")
-                    .cache_signature(&values);
+                    .cache_signature(values);
                 if let Some(address) =
                     self.physical
                         .state
@@ -5862,9 +5862,7 @@ impl NativeRegionPlan {
         };
         if initialize_leaves {
             for (offset, leaf) in self.binary_leaves.iter_mut().enumerate() {
-                let Some(instruction) =
-                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
-                else {
+                let Some(instruction) = code.instruction(pc.saturating_add(offset)) else {
                     return Ok(None);
                 };
                 // `IncI` has distinct generated +1 and -1 artifacts.  Keep the
@@ -5910,9 +5908,7 @@ impl NativeRegionPlan {
                 }
             }
             for (offset, leaf) in self.unary_leaves.iter_mut().enumerate() {
-                let Some(instruction) =
-                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
-                else {
+                let Some(instruction) = code.instruction(pc.saturating_add(offset)) else {
                     return Ok(None);
                 };
                 if instruction.opcode != crate::ir::Opcode::Unary {
@@ -5933,9 +5929,7 @@ impl NativeRegionPlan {
                 }
             }
             for (offset, leaf) in self.truthiness_leaves.iter_mut().enumerate() {
-                let Some(instruction) =
-                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
-                else {
+                let Some(instruction) = code.instruction(pc.saturating_add(offset)) else {
                     return Ok(None);
                 };
                 let is_truthiness = instruction.opcode == crate::ir::Opcode::JumpIfFalse
@@ -5960,9 +5954,7 @@ impl NativeRegionPlan {
                 }
             }
             for (offset, leaf) in self.nullish_leaves.iter_mut().enumerate() {
-                let Some(instruction) =
-                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
-                else {
+                let Some(instruction) = code.instruction(pc.saturating_add(offset)) else {
                     return Ok(None);
                 };
                 if instruction.opcode != crate::ir::Opcode::Unary
@@ -5986,9 +5978,7 @@ impl NativeRegionPlan {
                 }
             }
             for (offset, leaf) in self.update_leaves.iter_mut().enumerate() {
-                let Some(instruction) =
-                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
-                else {
+                let Some(instruction) = code.instruction(pc.saturating_add(offset)) else {
                     return Ok(None);
                 };
                 if instruction.opcode != crate::ir::Opcode::UpdateLocal {
@@ -6014,9 +6004,7 @@ impl NativeRegionPlan {
                 }
             }
             for (offset, leaf) in self.return_leaves.iter_mut().enumerate() {
-                let Some(instruction) =
-                    code.instruction(pc.checked_add(offset).unwrap_or(usize::MAX))
-                else {
+                let Some(instruction) = code.instruction(pc.saturating_add(offset)) else {
                     return Ok(None);
                 };
                 if instruction.opcode != crate::ir::Opcode::Return {
@@ -7059,7 +7047,7 @@ fn comparison_branch_key(
 fn dead_pure_definition(entry: &BaselineEntry, live_after: &BTreeSet<u16>) -> bool {
     let flow = entry.instruction.register_flow();
     entry.control == crate::ir::ControlOperands::Next
-        && entry.instruction.opcode.effects() == &[crate::facts::OperationEffect::Pure]
+        && entry.instruction.opcode.effects() == [crate::facts::OperationEffect::Pure]
         && flow.complete
         && flow
             .definition
@@ -10710,10 +10698,10 @@ impl Machine {
         &mut self,
         frame: crate::completion::CallContinuation,
     ) -> Result<(), crate::completion::CallContinuation> {
-        if self.call_frames.len() == self.call_frames.capacity() {
-            if self.call_frames.try_reserve(1).is_err() {
-                return Err(frame);
-            }
+        if self.call_frames.len() == self.call_frames.capacity()
+            && self.call_frames.try_reserve(1).is_err()
+        {
+            return Err(frame);
         }
         self.call_frames.push(frame);
         Ok(())

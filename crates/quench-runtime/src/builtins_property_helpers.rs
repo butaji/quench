@@ -364,7 +364,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
     if let Value::Object(properties) = result {
         if default_ordinary_descriptor(descriptor) {
             let properties = Rc::make_mut(properties);
-            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.retain(|(name, _)| name != descriptor_key);
             properties.invalidate_layout();
             return;
         }
@@ -374,7 +374,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
     match result {
         Value::Object(properties) => {
             let properties = Rc::make_mut(properties);
-            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.retain(|(name, _)| name != descriptor_key);
             properties.push((descriptor_key.into(), metadata));
             properties.invalidate_layout();
         }

@@ -221,9 +221,11 @@ impl StencilLifecycle {
         if matches!(delta, FactDelta::RequiresRender | FactDelta::Degrade) {
             self.misses = self.misses.saturating_add(1);
         }
-        let delta = (self.misses >= MAX_MISSES)
-            .then_some(FactDelta::Degrade)
-            .unwrap_or(delta);
+        let delta = if self.misses >= MAX_MISSES {
+            FactDelta::Degrade
+        } else {
+            delta
+        };
         self.state = transition(self.state, delta);
         if self.state != StencilState::Retired {
             self.key = Some(key);

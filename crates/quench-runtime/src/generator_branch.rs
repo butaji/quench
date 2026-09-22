@@ -37,7 +37,7 @@ fn resume_branch_frame(
     }
     let completion = match (frame.dst, completion) {
         (Some(dst), crate::completion::Completion::Return(value)) => {
-            crate::execute::write_value(&mut registers_mut(generator), dst, value);
+            crate::execute::write_value(registers_mut(generator), dst, value);
             crate::completion::Completion::Normal
         }
         (Some(_), completion) => return Ok(Some(completion)),
@@ -51,6 +51,6 @@ fn install_branch_frame_input(generator: &GeneratorData, input: &Value) -> bool 
     let Some(frame) = branch_frame_resume(generator) else {
         return false;
     };
-    crate::execute::write_value(&mut registers_mut(generator), frame.yield_dst, input.clone());
+    crate::execute::write_value(registers_mut(generator), frame.yield_dst, input.clone());
     true
 }

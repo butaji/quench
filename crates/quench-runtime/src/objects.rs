@@ -42,7 +42,7 @@ pub(crate) fn reduce(
             // The key register is only read for computed properties, which
             // this fused subset excludes.
             set_property_name(property, 0, value, ops)?;
-            if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == &key) {
+            if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == key) {
                 // Duplicate literal keys update the existing slot; the
                 // creation order remains that of the first occurrence.
                 *current = value;

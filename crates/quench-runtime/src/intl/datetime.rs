@@ -225,10 +225,8 @@ impl DateTimeOptions {
             if let Some(valid) = valid_component(&text, allowed) {
                 let is_hour_cycle = key == "hourCycle";
                 self.set_component(name, valid.clone());
-                if is_hour_cycle {
-                    if locale_hour_cycle(&self.locale) != Some(valid.as_str()) {
-                        self.locale = super::locale::remove_unicode_extension(&self.locale, "hc");
-                    }
+                if is_hour_cycle && locale_hour_cycle(&self.locale) != Some(valid.as_str()) {
+                    self.locale = super::locale::remove_unicode_extension(&self.locale, "hc");
                 }
             } else {
                 return Err(runtime_error("RangeError: invalid date/time option"));
