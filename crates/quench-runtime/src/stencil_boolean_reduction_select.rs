@@ -194,32 +194,38 @@ fn simulate_condition(
             return Some((incremented, incremented.is_some()));
         }
         let instruction = code.instruction(pc)?;
-        pc = simulate_instruction(
-            code,
-            instruction,
-            pc,
+        let inputs = BooleanInputs {
             left_slot,
             right_slot,
             left,
             right,
-            &mut values,
-            &mut incremented,
-        )?;
+        };
+        pc = simulate_instruction(code, instruction, pc, inputs, &mut values, &mut incremented)?;
     }
     None
+}
+
+struct BooleanInputs {
+    left_slot: u16,
+    right_slot: u16,
+    left: bool,
+    right: bool,
 }
 
 fn simulate_instruction(
     code: CodeView<'_>,
     instruction: crate::ir::Instruction,
     pc: usize,
-    left_slot: u16,
-    right_slot: u16,
-    left: bool,
-    right: bool,
+    inputs: BooleanInputs,
     values: &mut BTreeMap<u16, FlowValue>,
     incremented: &mut Option<u16>,
 ) -> Option<usize> {
+    let BooleanInputs {
+        left_slot,
+        right_slot,
+        left,
+        right,
+    } = inputs;
     let next = pc + 1;
     match instruction.opcode {
         opcode if opcode.is_cold_marker() && marker(code, pc, Some([left_slot, right_slot])) => {}
