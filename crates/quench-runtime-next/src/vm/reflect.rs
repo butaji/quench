@@ -30,10 +30,10 @@ impl<H: Host> Vm<H> {
                 if self.object_data(target).is_none() {
                     return Err(JsError("Reflect target is not an object".into()));
                 }
-                self.object_data_mut(target)
-                    .expect("object target validated")
-                    .set_extensible(false);
-                Ok(Value::TRUE)
+                Ok(match self.object_prevent_extensions(p, args) {
+                    Ok(_) => Value::TRUE,
+                    Err(_) => Value::FALSE,
+                })
             }
             Native::ReflectIsExtensible => {
                 if self.object_data(target).is_none() {
