@@ -161,6 +161,7 @@ impl<H: Host> Vm<H> {
             env: continuation.env,
             this: continuation.this,
             locals: continuation.locals,
+            dynamic_bindings: vec![],
             captured: continuation.captured,
             registers: continuation.registers,
             with_base: self.with_stack.len(),
