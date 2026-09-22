@@ -118,6 +118,7 @@ pub struct Function {
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
+    pub arguments_slot: Option<u16>,
     pub locals: u16,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,

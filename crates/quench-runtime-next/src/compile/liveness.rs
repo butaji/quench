@@ -230,6 +230,7 @@ mod tests {
             rest: false,
             is_async: false,
             is_generator: false,
+            arguments_slot: None,
             locals: 0,
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),
