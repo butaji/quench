@@ -257,6 +257,7 @@ impl Native {
                 | Self::SyntaxError
                 | Self::TypeError
                 | Self::URIError
+                | Self::RealmTypeError
         )
     }
 
