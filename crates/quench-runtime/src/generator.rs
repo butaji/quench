@@ -22,7 +22,6 @@ include!("generator_loop.rs");
 include!("generator_iterator_binding.rs");
 include!("generator_suspension.rs");
 include!("generator_reduce.rs");
-include!("generator_try_path.rs");
 include!("generator_machine.rs");
 include!("generator_result.rs");
 include!("generator_completion.rs");
