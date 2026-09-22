@@ -1,6 +1,24 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn object_define_properties(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if self.object_data(target).is_none() {
+            return Err(JsError("defineProperties target is not an object".into()));
+        }
+        let descriptors = self.box_object(args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        let keys = self.object_own_key_values(p, descriptors)?;
+        for key in keys {
+            let descriptor = self.get_index(p, descriptors, key)?;
+            self.object_define_property(p, &[target, key, descriptor])?;
+        }
+        Ok(target)
+    }
+
     pub(super) fn install_object(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let object = self.native_value(Native::Object);
         self.set_named(program, object, "prototype", self.object_proto)?;

@@ -97,6 +97,12 @@ impl<H: Host> Vm<H> {
         self.set_named(
             program,
             object,
+            "defineProperties",
+            self.native_value(Native::ObjectDefineProperties),
+        )?;
+        self.set_named(
+            program,
+            object,
             "values",
             self.native_value(Native::ObjectValues),
         )?;
@@ -138,6 +144,7 @@ impl<H: Host> Vm<H> {
                 self.object_get_own_property_descriptors(p, args)
             }
             Native::ObjectDefineProperty => self.object_define_property(p, args),
+            Native::ObjectDefineProperties => self.object_define_properties(p, args),
             Native::ObjectValues => {
                 self.object_values(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
