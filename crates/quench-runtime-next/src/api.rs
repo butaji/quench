@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn generic_reference_matches_specialized_output() {
-        let source = "var object = { answer: 41 }; print(object['answer'] + 1);";
+        let source = "var object = { answer: 41, add: function(value) { return value + 1; } }; print(object['answer'] + object.add(1));";
         let optimized_host = Capture::default();
         let optimized_view = optimized_host.clone();
         let mut optimized = Runtime::new(optimized_host);
