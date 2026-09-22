@@ -110,4 +110,22 @@ impl<H: Host> Vm<H> {
             elements: Rc::new(values),
         }))
     }
+
+    pub(super) fn symbol_prototype_property(
+        &self,
+        object: Value,
+        key: Value,
+        native: Native,
+    ) -> Value {
+        let exists = self.symbol_property(object, key).is_some();
+        let enumerable = self
+            .symbol_descriptors
+            .get(&(object, key))
+            .is_some_and(|attributes| attributes.enumerable);
+        if exists && (native == Native::ObjectPrototypeHasOwnProperty || enumerable) {
+            Value::TRUE
+        } else {
+            Value::FALSE
+        }
+    }
 }
