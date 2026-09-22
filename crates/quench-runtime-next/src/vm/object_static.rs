@@ -51,26 +51,6 @@ impl<H: Host> Vm<H> {
         Ok(target)
     }
 
-    pub(super) fn object_keys(&mut self, object: Value) -> Result<Value, JsError> {
-        let object = self.proxy_target(object);
-        let object = self.box_object(object)?;
-        let data = self.object_data(object).expect("boxed target is object");
-        let atoms = self
-            .ordered_shape(data)
-            .into_iter()
-            .filter(|(atom, _)| self.is_enumerable(object, *atom))
-            .map(|(atom, _)| atom)
-            .collect::<Vec<_>>();
-        let values = atoms
-            .into_iter()
-            .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
-    }
-
     pub(super) fn install_object_extra(
         &mut self,
         program: &ResidualProgram,
@@ -153,13 +133,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match native {
             Native::ObjectKeys => {
-                self.object_keys(args.first().copied().unwrap_or(Value::UNDEFINED))
+                self.object_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectGetOwnPropertyNames => {
-                self.object_names(args.first().copied().unwrap_or(Value::UNDEFINED))
+                self.object_names(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectGetOwnPropertySymbols => {
-                self.object_symbols(args.first().copied().unwrap_or(Value::UNDEFINED))
+                self.object_symbols(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectGetOwnPropertyDescriptor => {
                 self.object_get_own_property_descriptor(p, args)
@@ -330,21 +310,6 @@ impl<H: Host> Vm<H> {
             }
         });
         entries
-    }
-
-    pub(super) fn object_names(&mut self, object: Value) -> Result<Value, JsError> {
-        let object = self.proxy_target(object);
-        let object = self.box_object(object)?;
-        let data = self.object_data(object).expect("boxed target is object");
-        let values = self
-            .ordered_shape(data)
-            .into_iter()
-            .map(|(atom, _)| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
     }
 
     pub(super) fn is_enumerable(&self, object: Value, atom: Atom) -> bool {
