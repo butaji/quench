@@ -24,16 +24,15 @@ impl<H: Host> Vm<H> {
             else {
                 return None;
             };
-            let mut text = String::with_capacity(left.len() + right.len());
-            text.push_str(left);
-            text.push_str(right);
+            let mut text = left.clone();
+            text.push_js_string(right);
             #[cfg(feature = "profile-aggregate")]
-            self.profile.string_concat_size(text.len());
+            self.profile.string_concat_size(text.units().len());
             text
         };
         #[cfg(feature = "profile-aggregate")]
         self.profile.concat_cache(false);
-        let value = self.intern_dynamic_string(text);
+        let value = self.intern_dynamic_value(text);
         let cache = self.string_concats.get_or_insert_with(|| {
             vec![EMPTY_STRING_CONCAT_CACHE; STRING_CONCAT_CACHE_SIZE].into_boxed_slice()
         });
