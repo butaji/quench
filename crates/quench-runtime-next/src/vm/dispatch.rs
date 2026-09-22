@@ -137,7 +137,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), v);
             }
             Op::GetIterator => {
-                let value = self.get_iterator(self.read(f, i.b()))?;
+                let value = self.get_iterator(p, self.read(f, i.b()))?;
                 self.write(f, i.a(), value);
             }
             Op::SetField => {

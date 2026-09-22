@@ -77,6 +77,16 @@ fn well_known_symbols_are_realm_stable_values() {
 }
 
 #[test]
+fn custom_symbol_iterator_uses_the_shared_iterator_protocol() {
+    assert_eq!(
+        output(
+            "var iterable = {}; var index = 0; iterable[Symbol.iterator] = function() { return { next: function() { index = index + 1; return { value: index, done: index > 2 }; } }; }; var values = Array.from(iterable); print(values.length); print(values[0]); print(values[1]); index = 0; var total = 0; for (var value of iterable) total = total + value; print(total);"
+        ),
+        ["2", "1", "2", "3"],
+    );
+}
+
+#[test]
 fn closures_prototypes_arrays_and_integer_ops() {
     let source = r#"
       var K = 40;
