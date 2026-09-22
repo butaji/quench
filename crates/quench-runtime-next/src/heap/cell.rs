@@ -193,9 +193,12 @@ pub(crate) enum Native {
     PromiseThen,
     PromiseCatch,
     PromiseFinally,
+    PromiseAll,
+    PromiseRace,
     PromiseReactionJob,
     PromiseThenableJob,
     PromiseFinallyJob,
+    PromiseAggregateJob,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -295,9 +298,12 @@ impl Native {
                 | Self::PromiseThen
                 | Self::PromiseCatch
                 | Self::PromiseFinally
+                | Self::PromiseAll
+                | Self::PromiseRace
                 | Self::PromiseReactionJob
                 | Self::PromiseThenableJob
                 | Self::PromiseFinallyJob
+                | Self::PromiseAggregateJob
         )
     }
 }
