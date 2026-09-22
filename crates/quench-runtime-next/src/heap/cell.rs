@@ -187,6 +187,12 @@ pub(crate) enum Native {
     NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat,
     NumberFixed,
     NumberPrecision,
+    Promise,
+    PromiseResolve,
+    PromiseReject,
+    PromiseThen,
+    PromiseCatch,
+    PromiseReactionJob,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -274,6 +280,18 @@ impl Native {
                 | Self::DataViewSetFloat32
                 | Self::DataViewGetFloat64
                 | Self::DataViewSetFloat64
+        )
+    }
+
+    pub(crate) fn is_promise_native(self) -> bool {
+        matches!(
+            self,
+            Self::Promise
+                | Self::PromiseResolve
+                | Self::PromiseReject
+                | Self::PromiseThen
+                | Self::PromiseCatch
+                | Self::PromiseReactionJob
         )
     }
 }
