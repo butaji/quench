@@ -104,9 +104,11 @@ impl<H: Host> Vm<H> {
             }
             return Ok(descriptor);
         }
-        let key = self.to_string(p, key_value)?;
-        if let Some(index) = super::object_static::array_index(&key).map(|index| index as usize) {
-            let atom = self.intern_atom(&key);
+        let key = self.coerce_js_string(p, key_value)?;
+        if let Some(index) =
+            super::object_static::array_index(key.host_string()).map(|index| index as usize)
+        {
+            let atom = self.intern_js_atom(&key);
             let attributes = self
                 .descriptors
                 .get(&(target, PropertyKey::string(atom)))
@@ -157,7 +159,7 @@ impl<H: Host> Vm<H> {
                 return Ok(descriptor);
             }
         }
-        let atom = self.intern_atom(&key);
+        let atom = self.intern_js_atom(&key);
         let Some(value) = self.own_property(target, atom) else {
             return Ok(Value::UNDEFINED);
         };

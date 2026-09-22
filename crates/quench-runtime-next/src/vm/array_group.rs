@@ -39,8 +39,8 @@ impl<H: Host> Vm<H> {
             let key_atom = if to_map {
                 None
             } else {
-                let text = self.to_string(p, key)?;
-                Some(self.intern_atom(&text))
+                let text = self.coerce_js_string(p, key)?;
+                Some(self.intern_js_atom(&text))
             };
             let existing = key_atom
                 .and_then(|atom| self.own_property(grouped, atom))
