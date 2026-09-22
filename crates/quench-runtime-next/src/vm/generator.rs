@@ -129,13 +129,18 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.generator_kind(generator)?;
-        self.close_generator(generator)?;
         if kind == IteratorKind::AsyncGenerator {
+            self.close_generator(generator)?;
             let promise = self.promise_object();
             self.promise_settle(p, promise, PromiseState::Rejected, value)?;
             Ok(promise)
         } else {
-            Err(JsError::thrown(value, "generator throw".into()))
+            self.resume_generator(
+                p,
+                generator,
+                &[],
+                Some(JsError::thrown(value, "generator throw".into())),
+            )
         }
     }
 
@@ -168,6 +173,16 @@ impl<H: Host> Vm<H> {
         generator: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.resume_generator(p, generator, args, None)
+    }
+
+    fn resume_generator(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        args: &[Value],
+        initial_error: Option<JsError>,
+    ) -> Result<Value, JsError> {
         let (continuation, done, running) = {
             let Some(record) = self.generators.get_mut(&generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
@@ -181,6 +196,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError("generator is already running".into()));
         }
         if done {
+            if let Some(error) = initial_error {
+                return Err(error);
+            }
             return self.iterator_result(Value::UNDEFINED, true);
         }
         let continuation = continuation.ok_or_else(|| JsError("generator is suspended".into()))?;
@@ -196,7 +214,9 @@ impl<H: Host> Vm<H> {
             captured: continuation.captured,
             registers: continuation.registers,
         };
-        if let Some(register) = continuation.resume_register {
+        if initial_error.is_none()
+            && let Some(register) = continuation.resume_register
+        {
             if register as usize >= frame.registers.len() {
                 self.frame_pool.push(Self::recycle_frame(frame));
                 if let Some(record) = self.generators.get_mut(&generator) {
@@ -208,7 +228,7 @@ impl<H: Host> Vm<H> {
             frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
         }
         self.frames.push(frame);
-        let result = self.run_frame_general(p, self.frames.len() - 1);
+        let result = self.run_frame_general_with_error(p, self.frames.len() - 1, initial_error);
         let frame = self.frames.pop().expect("generator frame exists");
         let outcome = match result {
             Ok(outcome) => outcome,
