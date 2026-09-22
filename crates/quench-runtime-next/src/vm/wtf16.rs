@@ -44,6 +44,14 @@ impl JsString {
         self.units = Rc::from(units);
         self.host.push_str(text);
     }
+
+    pub(crate) fn repeat(&self, count: usize) -> Self {
+        let mut units = Vec::with_capacity(self.units.len().saturating_mul(count));
+        for _ in 0..count {
+            units.extend(self.units.iter().copied());
+        }
+        Self::from_units(&units)
+    }
 }
 
 impl From<&str> for JsString {
@@ -120,5 +128,15 @@ mod tests {
     fn encodes_unicode_scalars_as_utf16_units() {
         let value = JsString::from_str("A🦀");
         assert_eq!(value.units(), &[u16::from(b'A'), 0xD83E, 0xDD80]);
+    }
+
+    #[test]
+    fn repeats_units_without_reencoding_surrogates() {
+        let value = JsString::from_units(&[0xD800, b'a' as u16]);
+        let repeated = value.repeat(2);
+        assert_eq!(
+            repeated.units(),
+            &[0xD800, b'a' as u16, 0xD800, b'a' as u16]
+        );
     }
 }
