@@ -6,6 +6,41 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(source).cloned()
+        {
+            if handler.is_null() {
+                return Err(JsError("cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("getOwnPropertyDescriptor");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let key = if matches!(
+                    self.heap
+                        .get(args.get(1).copied().unwrap_or(Value::UNDEFINED)),
+                    Some(Cell::Symbol(_))
+                ) {
+                    args.get(1).copied().unwrap_or(Value::UNDEFINED)
+                } else {
+                    let text =
+                        self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                    self.heap.alloc(Cell::String(text))
+                };
+                let result = self.call_value(p, trap, handler, &[target, key])?;
+                if result.is_undefined() || result.is_null() {
+                    return Ok(Value::UNDEFINED);
+                }
+                if self.object_data(result).is_none() {
+                    return Err(JsError(
+                        "proxy getOwnPropertyDescriptor trap must return an object or undefined"
+                            .into(),
+                    ));
+                }
+                return Ok(result);
+            }
+        }
         let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
         let target = self.box_object(target)?;
         let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
