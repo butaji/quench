@@ -55,6 +55,7 @@ impl NativeI32PatternPlan {
         REGION_LEN
     }
 
+    #[cfg(test)]
     pub(crate) fn route() -> impl Iterator<Item = &'static str> {
         [
             "LoadLocalChecked",

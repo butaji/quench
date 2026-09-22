@@ -20,7 +20,7 @@ impl StencilArena {
         let mut storage = vec![0u8; capacity].into_boxed_slice();
         let ptr = storage.as_mut_ptr();
         Ok(Self {
-            storage,
+            _storage: storage,
             ptr: ptr.cast(),
             capacity,
             cursor: 0,
@@ -28,7 +28,7 @@ impl StencilArena {
             id: NEXT_ARENA_ID.fetch_add(1, Ordering::Relaxed),
             published_entries: RefCell::new(HashMap::new()),
             last_physical_execution: Cell::new(None),
-            global_charge,
+            _global_charge: global_charge,
         })
     }
 

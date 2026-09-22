@@ -37,6 +37,7 @@ impl NumericSeries {
         self.operations.into_iter().take(usize::from(self.len))
     }
 
+    #[cfg(test)]
     pub(crate) const fn len(self) -> u8 {
         self.len
     }
@@ -315,6 +316,7 @@ pub(crate) fn select_add_chain(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn select_local_binary(
     producers: &[NumericProducer],
     operation: Instruction,
@@ -485,6 +487,7 @@ fn discarded_registers(producers: &[NumericProducer], output: Register) -> Disca
     discarded
 }
 
+#[cfg(test)]
 fn operation_sources(
     producers: &[NumericProducer],
     operation: Instruction,
@@ -495,6 +498,7 @@ fn operation_sources(
     ])
 }
 
+#[cfg(test)]
 fn resolve_source(producers: &[NumericProducer], mut register: Register) -> Option<NumericSource> {
     let mut end = producers.len();
     for _ in 0..producers.len() {
@@ -512,6 +516,7 @@ fn resolve_source(producers: &[NumericProducer], mut register: Register) -> Opti
     None
 }
 
+#[cfg(test)]
 fn duplicate_definitions(producers: &[NumericProducer]) -> bool {
     producers.iter().enumerate().any(|(index, producer)| {
         producers[..index]

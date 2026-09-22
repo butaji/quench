@@ -34,6 +34,7 @@ impl StringBuiltinPlan {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn route(&self) -> [&'static str; 2] {
         match &self.recipe {
             StringBuiltinRecipe::Case { .. } => ["builtins", "string_case"],

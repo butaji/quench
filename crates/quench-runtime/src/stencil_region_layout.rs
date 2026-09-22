@@ -8,9 +8,6 @@ use crate::stencil_fact::PatchValues;
 use crate::stencil_layout::{compose_region, Fixup, FixupKind, LabelId, LayoutError};
 use crate::stencil_select::PhysicalStencilView;
 
-const ENTRY_LABEL: LabelId = LabelId(0);
-const FALLTHROUGH_LABEL: LabelId = LabelId(1);
-
 /// Finalized code and its selected physical contract travel as one value.
 /// Publication must not reconstruct ABI or identity from parallel arguments.
 pub(crate) struct VerifiedRegionImage {
@@ -133,7 +130,6 @@ fn validate_entry_offset(entry: u16, byte_len: usize) -> Result<(), LayoutError>
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RegionPoint {
     Operation(u8),
-    Exit(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,9 +182,7 @@ pub(crate) fn validate_controlled_fixups(
             .iter()
             .find(|placement| placement.label == fixup.target)
             .ok_or(LayoutError::UndefinedLabel(fixup.target))?;
-        let RegionPoint::Operation(source) = source.point else {
-            return Err(LayoutError::RelocationContract);
-        };
+        let RegionPoint::Operation(source) = source.point;
         let target = point_pc(control, target.point)?;
         if !control.permits_transfer(operations, usize::from(source), target) {
             return Err(LayoutError::RelocationContract);
@@ -235,9 +229,7 @@ fn fixup_edge(
     placements: &[FragmentPlacement],
     fixup: Fixup,
 ) -> Option<crate::stencil_cfg::RegionEdge> {
-    let RegionPoint::Operation(source) = placements.get(usize::from(fixup.fragment))?.point else {
-        return None;
-    };
+    let RegionPoint::Operation(source) = placements.get(usize::from(fixup.fragment))?.point;
     let target = placements.iter().find(|item| item.label == fixup.target)?;
     Some(crate::stencil_cfg::RegionEdge {
         from: control.start().checked_add(usize::from(source))?,
@@ -283,7 +275,6 @@ fn point_pc(
             .start()
             .checked_add(usize::from(offset))
             .filter(|pc| *pc < control.end()),
-        RegionPoint::Exit(pc) => (!(control.start()..control.end()).contains(&pc)).then_some(pc),
     }
     .ok_or(LayoutError::RelocationContract)
 }

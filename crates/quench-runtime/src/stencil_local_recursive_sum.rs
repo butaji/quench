@@ -48,6 +48,7 @@ impl NativeLocalRecursiveSumPlan {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn route(&self) -> [&'static str; 2] {
         if self.selection.depth <= 4 {
             ["locals", "shallow"]

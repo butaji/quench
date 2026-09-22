@@ -105,7 +105,7 @@ fn main() {
         "static NUMERIC_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[];\n",
         "static CONTINUATION_REGION_KEYS: &[(crate::ir::Opcode, crate::stencil_fact::RegionKey)] = &[];\n",
         "static CANONICAL_REGION_TABLE: &[crate::stencil_select::RegionRecord] = &[];\n",
-        "fn canonical_region_index(_: crate::stencil_fact::RegionKey) -> Option<usize> { None }\n",
+        "#[cfg(test)] fn canonical_region_index(_: crate::stencil_fact::RegionKey) -> Option<usize> { None }\n",
         "fn canonical_region_lookup(_: crate::stencil_fact::RegionKey) -> Option<&'static crate::stencil_select::RegionRecord> { None }\n",
     ));
     for name in REGION_KEYS {

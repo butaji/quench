@@ -9,6 +9,7 @@ const MAX_REGION_LEN: usize = 16;
 const MAX_OBJECT_FIELDS: usize = 8;
 pub(crate) const PROFILE_NAME: &str = "guarded_vector3_dot_return";
 const PRIMITIVE_PROFILE_NAME: &str = "primitive_missing_vector_dot_return";
+#[cfg(test)]
 const VECTOR_ROUTE: [&str; 12] = [
     "GetNQuickened",
     "GetNQuickened",
@@ -23,6 +24,7 @@ const VECTOR_ROUTE: [&str; 12] = [
     "Add",
     "Return",
 ];
+#[cfg(test)]
 const PRIMITIVE_ROUTE: [&str; 18] = [
     "local",
     "guarded_property_number",
@@ -99,6 +101,7 @@ impl NativeFreshObjectCallPlan {
         self.selection.profile_name()
     }
 
+    #[cfg(test)]
     pub(crate) fn route(&self) -> impl Iterator<Item = &'static str> {
         self.selection.route().iter().copied()
     }
@@ -125,6 +128,7 @@ impl FreshObjectCallSelection {
         }
     }
 
+    #[cfg(test)]
     fn route(&self) -> &'static [&'static str] {
         if self.has_primitive() {
             &PRIMITIVE_ROUTE
