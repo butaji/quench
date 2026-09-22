@@ -67,11 +67,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_name(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         atom: Atom,
         value: Value,
         cache: u16,
     ) -> Result<(), JsError> {
-        self.set_field_cached(self.globals, atom, value, cache)
+        self.set_field_cached(p, self.globals, atom, value, cache)
     }
 }
