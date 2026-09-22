@@ -30,13 +30,14 @@ fn constant_runs_remain_fresh_and_contiguous() {
 }
 
 #[test]
-fn packed_domain_overflow_is_a_diagnostic() {
+fn packed_domain_overflow_uses_the_wide_side_table() {
     let source = format!("[{}];", "0,".repeat(4097));
-    let errors = Engine::specialize(&source, "packed-overflow.js").unwrap_err();
+    let program = Engine::specialize(&source, "packed-overflow.js").unwrap();
     assert!(
-        errors
+        program
+            .functions
             .iter()
-            .any(|error| error.message.contains("packed instruction domain"))
+            .any(|function| !function.wide.is_empty())
     );
 }
 

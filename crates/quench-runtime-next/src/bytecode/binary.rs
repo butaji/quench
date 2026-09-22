@@ -1,4 +1,284 @@
-use super::AtomTable;
+use super::{
+    AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function, Handler, Instr, MethodSite,
+    ObjectSite, Op, Superinstruction, WideInstruction,
+};
+
+pub(super) fn write_program(
+    program: &super::ResidualProgram,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let mut out = BinaryWriter::new();
+    out.bytes.extend_from_slice(b"RQJ\0\x08");
+    out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
+    out.u8(u8::from(program.specialized));
+    out.strings(&program.atoms);
+    out.u32(program.constants.len() as u32);
+    for value in &program.constants {
+        match value {
+            Constant::Number(value) => {
+                out.u8(0);
+                out.u64(value.to_bits());
+            }
+            Constant::String(value) => {
+                out.u8(1);
+                out.string(value);
+            }
+            Constant::BigInt(value) => {
+                out.u8(6);
+                out.string(value);
+            }
+            Constant::Boolean(value) => {
+                out.u8(if *value { 2 } else { 3 });
+            }
+            Constant::Null => out.u8(4),
+            Constant::Undefined => out.u8(5),
+        }
+    }
+    out.u32(program.functions.len() as u32);
+    for function in &program.functions {
+        out.option_u32(function.parent);
+        out.option_u32(function.name);
+        out.u16(function.params);
+        out.u8(u8::from(function.rest));
+        out.u16(function.locals);
+        out.u16(function.registers);
+        out.u8(function.dispatch as u8);
+        out.u32(function.register_root_offset);
+        out.u32(function.code.len() as u32);
+        for instruction in &function.code {
+            out.u8(instruction.op() as u8);
+            out.u16(instruction.a());
+            out.u16(instruction.b());
+            out.u16(instruction.c());
+            out.u32(instruction.imm());
+        }
+        out.u32(function.wide.len() as u32);
+        for instruction in &function.wide {
+            out.u8(instruction.op() as u8);
+            out.u16(instruction.a());
+            out.u16(instruction.b());
+            out.u16(instruction.c());
+            out.u32(instruction.imm());
+        }
+        out.u32(function.handlers.len() as u32);
+        for handler in &function.handlers {
+            out.u32(handler.start);
+            out.u32(handler.end);
+            out.u32(handler.target);
+            out.u16(handler.slot.unwrap_or(u16::MAX));
+        }
+    }
+    out.u16(program.cache_sites);
+    out.u32(program.method_sites.len() as u32);
+    for site in &program.method_sites {
+        out.u32(site.atom);
+        out.u16(site.cache);
+        out.u32(site.argument_start);
+        out.u16(site.argument_count);
+        out.optional_pair(site.receiver_path);
+    }
+    out.u16s(&program.method_arguments);
+    out.u32(program.field_sites.len() as u32);
+    for site in &program.field_sites {
+        out.u16(site.base.0);
+        out.pair(site.first);
+        out.optional_pair(site.second);
+        out.optional_pair(site.sink);
+    }
+    out.u32(program.object_sites.len() as u32);
+    for site in &program.object_sites {
+        out.u32(site.atoms[0]);
+        out.u32(site.atoms[1]);
+    }
+    out.u32(program.superinstructions.len() as u32);
+    for site in &program.superinstructions {
+        for instruction in site.code {
+            out.u8(instruction.op() as u8);
+            out.u16(instruction.a());
+            out.u16(instruction.b());
+            out.u16(instruction.c());
+            out.u32(instruction.imm());
+        }
+    }
+    out.u32(program.register_roots.len() as u32);
+    for value in &program.register_roots {
+        out.u64(*value);
+    }
+    std::fs::write(path, out.bytes).map_err(|error| error.to_string())
+}
+
+pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let mut input = BinaryReader::new(&bytes);
+    input.magic(b"RQJ\0\x08")?;
+    let abi = input.u64()?;
+    if abi != super::ResidualProgram::RUNTIME_ABI_FINGERPRINT {
+        return Err("residual runtime ABI mismatch".into());
+    }
+    let specialized = match input.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err("invalid residual specialization mode".into()),
+    };
+    let atoms = input.strings()?;
+    let constants = input.list(|input| match input.u8()? {
+        0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
+        1 => Ok(Constant::String(input.string()?)),
+        6 => Ok(Constant::BigInt(input.string()?)),
+        2 => Ok(Constant::Boolean(true)),
+        3 => Ok(Constant::Boolean(false)),
+        4 => Ok(Constant::Null),
+        5 => Ok(Constant::Undefined),
+        _ => Err("invalid residual constant".into()),
+    })?;
+    let functions = input.list(|input| {
+        let parent = input.option_u32()?;
+        let name = input.option_u32()?;
+        let params = input.u16()?;
+        let rest = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid residual rest flag".into()),
+        };
+        let locals = input.u16()?;
+        let registers = input.u16()?;
+        let dispatch = match input.u8()? {
+            0 => DispatchClass::General,
+            1 => DispatchClass::Numeric,
+            _ => return Err("invalid residual dispatch class".into()),
+        };
+        let register_root_offset = input.u32()?;
+        let code = input.list(|input| {
+            let opcode = input.u8()?;
+            if usize::from(opcode) >= Op::COUNT {
+                return Err("invalid residual opcode".into());
+            }
+            // SAFETY: `Op` is a contiguous repr(u16) enum generated by `opcodes!`.
+            let op = unsafe { std::mem::transmute::<u16, Op>(u16::from(opcode)) };
+            let a = input.u16()?;
+            let b = input.u16()?;
+            let c = input.u16()?;
+            let imm = input.u32()?;
+            if op == Op::Wide {
+                let index = u64::from(a)
+                    | (u64::from(b) << 14)
+                    | (u64::from(c) << 28)
+                    | (u64::from(imm) << 42);
+                Instr::wide(index as usize)
+                    .ok_or_else(|| String::from("residual wide index exceeds domain"))
+            } else {
+                Instr::try_new(op, a, b, c, imm)
+                    .ok_or_else(|| String::from("residual instruction exceeds packed domain"))
+            }
+        })?;
+        let wide = input.list(|input| {
+            let opcode = input.u8()?;
+            if usize::from(opcode) >= Op::COUNT || opcode == Op::Wide as u8 {
+                return Err("invalid residual wide opcode".into());
+            }
+            // SAFETY: `Op` is a contiguous repr(u16) enum generated by `opcodes!`.
+            let op = unsafe { std::mem::transmute::<u16, Op>(u16::from(opcode)) };
+            Ok(WideInstruction::new(
+                op,
+                input.u16()?,
+                input.u16()?,
+                input.u16()?,
+                input.u32()?,
+            ))
+        })?;
+        if !super::local_loads_in_bounds(&code, &wide, locals) {
+            return Err("invalid residual local load".into());
+        }
+        let handlers = input.list(|input| {
+            let start = input.u32()?;
+            let end = input.u32()?;
+            let target = input.u32()?;
+            let slot = input.u16()?;
+            Ok(Handler {
+                start,
+                end,
+                target,
+                slot: (slot != u16::MAX).then_some(slot),
+            })
+        })?;
+        Ok(Function {
+            parent,
+            name,
+            params,
+            rest,
+            locals,
+            code,
+            wide,
+            registers,
+            dispatch,
+            handlers,
+            register_root_offset,
+        })
+    })?;
+    let cache_sites = input.u16()?;
+    let method_sites = input.list(|input| {
+        Ok(MethodSite {
+            atom: input.u32()?,
+            cache: input.u16()?,
+            argument_start: input.u32()?,
+            argument_count: input.u16()?,
+            receiver_path: input.optional_pair()?,
+        })
+    })?;
+    let method_arguments = input.u16s()?;
+    let field_sites = input.list(|input| {
+        Ok(FieldSite {
+            base: FieldBase(input.u16()?),
+            first: input.pair()?,
+            second: input.optional_pair()?,
+            sink: input.optional_pair()?,
+        })
+    })?;
+    let object_sites = input.list(|input| {
+        Ok(ObjectSite {
+            atoms: [input.u32()?, input.u32()?],
+        })
+    })?;
+    let superinstructions = input.list(|input| {
+        let mut code = [Instr::new(Op::Nop, 0, 0, 0, 0); 4];
+        for instruction in &mut code {
+            let opcode = input.u8()?;
+            if usize::from(opcode) >= Op::COUNT {
+                return Err("invalid residual superinstruction opcode".into());
+            }
+            // SAFETY: same contiguous repr(u16) invariant as normal code.
+            let op = unsafe { std::mem::transmute::<u16, Op>(u16::from(opcode)) };
+            *instruction =
+                Instr::try_new(op, input.u16()?, input.u16()?, input.u16()?, input.u32()?)
+                    .ok_or_else(|| {
+                        String::from("residual superinstruction exceeds packed domain")
+                    })?;
+        }
+        if code.map(|instruction| instruction.op())
+            != [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2]
+        {
+            return Err("invalid residual superinstruction pattern".into());
+        }
+        Ok(Superinstruction { code })
+    })?;
+    let register_roots = input.list(|input| input.u64())?;
+    input.finish()?;
+    let program = super::ResidualProgram {
+        specialized,
+        atoms,
+        constants,
+        functions,
+        cache_sites,
+        method_sites,
+        method_arguments,
+        field_sites,
+        object_sites,
+        superinstructions,
+        register_roots,
+    };
+    program.validate()?;
+    Ok(program)
+}
 
 pub(super) struct BinaryWriter {
     pub(super) bytes: Vec<u8>,

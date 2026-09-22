@@ -1,3 +1,4 @@
+use super::control_flow::instruction_at;
 use super::{
     FieldBase, Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, ResidualProgram,
     SET_THIS_REGISTER,
@@ -35,43 +36,6 @@ fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
 fn cache_in_bounds(cache: u16, caches: u16) -> bool {
     cache < caches
 }
-fn control_flow_is_bounded(code: &[super::Instr], handlers: &[super::Handler]) -> bool {
-    let mut reachable = vec![false; code.len()];
-    let mut work = vec![0usize];
-    work.extend(handlers.iter().map(|handler| handler.target as usize));
-    while let Some(pc) = work.pop() {
-        if pc >= code.len() || reachable[pc] {
-            if pc >= code.len() {
-                return false;
-            }
-            continue;
-        }
-        reachable[pc] = true;
-        let instruction = code[pc];
-        match instruction.op() {
-            Op::Return | Op::Throw => {}
-            Op::Jump => work.push(instruction.imm() as usize),
-            Op::JumpFalse | Op::JumpBinaryFalse => {
-                work.push(instruction.imm() as usize);
-                work.push(pc + 1);
-            }
-            Op::Binary
-            | Op::NumericAdd
-            | Op::NumericMultiply
-            | Op::GetField
-            | Op::MakeObject2
-            | Op::SuperConstArrayObject2
-            | Op::Call
-            | Op::CallKnown
-            | Op::CallMethod
-            | Op::CallThisMethod
-            | Op::Construct
-                if instruction.a() & super::RETURN_REGISTER != 0 => {}
-            _ => work.push(pc + 1),
-        }
-    }
-    true
-}
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
     pub(crate) fn validate(&self) -> Result<(), String> {
@@ -82,9 +46,7 @@ impl ResidualProgram {
             return Err("register root table is too large".into());
         }
         for (index, function) in self.functions.iter().enumerate() {
-            if function.code.is_empty()
-                || !control_flow_is_bounded(&function.code, &function.handlers)
-            {
+            if function.code.is_empty() || !super::control_flow::is_bounded(function) {
                 return Err(format!("function {index} can fall off its code"));
             }
             if function.registers > REGISTER_MASK {
@@ -121,7 +83,13 @@ impl ResidualProgram {
                     }
                 }
             }
-            for (pc, instruction) in function.code.iter().enumerate() {
+            for (pc, packed) in function.code.iter().enumerate() {
+                let Some(instruction) = instruction_at(function, *packed) else {
+                    return Err(format!("function {index} wide instruction is invalid"));
+                };
+                if instruction.op() == Op::Wide {
+                    return Err(format!("function {index} contains nested wide instruction"));
+                }
                 let register = |value: u16| register_in_bounds(value, function.registers, 0);
                 let destination = |value: u16| {
                     register_in_bounds(
@@ -404,6 +372,7 @@ mod tests {
             rest: false,
             locals: 0,
             code,
+            wide: vec![],
             registers,
             dispatch: DispatchClass::General,
             handlers: vec![],
