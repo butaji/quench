@@ -55,8 +55,7 @@ pub struct Engine;
 impl Engine {
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(source, name, SpecializationMode::Enabled)
-    }
-    pub fn specialize_unspecialized(
+    } pub fn specialize_unspecialized(
         source: &str,
         name: &str,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -67,8 +66,9 @@ impl Engine {
         name: &str,
         mode: SpecializationMode,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let allocator = Allocator::with_capacity(source.len().saturating_mul(6));
-        let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+        let normalized = early::normalize_hashbang(source);
+        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
+        let parsed = Parser::new(&allocator, &normalized, SourceType::default()).parse();
         if !parsed.diagnostics.is_empty() {
             return Err(parsed
                 .diagnostics
@@ -80,7 +80,7 @@ impl Engine {
                 })
                 .collect());
         }
-        let program = Compiler::new_with_mode(name, source, mode).program(&parsed.program);
+        let program = Compiler::new_with_mode(name, &normalized, mode).program(&parsed.program);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
             eprintln!(
@@ -458,6 +458,7 @@ impl<'a> Compiler<'a> {
             arguments_slot,
             strict: root_strict,
             locals: function.locals.len() as u16,
+            local_atoms: function.locals.clone(),
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
@@ -496,5 +497,4 @@ impl<'a> Compiler<'a> {
         }
     }
 }
-#[cfg(test)]
-mod tests;
+#[cfg(test)] mod tests;

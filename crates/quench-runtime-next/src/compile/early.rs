@@ -1,5 +1,18 @@
 use oxc_ast::ast::{BindingPattern, Program, Statement, VariableDeclarationKind};
 use rustc_hash::FxHashSet;
+use std::borrow::Cow;
+
+pub(super) fn normalize_hashbang(source: &str) -> Cow<'_, str> {
+    if !source.starts_with("#!") {
+        return Cow::Borrowed(source);
+    }
+    let end = source
+        .find(['\n', '\r', '\u{2028}', '\u{2029}'])
+        .unwrap_or(source.len());
+    let mut normalized = source.to_owned();
+    normalized.replace_range(0..end, &" ".repeat(end));
+    Cow::Owned(normalized)
+}
 
 pub(super) fn block_early_error(program: &Program<'_>) -> Option<String> {
     validate_nested(&program.body)

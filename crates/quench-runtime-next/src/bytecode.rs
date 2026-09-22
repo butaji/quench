@@ -124,6 +124,7 @@ pub struct Function {
     pub arguments_slot: Option<u16>,
     pub strict: bool,
     pub locals: u16,
+    pub local_atoms: Vec<Atom>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,

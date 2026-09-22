@@ -49,6 +49,10 @@ pub(super) fn write_program(
         out.u8(u8::from(function.strict));
         out.u16(function.arguments_slot.unwrap_or(u16::MAX));
         out.u16(function.locals);
+        out.u32(function.local_atoms.len() as u32);
+        for atom in &function.local_atoms {
+            out.u32(*atom);
+        }
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
         out.u32(function.register_root_offset);
@@ -169,6 +173,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             slot => Some(slot),
         };
         let locals = input.u16()?;
+        let local_atoms = input.list(|input| input.u32())?;
         let registers = input.u16()?;
         let dispatch = match input.u8()? {
             0 => DispatchClass::General,
@@ -239,6 +244,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             arguments_slot,
             strict,
             locals,
+            local_atoms,
             code,
             wide,
             registers,
