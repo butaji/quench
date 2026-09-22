@@ -43,7 +43,8 @@ impl FunctionCompiler<'_, '_> {
                         .map(|name| self.literal(Constant::String(name.into())))
                 });
                 let Some(key) = key else {
-                    self.owner.reject(property.span, "object accessor key unsupported");
+                    self.owner
+                        .reject(property.span, "object accessor key unsupported");
                     continue;
                 };
                 let item = self.object_method(&property.value, super_atom);
@@ -97,7 +98,10 @@ impl FunctionCompiler<'_, '_> {
             return self.expression(value);
         };
         let params = Self::params_from_formals(&function.params, self.owner);
-        let body = function.body.as_ref().map_or(&[][..], |body| body.statements.as_slice());
+        let body = function
+            .body
+            .as_ref()
+            .map_or(&[][..], |body| body.statements.as_slice());
         let scopes = self.capture_scopes();
         let id = self.owner.compile_function(
             None,
@@ -113,7 +117,9 @@ impl FunctionCompiler<'_, '_> {
                 super_home_atom: Some(super_atom),
                 strict: self.strict
                     || function.body.as_ref().is_some_and(|body| {
-                        body.directives.iter().any(|directive| directive.directive == "use strict")
+                        body.directives
+                            .iter()
+                            .any(|directive| directive.directive == "use strict")
                     }),
                 ..FunctionOptions::default()
             },
@@ -142,7 +148,13 @@ impl FunctionCompiler<'_, '_> {
         let define = self.reg();
         let define_atom = self.owner.atom("defineProperty");
         let define_cache = self.owner.cache_site();
-        self.emit(Op::GetField, define, FieldBase::register(object).0, define_cache, define_atom);
+        self.emit(
+            Op::GetField,
+            define,
+            FieldBase::register(object).0,
+            define_cache,
+            define_atom,
+        );
         let base = self.next_reg;
         let target_arg = self.reg();
         self.emit(Op::Move, target_arg, target, 0, 0);
@@ -151,11 +163,28 @@ impl FunctionCompiler<'_, '_> {
         let descriptor_arg = self.reg();
         self.emit(Op::Move, descriptor_arg, descriptor, 0, 0);
         let result = self.reg();
-        self.emit(Op::Call, result, define, object, (u32::from(base) << 16) | 3);
+        self.emit(
+            Op::Call,
+            result,
+            define,
+            object,
+            (u32::from(base) << 16) | 3,
+        );
     }
 
     fn object_spread(&mut self, target: Register, source: &Expression<'_>) {
         let source = self.expression(source);
+        let null = self.literal(Constant::Null);
+        let is_null = self.emit_binary(2, Operand::register(source), Operand::register(null));
+        let continue_non_null = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
+        let skip_null = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.patch(continue_non_null);
+        let undefined = self.literal(Constant::Undefined);
+        let is_undefined =
+            self.emit_binary(2, Operand::register(source), Operand::register(undefined));
+        let continue_non_undefined = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
+        let skip_undefined = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.patch(continue_non_undefined);
         let object = self.load_name("Object");
         let assign = self.reg();
         let assign_atom = self.owner.atom("assign");
@@ -180,6 +209,8 @@ impl FunctionCompiler<'_, '_> {
             object,
             (u32::from(base) << 16) | 2,
         );
+        self.patch_instruction(skip_null, self.code.len() as u32);
+        self.patch_instruction(skip_undefined, self.code.len() as u32);
     }
 
     pub(super) fn computed_object_key(&mut self, key: &PropertyKey<'_>) -> Option<Register> {
