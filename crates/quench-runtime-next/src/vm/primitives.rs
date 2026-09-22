@@ -111,11 +111,11 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let search =
-                    self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let matched = match native {
-                    Native::StringIncludes => receiver.contains(&search),
-                    Native::StringStartsWith => receiver.starts_with(&search),
-                    Native::StringEndsWith => receiver.ends_with(&search),
+                    Native::StringIncludes => receiver.find_units(search.units(), 0).is_some(),
+                    Native::StringStartsWith => receiver.units().starts_with(search.units()),
+                    Native::StringEndsWith => receiver.units().ends_with(search.units()),
                     _ => unreachable!(),
                 };
                 Ok(if matched { Value::TRUE } else { Value::FALSE })
@@ -124,17 +124,15 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
-                let search = self
-                    .to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
-                    .encode_utf16()
-                    .collect::<Vec<_>>();
-                let text = receiver.units().to_vec();
+                let search =
+                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let text = receiver.units();
                 let result = if native == Native::StringIndexOf {
                     let start = self
                         .to_number(p, args.get(1).copied().unwrap_or(Value::number(0.0)))?
                         .max(0.0)
                         .trunc() as usize;
-                    super::string::find_utf16(&text, &search, start)
+                    receiver.find_units(search.units(), start)
                 } else {
                     let position = self.to_number(
                         p,
@@ -147,7 +145,7 @@ impl<H: Host> Vm<H> {
                     } else {
                         position.max(0.0).min(text.len() as f64).trunc() as usize
                     };
-                    super::string::rfind_utf16(&text, &search, position)
+                    super::string::rfind_utf16(text, search.units(), position)
                 };
                 Ok(Value::number(result.map_or(-1.0, |index| index as f64)))
             }
@@ -175,20 +173,8 @@ impl<H: Host> Vm<H> {
                 let parts = if separator.is_undefined() {
                     vec![receiver]
                 } else {
-                    let separator = self.to_string(p, separator)?;
-                    if separator.is_empty() {
-                        receiver
-                            .units()
-                            .iter()
-                            .copied()
-                            .map(|unit| super::wtf16::JsString::from_units(&[unit]))
-                            .collect()
-                    } else {
-                        receiver
-                            .split(&separator)
-                            .map(super::wtf16::JsString::from)
-                            .collect()
-                    }
+                    let separator = self.coerce_js_string(p, separator)?;
+                    receiver.split_units(separator.units())
                 };
                 let values = parts
                     .into_iter()
@@ -252,8 +238,9 @@ impl<H: Host> Vm<H> {
                 if receiver_units.len() >= target {
                     return Ok(self.heap.alloc(Cell::String(receiver)));
                 }
-                let fill = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                let fill_units: Vec<u16> = fill.encode_utf16().collect();
+                let fill =
+                    self.coerce_js_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let fill_units = fill.units();
                 if fill_units.is_empty() {
                     return Ok(self.heap.alloc(Cell::String(receiver)));
                 }

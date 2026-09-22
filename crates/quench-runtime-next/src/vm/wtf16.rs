@@ -55,6 +55,32 @@ impl JsString {
         }
         Self::from_units(&units)
     }
+
+    pub(crate) fn find_units(&self, search: &[u16], start: usize) -> Option<usize> {
+        if search.is_empty() {
+            return Some(start.min(self.units.len()));
+        }
+        (start..=self.units.len().saturating_sub(search.len()))
+            .find(|index| self.units[*index..*index + search.len()] == *search)
+    }
+
+    pub(crate) fn split_units(&self, separator: &[u16]) -> Vec<Self> {
+        if separator.is_empty() {
+            return self
+                .units
+                .iter()
+                .map(|unit| Self::from_units(std::slice::from_ref(unit)))
+                .collect();
+        }
+        let mut parts = Vec::new();
+        let mut cursor = 0;
+        while let Some(offset) = self.find_units(separator, cursor) {
+            parts.push(Self::from_units(&self.units[cursor..offset]));
+            cursor = offset + separator.len();
+        }
+        parts.push(Self::from_units(&self.units[cursor..]));
+        parts
+    }
 }
 
 impl From<&str> for JsString {
@@ -141,5 +167,15 @@ mod tests {
             repeated.units(),
             &[0xD800, b'a' as u16, 0xD800, b'a' as u16]
         );
+    }
+
+    #[test]
+    fn searches_and_splits_by_units() {
+        let value = JsString::from_units(&[0xD800, b'|' as u16, 0xDC00]);
+        assert_eq!(value.find_units(&[b'|' as u16], 0), Some(1));
+        let parts = value.split_units(&[b'|' as u16]);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].units(), &[0xD800]);
+        assert_eq!(parts[1].units(), &[0xDC00]);
     }
 }
