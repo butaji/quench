@@ -15,8 +15,15 @@ impl Compiler<'_> {
         if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body {
             self.collect_locals(&body.statements, &mut locals);
         }
-        let mut function =
-            FunctionCompiler::new(self, locals, scopes.to_vec(), id, false, value.r#async);
+        let mut function = FunctionCompiler::new(
+            self,
+            locals,
+            scopes.to_vec(),
+            id,
+            false,
+            value.r#async,
+            false,
+        );
         function.emit_parameter_bindings(&value.params);
         match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
@@ -63,6 +70,7 @@ impl Compiler<'_> {
             params: params.len() as u16,
             rest: value.params.rest.is_some(),
             is_async: value.r#async,
+            is_generator: false,
             locals: function.locals.len() as u16,
             code: function.code,
             wide: function.wide,

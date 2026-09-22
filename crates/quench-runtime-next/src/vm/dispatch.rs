@@ -147,6 +147,12 @@ impl<H: Host> Vm<H> {
                     destination: i.a(),
                 });
             }
+            Op::Yield => {
+                return Ok(StepResult::Yield {
+                    value: self.read(f, i.b()),
+                    destination: i.a(),
+                });
+            }
             Op::SetField => {
                 self.set_field_cached(p, self.read(f, i.b()), i.imm(), self.read(f, i.a()), i.c())?
             }

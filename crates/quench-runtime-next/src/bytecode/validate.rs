@@ -371,6 +371,7 @@ mod tests {
             params: 0,
             rest: false,
             is_async: false,
+            is_generator: false,
             locals: 0,
             code,
             wide: vec![],

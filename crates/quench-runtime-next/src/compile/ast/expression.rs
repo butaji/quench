@@ -41,6 +41,16 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::Await, destination, source, 0, 0);
                 destination
             }
+            Expression::YieldExpression(value) if self.generator && !value.delegate => {
+                let source = if let Some(argument) = value.argument.as_ref() {
+                    self.expression(argument)
+                } else {
+                    self.literal(Constant::Undefined)
+                };
+                let destination = self.reg();
+                self.emit(Op::Yield, destination, source, 0, 0);
+                destination
+            }
             _ => {
                 self.owner.reject(
                     expression.span(),

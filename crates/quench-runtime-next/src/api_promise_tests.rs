@@ -192,3 +192,17 @@ fn async_await_waits_for_pending_promises_and_propagates_rejection() {
         .unwrap();
     assert_eq!(view.0.borrow().as_slice(), ["before", "9", "6"]);
 }
+
+#[test]
+fn generators_share_continuations_with_iterator_results() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "function* values() { var received = yield 1; yield received + 1; return 9; } var iterator = values(); var first = iterator.next(); print(first.value); var second = iterator.next(4); print(second.value); var done = iterator.next(); print(done.value); print(done.done); print(iterator.next().done);",
+            "generators.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["1", "5", "9", "true", "true"]);
+}

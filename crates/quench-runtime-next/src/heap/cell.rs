@@ -321,7 +321,7 @@ pub(crate) enum FunctionKind {
     NumericUser(u32),
     Native(Native),
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IteratorKind {
     Array,
     ArrayKeys,
@@ -333,6 +333,7 @@ pub(crate) enum IteratorKind {
     MapEntries,
     SetValues,
     SetEntries,
+    Generator,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Object {

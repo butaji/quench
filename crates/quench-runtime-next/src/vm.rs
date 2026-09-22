@@ -37,6 +37,7 @@ mod error;
 mod field_cache;
 mod finalization;
 mod gc;
+mod generator;
 mod index;
 mod iterators;
 mod json;
@@ -55,7 +56,7 @@ mod object_symbols;
 #[cfg(test)]
 mod object_tests;
 mod property_key;
-use activation::{Continuation, SuspendedEntry};
+use activation::{Continuation, GeneratorRecord, SuspendedEntry};
 use call_arguments::CallArguments;
 use numeric_site::NumericSite;
 use promise::PromiseRuntime;
@@ -162,16 +163,21 @@ enum CallTarget {
     NumericUser(u32, Value),
     Native(Native),
 }
-
 pub(super) enum StepResult {
     Continue,
     Return(Value),
     Await { value: Value, destination: Register },
+    Yield { value: Value, destination: Register },
 }
 
 pub(super) enum FrameOutcome {
     Complete(Value),
     Await {
+        value: Value,
+        destination: Register,
+        frame: Option<Frame>,
+    },
+    Yield {
         value: Value,
         destination: Register,
         frame: Option<Frame>,
@@ -247,6 +253,7 @@ pub struct Vm<H> {
     jobs: Vec<PendingJob>,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
+    generators: FxHashMap<Value, GeneratorRecord>,
     promise: PromiseRuntime,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
@@ -381,6 +388,7 @@ impl<H: Host> Vm<H> {
         self.jobs.clear();
         self.suspended.clear();
         self.suspended_free.clear();
+        self.generators.clear();
         self.promise = Default::default();
         self.numeric_sites.clear();
         self.shapes.truncate(1);

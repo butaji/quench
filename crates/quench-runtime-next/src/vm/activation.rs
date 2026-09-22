@@ -28,6 +28,12 @@ pub(crate) struct Continuation {
     pub promise: Value,
 }
 
+pub(crate) struct GeneratorRecord {
+    pub(crate) continuation: Option<Continuation>,
+    pub(crate) done: bool,
+    pub(crate) running: bool,
+}
+
 /// A generation-checked slot for a suspended activation. Resumption consumes
 /// the slot, so a stale host/compiler token cannot resume a replacement frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

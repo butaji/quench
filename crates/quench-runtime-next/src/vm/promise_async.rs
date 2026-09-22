@@ -11,6 +11,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if p.functions[id as usize].is_generator {
+            return self.call_generator(p, id, env, this, args);
+        }
         if !p.functions[id as usize].is_async {
             return self.call_user(p, id, env, this, args);
         }
@@ -51,6 +54,9 @@ impl<H: Host> Vm<H> {
             }
             super::FrameOutcome::Await { frame: None, .. } => {
                 return Err(JsError("async frame lost at suspension".into()));
+            }
+            super::FrameOutcome::Yield { .. } => {
+                return Err(JsError("yield is not valid in an async function".into()));
             }
         }
         Ok(promise)
@@ -201,6 +207,16 @@ impl<H: Host> Vm<H> {
             } => {
                 self.frame_pool.push(Self::recycle_frame(frame));
                 return Err(JsError("resumed async frame retained unexpectedly".into()));
+            }
+            super::FrameOutcome::Yield {
+                frame: Some(frame), ..
+            } => {
+                self.frame_pool.push(Self::recycle_frame(frame));
+                return Err(JsError("yield is not valid in an async function".into()));
+            }
+            super::FrameOutcome::Yield { frame: None, .. } => {
+                self.frame_pool.push(Self::recycle_frame(frame));
+                return Err(JsError("yield is not valid in an async function".into()));
             }
         }
         Ok(())

@@ -309,6 +309,9 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::Await { .. }) => {
                     return Err(JsError("await is not valid in numeric dispatch".into()));
                 }
+                Ok(StepResult::Yield { .. }) => {
+                    return Err(JsError("yield is not valid in numeric dispatch".into()));
+                }
                 Err(error) => {
                     let throwing_pc = pc as u32 - 1;
                     let handler = p.functions[function]

@@ -86,6 +86,7 @@ opcodes!(
     SuperConstArrayObject2 => CALL_EFFECT,
     GetIterator => READ_THROW,
     Await => READ_THROW.union(Effect::CONTROL),
+    Yield => READ_THROW.union(Effect::CONTROL),
     GetField => READ_THROW,
     GetIndex => READ_THROW,
     SetField => WRITE_THROW,
@@ -115,6 +116,7 @@ pub struct Function {
     pub params: u16,
     pub rest: bool,
     pub is_async: bool,
+    pub is_generator: bool,
     pub locals: u16,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
@@ -251,8 +253,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 11;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_000b_0004;
+    pub const FORMAT_VERSION: u8 = 12;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_000c_0005;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

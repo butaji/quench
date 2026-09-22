@@ -361,7 +361,7 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(Value::UNDEFINED)
             }
-            Native::IteratorNext => self.iterator_next(p, this),
+            Native::IteratorNext => self.iterator_next_with_args(p, this, args),
             Native::IteratorClose => self.iterator_close(p, this),
             Native::WeakMapGet => {
                 let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;

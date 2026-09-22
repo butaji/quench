@@ -13,6 +13,9 @@ impl<H: Host> Vm<H> {
         match self.call_user_frame(p, id, parent, this, args)? {
             FrameOutcome::Complete(value) => Ok(value),
             FrameOutcome::Await { .. } => Err(JsError("await requires async continuation".into())),
+            FrameOutcome::Yield { .. } => {
+                Err(JsError("yield requires generator continuation".into()))
+            }
         }
     }
 
@@ -78,6 +81,9 @@ impl<H: Host> Vm<H> {
                 destination,
                 frame: Some(frame),
             }),
+            FrameOutcome::Yield { .. } => {
+                Err(JsError("yield requires generator continuation".into()))
+            }
         }
     }
 
@@ -177,6 +183,14 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::Await { value, destination }) => {
                     self.frames[frame].pc = pc;
                     return Ok(FrameOutcome::Await {
+                        value,
+                        destination,
+                        frame: None,
+                    });
+                }
+                Ok(StepResult::Yield { value, destination }) => {
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::Yield {
                         value,
                         destination,
                         frame: None,
