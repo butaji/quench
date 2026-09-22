@@ -138,10 +138,10 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectDefineProperty => self.object_define_property(p, args),
             Native::ObjectValues => {
-                self.object_values(args.first().copied().unwrap_or(Value::UNDEFINED))
+                self.object_values(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectEntries => {
-                self.object_entries(args.first().copied().unwrap_or(Value::UNDEFINED))
+                self.object_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectFromEntries => {
                 let input = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -233,52 +233,6 @@ impl<H: Host> Vm<H> {
             | (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
             _ => left == right,
         }
-    }
-
-    fn object_values(&mut self, object: Value) -> Result<Value, JsError> {
-        let object = self.proxy_target(object);
-        let object = self.box_object(object)?;
-        let data = self.object_data(object).expect("boxed target is object");
-        let shape = self.ordered_shape(data);
-        let values = shape
-            .iter()
-            .filter(|(atom, _)| self.is_enumerable(object, *atom))
-            .filter_map(|(_, slot)| self.heap.property_get(data, *slot))
-            .collect::<Vec<_>>();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
-    }
-
-    fn object_entries(&mut self, object: Value) -> Result<Value, JsError> {
-        let object = self.proxy_target(object);
-        let object = self.box_object(object)?;
-        let data = self.object_data(object).expect("boxed target is object");
-        let shape = self.ordered_shape(data);
-        let pairs = shape
-            .iter()
-            .filter(|(atom, _)| self.is_enumerable(object, *atom))
-            .filter_map(|(atom, slot)| {
-                self.heap
-                    .property_get(data, *slot)
-                    .map(|value| (*atom, value))
-            })
-            .collect::<Vec<_>>();
-        let entries = pairs
-            .into_iter()
-            .map(|(atom, value)| {
-                let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
-                self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(vec![key, value]),
-                })
-            })
-            .collect::<Vec<_>>();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(entries),
-        }))
     }
 
     pub(super) fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
