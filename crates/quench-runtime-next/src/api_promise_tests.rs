@@ -118,3 +118,17 @@ fn promise_any_short_circuits_and_reports_indexed_rejections() {
         .unwrap();
     assert_eq!(view.0.borrow().as_slice(), ["2", "AggregateError", "3,4"]);
 }
+
+#[test]
+fn promise_combinators_consume_shared_iterators() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "Promise.all(new Set([1, 2])).then(function(values) { print(values.join(',')); }); Promise.race('ab').then(print);",
+            "promise-iterables.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["1,2", "a"]);
+}

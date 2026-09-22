@@ -1,31 +1,10 @@
 use super::promise::{
-    AggregateJob, AggregateMode, AggregateRecord, FinallyContinuationJob, FinallyJob,
-    FinallyReaction, PromiseJob, PromiseReaction, PromiseState,
+    AggregateMode, AggregateRecord, FinallyContinuationJob, FinallyJob, FinallyReaction,
+    PromiseJob, PromiseReaction, PromiseState,
 };
 use super::*;
 
 impl<H: Host> Vm<H> {
-    fn aggregate_error(&mut self, errors: Vec<Value>) -> Result<Value, JsError> {
-        let errors = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: std::rc::Rc::new(errors),
-        });
-        let error = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        let name_atom = self.intern_atom("name");
-        let message_atom = self.intern_atom("message");
-        let errors_atom = self.intern_atom("errors");
-        let name = self.heap.alloc(Cell::String("AggregateError".into()));
-        let message = self
-            .heap
-            .alloc(Cell::String("All promises were rejected".into()));
-        self.set_property(error, name_atom, name)?;
-        self.set_property(error, message_atom, message)?;
-        self.set_property(error, errors_atom, errors)?;
-        Ok(error)
-    }
-
     fn enqueue_finally_continuation(
         &mut self,
         p: &ResidualProgram,
@@ -82,71 +61,110 @@ impl<H: Host> Vm<H> {
         mode: AggregateMode,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let Some(Cell::Array { elements, .. }) = self.heap.get(source) else {
-            return Err(JsError("Promise combinator input is not an array".into()));
-        };
-        let length = self.heap.sparse_length(source).unwrap_or(elements.len());
         let output = self.promise_object();
         self.promise.aggregates.insert(
             output,
             AggregateRecord {
                 mode,
                 output,
-                remaining: length,
-                values: vec![Value::UNDEFINED; length],
+                remaining: 0,
+                values: vec![],
             },
         );
-        for index in 0..length {
-            let value = self.array_value_at(source, index);
-            let input = self.promise_for_value(p, value)?;
-            let fulfilled = self.native_with_env(Native::PromiseAggregateJob, Value::NULL);
-            let rejected = self.native_with_env(Native::PromiseAggregateJob, Value::NULL);
-            self.promise.aggregate_jobs.insert(
-                fulfilled,
-                AggregateJob {
-                    aggregate: output,
-                    index,
-                    rejected: false,
-                },
-            );
-            self.promise.aggregate_jobs.insert(
-                rejected,
-                AggregateJob {
-                    aggregate: output,
-                    index,
-                    rejected: true,
-                },
-            );
-            let next = self.promise_object();
-            let reaction = PromiseReaction {
-                on_fulfilled: fulfilled,
-                on_rejected: rejected,
-                next,
-            };
-            let record = self
-                .promise
-                .records
-                .get(&input)
-                .cloned()
-                .ok_or_else(|| JsError("invalid Promise input".into()))?;
-            if record.state == PromiseState::Pending {
-                self.promise
-                    .records
-                    .get_mut(&input)
-                    .expect("Promise record exists")
-                    .reactions
-                    .push(reaction);
-            } else {
-                self.enqueue_promise_reaction(p, reaction, record.state, record.result);
+        let source_root = self.heap.root(source);
+        let iterator = match self.get_iterator(
+            p,
+            self.heap
+                .root_value(source_root)
+                .expect("aggregate source root exists"),
+        ) {
+            Ok(iterator) => iterator,
+            Err(error) => {
+                self.heap.release_root(source_root);
+                let reason = error
+                    .thrown_value()
+                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                self.promise_settle(p, output, PromiseState::Rejected, reason)?;
+                return Ok(output);
             }
+        };
+        self.heap.release_root(source_root);
+        let iterator_root = self.heap.root(iterator);
+        let done_atom = self.intern_atom("done");
+        let value_atom = self.intern_atom("value");
+        let mut index = 0;
+        loop {
+            let iterator = self
+                .heap
+                .root_value(iterator_root)
+                .expect("aggregate iterator root exists");
+            let step = match self.iterator_next(p, iterator) {
+                Ok(step) => step,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    self.heap.release_root(iterator_root);
+                    let reason = error
+                        .thrown_value()
+                        .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                    self.promise_settle(p, output, PromiseState::Rejected, reason)?;
+                    return Ok(output);
+                }
+            };
+            let step_root = self.heap.root(step);
+            let step = self
+                .heap
+                .root_value(step_root)
+                .expect("aggregate iterator result root exists");
+            let done = match self.get_property(p, step, done_atom) {
+                Ok(done) => done,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    self.heap.release_root(step_root);
+                    self.heap.release_root(iterator_root);
+                    let reason = error
+                        .thrown_value()
+                        .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                    self.promise_settle(p, output, PromiseState::Rejected, reason)?;
+                    return Ok(output);
+                }
+            };
+            if self.truthy(done) {
+                self.heap.release_root(step_root);
+                break;
+            }
+            let value = match self.get_property(p, step, value_atom) {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    self.heap.release_root(step_root);
+                    self.heap.release_root(iterator_root);
+                    let reason = error
+                        .thrown_value()
+                        .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                    self.promise_settle(p, output, PromiseState::Rejected, reason)?;
+                    return Ok(output);
+                }
+            };
+            self.heap.release_root(step_root);
+            if let Err(error) = self.enqueue_aggregate_input(p, output, index, value) {
+                let _ = self.iterator_close(p, iterator);
+                self.heap.release_root(iterator_root);
+                let reason = error
+                    .thrown_value()
+                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                self.promise_settle(p, output, PromiseState::Rejected, reason)?;
+                return Ok(output);
+            }
+            index += 1;
         }
-        if length == 0 && matches!(mode, AggregateMode::All | AggregateMode::AllSettled) {
+        self.heap.release_root(iterator_root);
+        if index == 0 && matches!(mode, AggregateMode::All | AggregateMode::AllSettled) {
             let values = self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.array_proto),
                 elements: std::rc::Rc::new(vec![]),
             });
             self.promise_settle(p, output, PromiseState::Fulfilled, values)?;
-        } else if length == 0 && mode == AggregateMode::Any {
+        } else if index == 0 && mode == AggregateMode::Any {
             let error = self.aggregate_error(vec![])?;
             self.promise_settle(p, output, PromiseState::Rejected, error)?;
         }

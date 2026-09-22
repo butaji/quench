@@ -62,6 +62,7 @@ mod operations;
 mod primitives;
 mod profile_edges;
 mod promise;
+mod promise_aggregate;
 mod promise_jobs;
 mod proxy;
 mod reflect;
@@ -472,7 +473,6 @@ impl<H: Host> Vm<H> {
             other => self.non_callable_target(callee, other),
         }
     }
-
     pub(super) fn intern_dynamic_value(&mut self, text: JsString) -> Value {
         let mut hasher = rustc_hash::FxHasher::default();
         text.hash(&mut hasher);
