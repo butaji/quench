@@ -111,6 +111,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         mapped: bool,
     ) -> Result<(), JsError> {
+        self.argument_objects.insert(arguments);
         let length = self.intern_atom("length");
         self.set_property(arguments, length, Value::number(args.len() as f64))?;
         self.descriptors.insert(
