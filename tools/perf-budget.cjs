@@ -36,8 +36,12 @@ if (!budgetEntries.length) {
   process.exit(1);
 }
 for (const [name, limit] of budgetEntries) {
-  if (!name || typeof limit !== "number" || !Number.isFinite(limit) || limit < 0) {
-    console.error(`invalid performance budget limit for ${name || "<unnamed>"}`);
+  if (
+    !name || typeof limit !== "number" || !Number.isFinite(limit) || limit < 0
+  ) {
+    console.error(
+      `invalid performance budget limit for ${name || "<unnamed>"}`,
+    );
     process.exit(1);
   }
 }
@@ -89,5 +93,7 @@ for (const [name, limit] of Object.entries(budget)) {
     failures.push(`${name}: ${value} > ${limit}`);
   }
 }
-console.log(JSON.stringify({ metrics, budget, ok: failures.length === 0, failures }));
+console.log(
+  JSON.stringify({ metrics, budget, ok: failures.length === 0, failures }),
+);
 if (failures.length) process.exit(1);

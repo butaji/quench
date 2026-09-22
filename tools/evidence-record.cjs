@@ -11,8 +11,14 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 const v8V7Fixtures = [
-  "richards", "deltablue", "crypto", "raytrace",
-  "earley-boyer", "regexp", "splay", "navier-stokes",
+  "richards",
+  "deltablue",
+  "crypto",
+  "raytrace",
+  "earley-boyer",
+  "regexp",
+  "splay",
+  "navier-stokes",
 ];
 const args = process.argv.slice(2);
 const option = (name, fallback = null) => {
@@ -25,7 +31,8 @@ const required = (name) => {
   return value;
 };
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+const sha256 = (file) =>
+  crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const command = (program, argv) => {
   const result = cp.spawnSync(program, argv, {
     cwd: root,
@@ -37,24 +44,33 @@ const command = (program, argv) => {
   return result.status === 0 ? result.stdout.trim() : null;
 };
 const median = (values) => {
-  const sorted = values.filter(Number.isFinite).sort((left, right) => left - right);
+  const sorted = values.filter(Number.isFinite).sort((left, right) =>
+    left - right
+  );
   if (sorted.length === 0) return null;
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
 };
 const mad = (values) => {
   const center = median(values);
-  return center === null ? null : median(values.map((value) => Math.abs(value - center)));
+  return center === null
+    ? null
+    : median(values.map((value) => Math.abs(value - center)));
 };
 const geometricMean = (values) =>
   values.length && values.every((value) => Number.isFinite(value) && value > 0)
-    ? Math.exp(values.reduce((sum, value) => sum + Math.log(value), 0) / values.length)
+    ? Math.exp(
+      values.reduce((sum, value) => sum + Math.log(value), 0) / values.length,
+    )
     : null;
 
 function fixtureRecord(name, raw) {
   const samples = raw.quench || [];
   const valid = raw.valid === true && samples.length > 0 && samples.every(
-    (sample) => sample.status === 0 && !sample.timedOut && Number.isFinite(sample.score)
+    (sample) =>
+      sample.status === 0 && !sample.timedOut && Number.isFinite(sample.score),
   );
   const scores = samples.map((sample) => sample.score);
   const walls = samples.map((sample) => sample.wallNs / 1e6);
@@ -68,19 +84,30 @@ function fixtureRecord(name, raw) {
 }
 
 function leverage(fixtures, requiredFixtures) {
-  const valid = fixtures.filter((fixture) => fixture.valid && fixture.score.median > 0);
+  const valid = fixtures.filter((fixture) =>
+    fixture.valid && fixture.score.median > 0
+  );
   const overall = geometricMean(valid.map((fixture) => fixture.score.median));
-  const totalWall = valid.reduce((sum, fixture) => sum + fixture.wall_ms.median, 0);
-  const found = new Set(fixtures.map((fixture) => fixture.name.replace(/\.js$/, "")));
+  const totalWall = valid.reduce(
+    (sum, fixture) => sum + fixture.wall_ms.median,
+    0,
+  );
+  const found = new Set(
+    fixtures.map((fixture) => fixture.name.replace(/\.js$/, "")),
+  );
   const missing = requiredFixtures.filter((fixture) => !found.has(fixture));
-  const requiredComplete = missing.length === 0
-    && fixtures.length === requiredFixtures.length
-    && valid.length === fixtures.length;
+  const requiredComplete = missing.length === 0 &&
+    fixtures.length === requiredFixtures.length &&
+    valid.length === fixtures.length;
   const sampleCount = requiredComplete
     ? Math.min(...fixtures.map((fixture) => fixture.raw.quench.length))
     : 0;
-  const indexedGeomeans = Array.from({ length: sampleCount }, (_, index) =>
-    geometricMean(fixtures.map((fixture) => fixture.raw.quench[index]?.score))
+  const indexedGeomeans = Array.from(
+    { length: sampleCount },
+    (_, index) =>
+      geometricMean(
+        fixtures.map((fixture) => fixture.raw.quench[index]?.score),
+      ),
   );
   return {
     valid_fixture_count: valid.length,
@@ -95,34 +122,46 @@ function leverage(fixtures, requiredFixtures) {
     // Indexed samples are a separate derived robustness view; fixture runs
     // are sequential, so they are not falsely presented as simultaneous
     // whole-suite trials.
-    indexed_fixture_geomean: requiredComplete ? {
-      samples: indexedGeomeans,
-      median: median(indexedGeomeans),
-      mad: mad(indexedGeomeans),
-    } : null,
+    indexed_fixture_geomean: requiredComplete
+      ? {
+        samples: indexedGeomeans,
+        median: median(indexedGeomeans),
+        mad: mad(indexedGeomeans),
+      }
+      : null,
     fixtures: fixtures.map((fixture) => ({
       name: fixture.name,
       score_log_weight: fixture.valid ? 1 / fixtures.length : null,
       wall_share: fixture.valid ? fixture.wall_ms.median / totalWall : null,
       // A fixture speedup f lifts the geometric suite score by f^(1/N),
       // before Amdahl interactions. This is a ranking bound, never a claim.
-      suite_multiplier_if_fixture_10x: fixture.valid ? Math.pow(10, 1 / fixtures.length) : null,
+      suite_multiplier_if_fixture_10x: fixture.valid
+        ? Math.pow(10, 1 / fixtures.length)
+        : null,
     })),
   };
 }
 
 const input = path.resolve(required("--runs"));
 const binary = path.resolve(required("--binary"));
-const output = path.resolve(option("--out", path.join(root, "target", "evidence-record.json")));
+const output = path.resolve(
+  option("--out", path.join(root, "target", "evidence-record.json")),
+);
 const append = option("--append");
 const raw = readJson(input);
 const results = raw.results || {};
-const fixtures = Object.entries(results).map(([name, entry]) => fixtureRecord(name, entry));
+const fixtures = Object.entries(results).map(([name, entry]) =>
+  fixtureRecord(name, entry)
+);
 const requiredFixtures = args.includes("--full-v8")
   ? v8V7Fixtures
   : fixtures.map((fixture) => fixture.name.replace(/\.js$/, ""));
 const dirtyDiff = command("git", ["diff", "--binary"]);
-const worktreeStatus = command("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
+const worktreeStatus = command("git", [
+  "status",
+  "--porcelain=v1",
+  "--untracked-files=all",
+]);
 const record = {
   schema: "quench.evidence-record/v1",
   id: option("--id", crypto.randomUUID()),

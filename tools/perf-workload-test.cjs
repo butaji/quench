@@ -13,10 +13,30 @@ assert.strictEqual(result.status, 0, result.stderr);
 const lines = result.stdout.trim().split(/\n/).filter(Boolean);
 assert.strictEqual(lines.length, 1, "workload owns exactly one final snapshot");
 const snapshot = JSON.parse(lines[0]);
-const expected = ["iterations", "checksum", "allocations", "copies", "bytes", "peak_rss", "wall_ms"];
+const expected = [
+  "iterations",
+  "checksum",
+  "allocations",
+  "copies",
+  "bytes",
+  "peak_rss",
+  "wall_ms",
+];
 assert.deepStrictEqual(Object.keys(snapshot).sort(), expected.sort());
-for (const key of ["iterations", "checksum", "allocations", "copies", "bytes", "peak_rss"]) {
-  assert.ok(Number.isInteger(snapshot[key]) && snapshot[key] >= 0, `${key} must be a non-negative integer`);
+for (
+  const key of [
+    "iterations",
+    "checksum",
+    "allocations",
+    "copies",
+    "bytes",
+    "peak_rss",
+  ]
+) {
+  assert.ok(
+    Number.isInteger(snapshot[key]) && snapshot[key] >= 0,
+    `${key} must be a non-negative integer`,
+  );
 }
 assert.ok(snapshot.peak_rss > 0);
 assert.ok(Number.isFinite(snapshot.wall_ms) && snapshot.wall_ms >= 0);
