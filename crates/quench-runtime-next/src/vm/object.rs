@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 impl<H: Host> Vm<H> {
     #[inline(always)]
@@ -257,7 +258,7 @@ impl<H: Host> Vm<H> {
             self.object_data_mut(object).unwrap().set_shape(next_shape);
         }
         self.descriptors
-            .entry((object, atom))
+            .entry((object, PropertyKey::string(atom)))
             .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
         if invalidates_method {
             self.invalidate_method_caches();
@@ -387,7 +388,10 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<PropertyAttributes> {
         loop {
-            if let Some(attributes) = self.descriptors.get(&(object, atom)).copied()
+            if let Some(attributes) = self
+                .descriptors
+                .get(&(object, PropertyKey::string(atom)))
+                .copied()
                 && attributes.accessor
             {
                 return Some(attributes);
@@ -402,7 +406,11 @@ impl<H: Host> Vm<H> {
     pub(super) fn inherited_write_blocked(&self, object: Value, atom: Atom) -> bool {
         let mut object = self.object_data(object).map(|data| data.proto);
         while let Some(current) = object.filter(|value| !value.is_null()) {
-            if let Some(attributes) = self.descriptors.get(&(current, atom)).copied() {
+            if let Some(attributes) = self
+                .descriptors
+                .get(&(current, PropertyKey::string(atom)))
+                .copied()
+            {
                 return !attributes.accessor && !attributes.writable;
             }
             object = self.object_data(current).map(|data| data.proto);

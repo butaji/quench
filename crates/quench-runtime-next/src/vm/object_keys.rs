@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -116,7 +117,7 @@ impl<H: Host> Vm<H> {
             };
             let atom = self.intern_atom(&name);
             self.descriptors
-                .get(&(object, atom))
+                .get(&(object, PropertyKey::string(atom)))
                 .copied()
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
                 .enumerable

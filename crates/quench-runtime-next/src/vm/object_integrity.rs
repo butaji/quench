@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -49,15 +50,16 @@ impl<H: Host> Vm<H> {
             }
             if self
                 .symbol_descriptors
-                .get(&(target, key_value))
+                .get(&(target, PropertyKey::symbol(key_value)))
                 .is_some_and(|attributes| !attributes.configurable)
             {
                 return Ok(Value::FALSE);
             }
-            self.symbol_properties.remove(&(target, key_value));
-            self.symbol_descriptors.remove(&(target, key_value));
+            let property_key = PropertyKey::symbol(key_value);
+            self.symbol_properties.remove(&(target, property_key));
+            self.symbol_descriptors.remove(&(target, property_key));
             if let Some(keys) = self.symbol_property_order.get_mut(&target) {
-                keys.retain(|candidate| *candidate != key_value);
+                keys.retain(|candidate| *candidate != property_key);
             }
             return Ok(Value::TRUE);
         }
@@ -77,7 +79,7 @@ impl<H: Host> Vm<H> {
         };
         if !self
             .descriptors
-            .get(&(target, atom))
+            .get(&(target, PropertyKey::string(atom)))
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
             .configurable
@@ -85,7 +87,8 @@ impl<H: Host> Vm<H> {
             return Ok(Value::FALSE);
         }
         self.heap.property_set(target, slot, Value::DELETED);
-        self.descriptors.remove(&(target, atom));
+        self.descriptors
+            .remove(&(target, PropertyKey::string(atom)));
         self.invalidate_method_caches();
         Ok(Value::TRUE)
     }
@@ -207,7 +210,7 @@ impl<H: Host> Vm<H> {
         if exists
             && self
                 .descriptors
-                .get(&(object, atom))
+                .get(&(object, PropertyKey::string(atom)))
                 .is_some_and(|attributes| !attributes.writable)
         {
             return Err(JsError("cannot write non-writable property".into()));
@@ -342,7 +345,7 @@ impl<H: Host> Vm<H> {
         for atom in keys {
             let attributes = self
                 .descriptors
-                .entry((target, atom))
+                .entry((target, PropertyKey::string(atom)))
                 .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
             attributes.configurable = false;
             if freeze {
@@ -382,7 +385,7 @@ impl<H: Host> Vm<H> {
             .all(|(atom, _)| {
                 let attributes = self
                     .descriptors
-                    .get(&(target, atom))
+                    .get(&(target, PropertyKey::string(atom)))
                     .copied()
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 !attributes.configurable && (!freeze || !attributes.writable)

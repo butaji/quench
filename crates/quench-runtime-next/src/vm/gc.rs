@@ -44,7 +44,11 @@ impl<H: Host> Vm<H> {
                 .chain(
                     self.symbol_properties
                         .iter()
-                        .flat_map(|((object, key), value)| [*object, *key, *value]),
+                        .flat_map(|((object, key), value)| {
+                            [Some(*object), key.symbol_value(), Some(*value)]
+                                .into_iter()
+                                .flatten()
+                        }),
                 )
                 .chain(
                     self.symbol_descriptors
@@ -82,19 +86,26 @@ impl<H: Host> Vm<H> {
             .retain(|(object, _), _| self.heap.get(*object).is_some());
         self.symbol_properties.retain(|(object, key), value| {
             self.heap.get(*object).is_some()
-                && self.heap.get(*key).is_some()
+                && key
+                    .symbol_value()
+                    .is_some_and(|key| self.heap.get(key).is_some())
                 && self.heap.get(*value).is_some()
         });
         self.symbol_property_order.retain(|object, keys| {
             if self.heap.get(*object).is_none() {
                 return false;
             }
-            keys.retain(|key| self.heap.get(*key).is_some());
+            keys.retain(|key| {
+                key.symbol_value()
+                    .is_some_and(|key| self.heap.get(key).is_some())
+            });
             !keys.is_empty()
         });
         self.symbol_descriptors.retain(|(object, key), attributes| {
             self.heap.get(*object).is_some()
-                && self.heap.get(*key).is_some()
+                && key
+                    .symbol_value()
+                    .is_some_and(|key| self.heap.get(key).is_some())
                 && attributes
                     .getter
                     .into_iter()

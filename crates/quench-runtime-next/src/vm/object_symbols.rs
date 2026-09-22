@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -50,14 +51,14 @@ impl<H: Host> Vm<H> {
             let required = match self.heap.get(target_key).cloned() {
                 Some(Cell::Symbol(_)) => self
                     .symbol_descriptors
-                    .get(&(target, target_key))
+                    .get(&(target, PropertyKey::symbol(target_key)))
                     .is_some_and(|attributes| !attributes.configurable),
                 Some(Cell::String(name)) => {
                     let atom = self.intern_atom(&name);
                     self.own_property(target, atom).is_some_and(|_| {
                         !self
                             .descriptors
-                            .get(&(target, atom))
+                            .get(&(target, PropertyKey::string(atom)))
                             .copied()
                             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
                             .configurable
@@ -112,7 +113,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn symbol_property(&self, object: Value, key: Value) -> Option<Value> {
-        self.symbol_properties.get(&(object, key)).copied()
+        self.symbol_properties
+            .get(&(object, PropertyKey::symbol(key)))
+            .copied()
     }
 
     pub(super) fn set_symbol_property(
@@ -124,6 +127,7 @@ impl<H: Host> Vm<H> {
         if self.object_data(object).is_none() {
             return Err(JsError("property write on non-object".into()));
         }
+        let key = PropertyKey::symbol(key);
         if !self.symbol_properties.contains_key(&(object, key))
             && self
                 .object_data(object)
@@ -163,9 +167,10 @@ impl<H: Host> Vm<H> {
         descriptor: Value,
     ) -> Result<Value, JsError> {
         let existing = self.symbol_property(target, key);
+        let property_key = PropertyKey::symbol(key);
         let mut attributes = self
             .symbol_descriptors
-            .get(&(target, key))
+            .get(&(target, property_key))
             .copied()
             .unwrap_or(PropertyAttributes {
                 writable: false,
@@ -190,7 +195,8 @@ impl<H: Host> Vm<H> {
             .own_property(descriptor, value_atom)
             .unwrap_or(existing.unwrap_or(Value::UNDEFINED));
         self.set_symbol_property(target, key, value)?;
-        self.symbol_descriptors.insert((target, key), attributes);
+        self.symbol_descriptors
+            .insert((target, property_key), attributes);
         Ok(target)
     }
 
@@ -217,7 +223,10 @@ impl<H: Host> Vm<H> {
             .cloned()
             .unwrap_or_default()
             .into_iter()
-            .filter(|symbol| self.symbol_property(object, *symbol).is_some())
+            .filter_map(|key| {
+                key.symbol_value()
+                    .filter(|symbol| self.symbol_property(object, *symbol).is_some())
+            })
             .collect();
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -248,7 +257,10 @@ impl<H: Host> Vm<H> {
                 .into_iter()
                 .flatten()
                 .copied()
-                .filter(|symbol| self.symbol_property(target, *symbol).is_some()),
+                .filter_map(|key| {
+                    key.symbol_value()
+                        .filter(|symbol| self.symbol_property(target, *symbol).is_some())
+                }),
         );
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
