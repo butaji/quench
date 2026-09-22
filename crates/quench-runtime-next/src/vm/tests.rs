@@ -193,3 +193,20 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     assert_eq!(reused, dead);
     assert!(vm.method_caches[0][1].target.is_none());
 }
+
+#[test]
+fn pending_jobs_use_the_shared_interpreter_after_root_release() {
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize("print(0);", "job.js").unwrap();
+    vm.initialize(&program).unwrap();
+    let callback = vm.native_value(crate::heap::Native::Print);
+    let callback_root = vm.root(callback);
+    let argument_root = vm.root(Value::number(7.0));
+    let argument = vm.root_value(argument_root).unwrap();
+    vm.enqueue_job(callback, vec![argument]);
+    assert!(vm.release_root(callback_root));
+    assert!(vm.release_root(argument_root));
+    vm.drain_jobs(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["7"]);
+}

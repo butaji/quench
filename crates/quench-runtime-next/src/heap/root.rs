@@ -1,3 +1,4 @@
+use super::Heap;
 use crate::Value;
 
 /// A generation-checked strong handle owned by a host/runtime scope.
@@ -59,6 +60,13 @@ impl RootTable {
         true
     }
 
+    pub(crate) fn get(&self, root: RootId) -> Option<Value> {
+        let entry = self.entries.get(root.slot as usize)?;
+        (entry.generation == root.generation)
+            .then_some(entry.value)
+            .flatten()
+    }
+
     pub(crate) fn remove(&mut self, root: RootId) -> bool {
         let Some(entry) = self.entries.get_mut(root.slot as usize) else {
             return false;
@@ -81,6 +89,12 @@ impl RootTable {
             entry.value = None;
             self.free.push(slot as u32);
         }
+    }
+}
+
+impl Heap {
+    pub(crate) fn root_value(&self, root: RootId) -> Option<Value> {
+        self.roots.get(root)
     }
 }
 

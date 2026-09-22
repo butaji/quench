@@ -264,6 +264,18 @@ impl<H: Host> Vm<H> {
     pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
         self.heap.update_root(root, value)
     }
+
+    pub fn root_value(&self, root: RootId) -> Option<Value> {
+        self.heap.root_value(root)
+    }
+
+    pub(crate) fn enqueue_job(&mut self, callback: Value, args: Vec<Value>) {
+        self.jobs.push(PendingJob {
+            callback,
+            this: Value::UNDEFINED,
+            args,
+        });
+    }
     pub fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
     }
