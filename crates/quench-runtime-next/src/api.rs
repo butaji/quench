@@ -352,10 +352,10 @@ mod tests {
         let mut runtime = Runtime::new(host);
         runtime
             .compile_and_execute(ExecutionRequest::script(
-                "var target = {}; var descriptors = { a: { value: 1 }, b: { value: 2, enumerable: true } }; Object.defineProperties(target, descriptors); print(target.a); print(target.b); print(Object.keys(target).join(','));",
+                "var target = {}; var descriptors = { a: { value: 1 }, b: { value: 2, enumerable: true } }; Object.defineProperties(target, descriptors); print(target.a); print(target.b); print(Object.keys(target).join(',')); var created = Object.create(null, { x: { value: 9, enumerable: true } }); print(created.x); print(Object.keys(created).join(','));",
                 "define-properties.js",
             ))
             .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["1", "2", "b"]);
+        assert_eq!(view.0.borrow().as_slice(), ["1", "2", "b", "9", "x"]);
     }
 }
