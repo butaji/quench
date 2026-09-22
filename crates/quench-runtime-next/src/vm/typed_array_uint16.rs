@@ -1,35 +1,6 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn install_uint8_clamped_array(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
-        let constructor = self.native_value(Native::Uint8ClampedArray);
-        self.uint8_clamped_array_proto = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
-        self.set_named(
-            program,
-            constructor,
-            "prototype",
-            self.uint8_clamped_array_proto,
-        )?;
-        self.set_named(
-            program,
-            constructor,
-            "BYTES_PER_ELEMENT",
-            Value::number(1.0),
-        )?;
-        self.set_named(
-            program,
-            self.uint8_clamped_array_proto,
-            "BYTES_PER_ELEMENT",
-            Value::number(1.0),
-        )?;
-        self.global(program, "Uint8ClampedArray", constructor)
-    }
-
     pub(super) fn construct_uint8_clamped_array_native(
         &mut self,
         p: &ResidualProgram,
@@ -125,30 +96,6 @@ impl<H: Host> Vm<H> {
             length,
             length_tracking: false,
         }))
-    }
-
-    pub(super) fn install_uint16_array(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
-        let constructor = self.native_value(Native::Uint16Array);
-        self.uint16_array_proto = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
-        self.set_named(program, constructor, "prototype", self.uint16_array_proto)?;
-        self.set_named(
-            program,
-            constructor,
-            "BYTES_PER_ELEMENT",
-            Value::number(2.0),
-        )?;
-        self.set_named(
-            program,
-            self.uint16_array_proto,
-            "BYTES_PER_ELEMENT",
-            Value::number(2.0),
-        )?;
-        self.global(program, "Uint16Array", constructor)
     }
 
     pub(super) fn construct_uint16_array_native(
@@ -252,30 +199,6 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn install_uint32_array(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
-        let constructor = self.native_value(Native::Uint32Array);
-        self.uint32_array_proto = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
-        self.set_named(program, constructor, "prototype", self.uint32_array_proto)?;
-        self.set_named(
-            program,
-            constructor,
-            "BYTES_PER_ELEMENT",
-            Value::number(4.0),
-        )?;
-        self.set_named(
-            program,
-            self.uint32_array_proto,
-            "BYTES_PER_ELEMENT",
-            Value::number(4.0),
-        )?;
-        self.global(program, "Uint32Array", constructor)
-    }
-
     pub(super) fn construct_uint32_array_native(
         &mut self,
         p: &ResidualProgram,

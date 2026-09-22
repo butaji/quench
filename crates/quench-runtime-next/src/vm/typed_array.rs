@@ -1,3 +1,4 @@
+use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 impl<H: Host> Vm<H> {
     pub(super) fn maybe_call_typed_array_native(
@@ -56,14 +57,10 @@ impl<H: Host> Vm<H> {
             )?;
         }
         self.global(program, "Uint8Array", uint8_array)?;
-        self.install_uint8_clamped_array(program)?;
-        self.install_uint16_array(program)?;
-        self.install_uint32_array(program)?;
-        self.install_int8_array(program)?;
-        self.install_int16_array(program)?;
-        self.install_int32_array(program)?;
-        self.install_float32_array(program)?;
-        self.install_float64_array(program)
+        for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
+            self.install_typed_array_kind(program, kind, native, name)?;
+        }
+        Ok(())
     }
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
         match self.heap.get(object) {

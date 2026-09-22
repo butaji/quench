@@ -1,62 +1,6 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn install_float32_array(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
-        self.install_float_array(
-            program,
-            TypedArrayKind::Float32,
-            Native::Float32Array,
-            "Float32Array",
-        )
-    }
-
-    pub(super) fn install_float64_array(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
-        self.install_float_array(
-            program,
-            TypedArrayKind::Float64,
-            Native::Float64Array,
-            "Float64Array",
-        )
-    }
-
-    fn install_float_array(
-        &mut self,
-        program: &ResidualProgram,
-        kind: TypedArrayKind,
-        native: Native,
-        name: &str,
-    ) -> Result<(), JsError> {
-        let constructor = self.native_value(native);
-        let proto = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
-        match kind {
-            TypedArrayKind::Float32 => self.float32_array_proto = proto,
-            TypedArrayKind::Float64 => self.float64_array_proto = proto,
-            _ => unreachable!(),
-        }
-        self.set_named(program, constructor, "prototype", proto)?;
-        self.set_named(
-            program,
-            constructor,
-            "BYTES_PER_ELEMENT",
-            Value::number(kind.width() as f64),
-        )?;
-        self.set_named(
-            program,
-            proto,
-            "BYTES_PER_ELEMENT",
-            Value::number(kind.width() as f64),
-        )?;
-        self.global(program, name, constructor)
-    }
-
     pub(super) fn construct_float32_array_native(
         &mut self,
         p: &ResidualProgram,
