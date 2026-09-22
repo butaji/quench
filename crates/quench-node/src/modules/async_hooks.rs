@@ -65,7 +65,6 @@ pub struct AsyncHooksState {
     // on a second JS-only context registry.
     local_stores: HashMap<(u64, u64), Value>,
     next_local_id: u64,
-    pub(crate) current_local_store: Option<Value>,
     resource_stack: Vec<(u64, Option<Value>)>,
     destroyed_resources: HashSet<u64>,
     tracked_resources: HashMap<u64, (Value, bool)>,
@@ -89,7 +88,6 @@ impl AsyncHooksState {
             promise_resources: HashMap::new(),
             local_stores: HashMap::new(),
             next_local_id: 1,
-            current_local_store: None,
             resource_stack: Vec::new(),
             destroyed_resources: HashSet::new(),
             tracked_resources: HashMap::new(),
