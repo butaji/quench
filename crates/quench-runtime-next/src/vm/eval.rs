@@ -102,6 +102,14 @@ impl<H: Host> Vm<H> {
             if !self.direct_eval {
                 return self.syntax_error_result(p, "super property is not valid in eval code");
             }
+            if self
+                .frames
+                .last()
+                .and_then(|frame| p.functions.get(frame.function as usize))
+                .is_some_and(|function| function.name.is_some())
+            {
+                return self.syntax_error_result(p, "super property is not valid in eval code");
+            }
             let expression = source.trim().trim_end_matches(';').trim();
             if let Some(property) = expression.strip_prefix("super.")
                 && property.chars().all(|character| character == '_' || character == '$' || character.is_ascii_alphanumeric())
@@ -111,6 +119,9 @@ impl<H: Host> Vm<H> {
                     .load_eval_capture_atom(p, super_atom)
                     .or_else(|| self.load_eval_frame_local(p, super_atom));
                 if let Some(home) = home {
+                    if self.frames.last().is_none_or(|frame| frame.this != home) {
+                        return self.syntax_error_result(p, "super property is not valid in eval code");
+                    }
                     let prototype = self.object_data(home).map_or(Value::NULL, |object| object.proto);
                     let property_atom = self.intern_atom(property);
                     return self.get_property(p, prototype, property_atom);
@@ -606,7 +617,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn load_eval_name(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
-        if self.direct_eval {
+            if self.direct_eval {
             let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
             let with_base = self
                 .frames
