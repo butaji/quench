@@ -6,6 +6,22 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let previous_global = self.realm.globals;
+        if let Some(global) = self.active_native_env()
+            && self.object_data(global).is_some()
+        {
+            self.realm.globals = global;
+        }
+        let result = self.eval_native_in_realm(p, args);
+        self.realm.globals = previous_global;
+        result
+    }
+
+    fn eval_native_in_realm(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         let text = match self.heap.get(source) {
             Some(Cell::String(value)) => value.host_string().to_owned(),
