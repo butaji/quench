@@ -4,14 +4,6 @@ fn utf16_index(text: &str, byte_index: usize) -> usize {
     text[..byte_index].encode_utf16().count()
 }
 
-pub(super) fn find_utf16(text: &[u16], search: &[u16], start: usize) -> Option<usize> {
-    if search.is_empty() {
-        return Some(start.min(text.len()));
-    }
-    (start..=text.len().saturating_sub(search.len()))
-        .find(|index| text[*index..*index + search.len()] == *search)
-}
-
 pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Option<usize> {
     if search.is_empty() {
         return Some(position.min(text.len()));
