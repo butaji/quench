@@ -34,6 +34,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn object_keys(&mut self, object: Value) -> Result<Value, JsError> {
+        let object = self.proxy_target(object);
         let object = self.box_object(object)?;
         let data = self.object_data(object).expect("boxed target is object");
         let atoms = self
@@ -230,6 +231,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn object_values(&mut self, object: Value) -> Result<Value, JsError> {
+        let object = self.proxy_target(object);
         let object = self.box_object(object)?;
         let data = self.object_data(object).expect("boxed target is object");
         let shape = self.ordered_shape(data);
@@ -245,6 +247,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn object_entries(&mut self, object: Value) -> Result<Value, JsError> {
+        let object = self.proxy_target(object);
         let object = self.box_object(object)?;
         let data = self.object_data(object).expect("boxed target is object");
         let shape = self.ordered_shape(data);
@@ -295,6 +298,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn object_names(&mut self, object: Value) -> Result<Value, JsError> {
+        let object = self.proxy_target(object);
         let object = self.box_object(object)?;
         let data = self.object_data(object).expect("boxed target is object");
         let values = self
