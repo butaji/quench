@@ -39,11 +39,11 @@ impl<H: Host> Vm<H> {
                     self.iterator_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
-                .chain(
-                    self.finalization_jobs
-                        .iter()
-                        .flat_map(|(callback, held)| [*callback, *held]),
-                )
+                .chain(self.jobs.iter().flat_map(|job| {
+                    std::iter::once(job.callback)
+                        .chain(std::iter::once(job.this))
+                        .chain(job.args.iter().copied())
+                }))
                 .chain(self.symbol_registry.values().copied())
                 .chain(self.well_known_symbols.values().copied())
                 .chain(
@@ -83,7 +83,16 @@ impl<H: Host> Vm<H> {
                             },
                         ))
                 }));
-        self.finalization_jobs.extend(self.heap.collect(roots));
+        self.jobs.extend(
+            self.heap
+                .collect(roots)
+                .into_iter()
+                .map(|(callback, held)| PendingJob {
+                    callback,
+                    this: Value::UNDEFINED,
+                    args: vec![held],
+                }),
+        );
         self.invalidate_field_caches();
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
@@ -126,17 +135,17 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn drain_finalization_jobs(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<Value, JsError> {
+    pub(super) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         let mut index = 0;
-        while index < self.finalization_jobs.len() {
-            let (callback, held) = self.finalization_jobs[index];
-            self.call_value(program, callback, Value::UNDEFINED, &[held])?;
+        while index < self.jobs.len() {
+            let job = &self.jobs[index];
+            let callback = job.callback;
+            let this = job.this;
+            let args = job.args.clone();
+            self.call_value(program, callback, this, &args)?;
             index += 1;
         }
-        self.finalization_jobs.drain(..index);
+        self.jobs.drain(..index);
         Ok(Value::UNDEFINED)
     }
 }
