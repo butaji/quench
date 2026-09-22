@@ -132,6 +132,8 @@ impl<H: Host> Vm<H> {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if value.is_null() || value.is_undefined() {
                     Ok(self.object())
+                } else if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
+                    self.box_bigint_object(p, value)
                 } else {
                     self.box_object(value)
                 }
