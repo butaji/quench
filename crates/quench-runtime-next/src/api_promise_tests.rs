@@ -237,3 +237,17 @@ fn async_for_of_prefers_async_iterator_and_wraps_sync_iterators() {
         .unwrap();
     assert_eq!(view.0.borrow().as_slice(), ["12"]);
 }
+
+#[test]
+fn async_generator_uses_the_async_iterator_protocol() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "async function* values() { yield await Promise.resolve(2); yield 3; } async function sum() { var result = 0; for await (var value of values()) { result = result + value; } return result; } sum().then(print);",
+            "async-generator.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["5"]);
+}

@@ -335,6 +335,7 @@ pub(crate) enum IteratorKind {
     SetEntries,
     Generator,
     AsyncFromSync,
+    AsyncGenerator,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Object {
