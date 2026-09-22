@@ -225,4 +225,18 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["55296", "1"]);
     }
+
+    #[test]
+    fn oxc_surrogate_keys_cover_class_fields_and_destructuring() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                r#"class Box { "\uD801" = 7; } print(new Box()["\uD801"]); var {"\uD800": value} = {"\uD800": 3}; print(value);"#,
+                "surrogate-class-destructure.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["7", "3"]);
+    }
 }
