@@ -1,3 +1,4 @@
+use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
@@ -432,20 +433,24 @@ impl<H: Host> Vm<H> {
         })
     }
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
-        if let Some(atom) = self.lookup_atom(name) {
+        self.intern_js_atom(&JsString::from_str(name))
+    }
+
+    pub(super) fn intern_js_atom(&mut self, name: &JsString) -> Atom {
+        if let Some(atom) = self.lookup_js_atom(name) {
             return atom;
         }
         let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
-        self.dynamic_atoms.push(Rc::from(name));
-        self.index_atom(Self::atom_hash(name), atom);
+        self.dynamic_atoms.push(name.clone());
+        self.index_atom(Self::atom_hash_units(name.units()), atom);
         self.profile.dynamic_atom();
         atom
     }
+
     pub(super) fn atom_hash(name: &str) -> u64 {
-        let mut hasher = rustc_hash::FxHasher::default();
-        name.hash(&mut hasher);
-        hasher.finish()
+        Self::atom_hash_units(&name.encode_utf16().collect::<Vec<_>>())
     }
+
     pub(super) fn index_atom(&mut self, hash: u64, atom: Atom) {
         if let std::collections::hash_map::Entry::Vacant(entry) = self.atoms.entry(hash) {
             entry.insert(atom);
@@ -458,7 +463,7 @@ impl<H: Host> Vm<H> {
         if index < self.atom_text.len() {
             &self.atom_text[index]
         } else {
-            &self.dynamic_atoms[index - self.atom_text.len()]
+            self.dynamic_atoms[index - self.atom_text.len()].host_string()
         }
     }
     pub(super) fn global(
