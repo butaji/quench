@@ -92,6 +92,21 @@ fn proxy_own_keys_trap_drives_reflection_order_and_filters() {
 }
 
 #[test]
+fn proxy_descriptor_trap_controls_descriptor_reflection() {
+    let source = r#"
+      var target = { value: 1 };
+      var proxy = new Proxy(target, { getOwnPropertyDescriptor: function(t, key) {
+        if (key === 'virtual') return { value: 9, writable: true, enumerable: true, configurable: true };
+        return undefined;
+      } });
+      print(Object.getOwnPropertyDescriptor(proxy, 'virtual').value);
+      print(Reflect.getOwnPropertyDescriptor(proxy, 'value'));
+      print(Object.getOwnPropertyDescriptor(proxy, 'other') === undefined ? 'missing' : 'present');
+    "#;
+    assert_eq!(output(source), ["9", "undefined", "missing"]);
+}
+
+#[test]
 fn well_known_symbols_are_realm_stable_values() {
     assert_eq!(
         output(
