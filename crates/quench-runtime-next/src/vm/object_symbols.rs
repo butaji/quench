@@ -118,6 +118,20 @@ impl<H: Host> Vm<H> {
             .copied()
     }
 
+    pub(super) fn inherited_symbol_property(&self, object: Value, key: Value) -> Option<Value> {
+        let property = PropertyKey::symbol(key);
+        let mut current = object;
+        loop {
+            if let Some(value) = self.symbol_properties.get(&(current, property)).copied() {
+                return Some(value);
+            }
+            current = self.object_data(current)?.proto;
+            if current.is_null() {
+                return None;
+            }
+        }
+    }
+
     pub(super) fn set_symbol_property(
         &mut self,
         object: Value,
