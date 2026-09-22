@@ -1,6 +1,67 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn is_constructable(&self, p: &ResidualProgram, value: Value) -> bool {
+        let Some(cell) = self.heap.get(value) else {
+            return false;
+        };
+        match cell {
+            Cell::Proxy {
+                target, handler, ..
+            } => !handler.is_null() && self.is_constructable(p, *target),
+            Cell::Function { kind, .. } => match kind {
+                FunctionKind::User(id) | FunctionKind::NumericUser(id) => {
+                    let function = &p.functions[*id as usize];
+                    !function.is_async
+                        && !function.is_generator
+                        && self
+                            .lookup_atom("prototype")
+                            .is_some_and(|atom| self.own_property(value, atom).is_some())
+                }
+                FunctionKind::Native(native) => matches!(
+                    native,
+                    Native::Function
+                        | Native::Object
+                        | Native::Proxy
+                        | Native::Array
+                        | Native::ArrayBuffer
+                        | Native::SharedArrayBuffer
+                        | Native::Uint8Array
+                        | Native::Uint8ClampedArray
+                        | Native::Uint16Array
+                        | Native::Uint32Array
+                        | Native::Int8Array
+                        | Native::Int16Array
+                        | Native::Int32Array
+                        | Native::Float32Array
+                        | Native::Float64Array
+                        | Native::DataView
+                        | Native::Map
+                        | Native::Set
+                        | Native::WeakMap
+                        | Native::WeakSet
+                        | Native::WeakRef
+                        | Native::FinalizationRegistry
+                        | Native::DisposableStack
+                        | Native::Date
+                        | Native::Error
+                        | Native::EvalError
+                        | Native::RangeError
+                        | Native::ReferenceError
+                        | Native::SyntaxError
+                        | Native::TypeError
+                        | Native::URIError
+                        | Native::RegExp
+                        | Native::String
+                        | Native::Boolean
+                        | Native::Number
+                        | Native::Promise
+                ),
+            },
+            _ => false,
+        }
+    }
+
     pub(super) fn closure(
         &mut self,
         p: &ResidualProgram,
@@ -16,8 +77,13 @@ impl<H: Host> Vm<H> {
             },
             env,
         });
-        if let Some(atom) = self.lookup_atom("prototype") {
-            self.set_property(function, atom, prototype)?;
+        let arrow = p.functions[id as usize]
+            .name
+            .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow");
+        if !arrow {
+            if let Some(atom) = self.lookup_atom("prototype") {
+                self.set_property(function, atom, prototype)?;
+            }
         }
         let constructor_atom = self.intern_atom("constructor");
         self.set_property(prototype, constructor_atom, function)?;
@@ -38,11 +104,23 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("not a constructor".into())),
         };
         if let FunctionKind::User(id) = kind {
+            if p.functions[id as usize]
+                .name
+                .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow")
+            {
+                return Err(JsError("arrow function is not a constructor".into()));
+            }
             if p.functions[id as usize].is_async {
                 return Err(JsError("async function is not a constructor".into()));
             }
             if p.functions[id as usize].is_generator {
                 return Err(JsError("generator function is not a constructor".into()));
+            }
+            if self
+                .lookup_atom("prototype")
+                .is_some_and(|atom| self.own_property(callee, atom).is_none())
+            {
+                return Err(JsError("arrow function is not a constructor".into()));
             }
         }
         if let FunctionKind::Native(native) = kind {
