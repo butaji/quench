@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
                     .single()
                     .ok_or_else(|| JsError("Invalid time value".into()))?;
                 let text = format_date(date);
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc(Cell::String(text.into())))
             }
             _ => Err(JsError("invalid Date native".into())),
         }

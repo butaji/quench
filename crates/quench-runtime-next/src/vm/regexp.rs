@@ -86,8 +86,8 @@ impl<H: Host> Vm<H> {
         let source_atom = self.intern_atom("source");
         let flags_atom = self.intern_atom("flags");
         let last_index_atom = self.intern_atom("lastIndex");
-        let source_value = self.heap.alloc(Cell::String(pattern));
-        let flags_value = self.heap.alloc(Cell::String(flags));
+        let source_value = self.heap.alloc(Cell::String(pattern.into()));
+        let flags_value = self.heap.alloc(Cell::String(flags.into()));
         self.set_property(object, source_atom, source_value)?;
         self.set_property(object, flags_atom, flags_value)?;
         self.set_property(object, last_index_atom, Value::number(0.0))?;
@@ -164,7 +164,7 @@ impl<H: Host> Vm<H> {
         }
         let index_atom = self.intern_atom("index");
         self.set_property(result, index_atom, Value::number(index as f64))?;
-        let input_value = self.heap.alloc(Cell::String(input));
+        let input_value = self.heap.alloc(Cell::String(input.into()));
         let input_atom = self.intern_atom("input");
         self.set_property(result, input_atom, input_value)?;
         Ok(result)

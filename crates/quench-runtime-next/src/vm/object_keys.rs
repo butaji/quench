@@ -8,7 +8,7 @@ impl<H: Host> Vm<H> {
         Some(
             self.array_present_indices(object)
                 .into_iter()
-                .map(|index| self.heap.alloc(Cell::String(index.to_string())))
+                .map(|index| self.heap.alloc(Cell::String(index.to_string().into())))
                 .collect(),
         )
     }

@@ -400,6 +400,6 @@ impl<H: Host> Vm<H> {
             }
             output.push_str(&self.to_string(p, value)?);
         }
-        Ok(self.heap.alloc(Cell::String(output)))
+        Ok(self.heap.alloc(Cell::String(output.into())))
     }
 }

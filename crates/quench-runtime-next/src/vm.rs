@@ -71,7 +71,7 @@ mod typed_array_install;
 mod typed_array_signed;
 mod typed_array_uint16;
 mod vm_init;
-mod wtf16;
+pub(crate) mod wtf16;
 pub use error::JsError;
 #[cfg(test)]
 mod tests;
@@ -374,7 +374,7 @@ impl<H: Host> Vm<H> {
         for constant in &program.constants {
             let value = match constant {
                 Constant::Number(v) => Value::number(*v),
-                Constant::String(v) => self.heap.alloc(Cell::String(v.clone())),
+                Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
                 Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
                 Constant::Boolean(true) => Value::TRUE,
                 Constant::Boolean(false) => Value::FALSE,
@@ -443,7 +443,7 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .and_then(|strings| strings.get(&hash))
             .copied()
-            && matches!(self.heap.get(value), Some(Cell::String(candidate)) if candidate == &text)
+            && matches!(self.heap.get(value), Some(Cell::String(candidate)) if candidate.host_string() == text)
         {
             #[cfg(feature = "profile-aggregate")]
             self.profile.dynamic_string(true);
@@ -452,7 +452,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.profile.dynamic_string(false);
         // A hash collision only evicts this weak canonical entry; content checks prevent semantic changes.
-        let value = self.heap.alloc(Cell::String(text));
+        let value = self.heap.alloc(Cell::String(text.into()));
         self.dynamic_strings
             .get_or_insert_with(|| Box::new(FxHashMap::default()))
             .insert(hash, value);

@@ -34,7 +34,7 @@ impl<H: Host> Vm<H> {
         };
         match native {
             Native::StringAt | Native::StringCodePointAt => {
-                let units: Vec<u16> = receiver.encode_utf16().collect();
+                let units = receiver.units().to_vec();
                 let raw = self
                     .to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
                     .trunc() as i64;
@@ -72,7 +72,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     receiver.to_lowercase()
                 };
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::StringConcat => {
                 let mut text = receiver;
@@ -224,10 +224,9 @@ impl<H: Host> Vm<H> {
             let Some(whole) = captures.get(0) else {
                 continue;
             };
-            values.push(
-                self.heap
-                    .alloc(Cell::String(receiver[cursor..whole.start()].to_owned())),
-            );
+            values.push(self.heap.alloc(Cell::String(
+                receiver[cursor..whole.start()].to_owned().into(),
+            )));
             for capture in captures.iter().skip(1) {
                 values.push(capture.map_or(Value::UNDEFINED, |value| {
                     self.heap.alloc(Cell::String(value.as_str().into()))
@@ -239,7 +238,10 @@ impl<H: Host> Vm<H> {
             }
         }
         if values.len() < limit {
-            values.push(self.heap.alloc(Cell::String(receiver[cursor..].to_owned())));
+            values.push(
+                self.heap
+                    .alloc(Cell::String(receiver[cursor..].to_owned().into())),
+            );
         }
         values.truncate(limit);
         Ok(self.heap.alloc(Cell::Array {
@@ -328,17 +330,17 @@ impl<H: Host> Vm<H> {
                 return Ok(self.heap.alloc(Cell::String(receiver)));
             }
             result.push_str(&receiver[cursor..]);
-            return Ok(self.heap.alloc(Cell::String(result)));
+            return Ok(self.heap.alloc(Cell::String(result.into())));
         }
         let search = self.to_string(p, search_value)?;
         if replace_all && search.is_empty() {
             let input = self.heap.alloc(Cell::String(receiver.clone()));
-            let units: Vec<u16> = receiver.encode_utf16().collect();
+            let units = receiver.units().to_vec();
             let mut output = Vec::new();
             for (offset, unit) in units.iter().copied().enumerate() {
                 let text = if replacement_function {
                     let callback_args = [
-                        self.heap.alloc(Cell::String(String::new())),
+                        self.heap.alloc(Cell::String(String::new().into())),
                         Value::number(offset as f64),
                         input,
                     ];
@@ -353,7 +355,7 @@ impl<H: Host> Vm<H> {
             }
             let text = if replacement_function {
                 let callback_args = [
-                    self.heap.alloc(Cell::String(String::new())),
+                    self.heap.alloc(Cell::String(String::new().into())),
                     Value::number(units.len() as f64),
                     input,
                 ];
@@ -376,7 +378,7 @@ impl<H: Host> Vm<H> {
                 result.push_str(&receiver[cursor..index]);
                 let replacement_text = if replacement_function {
                     let callback_args = [
-                        self.heap.alloc(Cell::String(search.clone())),
+                        self.heap.alloc(Cell::String(search.clone().into())),
                         Value::number(utf16_index(&receiver, index) as f64),
                         self.heap.alloc(Cell::String(receiver.clone())),
                     ];
@@ -397,11 +399,11 @@ impl<H: Host> Vm<H> {
                 cursor = index + search.len();
             }
             result.push_str(&receiver[cursor..]);
-            return Ok(self.heap.alloc(Cell::String(result)));
+            return Ok(self.heap.alloc(Cell::String(result.into())));
         }
         let replacement = if replacement_function {
             let callback_args = [
-                self.heap.alloc(Cell::String(search.clone())),
+                self.heap.alloc(Cell::String(search.clone().into())),
                 Value::number(utf16_index(&receiver, index) as f64),
                 self.heap.alloc(Cell::String(receiver.clone())),
             ];
@@ -422,7 +424,7 @@ impl<H: Host> Vm<H> {
         result.push_str(&receiver[..index]);
         result.push_str(&replacement);
         result.push_str(&receiver[index + search.len()..]);
-        Ok(self.heap.alloc(Cell::String(result)))
+        Ok(self.heap.alloc(Cell::String(result.into())))
     }
 }
 
