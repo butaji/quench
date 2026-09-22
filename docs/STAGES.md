@@ -119,3 +119,7 @@ list.
 - Stage 111: `intl402/String`
 - Stage 112: `intl402/Temporal`
 - Stage 113: `intl402/TypedArray`
+- Stage 114: `staging`
+
+The 22 files directly under `intl402/` belong to no directory stage; the
+uncapped `run-all-next` run covers them.

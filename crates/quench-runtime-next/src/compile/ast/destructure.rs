@@ -22,6 +22,7 @@ impl FunctionCompiler<'_, '_> {
         }
         match target {
             AssignmentTarget::ArrayAssignmentTarget(array) => {
+                self.require_object_coercible(value);
                 for (index, element) in array.elements.iter().enumerate() {
                     let Some(element) = element else { continue };
                     let key = self.literal(Constant::Number(index as f64));
@@ -55,12 +56,14 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             AssignmentTarget::ObjectAssignmentTarget(object) => {
+                self.require_object_coercible(value);
                 let mut excluded = Vec::with_capacity(object.properties.len());
                 for property in &object.properties {
                     let selected = self.reg();
                     match property {
                         AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
                             let atom = self.owner.atom(property.binding.name.as_str());
+                            self.resolve_assignment_name(atom);
                             excluded.push(
                                 self.literal(Constant::String(property.binding.name.to_string())),
                             );
@@ -80,10 +83,12 @@ impl FunctionCompiler<'_, '_> {
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
                             if let Some(expression) = property.name.as_expression() {
                                 let key = self.expression(expression);
+                                self.resolve_assignment_maybe_default(&property.binding);
                                 excluded.push(key);
                                 self.emit(Op::GetIndex, selected, value, key, 0);
                             } else if let Some(name) = Self::binding_key(&property.name) {
                                 let atom = self.owner.atom(name);
+                                self.resolve_assignment_maybe_default(&property.binding);
                                 excluded.push(self.literal(Constant::String(name.to_owned())));
                                 let cache = self.owner.cache_site();
                                 self.emit(
@@ -211,6 +216,7 @@ impl FunctionCompiler<'_, '_> {
                 self.store_atom(atom, value);
             }
             BindingPattern::ObjectPattern(object) => {
+                self.require_object_coercible(value);
                 for property in &object.properties {
                     let dst = self.reg();
                     if let Some(expression) = property.key.as_expression() {
@@ -233,6 +239,7 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             BindingPattern::ArrayPattern(array) => {
+                self.require_object_coercible(value);
                 for (index, element) in array.elements.iter().enumerate() {
                     let Some(element) = element else { continue };
                     let key = self.literal(Constant::Number(index as f64));
@@ -286,6 +293,59 @@ impl FunctionCompiler<'_, '_> {
             PropertyKey::StringLiteral(value) => Some(value.value.as_str()),
             _ => None,
         }
+    }
+
+    fn require_object_coercible(&mut self, value: Register) {
+        let null = self.literal(Constant::Null);
+        let is_null = self.emit_binary(2, Operand::register(value), Operand::register(null));
+        let skip_null = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
+        self.throw_object_coercion();
+        let end = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.patch(skip_null);
+        let undefined = self.literal(Constant::Undefined);
+        let is_undefined =
+            self.emit_binary(2, Operand::register(value), Operand::register(undefined));
+        let skip_undefined = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
+        self.throw_object_coercion();
+        self.patch(end);
+        self.patch(skip_undefined);
+    }
+
+    fn resolve_assignment_maybe_default(
+        &mut self,
+        target: &AssignmentTargetMaybeDefault<'_>,
+    ) {
+        let target = match target {
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(target) => {
+                &target.binding
+            }
+            _ => match target.as_assignment_target() {
+                Some(target) => target,
+                None => return,
+            },
+        };
+        if let Some(SimpleAssignmentTarget::AssignmentTargetIdentifier(id)) =
+            target.as_simple_assignment_target()
+        {
+            let atom = self.owner.atom(id.name.as_str());
+            self.resolve_assignment_name(atom);
+        }
+    }
+
+    fn resolve_assignment_name(&mut self, atom: Atom) {
+        if self.with_depth != 0 {
+            let _ = self.load_atom(atom);
+        }
+    }
+
+    fn throw_object_coercion(&mut self) {
+        let constructor = self.load_name("TypeError");
+        let message = self.literal(Constant::String("cannot destructure null or undefined".into()));
+        let argument = self.reg();
+        self.emit(Op::Move, argument, message, 0, 0);
+        let error = self.reg();
+        self.emit(Op::Construct, error, constructor, argument, 1);
+        self.emit(Op::Throw, error, 0, 0, 0);
     }
 
     fn object_rest(&mut self, source: Register, pattern: &ObjectPattern<'_>) -> Register {

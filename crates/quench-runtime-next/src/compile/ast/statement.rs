@@ -57,12 +57,27 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::Throw, value, 0, 0, 0);
             }
             Statement::TryStatement(item) => self.try_statement(item),
-            Statement::WithStatement(item) => self.statement(&item.body),
+            Statement::WithStatement(item) => self.with_statement(item),
             _ => self.owner.reject(
                 statement.span(),
                 "statement is outside the supported subset",
             ),
         }
+    }
+
+    fn with_statement(&mut self, item: &WithStatement<'_>) {
+        let object = self.expression(&item.object);
+        let enter = self.load_name("\0rqj:with-enter");
+        let argument = self.reg();
+        self.emit(Op::Move, argument, object, 0, 0);
+        let ignored = self.reg();
+        self.emit(Op::Call, ignored, enter, enter, (u32::from(argument) << 16) | 1);
+        self.with_depth = self.with_depth.saturating_add(1);
+        self.statement(&item.body);
+        self.with_depth = self.with_depth.saturating_sub(1);
+        let exit = self.load_name("\0rqj:with-exit");
+        let ignored = self.reg();
+        self.emit(Op::Call, ignored, exit, exit, 0);
     }
     fn return_statement(&mut self, item: &ReturnStatement<'_>) {
         if let Some(value) = &item.argument {

@@ -34,6 +34,19 @@ Set `next_task` to `null` only when every item is done.
   may complete without a speed claim unless the task explicitly owns a
   performance gate.
 
+## Conformance ratchet
+
+Task 19 freezes per-test legacy outcomes for Test262, Wasm, and
+`tests/node-compat`. From then on every change that touches the next engine,
+the host facade, or a runner is checked against the latest recorded pass set
+for each suite it can affect: newly failing tests are regressions and block the
+change. Feature tasks close on their mapped conformance slices (task 20 maps
+Test262 stages to tasks 11–18), so completion is measured, not asserted.
+
+A foundation task (07–10) closes on its mechanism contract. Producers in later
+tasks adopt it as part of their own definition of done, which keeps the
+dependency graph acyclic.
+
 ## Final gates
 
 - Every official test discovered from the pinned Test262 checkout passes; there

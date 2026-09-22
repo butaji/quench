@@ -9,7 +9,7 @@
     "reference_repository": "../v2",
     "reference_commit": "e511d1f7e401ecff8cfc4f7cccb6292e6426be44"
   },
-  "next_task": "07",
+  "next_task": "08",
   "completion_policy": "retain_done",
   "lanes": {
     "critical_path": [
@@ -18,7 +18,7 @@
     ],
     "semantics": ["11", "12", "13", "14", "15", "16", "17", "18"],
     "conformance": ["19", "20"],
-    "host": ["21", "22", "23"],
+    "host": ["43", "21", "22", "23"],
     "performance": ["25", "26"],
     "specializers": ["29", "30", "31", "32", "33", "34"],
     "simplification": ["35", "36"],
@@ -47,7 +47,7 @@
     {"id":"05","file":"05.md","title":"Establish engine and residual-program contracts","lane":"critical_path","status":"done","depends_on":["04"]},
     {"id":"06","file":"06.md","title":"Adopt tagged values and JavaScript strings","lane":"critical_path","status":"done","depends_on":["05"]},
     {"id":"07","file":"07.md","title":"Extend the tracing heap and root lifecycle","lane":"critical_path","status":"in_progress","depends_on":["06"]},
-    {"id":"08","file":"08.md","title":"Rebuild objects, shapes, descriptors, and caches","lane":"critical_path","status":"pending","depends_on":["06","07"]},
+    {"id":"08","file":"08.md","title":"Rebuild objects, shapes, descriptors, and caches","lane":"critical_path","status":"in_progress","depends_on":["06","07"]},
     {"id":"09","file":"09.md","title":"Unify activation, realms, jobs, and the host ABI","lane":"critical_path","status":"pending","depends_on":["07","08"]},
     {"id":"10","file":"10.md","title":"Extend the direct OXC specializer","lane":"critical_path","status":"pending","depends_on":["05","09"]},
     {"id":"11","file":"11.md","title":"Port core language, function, and class semantics","lane":"semantics","status":"pending","depends_on":["10"]},
@@ -60,9 +60,9 @@
     {"id":"18","file":"18.md","title":"Port modules, dynamic compilation, and realm semantics","lane":"semantics","status":"pending","depends_on":["09","10","11","17"]},
     {"id":"19","file":"19.md","title":"Build next-engine runners and differential oracles","lane":"conformance","status":"pending","depends_on":["05","09","10"]},
     {"id":"20","file":"20.md","title":"Close Test262 at 100 percent","lane":"conformance","status":"pending","depends_on":["11","12","13","14","15","16","17","18","19"]},
-    {"id":"21","file":"21.md","title":"Adapt Node core to the capability ABI","lane":"host","status":"pending","depends_on":["09","19"]},
+    {"id":"21","file":"21.md","title":"Adapt Node core to the capability ABI","lane":"host","status":"pending","depends_on":["09","19","43"]},
     {"id":"22","file":"22.md","title":"Close tracked Node compatibility at 100 percent","lane":"host","status":"pending","depends_on":["12","13","14","15","16","17","18","21"]},
-    {"id":"23","file":"23.md","title":"Port Wasm and close the specification suite at 100 percent","lane":"host","status":"pending","depends_on":["07","09","10","13","19"]},
+    {"id":"23","file":"23.md","title":"Port Wasm and close the specification suite at 100 percent","lane":"host","status":"pending","depends_on":["07","09","13","19","37","41"]},
     {"id":"24","file":"24.md","title":"Prove integrated correctness and safety","lane":"critical_path","status":"pending","depends_on":["20","22","23"]},
     {"id":"25","file":"25.md","title":"Add two-mode residual execution and the v2 lab","lane":"performance","status":"pending","depends_on":["05","09","10","19"]},
     {"id":"26","file":"26.md","title":"Match v2 Score and RSS","lane":"performance","status":"pending","depends_on":["24","25"]},
@@ -70,17 +70,18 @@
     {"id":"28","file":"28.md","title":"Finalize repository contracts","lane":"critical_path","status":"pending","depends_on":["27"]},
     {"id":"29","file":"29.md","title":"Add property-access inline caches","lane":"specializers","status":"pending","depends_on":["08","10"]},
     {"id":"30","file":"30.md","title":"Arm numeric opcode specialization from profile feedback","lane":"specializers","status":"pending","depends_on":["08","10"]},
-    {"id":"31","file":"31.md","title":"Specialize call-site argument binding","lane":"specializers","status":"pending","depends_on":["08","10","29"]},
+    {"id":"31","file":"31.md","title":"Specialize call-site argument binding","lane":"specializers","status":"pending","depends_on":["08","10","25","29"]},
     {"id":"32","file":"32.md","title":"Resolve capture binding time at specialization","lane":"specializers","status":"pending","depends_on":["10"]},
     {"id":"33","file":"33.md","title":"Generalize opcode superinstruction fusion","lane":"specializers","status":"pending","depends_on":["10","30"]},
-    {"id":"34","file":"34.md","title":"Add shape-guarded iterator fast paths","lane":"specializers","status":"pending","depends_on":["08","29"]},
+    {"id":"34","file":"34.md","title":"Add shape-guarded iterator fast paths","lane":"specializers","status":"pending","depends_on":["08","25","29"]},
     {"id":"35","file":"35.md","title":"Unify typed array cell representation by kind","lane":"simplification","status":"pending","depends_on":["08"]},
     {"id":"36","file":"36.md","title":"Move object integrity state onto the object cell","lane":"simplification","status":"done","depends_on":["08"]},
-    {"id":"37","file":"37.md","title":"Lower Wasm operators to the shared residual bytecode","lane":"frontends","status":"pending","depends_on":["10","23"]},
+    {"id":"37","file":"37.md","title":"Lower Wasm operators to the shared residual bytecode","lane":"frontends","status":"pending","depends_on":["07","10"]},
     {"id":"38","file":"38.md","title":"Extend binding-time materialization to Wasm immutables","lane":"frontends","status":"pending","depends_on":["37"]},
     {"id":"39","file":"39.md","title":"Share a structured control-flow scope stack across front ends","lane":"frontends","status":"pending","depends_on":["37"]},
     {"id":"40","file":"40.md","title":"Unify the OXC and Wasm engine and diagnostic types","lane":"frontends","status":"pending","depends_on":["37"]},
-    {"id":"41","file":"41.md","title":"Verify Wasm lowering consumes validator-derived types","lane":"frontends","status":"pending","depends_on":["23"]},
-    {"id":"42","file":"42.md","title":"Prove specialization is behavior-preserving via a disable-specialization gate","lane":"gates","status":"pending","depends_on":["19"]}
+    {"id":"41","file":"41.md","title":"Verify Wasm lowering consumes validator-derived types","lane":"frontends","status":"pending","depends_on":["37"]},
+    {"id":"42","file":"42.md","title":"Prove specialization is behavior-preserving via a disable-specialization gate","lane":"gates","status":"pending","depends_on":["19"]},
+    {"id":"43","file":"43.md","title":"Put quench-node behind an engine-neutral host facade","lane":"host","status":"pending","depends_on":["06"]}
   ]
 }

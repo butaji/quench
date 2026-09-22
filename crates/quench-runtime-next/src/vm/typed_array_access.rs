@@ -60,6 +60,12 @@ impl<H: Host> Vm<H> {
                         TypedArrayKind::Int32 => {
                             i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
                         }
+                        TypedArrayKind::BigInt64 => {
+                            i64::from_ne_bytes(bytes[..8].try_into().unwrap()) as f64
+                        }
+                        TypedArrayKind::BigUint64 => {
+                            u64::from_ne_bytes(bytes[..8].try_into().unwrap()) as f64
+                        }
                         TypedArrayKind::Float32 => {
                             f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
                         }
@@ -105,6 +111,33 @@ impl<H: Host> Vm<H> {
                 length
             },
         )
+    }
+
+    pub(super) fn typed_array_out_of_bounds(&self, object: Value) -> bool {
+        let Some(Cell::TypedArray {
+            buffer,
+            offset,
+            kind,
+            length,
+            length_tracking,
+            ..
+        }) = self.heap.get(object)
+        else {
+            return false;
+        };
+        let out = if *length_tracking {
+            match self.heap.get(*buffer) {
+                Some(Cell::ArrayBuffer { bytes, detached, .. }) => *detached || *offset > bytes.len(),
+                _ => true,
+            }
+        } else {
+            self.array_buffer_out_of_bounds(
+                *buffer,
+                *offset,
+                length.saturating_mul(kind.width()),
+            )
+        };
+        out
     }
 
     pub(super) fn typed_array_shared(&self, object: Value) -> Option<bool> {
@@ -239,6 +272,9 @@ impl<H: Host> Vm<H> {
                     .copy_from_slice(&Self::uint16_from_value(value).to_ne_bytes()),
                 TypedArrayKind::Int32 => bytes[start..start + 4]
                     .copy_from_slice(&Self::uint32_from_value(value).to_ne_bytes()),
+                TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => bytes
+                    [start..start + 8]
+                    .copy_from_slice(&(value.trunc() as i64).to_ne_bytes()),
                 TypedArrayKind::Float32 => {
                     bytes[start..start + 4].copy_from_slice(&(value as f32).to_ne_bytes())
                 }

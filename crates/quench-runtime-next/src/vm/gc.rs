@@ -47,6 +47,8 @@ impl<H: Host> Vm<H> {
                     self.int8_array_proto,
                     self.int16_array_proto,
                     self.int32_array_proto,
+                    self.bigint64_array_proto,
+                    self.biguint64_array_proto,
                     self.float32_array_proto,
                     self.float64_array_proto,
                     self.data_view_proto,
@@ -136,6 +138,7 @@ impl<H: Host> Vm<H> {
                         .chain(std::iter::once(job.this))
                         .chain(job.args.iter().copied())
                 }))
+                .chain(self.with_stack.iter().copied())
                 .chain(
                     self.suspended
                         .iter()

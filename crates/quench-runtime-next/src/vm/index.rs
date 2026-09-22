@@ -28,6 +28,12 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<Value, JsError> {
+        if self.typed_array_out_of_bounds(object) {
+            return Err(self.type_error(
+                p,
+                "cannot access typed array with an out-of-bounds backing buffer".into(),
+            ));
+        }
         if let Some(index) = key.as_int().filter(|index| *index >= 0)
             && let Some(value) = self.typed_array_get(object, index as usize)
         {
@@ -62,6 +68,12 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<Value, JsError> {
+        if self.typed_array_out_of_bounds(object) {
+            return Err(self.type_error(
+                p,
+                "cannot access typed array with an out-of-bounds backing buffer".into(),
+            ));
+        }
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             if let Some(Cell::Proxy {
                 target, handler, ..

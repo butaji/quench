@@ -254,6 +254,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
         let mut entries = self.shapes[data.shape() as usize]
+            .keys
             .iter()
             .copied()
             .enumerate()

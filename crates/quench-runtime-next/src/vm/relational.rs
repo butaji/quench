@@ -5,6 +5,21 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<bool, JsError> {
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(object).cloned()
+        {
+            if handler.is_null() {
+                return Err(JsError("cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("has");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let result = self.call_value(p, trap, handler, &[target, key])?;
+                return Ok(self.truthy(result));
+            }
+            return self.has_property(p, target, key);
+        }
         if self.object_data(object).is_none() {
             return Err(JsError("right-hand side of 'in' is not an object".into()));
         }

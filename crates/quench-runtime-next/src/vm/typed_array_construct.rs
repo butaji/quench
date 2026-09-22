@@ -110,6 +110,8 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Int8 => self.int8_array_proto,
             TypedArrayKind::Int16 => self.int16_array_proto,
             TypedArrayKind::Int32 => self.int32_array_proto,
+            TypedArrayKind::BigInt64 => self.bigint64_array_proto,
+            TypedArrayKind::BigUint64 => self.biguint64_array_proto,
             TypedArrayKind::Float32 => self.float32_array_proto,
             TypedArrayKind::Float64 => self.float64_array_proto,
         }
@@ -132,6 +134,9 @@ fn encode_typed_value(kind: TypedArrayKind, value: f64, bytes: &mut [u8]) {
         }
         TypedArrayKind::Int32 => {
             bytes.copy_from_slice(&(value.trunc().rem_euclid(4_294_967_296.0) as u32).to_ne_bytes())
+        }
+        TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
+            bytes.copy_from_slice(&(value.trunc() as i64).to_ne_bytes())
         }
         TypedArrayKind::Float32 => bytes.copy_from_slice(&(value as f32).to_ne_bytes()),
         TypedArrayKind::Float64 => bytes.copy_from_slice(&value.to_ne_bytes()),

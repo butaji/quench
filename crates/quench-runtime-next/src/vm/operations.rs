@@ -35,6 +35,15 @@ impl<H: Host> Vm<H> {
             return self.data_view_native(p, native, this, args);
         }
         match native {
+            Native::WithEnter => {
+                self.with_stack
+                    .push(args.first().copied().unwrap_or(Value::UNDEFINED));
+                Ok(Value::UNDEFINED)
+            }
+            Native::WithExit => {
+                self.with_stack.pop();
+                Ok(Value::UNDEFINED)
+            }
             Native::Eval => self.eval_native(p, args),
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             native if native.is_host_control_native() => self.call_host(p, native, args),

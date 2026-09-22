@@ -88,6 +88,8 @@ pub(crate) enum Native {
     Int8Array,
     Int16Array,
     Int32Array,
+    BigInt64Array,
+    BigUint64Array,
     Float32Array,
     Float64Array,
     Uint8ArraySet,
@@ -209,7 +211,7 @@ pub(crate) enum Native {
     PromiseFinallyJob,
     PromiseFinallyContinuationJob,
     PromiseAggregateJob,
-    PromiseAsyncResumeJob,
+    PromiseAsyncResumeJob, WithEnter, WithExit,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -220,6 +222,8 @@ pub(crate) enum TypedArrayKind {
     Int8,
     Int16,
     Int32,
+    BigInt64,
+    BigUint64,
     Float32,
     Float64,
 }
@@ -233,6 +237,8 @@ impl TypedArrayKind {
             Self::Int8 => 1,
             Self::Int16 => 2,
             Self::Int32 => 4,
+            Self::BigInt64 => 8,
+            Self::BigUint64 => 8,
             Self::Float32 => 4,
             Self::Float64 => 8,
         }

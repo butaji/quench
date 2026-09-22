@@ -26,8 +26,9 @@ TEST262_REPORT=target/test262-report.json \
   cargo run --release -p quench-test262 --bin run-all
 ```
 
-The rewrite gate must use the v2-derived runtime explicitly while it is being
-closed stage by stage:
+The rewrite gate must use the v2-derived runtime explicitly. Closure is driven
+by full `run-all-next` runs with a pass-set ratchet (see task 20); a single
+stage is the focused rerun unit:
 
 ```sh
 cargo run --release -p quench-test262 --bin run-stages-next -- 0 0
