@@ -4048,9 +4048,7 @@ mod stubs {
                 let fixed_wall_timezone = receiver_timezone.starts_with(['+', '-'])
                     || super::timezone_primary_name(&receiver_timezone) == "UTC";
                 let forward = right_epoch >= left_epoch;
-                let (start, end) = if fixed_wall_timezone {
-                    (receiver, &other)
-                } else if forward {
+                let (start, end) = if fixed_wall_timezone || forward {
                     (receiver, &other)
                 } else {
                     (&other, receiver)
@@ -4760,9 +4758,9 @@ mod stubs {
                     let anniversary =
                         year_start.with_year(year_start.year() + calendar_sign * whole_years);
                     if let Some(anniversary) = anniversary {
-                        if calendar_sign > 0 && year_end < anniversary {
-                            whole_years -= 1;
-                        } else if calendar_sign < 0 && year_end > anniversary {
+                        if (calendar_sign > 0 && year_end < anniversary)
+                            || (calendar_sign < 0 && year_end > anniversary)
+                        {
                             whole_years -= 1;
                         }
                     }
@@ -4837,9 +4835,9 @@ mod stubs {
                         + month_end.month() as i32
                         - month_start.month() as i32)
                         .abs();
-                    if calendar_sign > 0 && month_end.day() < month_start.day() {
-                        total_months -= 1;
-                    } else if calendar_sign < 0 && month_end.day() > month_start.day() {
+                    if (calendar_sign > 0 && month_end.day() < month_start.day())
+                        || (calendar_sign < 0 && month_end.day() > month_start.day())
+                    {
                         total_months -= 1;
                     }
                     let month_anchor = if calendar_sign > 0 {

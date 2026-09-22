@@ -592,10 +592,7 @@ fn replace_with_native(
     let mut output = String::with_capacity(input.len());
     let mut copied = 0;
     let mut search = 0;
-    loop {
-        let Some(found) = crate::regexp_native::find_str(source, flags, input, search) else {
-            break;
-        };
+    while let Some(found) = crate::regexp_native::find_str(source, flags, input, search) {
         let matched = crate::regexp_backend::Match::native(found.start..found.end);
         output.push_str(&input[copied..found.start]);
         output.push_str(&expand_template(template, input, input, &matched));

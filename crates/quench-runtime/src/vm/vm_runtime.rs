@@ -2634,12 +2634,11 @@ pub(crate) fn execute_optimized_code_step_from(
                 true,
             );
             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-            let completion = series
-                .terminal()
-                .then(|| {
-                    crate::completion::Completion::Return(crate::value::Value::Number(value))
-                })
-                .unwrap_or(crate::completion::Completion::Normal);
+            let completion = if series.terminal() {
+                crate::completion::Completion::Return(crate::value::Value::Number(value))
+            } else {
+                crate::completion::Completion::Normal
+            };
             return Ok((completion, start + span));
         }
         crate::execution_trace::stencil_observation(
@@ -2655,12 +2654,11 @@ pub(crate) fn execute_optimized_code_step_from(
         if let Some((span, value)) = series.execute(registers) {
             crate::execution_trace::stencil_observation(code, start, "binary_series", true);
             crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-            let completion = series
-                .terminal()
-                .then(|| {
-                    crate::completion::Completion::Return(crate::value::Value::Number(value))
-                })
-                .unwrap_or(crate::completion::Completion::Normal);
+            let completion = if series.terminal() {
+                crate::completion::Completion::Return(crate::value::Value::Number(value))
+            } else {
+                crate::completion::Completion::Normal
+            };
             return Ok((completion, start + span));
         }
         crate::execution_trace::stencil_observation(code, start, "binary_series", false);
@@ -7202,19 +7200,18 @@ pub(crate) fn run_compact_get_index(
         crate::execution_trace::packed_kind_miss(array.kind());
         return run_compact_get_property(code, pc, instruction, registers, _context);
     }
-    let reason = if array.is_none() {
-        crate::execution_trace::packed_kind_reason(if raw_array.is_some() {
-            "stale"
-        } else {
-            "non_array"
-        });
-        None
-    } else if index.is_none() {
-        Some("other")
-    } else if index.expect("checked index") >= array.expect("checked array").logical_len() {
-        Some("oob")
-    } else {
-        Some("hole")
+    let reason = match (array, index) {
+        (None, _) => {
+            crate::execution_trace::packed_kind_reason(if raw_array.is_some() {
+                "stale"
+            } else {
+                "non_array"
+            });
+            None
+        }
+        (_, None) => Some("other"),
+        (Some(array), Some(index)) if index >= array.logical_len() => Some("oob"),
+        (Some(_), Some(_)) => Some("hole"),
     };
     if let Some(reason) = reason {
         crate::execution_trace::packed_miss(reason);

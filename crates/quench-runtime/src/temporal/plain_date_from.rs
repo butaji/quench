@@ -264,9 +264,9 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
         }
     }
-    let era_name = if matches!(era, Value::Undefined) {
-        None
-    } else if matches!(calendar_name, "chinese" | "dangi") {
+    let era_name = if matches!(era, Value::Undefined)
+        || matches!(calendar_name, "chinese" | "dangi")
+    {
         None
     } else {
         let text = crate::conversion::to_string(&era)?.to_ascii_lowercase();

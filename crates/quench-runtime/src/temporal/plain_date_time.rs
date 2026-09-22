@@ -2798,9 +2798,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             } else if critical {
                 return Err(crate::value::error::throw_range_error("Invalid annotation"));
             }
-        } else if time_zone_annotation {
-            return Err(crate::value::error::throw_range_error("Invalid annotation"));
-        } else if annotation.is_empty() {
+        } else if time_zone_annotation || annotation.is_empty() {
             return Err(crate::value::error::throw_range_error("Invalid annotation"));
         } else {
             time_zone_annotation = true;
