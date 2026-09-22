@@ -166,8 +166,13 @@ pub(crate) fn select_fresh_object_call(
     (callee.opcode == Opcode::LoadLocal).then_some(())?;
     let mut values = BTreeMap::new();
     let mut inputs = BTreeMap::new();
-    for pc in start + 1..entries.len().min(start + MAX_REGION_LEN) {
-        let instruction = entries[pc].instruction;
+    for (pc, entry) in entries
+        .iter()
+        .enumerate()
+        .take(entries.len().min(start + MAX_REGION_LEN))
+        .skip(start + 1)
+    {
+        let instruction = entry.instruction;
         if instruction.opcode == Opcode::Call {
             return finish_selection(code, cfg, start, pc, callee, instruction, &inputs);
         }

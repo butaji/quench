@@ -416,7 +416,7 @@ pub(crate) fn load_binding(
             crate::execute::write_value(registers, dst, value);
             return Ok(());
         }
-        if environment.eval_name_aliases_slot(name, slot) {
+        if environment.eval_name_aliases_slot(name) {
             if let Some(value) = resolve_eval_name(name) {
                 crate::execute::write_value(registers, dst, value);
                 return Ok(());

@@ -700,9 +700,10 @@ fn proxy_relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
     proxy_relative_date_record(value).map(|(date, _)| date)
 }
 
-fn proxy_relative_date_record(
-    value: &Value,
-) -> Result<((i32, u32, u32), Option<String>), VmError> {
+type CalendarDate = (i32, u32, u32);
+type ProxyRelativeDate = (CalendarDate, Option<String>);
+
+fn proxy_relative_date_record(value: &Value) -> Result<ProxyRelativeDate, VmError> {
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     let day = integer_property(value, "day")?;
     let _ = integer_property(value, "hour")?;

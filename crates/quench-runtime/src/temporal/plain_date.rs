@@ -702,12 +702,14 @@ pub(crate) fn add_with_calendar(
     .unwrap_or(1.0)
     .signum();
     let scale = direction.signum() * source_sign;
-    let mut duration = DateDuration::default();
-    duration.is_negative = scale < 0.0;
-    duration.years = number_property(source, "years").abs() as u32;
-    duration.months = number_property(source, "months").abs() as u32;
-    duration.days = (number_property(source, "days").abs()
-        + number_property(source, "weeks").abs() * 7.0) as u32;
+    let duration = DateDuration {
+        is_negative: scale < 0.0,
+        years: number_property(source, "years").abs() as u32,
+        months: number_property(source, "months").abs() as u32,
+        days: (number_property(source, "days").abs() + number_property(source, "weeks").abs() * 7.0)
+            as u32,
+        ..Default::default()
+    };
     let mut options = DateAddOptions::default();
     options.overflow = Some(if overflow == "reject" {
         Overflow::Reject
@@ -1570,9 +1572,11 @@ fn calendar_add_months(
     calendar: &str,
 ) -> Option<(f64, f64, f64)> {
     let date = calendar_date(date.0 as i32, date.1 as u32, date.2 as u32, calendar)?;
-    let mut duration = DateDuration::default();
-    duration.months = months.unsigned_abs() as u32;
-    duration.is_negative = months < 0;
+    let duration = DateDuration {
+        months: months.unsigned_abs() as u32,
+        is_negative: months < 0,
+        ..Default::default()
+    };
     let mut options = DateAddOptions::default();
     options.overflow = Some(Overflow::Constrain);
     let result = date.try_added_with_options(duration, options).ok()?;

@@ -1,33 +1,21 @@
 use super::*;
 
 const EXECUTION_PROFILE_CASE_COUNT: usize = 342;
+type ExecutionCaseResult = (
+    crate::value::Value,
+    Vec<crate::ir::Opcode>,
+    Vec<RawInstruction>,
+    Vec<u32>,
+);
 
-fn execute_case(
-    case: &ExecutionCase,
-) -> Result<
-    (
-        crate::value::Value,
-        Vec<crate::ir::Opcode>,
-        Vec<RawInstruction>,
-        Vec<u32>,
-    ),
-    String,
-> {
+fn execute_case(case: &ExecutionCase) -> Result<ExecutionCaseResult, String> {
     execute_case_with_warmup(case, case.warmup())
 }
 
 fn execute_case_with_warmup(
     case: &ExecutionCase,
     warmup: u32,
-) -> Result<
-    (
-        crate::value::Value,
-        Vec<crate::ir::Opcode>,
-        Vec<RawInstruction>,
-        Vec<u32>,
-    ),
-    String,
-> {
+) -> Result<ExecutionCaseResult, String> {
     let program = crate::reduce::reduce_source(case.source())
         .map_err(|errors| format!("lowering failed: {}", errors.join("; ")))?;
     let context = crate::vm::current_context_or_default();
