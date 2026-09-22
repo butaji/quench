@@ -22,6 +22,7 @@ impl<H: Host> Vm<H> {
                 | Native::SetEntries
                 | Native::SetForEach
                 | Native::IteratorNext
+                | Native::IteratorClose
                 | Native::WeakMapGet
                 | Native::WeakMapSet
                 | Native::WeakMapHas
@@ -361,6 +362,7 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             }
             Native::IteratorNext => self.iterator_next(p, this),
+            Native::IteratorClose => self.iterator_close(p, this),
             Native::WeakMapGet => {
                 let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let Some(index) = self.weak_map_entry_index(this, key) else {

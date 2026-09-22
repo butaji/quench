@@ -238,9 +238,14 @@ impl FunctionCompiler<'_, '_> {
         let update = self.code.len() as u32;
         self.patch_edges(&control.continues, update);
         self.emit(Op::Jump, 0, 0, 0, head);
+        let close = self.code.len() as u32;
+        self.patch_edges(&control.breaks, close);
+        let iterator = self.load_atom(iterator_atom);
+        let close_fn = self.load_name("\0rqj:iterator-close");
+        let ignored = self.reg();
+        self.emit(Op::Call, ignored, close_fn, iterator, 0);
         let end = self.code.len() as u32;
         self.patch_to(end_edge, end);
-        self.patch_edges(&control.breaks, end);
     }
 
     fn bind_for_of_left(&mut self, left: &ForStatementLeft<'_>, value: Register) {

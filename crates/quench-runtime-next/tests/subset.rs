@@ -107,6 +107,16 @@ fn custom_symbol_iterator_uses_the_shared_iterator_protocol() {
 }
 
 #[test]
+fn abrupt_for_of_break_closes_custom_iterators() {
+    assert_eq!(
+        output(
+            "var iterable = {}; iterable[Symbol.iterator] = function() { return { next: function() { return { value: 1, done: false }; }, return: function() { print('closed'); return {}; } }; }; for (var value of iterable) { print(value); break; }"
+        ),
+        ["1", "closed"],
+    );
+}
+
+#[test]
 fn closures_prototypes_arrays_and_integer_ops() {
     let source = r#"
       var K = 40;

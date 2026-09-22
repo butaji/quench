@@ -1,6 +1,21 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn iterator_close(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+    ) -> Result<Value, JsError> {
+        let atom = self.intern_atom("return");
+        let method = self.get_property(p, iterator, atom)?;
+        if method.is_undefined() || method.is_null() {
+            return Ok(Value::UNDEFINED);
+        }
+        if !self.is_function(method) {
+            return Err(JsError("iterator return method is not callable".into()));
+        }
+        self.call_value(p, method, iterator, &[])
+    }
     pub(super) fn install_iterators(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.iterator_proto = self.object();
         self.set_named(
