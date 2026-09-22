@@ -122,7 +122,17 @@ pub(super) fn apply(
     }
 }
 
+struct SuperRule {
+    pattern: &'static [Op],
+    fuse: fn(&[Instr], &mut Vec<Superinstruction>) -> Option<Instr>,
+}
+
 const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
+
+const SUPER_RULES: &[SuperRule] = &[SuperRule {
+    pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
+    fuse: fuse_const_array_object2,
+}];
 
 fn rewrite_super_window(
     function: &mut BcFunction,
@@ -136,16 +146,25 @@ fn rewrite_super_window(
     let mut changed = false;
     while index < old.len() {
         map[index] = code.len();
-        let replacement = old
-            .get(index..index + CONST_ARRAY_OBJECT2.len())
-            .filter(|_| !(1..CONST_ARRAY_OBJECT2.len()).any(|n| protected[index + n]))
-            .and_then(|window| fuse_const_array_object2(window, superinstructions));
-        if let Some(instruction) = replacement {
-            for offset in 1..CONST_ARRAY_OBJECT2.len() {
+        let replacement = SUPER_RULES.iter().find_map(|rule| {
+            let width = rule.pattern.len();
+            let window = old.get(index..index + width)?;
+            if (1..width).any(|offset| protected[index + offset])
+                || window
+                    .iter()
+                    .map(|instruction| instruction.op())
+                    .ne(rule.pattern.iter().copied())
+            {
+                return None;
+            }
+            (rule.fuse)(window, superinstructions).map(|instruction| (instruction, width))
+        });
+        if let Some((instruction, width)) = replacement {
+            for offset in 1..width {
                 map[index + offset] = code.len();
             }
             code.push(instruction);
-            index += CONST_ARRAY_OBJECT2.len();
+            index += width;
             changed = true;
         } else {
             code.push(old[index]);
