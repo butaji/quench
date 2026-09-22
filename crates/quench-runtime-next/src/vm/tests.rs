@@ -59,6 +59,7 @@ fn dynamic_atoms_distinguish_lone_surrogate_units() {
     let other = vm.intern_js_atom(&JsString::from_units(&[0xD801]));
     assert_eq!(first, second);
     assert_ne!(first, other);
+    assert_eq!(vm.atom_value(first).units(), &[0xD800]);
 }
 
 #[test]
