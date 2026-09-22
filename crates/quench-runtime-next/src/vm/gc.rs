@@ -72,6 +72,14 @@ impl<H: Host> Vm<H> {
                 .chain(self.promise.jobs.iter().flat_map(|(job, reaction)| {
                     [*job, reaction.handler, reaction.next, reaction.value]
                 }))
+                .chain(
+                    self.promise
+                        .thenable_jobs
+                        .iter()
+                        .flat_map(|(job, thenable)| {
+                            [*job, thenable.then, thenable.thenable, thenable.promise]
+                        }),
+                )
                 .chain(self.jobs.iter().flat_map(|job| {
                     std::iter::once(job.callback)
                         .chain(std::iter::once(job.this))
@@ -150,14 +158,17 @@ impl<H: Host> Vm<H> {
                 key.symbol_value()
                     .is_some_and(|key| self.heap.get(key).is_some())
             });
-            self.promise
-                .records
-                .retain(|promise, _| self.heap.get(*promise).is_some());
-            self.promise
-                .jobs
-                .retain(|job, _| self.heap.get(*job).is_some());
             !keys.is_empty()
         });
+        self.promise
+            .records
+            .retain(|promise, _| self.heap.get(*promise).is_some());
+        self.promise
+            .jobs
+            .retain(|job, _| self.heap.get(*job).is_some());
+        self.promise
+            .thenable_jobs
+            .retain(|job, _| self.heap.get(*job).is_some());
         self.symbol_descriptors.retain(|(object, key), attributes| {
             self.heap.get(*object).is_some()
                 && key
