@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
         values.extend(
             named_atoms
                 .into_iter()
-                .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into()))),
+                .map(|atom| self.heap.alloc(Cell::String(self.atom_value(atom)))),
         );
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -170,7 +170,7 @@ impl<H: Host> Vm<H> {
         values.extend(
             named_atoms
                 .into_iter()
-                .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into()))),
+                .map(|atom| self.heap.alloc(Cell::String(self.atom_value(atom)))),
         );
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
