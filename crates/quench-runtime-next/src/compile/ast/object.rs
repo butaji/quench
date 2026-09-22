@@ -39,6 +39,15 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::SetIndex, item, dst, key, 0);
                 continue;
             }
+            if let PropertyKey::StringLiteral(value) = &property.key {
+                let key = super::super::string::constant(value);
+                if matches!(&key, Constant::StringUnits(_)) {
+                    let key = self.literal(key);
+                    let item = self.expression(&property.value);
+                    self.emit(Op::SetIndex, item, dst, key, 0);
+                    continue;
+                }
+            }
             let key = match &property.key {
                 PropertyKey::StaticIdentifier(id) => id.name.as_str(),
                 PropertyKey::StringLiteral(value) => value.value.as_str(),

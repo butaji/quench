@@ -312,7 +312,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn static_key<'c>(key: &'c PropertyKey<'c>) -> Option<&'c str> {
         match key {
             PropertyKey::StaticIdentifier(id) => Some(id.name.as_str()),
-            PropertyKey::StringLiteral(value) => Some(value.value.as_str()),
+            PropertyKey::StringLiteral(value)
+                if !matches!(super::string::constant(value), Constant::StringUnits(_)) =>
+            {
+                Some(value.value.as_str())
+            }
             _ => None,
         }
     }
