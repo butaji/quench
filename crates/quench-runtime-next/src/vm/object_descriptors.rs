@@ -182,7 +182,9 @@ impl<H: Host> Vm<H> {
         for (atom, _) in keys {
             let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
             let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
-            self.set_property(result, atom, descriptor)?;
+            if !descriptor.is_undefined() {
+                self.set_property(result, atom, descriptor)?;
+            }
         }
         for symbol in self
             .symbol_property_order

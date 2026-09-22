@@ -2,9 +2,57 @@ use super::*;
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn unary(&mut self, value: &UnaryExpression<'_>) -> Register {
+        if value.operator == UnaryOperator::Delete {
+            return self.delete_expression(&value.argument);
+        }
         let input = self.expression(&value.argument);
         let dst = self.reg();
         self.emit(Op::Unary, dst, input, 0, value.operator as u32);
+        dst
+    }
+
+    fn delete_expression(&mut self, argument: &Expression<'_>) -> Register {
+        let (target, key) = match argument {
+            Expression::StaticMemberExpression(member) => {
+                let target = self.expression(&member.object);
+                let key = self.literal(Constant::String(member.property.name.to_string()));
+                (target, key)
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let target = self.expression(&member.object);
+                let key = self.expression(&member.expression);
+                (target, key)
+            }
+            other => {
+                let _ = self.expression(other);
+                return self.literal(Constant::Boolean(true));
+            }
+        };
+        let reflect = self.load_name("Reflect");
+        let delete_property = self.reg();
+        let atom = self.owner.atom("deleteProperty");
+        let cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            delete_property,
+            FieldBase::register(reflect).0,
+            cache,
+            atom,
+        );
+        let this = self.literal(Constant::Undefined);
+        let base = self.next_reg;
+        let target_arg = self.reg();
+        self.emit(Op::Move, target_arg, target, 0, 0);
+        let key_arg = self.reg();
+        self.emit(Op::Move, key_arg, key, 0, 0);
+        let dst = self.reg();
+        self.emit(
+            Op::Call,
+            dst,
+            delete_property,
+            this,
+            (u32::from(base) << 16) | 2,
+        );
         dst
     }
 

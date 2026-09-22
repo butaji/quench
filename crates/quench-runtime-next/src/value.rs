@@ -7,6 +7,7 @@ const TAG_NULL: u64 = 0x7ffa_0000_0000_0000;
 const TAG_BOOL: u64 = 0x7ffb_0000_0000_0000;
 const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
+const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -18,6 +19,7 @@ impl Value {
     pub const NULL: Self = Self(TAG_NULL);
     pub const FALSE: Self = Self(TAG_BOOL);
     pub const TRUE: Self = Self(TAG_BOOL | 1);
+    pub(crate) const DELETED: Self = Self(TAG_DELETED);
 
     pub fn number(value: f64) -> Self {
         let integer = value as i32;
@@ -77,10 +79,14 @@ impl Value {
         (self.0 & TAG_MASK) == TAG_HEAP
     }
 
+    pub(crate) fn is_deleted(self) -> bool {
+        self.0 == TAG_DELETED
+    }
+
     fn is_tagged(self) -> bool {
         matches!(
             self.0 & TAG_MASK,
-            TAG_UNDEFINED | TAG_NULL | TAG_BOOL | TAG_HEAP | TAG_INT
+            TAG_UNDEFINED | TAG_NULL | TAG_BOOL | TAG_HEAP | TAG_INT | TAG_DELETED
         )
     }
 

@@ -1,6 +1,90 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn object_delete_property(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(source).cloned()
+        {
+            if handler.is_null() {
+                return Err(JsError("cannot access a revoked proxy".into()));
+            }
+            let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+            let key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+                key_value
+            } else {
+                let text = self.to_string(p, key_value)?;
+                self.heap.alloc(Cell::String(text))
+            };
+            let trap_atom = self.intern_atom("deleteProperty");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let result = self.call_value(p, trap, handler, &[target, key])?;
+                if !self.truthy(result) {
+                    return Ok(Value::FALSE);
+                }
+                let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+                if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
+                    return Err(JsError(
+                        "proxy deleteProperty trap cannot delete a non-configurable property"
+                            .into(),
+                    ));
+                }
+                return Ok(Value::TRUE);
+            }
+        }
+        let target = self.proxy_target(source);
+        if self.object_data(target).is_none() {
+            return Err(JsError("delete target is not an object".into()));
+        }
+        let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+            if self.symbol_property(target, key_value).is_none() {
+                return Ok(Value::TRUE);
+            }
+            if self
+                .symbol_descriptors
+                .get(&(target, key_value))
+                .is_some_and(|attributes| !attributes.configurable)
+            {
+                return Ok(Value::FALSE);
+            }
+            self.symbol_properties.remove(&(target, key_value));
+            self.symbol_descriptors.remove(&(target, key_value));
+            if let Some(keys) = self.symbol_property_order.get_mut(&target) {
+                keys.retain(|candidate| *candidate != key_value);
+            }
+            return Ok(Value::TRUE);
+        }
+        let key = self.to_string(p, key_value)?;
+        let atom = self.intern_atom(&key);
+        let Some(slot) = self.shapes[self.object_data(target).unwrap().shape() as usize]
+            .iter()
+            .position(|candidate| *candidate == atom)
+            .filter(|_| self.own_property(target, atom).is_some())
+        else {
+            return Ok(Value::TRUE);
+        };
+        if !self
+            .descriptors
+            .get(&(target, atom))
+            .copied()
+            .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
+            .configurable
+        {
+            return Ok(Value::FALSE);
+        }
+        self.heap.property_set(target, slot, Value::DELETED);
+        self.descriptors.remove(&(target, atom));
+        self.invalidate_method_caches();
+        Ok(Value::TRUE)
+    }
+
     pub(super) fn object_get_prototype_of(
         &mut self,
         p: &ResidualProgram,
@@ -244,6 +328,7 @@ impl<H: Host> Vm<H> {
             .map(|data| {
                 self.ordered_shape(data)
                     .into_iter()
+                    .filter(|(_, slot)| self.heap.property_get(data, *slot).is_some())
                     .map(|(atom, _)| atom)
                     .collect::<Vec<_>>()
             })
@@ -284,14 +369,18 @@ impl<H: Host> Vm<H> {
         if data.is_extensible() || freeze && !data.is_frozen() {
             return false;
         }
-        let named_ok = self.ordered_shape(data).into_iter().all(|(atom, _)| {
-            let attributes = self
-                .descriptors
-                .get(&(target, atom))
-                .copied()
-                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            !attributes.configurable && (!freeze || !attributes.writable)
-        });
+        let named_ok = self
+            .ordered_shape(data)
+            .into_iter()
+            .filter(|(_, slot)| self.heap.property_get(data, *slot).is_some())
+            .all(|(atom, _)| {
+                let attributes = self
+                    .descriptors
+                    .get(&(target, atom))
+                    .copied()
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                !attributes.configurable && (!freeze || !attributes.writable)
+            });
         let symbols_ok = self
             .symbol_property_order
             .get(&target)
