@@ -9,21 +9,42 @@ pub(crate) fn reduce_loop_body(
     locals: &mut HashMap<String, u16>,
     completion: u16,
 ) -> Result<Option<u16>, Vec<String>> {
-    reduce_loop_body_slots(
-        statement, ops, facts, next_register, next_slot, locals, completion, &mut Vec::new(),
-    )
+    reduce_loop_body_slots(LoopBodySlots {
+        statement,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+        completion,
+        body_slots: &mut Vec::new(),
+    })
+}
+
+pub(crate) struct LoopBodySlots<'ast, 'ctx> {
+    pub(crate) statement: &'ast Statement<'ast>,
+    pub(crate) ops: &'ctx mut Vec<Op>,
+    pub(crate) facts: &'ctx mut ProgramDb,
+    pub(crate) next_register: &'ctx mut u16,
+    pub(crate) next_slot: &'ctx mut u16,
+    pub(crate) locals: &'ctx mut HashMap<String, u16>,
+    pub(crate) completion: u16,
+    pub(crate) body_slots: &'ctx mut Vec<u16>,
 }
 
 pub(crate) fn reduce_loop_body_slots(
-    statement: &Statement<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &mut HashMap<String, u16>,
-    completion: u16,
-    body_slots: &mut Vec<u16>,
+    request: LoopBodySlots<'_, '_>,
 ) -> Result<Option<u16>, Vec<String>> {
+    let LoopBodySlots {
+        statement,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+        completion,
+        body_slots,
+    } = request;
     if let Statement::BlockStatement(block) = statement {
         crate::blocks::hoist_var_names(block, facts.strict, next_slot, locals);
         let mut block_locals = locals.clone();
