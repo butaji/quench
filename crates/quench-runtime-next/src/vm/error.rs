@@ -243,10 +243,11 @@ impl<H: Host> Vm<H> {
         for argument in args {
             let text = self.to_string(program, *argument)?;
             if text.trim().starts_with("#!") {
-                let message = self
-                    .heap
-                    .alloc(Cell::String("hashbang is not allowed in Function source".into()));
-                let error = self.construct_error_native(program, Native::SyntaxError, &[message])?;
+                let message = self.heap.alloc(Cell::String(
+                    "hashbang is not allowed in Function source".into(),
+                ));
+                let error =
+                    self.construct_error_native(program, Native::SyntaxError, &[message])?;
                 return Err(JsError::thrown(
                     error,
                     "SyntaxError: hashbang is not allowed in Function source".into(),
@@ -284,25 +285,22 @@ impl<H: Host> Vm<H> {
         Ok(self.native_with_env(Native::FunctionReturnName, name))
     }
 
-    pub(super) fn dynamic_class_native(
-        &mut self,
-        base: Value,
-    ) -> Result<Value, JsError> {
+    pub(super) fn dynamic_class_native(&mut self, base: Value) -> Result<Value, JsError> {
         let function = self.native_with_env(Native::DynamicDerivedClass, base);
-            let prototype = self.object();
-            if let Some(base_prototype_atom) = self.lookup_atom("prototype")
-                && let Some(base_prototype) = self.own_property(base, base_prototype_atom)
-                && let Some(object) = self.object_data_mut(prototype)
-            {
-                object.proto = base_prototype;
-            }
-            let prototype_atom = self.intern_atom("prototype");
-            self.set_property(function, prototype_atom, prototype)?;
-            let constructor_atom = self.intern_atom("constructor");
-            self.set_property(prototype, constructor_atom, function)?;
-            if let Some(object) = self.object_data_mut(function) {
-                object.proto = base;
-            }
+        let prototype = self.object();
+        if let Some(base_prototype_atom) = self.lookup_atom("prototype")
+            && let Some(base_prototype) = self.own_property(base, base_prototype_atom)
+            && let Some(object) = self.object_data_mut(prototype)
+        {
+            object.proto = base_prototype;
+        }
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property(function, prototype_atom, prototype)?;
+        let constructor_atom = self.intern_atom("constructor");
+        self.set_property(prototype, constructor_atom, function)?;
+        if let Some(object) = self.object_data_mut(function) {
+            object.proto = base;
+        }
         Ok(function)
     }
 
@@ -340,8 +338,8 @@ impl<H: Host> Vm<H> {
                     })
                     .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
                 let source = source.trim();
-                let body_strict = source.starts_with("'use strict';")
-                    || source.starts_with("\"use strict\";");
+                let body_strict =
+                    source.starts_with("'use strict';") || source.starts_with("\"use strict\";");
                 let source = source
                     .strip_prefix("'use strict';")
                     .or_else(|| source.strip_prefix("\"use strict\";"))

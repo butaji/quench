@@ -36,9 +36,9 @@ impl<H: Host> Vm<H> {
             .object_data(arguments)
             .and_then(|object| object.arguments_map.as_ref())
             .and_then(|mapping| {
-            mapping
-                .iter()
-                .position(|mapped| *mapped != u16::MAX && usize::from(*mapped) == slot)
+                mapping
+                    .iter()
+                    .position(|mapped| *mapped != u16::MAX && usize::from(*mapped) == slot)
             })
         else {
             return fallback;
@@ -87,9 +87,9 @@ impl<H: Host> Vm<H> {
             .object_data(arguments)
             .and_then(|object| object.arguments_map.as_ref())
             .and_then(|mapping| {
-            mapping
-                .iter()
-                .position(|mapped| *mapped != u16::MAX && usize::from(*mapped) == slot)
+                mapping
+                    .iter()
+                    .position(|mapped| *mapped != u16::MAX && usize::from(*mapped) == slot)
             })
         else {
             return;

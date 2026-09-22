@@ -141,16 +141,12 @@ impl<H: Host> Vm<H> {
         );
         let callee = self.intern_atom("callee");
         let value = if mapped {
-            if let Some(function) = self
-                .function_values
-                .get(id as usize)
-                .and_then(|entries| {
-                    entries
-                        .iter()
-                        .find(|(environment, _)| *environment == parent)
-                        .map(|(_, function)| *function)
-                })
-            {
+            if let Some(function) = self.function_values.get(id as usize).and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|(environment, _)| *environment == parent)
+                    .map(|(_, function)| *function)
+            }) {
                 function
             } else {
                 self.closure(p, id, parent)?

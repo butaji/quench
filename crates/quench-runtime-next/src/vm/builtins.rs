@@ -247,8 +247,16 @@ impl<H: Host> Vm<H> {
         self.global(program, "Infinity", Value::number(f64::INFINITY))?;
         self.global(program, "print", self.native_value(Native::Print))?;
         self.global(program, "eval", self.native_value(Native::Eval))?;
-        self.global(program, "\0rqj:with-enter", self.native_value(Native::WithEnter))?;
-        self.global(program, "\0rqj:with-exit", self.native_value(Native::WithExit))?;
+        self.global(
+            program,
+            "\0rqj:with-enter",
+            self.native_value(Native::WithEnter),
+        )?;
+        self.global(
+            program,
+            "\0rqj:with-exit",
+            self.native_value(Native::WithExit),
+        )?;
         self.install_date(program)?;
         self.install_host_globals(program)?;
         self.install_errors(program)?;
@@ -300,7 +308,8 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::StringFromCodePoint),
         )?;
         self.global(program, "String", string)?;
-        self.global(program, "parseInt", self.native_value(Native::ParseInt))?; self.global(program, "isNaN", self.native_value(Native::GlobalIsNaN))?;
+        self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
+        self.global(program, "isNaN", self.native_value(Native::GlobalIsNaN))?;
         self.install_number(program)?;
         self.global(program, "encodeURI", self.native_value(Native::EncodeUri))?;
         self.global(

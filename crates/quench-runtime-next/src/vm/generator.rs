@@ -59,9 +59,8 @@ impl<H: Host> Vm<H> {
             self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
             if mapped {
                 if let Some(object) = self.object_data_mut(arguments) {
-                    object.arguments_map = Some(
-                        (0..function.params.min(args.len() as u16)).collect(),
-                    );
+                    object.arguments_map =
+                        Some((0..function.params.min(args.len() as u16)).collect());
                 }
             }
         }
@@ -109,7 +108,10 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::IteratorThrow),
         )?;
         self.heap.release_root(root);
-        if let Some(Cell::Iterator { generator: slot, .. }) = self.heap.get_mut(generator) {
+        if let Some(Cell::Iterator {
+            generator: slot, ..
+        }) = self.heap.get_mut(generator)
+        {
             *slot = Some(Box::new(GeneratorRecord {
                 continuation: Some(Continuation {
                     function: frame.function,
@@ -127,7 +129,9 @@ impl<H: Host> Vm<H> {
                 running: false,
             }));
         } else {
-            return Err(JsError("generator allocation lost its iterator cell".into()));
+            return Err(JsError(
+                "generator allocation lost its iterator cell".into(),
+            ));
         }
         self.frame_pool.push(Self::recycle_frame(frame));
         Ok(generator)

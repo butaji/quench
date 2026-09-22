@@ -474,8 +474,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn inherited_write_blocked(&self, object: Value, atom: Atom) -> bool {
         let mut object = self.object_data(object).map(|data| data.proto);
         while let Some(current) = object.filter(|value| !value.is_null()) {
-            if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom))
-            {
+            if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom)) {
                 return !attributes.accessor && !attributes.writable;
             }
             object = self.object_data(current).map(|data| data.proto);

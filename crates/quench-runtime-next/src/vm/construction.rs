@@ -85,22 +85,43 @@ impl<H: Host> Vm<H> {
         });
         self.function_values[id as usize].push((env, function));
         let length = self.intern_atom("length");
-        self.set_property(function, length, Value::number(p.functions[id as usize].params as f64))?;
+        self.set_property(
+            function,
+            length,
+            Value::number(p.functions[id as usize].params as f64),
+        )?;
         self.set_property_attributes(
             function,
             property_key::PropertyKey::string(length),
-            PropertyAttributes { writable: false, enumerable: false, configurable: true, accessor: false, getter: None, setter: None },
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
         );
         let name = self.intern_atom("name");
         let name_value = p.functions[id as usize]
             .name
-            .map(|atom| self.heap.alloc(Cell::String(JsString::from_str(self.atom_name(atom)))))
+            .map(|atom| {
+                self.heap
+                    .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
+            })
             .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
         self.set_property(function, name, name_value)?;
         self.set_property_attributes(
             function,
             property_key::PropertyKey::string(name),
-            PropertyAttributes { writable: false, enumerable: false, configurable: true, accessor: false, getter: None, setter: None },
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
         );
         let arrow = p.functions[id as usize]
             .name
@@ -110,11 +131,21 @@ impl<H: Host> Vm<H> {
             self.set_property_attributes(
                 function,
                 property_key::PropertyKey::string(atom),
-                PropertyAttributes { writable: true, enumerable: false, configurable: false, accessor: false, getter: None, setter: None },
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
             );
         }
         let constructor_atom = self.intern_atom("constructor");
-        let constructor = match (p.functions[id as usize].is_async, p.functions[id as usize].is_generator) {
+        let constructor = match (
+            p.functions[id as usize].is_async,
+            p.functions[id as usize].is_generator,
+        ) {
             (true, true) => self.native_value(Native::AsyncGeneratorFunction),
             (true, false) => self.native_value(Native::AsyncFunction),
             (false, true) => self.native_value(Native::GeneratorFunction),
@@ -186,7 +217,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::Function | Native::AsyncFunction | Native::GeneratorFunction
+            Native::Function
+            | Native::AsyncFunction
+            | Native::GeneratorFunction
             | Native::AsyncGeneratorFunction => self.function_native(p, args),
             Native::Object => {
                 if let Some(value) = args.first().copied()

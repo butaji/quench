@@ -127,15 +127,13 @@ impl<H: Host> Vm<H> {
         };
         let out = if *length_tracking {
             match self.heap.get(*buffer) {
-                Some(Cell::ArrayBuffer { bytes, detached, .. }) => *detached || *offset > bytes.len(),
+                Some(Cell::ArrayBuffer {
+                    bytes, detached, ..
+                }) => *detached || *offset > bytes.len(),
                 _ => true,
             }
         } else {
-            self.array_buffer_out_of_bounds(
-                *buffer,
-                *offset,
-                length.saturating_mul(kind.width()),
-            )
+            self.array_buffer_out_of_bounds(*buffer, *offset, length.saturating_mul(kind.width()))
         };
         out
     }
@@ -272,9 +270,9 @@ impl<H: Host> Vm<H> {
                     .copy_from_slice(&Self::uint16_from_value(value).to_ne_bytes()),
                 TypedArrayKind::Int32 => bytes[start..start + 4]
                     .copy_from_slice(&Self::uint32_from_value(value).to_ne_bytes()),
-                TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => bytes
-                    [start..start + 8]
-                    .copy_from_slice(&(value.trunc() as i64).to_ne_bytes()),
+                TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
+                    bytes[start..start + 8].copy_from_slice(&(value.trunc() as i64).to_ne_bytes())
+                }
                 TypedArrayKind::Float32 => {
                     bytes[start..start + 4].copy_from_slice(&(value as f32).to_ne_bytes())
                 }

@@ -169,7 +169,12 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), value);
             }
             Op::StoreResolvedName => {
-                self.set_property_with_program(p, self.read(f, i.b()), i.imm(), self.read(f, i.a()))?;
+                self.set_property_with_program(
+                    p,
+                    self.read(f, i.b()),
+                    i.imm(),
+                    self.read(f, i.a()),
+                )?;
             }
             Op::ToPropertyKey => {
                 let value = self.to_property_key(p, self.read(f, i.b()))?;
