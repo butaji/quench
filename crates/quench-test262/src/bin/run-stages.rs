@@ -326,10 +326,9 @@ fn run_single_stage(
     Ok(report)
 }
 
-fn run_stage_files(
-    root: &Path,
-    files: Vec<PathBuf>,
-) -> Result<Vec<(usize, PathBuf, Result<TestOutcome, String>)>, String> {
+type StageFileResult = (usize, PathBuf, Result<TestOutcome, String>);
+
+fn run_stage_files(root: &Path, files: Vec<PathBuf>) -> Result<Vec<StageFileResult>, String> {
     const WORK_BATCH: usize = 32;
     let worker_count = env::var("QUENCH_STAGE_WORKERS")
         .ok()

@@ -489,6 +489,21 @@ impl FrameStack {
     }
 }
 
+struct EncodeContext<'a> {
+    range_start: u32,
+    constants: &'a ConstantPool,
+    metadata: &'a mut Vec<InstructionMeta>,
+    operand_windows: &'a mut Vec<Rc<[u16]>>,
+}
+
+struct LoopParts<'a> {
+    init: &'a [Op],
+    test: &'a [Op],
+    body: &'a [Op],
+    update: &'a [Op],
+    post_test: bool,
+}
+
 impl CodeArena {
     pub fn new() -> Self {
         Self::default()
@@ -599,10 +614,12 @@ impl CodeArena {
             if let Some(next) = self.try_encode_control(
                 body,
                 cursor,
-                start,
-                &constants,
-                &mut metadata,
-                &mut operand_windows,
+                &mut EncodeContext {
+                    range_start: start,
+                    constants: &constants,
+                    metadata: &mut metadata,
+                    operand_windows: &mut operand_windows,
+                },
                 source,
                 None,
             ) {
@@ -701,52 +718,30 @@ impl CodeArena {
         condition: u16,
         then_ops: &[Op],
         else_ops: &[Op],
-        range_start: u32,
-        constants: &ConstantPool,
-        metadata: &mut Vec<InstructionMeta>,
-        operand_windows: &mut Vec<Rc<[u16]>>,
+        context: &mut EncodeContext<'_>,
         source: Option<u32>,
     ) {
         let jif = self.instructions.len();
         self.instructions
             .push(crate::ir::Instruction::jump_if_false(condition, 0));
-        metadata.push(InstructionMeta::empty());
-        self.encode_linear(
-            then_ops,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-            dst,
-        );
+        context.metadata.push(InstructionMeta::empty());
+        self.encode_linear(then_ops, context, source, dst);
         let jump = self.instructions.len();
         self.instructions.push(crate::ir::Instruction::jump(0));
-        metadata.push(InstructionMeta::empty());
+        context.metadata.push(InstructionMeta::empty());
         let else_pc =
-            u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
+            u16::try_from(self.instructions.len() as u32 - context.range_start).unwrap_or(u16::MAX);
         self.instructions[jif].b = else_pc;
-        self.encode_linear(
-            else_ops,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-            dst,
-        );
+        self.encode_linear(else_ops, context, source, dst);
         let end_pc =
-            u16::try_from(self.instructions.len() as u32 - range_start).unwrap_or(u16::MAX);
+            u16::try_from(self.instructions.len() as u32 - context.range_start).unwrap_or(u16::MAX);
         self.instructions[jump].a = end_pc;
     }
 
     fn encode_linear(
         &mut self,
         body: &[Op],
-        range_start: u32,
-        constants: &ConstantPool,
-        metadata: &mut Vec<InstructionMeta>,
-        operand_windows: &mut Vec<Rc<[u16]>>,
+        context: &mut EncodeContext<'_>,
         source: Option<u32>,
         ternary_dst: Option<u16>,
     ) {
@@ -758,43 +753,38 @@ impl CodeArena {
                 cursor += 1;
                 continue;
             }
-            if let Some(next) = self.try_encode_control(
-                body,
-                cursor,
-                range_start,
-                constants,
-                metadata,
-                operand_windows,
-                source,
-                ternary_dst,
-            ) {
+            if let Some(next) = self.try_encode_control(body, cursor, context, source, ternary_dst)
+            {
                 cursor = next;
                 continue;
             }
-            if let Some(instruction) = lower_const_add(&body[cursor..], constants) {
+            if let Some(instruction) = lower_const_add(&body[cursor..], context.constants) {
                 self.instructions.push(instruction);
-                metadata.push(metadata_for(&body[cursor + 1], source));
+                context
+                    .metadata
+                    .push(metadata_for(&body[cursor + 1], source));
                 cursor += 2;
                 continue;
             }
             if let (Some(dst), Op::Return { src }) = (ternary_dst, &body[cursor]) {
                 self.instructions
                     .push(crate::ir::Instruction::move_(dst, *src));
-                metadata.push(InstructionMeta::empty());
+                context.metadata.push(InstructionMeta::empty());
                 cursor += 1;
                 continue;
             }
             if let Some(instruction) = lower_named_call(&body[cursor..]) {
                 self.instructions.push(instruction);
-                metadata.push(metadata_for(&body[cursor], source));
+                context.metadata.push(metadata_for(&body[cursor], source));
                 cursor += 2;
                 continue;
             }
             let op = &body[cursor];
             let mut meta = metadata_for(op, source);
-            let instruction = self.lower_operation(op, constants, &mut meta, operand_windows);
+            let instruction =
+                self.lower_operation(op, context.constants, &mut meta, context.operand_windows);
             self.instructions.push(instruction);
-            metadata.push(meta);
+            context.metadata.push(meta);
             cursor += 1;
         }
     }
@@ -807,10 +797,7 @@ impl CodeArena {
         &mut self,
         body: &[Op],
         cursor: usize,
-        range_start: u32,
-        constants: &ConstantPool,
-        metadata: &mut Vec<InstructionMeta>,
-        operand_windows: &mut Vec<Rc<[u16]>>,
+        context: &mut EncodeContext<'_>,
         source: Option<u32>,
         _ternary_dst: Option<u16>,
     ) -> Option<usize> {
@@ -823,17 +810,7 @@ impl CodeArena {
             } => {
                 let then_ops = consequent.source_ops()?;
                 let else_ops = alternate.source_ops()?;
-                self.emit_conditional(
-                    Some(*dst),
-                    *condition,
-                    then_ops,
-                    else_ops,
-                    range_start,
-                    constants,
-                    metadata,
-                    operand_windows,
-                    source,
-                );
+                self.emit_conditional(Some(*dst), *condition, then_ops, else_ops, context, source);
                 Some(cursor + 1)
             }
             Op::Branch {
@@ -843,17 +820,7 @@ impl CodeArena {
             } => {
                 let then_ops = then_ops.source_ops()?;
                 let else_ops = else_ops.source_ops()?;
-                self.emit_conditional(
-                    None,
-                    *condition,
-                    then_ops,
-                    else_ops,
-                    range_start,
-                    constants,
-                    metadata,
-                    operand_windows,
-                    source,
-                );
+                self.emit_conditional(None, *condition, then_ops, else_ops, context, source);
                 Some(cursor + 1)
             }
             Op::Loop {
@@ -884,15 +851,14 @@ impl CodeArena {
                     return None;
                 }
                 self.emit_loop(
-                    init,
-                    test,
-                    loop_body,
-                    update,
-                    *post_test,
-                    range_start,
-                    constants,
-                    metadata,
-                    operand_windows,
+                    LoopParts {
+                        init,
+                        test,
+                        body: loop_body,
+                        update,
+                        post_test: *post_test,
+                    },
+                    context,
                     source,
                 );
                 Some(cursor + 1)
@@ -903,131 +869,65 @@ impl CodeArena {
 
     fn emit_loop(
         &mut self,
-        init: &[Op],
-        test: &[Op],
-        body: &[Op],
-        update: &[Op],
-        post_test: bool,
-        range_start: u32,
-        constants: &ConstantPool,
-        metadata: &mut Vec<InstructionMeta>,
-        operand_windows: &mut Vec<Rc<[u16]>>,
+        parts: LoopParts<'_>,
+        context: &mut EncodeContext<'_>,
         source: Option<u32>,
     ) {
-        self.encode_fragment(
+        let LoopParts {
             init,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-        );
+            test,
+            body,
+            update,
+            post_test,
+        } = parts;
+        self.encode_fragment(init, context, source);
         if test_always_true(test) {
-            let body_pc = self.relative_pc(range_start);
-            self.encode_linear(
-                body,
-                range_start,
-                constants,
-                metadata,
-                operand_windows,
-                source,
-                None,
-            );
-            self.encode_fragment(
-                update,
-                range_start,
-                constants,
-                metadata,
-                operand_windows,
-                source,
-            );
+            let body_pc = self.relative_pc(context.range_start);
+            self.encode_linear(body, context, source, None);
+            self.encode_fragment(update, context, source);
             self.instructions
                 .push(crate::ir::Instruction::jump(body_pc));
-            metadata.push(InstructionMeta::empty());
+            context.metadata.push(InstructionMeta::empty());
             return;
         }
         if post_test {
-            let body_pc = self.relative_pc(range_start);
-            self.encode_linear(
-                body,
-                range_start,
-                constants,
-                metadata,
-                operand_windows,
-                source,
-                None,
-            );
-            self.encode_fragment(
-                update,
-                range_start,
-                constants,
-                metadata,
-                operand_windows,
-                source,
-            );
-            if let Some(condition) = self.encode_test(
-                test,
-                range_start,
-                constants,
-                metadata,
-                operand_windows,
-                source,
-            ) {
+            let body_pc = self.relative_pc(context.range_start);
+            self.encode_linear(body, context, source, None);
+            self.encode_fragment(update, context, source);
+            if let Some(condition) = self.encode_test(test, context, source) {
                 let jif = self.instructions.len();
                 self.instructions
                     .push(crate::ir::Instruction::jump_if_false(condition, 0));
-                metadata.push(InstructionMeta::empty());
+                context.metadata.push(InstructionMeta::empty());
                 self.instructions
                     .push(crate::ir::Instruction::jump(body_pc));
-                metadata.push(InstructionMeta::empty());
-                let end = self.relative_pc(range_start);
+                context.metadata.push(InstructionMeta::empty());
+                let end = self.relative_pc(context.range_start);
                 self.instructions[jif].b = end;
             } else {
                 self.instructions
                     .push(crate::ir::Instruction::jump(body_pc));
-                metadata.push(InstructionMeta::empty());
+                context.metadata.push(InstructionMeta::empty());
             }
             return;
         }
-        let test_pc = self.relative_pc(range_start);
-        let jif = if let Some(condition) = self.encode_test(
-            test,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-        ) {
+        let test_pc = self.relative_pc(context.range_start);
+        let jif = if let Some(condition) = self.encode_test(test, context, source) {
             let jif = self.instructions.len();
             self.instructions
                 .push(crate::ir::Instruction::jump_if_false(condition, 0));
-            metadata.push(InstructionMeta::empty());
+            context.metadata.push(InstructionMeta::empty());
             Some(jif)
         } else {
             None
         };
-        self.encode_linear(
-            body,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-            None,
-        );
-        self.encode_fragment(
-            update,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-        );
+        self.encode_linear(body, context, source, None);
+        self.encode_fragment(update, context, source);
         self.instructions
             .push(crate::ir::Instruction::jump(test_pc));
-        metadata.push(InstructionMeta::empty());
+        context.metadata.push(InstructionMeta::empty());
         if let Some(jif) = jif {
-            let end = self.relative_pc(range_start);
+            let end = self.relative_pc(context.range_start);
             self.instructions[jif].b = end;
         }
     }
@@ -1035,48 +935,27 @@ impl CodeArena {
     fn encode_fragment(
         &mut self,
         body: &[Op],
-        range_start: u32,
-        constants: &ConstantPool,
-        metadata: &mut Vec<InstructionMeta>,
-        operand_windows: &mut Vec<Rc<[u16]>>,
+        context: &mut EncodeContext<'_>,
         source: Option<u32>,
     ) {
         let body = match body.last() {
             Some(Op::Return { .. }) => &body[..body.len() - 1],
             _ => body,
         };
-        self.encode_linear(
-            body,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-            None,
-        );
+        self.encode_linear(body, context, source, None);
     }
 
     fn encode_test(
         &mut self,
         body: &[Op],
-        range_start: u32,
-        constants: &ConstantPool,
-        metadata: &mut Vec<InstructionMeta>,
-        operand_windows: &mut Vec<Rc<[u16]>>,
+        context: &mut EncodeContext<'_>,
         source: Option<u32>,
     ) -> Option<u16> {
         let condition = match body.last() {
             Some(Op::Return { src }) => Some(*src),
             _ => None,
         };
-        self.encode_fragment(
-            body,
-            range_start,
-            constants,
-            metadata,
-            operand_windows,
-            source,
-        );
+        self.encode_fragment(body, context, source);
         condition
     }
 
@@ -6933,16 +6812,28 @@ fn region_outputs_cover_exit_with_control(
 
 type SharedStencilPool = Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>;
 
-fn collect_numeric_admissions(
-    builder: &mut AdmissionBuilder<NativeAdmission>,
-    entries: &[BaselineEntry],
-    cfg: &ControlFlowFacts,
+struct NumericAdmissionRequest<'a> {
+    builder: &'a mut AdmissionBuilder<NativeAdmission>,
+    entries: &'a [BaselineEntry],
+    cfg: &'a ControlFlowFacts,
     pc: usize,
     entry: BaselineEntry,
-    code: CodeView<'_>,
+    code: CodeView<'a>,
     policy: crate::stencil_policy::ExecutionPolicy,
-    arena: &SharedStencilPool,
-) {
+    arena: &'a SharedStencilPool,
+}
+
+fn collect_numeric_admissions(request: NumericAdmissionRequest<'_>) {
+    let NumericAdmissionRequest {
+        builder,
+        entries,
+        cfg,
+        pc,
+        entry,
+        code,
+        policy,
+        arena,
+    } = request;
     let instruction = entry.instruction;
     let binary =
         NativeBinaryPlan::new_with_shared(instruction, policy, Rc::clone(arena)).map(|mut plan| {
@@ -8621,7 +8512,16 @@ fn collect_admissions_at(
     );
     builder.push_optional(pc, string_concat_admission(code, entries, cfg, pc, policy));
     builder.push_optional(pc, string_builtin_admission(code, entries, cfg, pc, policy));
-    collect_numeric_admissions(builder, entries, cfg, pc, entry, code, policy, arena);
+    collect_numeric_admissions(NumericAdmissionRequest {
+        builder,
+        entries,
+        cfg,
+        pc,
+        entry,
+        code,
+        policy,
+        arena,
+    });
     builder.push_optional(
         pc,
         constant_binary_series_admission(code, entries, cfg, pc, policy, arena),
