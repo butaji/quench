@@ -60,6 +60,9 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
     let Some(root) = functions.first() else {
         return vec![];
     };
+    if !root.wide.is_empty() {
+        return vec![BindingTime::Dynamic; root.locals as usize];
+    }
     let mut bindings = vec![BindingTime::Unknown; root.locals as usize];
     let mut stores = vec![0u16; root.locals as usize];
     let mut registers = vec![BindingTime::Unknown; root.registers as usize];
@@ -107,7 +110,7 @@ fn invalidate_captured(functions: &[Function], bindings: &mut [BindingTime<Stati
     for function in functions
         .iter()
         .skip(1)
-        .filter(|function| function.parent == Some(0))
+        .filter(|function| function.parent == Some(0) && function.wide.is_empty())
     {
         for instruction in &function.code {
             if instruction.op() == Op::StoreCapture && instruction.imm() >> 16 == 0 {
@@ -189,5 +192,5 @@ fn direct_children(functions: &mut [Function]) -> impl Iterator<Item = &mut Func
     functions
         .iter_mut()
         .skip(1)
-        .filter(|function| function.parent == Some(0))
+        .filter(|function| function.parent == Some(0) && function.wide.is_empty())
 }

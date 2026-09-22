@@ -345,7 +345,7 @@ impl<H: Host> Vm<H> {
         instruction: Instr,
     ) -> Result<Option<Value>, JsError> {
         let mut pc = self.frames[frame].pc;
-        let result = self.step(p, frame, instruction, &mut pc);
+        let result = self.step(p, frame, instruction.as_wide(), &mut pc);
         self.frames[frame].pc = pc;
         result
     }

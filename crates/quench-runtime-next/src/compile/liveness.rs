@@ -28,6 +28,9 @@ pub(super) fn analyze(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<u64>> {
+    if !function.wide.is_empty() {
+        return None;
+    }
     if function.registers > 64 {
         return None;
     }
@@ -231,6 +234,7 @@ mod tests {
                 Instr::new(Op::Return, 0, 0, 0, 0),
                 Instr::new(Op::Return, 1, 0, 0, 0),
             ],
+            wide: vec![],
             registers: 2,
             dispatch: crate::bytecode::DispatchClass::General,
             handlers: vec![],

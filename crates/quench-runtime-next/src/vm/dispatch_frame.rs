@@ -96,7 +96,12 @@ impl<H: Host> Vm<H> {
             let instruction_pc = pc;
             // SAFETY: the validated residual program has in-range branch targets
             // and a terminal Return. Effect edges publish `pc` to the frame.
-            let ins = unsafe { *code.get_unchecked(pc) };
+            let packed = unsafe { *code.get_unchecked(pc) };
+            let ins = if packed.is_wide() {
+                p.functions[function].wide[packed.wide_index()]
+            } else {
+                packed.as_wide()
+            };
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
             self.profile

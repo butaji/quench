@@ -46,6 +46,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) owner: &'a mut Compiler<'b>,
     pub(super) locals: Vec<Atom>,
     pub(super) code: Vec<Instr>,
+    pub(super) wide: Vec<WideInstruction>,
     pub(super) next_reg: Register,
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
@@ -81,6 +82,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             owner,
             locals,
             code: vec![],
+            wide: vec![],
             next_reg: 0,
             max_reg: 0,
             local_slots,
@@ -97,7 +99,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn reg(&mut self) -> Register {
         let value = self.next_reg;
-        if value > Instr::MAX_PAYLOAD {
+        if value >= SET_THIS_REGISTER {
             self.reject_packed_domain();
             return 0;
         }
@@ -115,8 +117,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         imm: u32,
     ) -> usize {
         let instruction = Instr::try_new(op, a, b, c, imm).unwrap_or_else(|| {
-            self.reject_packed_domain();
-            Instr::new(Op::Nop, 0, 0, 0, 0)
+            let index = self.wide.len();
+            self.wide.push(WideInstruction::new(op, a, b, c, imm));
+            Instr::wide(index).unwrap_or_else(|| {
+                self.wide.pop();
+                self.reject_packed_domain();
+                Instr::new(Op::Nop, 0, 0, 0, 0)
+            })
         });
         self.code.push(instruction);
         self.code.len() - 1
@@ -129,6 +136,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn patch_instruction(&mut self, at: usize, target: u32) {
         let instruction = self.code[at];
+        if instruction.is_wide() {
+            if let Some(wide) = self.wide.get_mut(instruction.wide_index()) {
+                wide.set_imm(target);
+            } else {
+                self.reject_packed_domain();
+            }
+            return;
+        }
         if let Some(patched) = Instr::try_new(
             instruction.op(),
             instruction.a(),

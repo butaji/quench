@@ -33,9 +33,21 @@ impl Compiler<'_> {
         let captures_locals = function
             .code
             .iter()
-            .any(|instruction| instruction.op() == Op::MakeClosure);
+            .any(|instruction| instruction.op() == Op::MakeClosure)
+            || function
+                .wide
+                .iter()
+                .any(|instruction| instruction.op() == Op::MakeClosure);
         if captures_locals {
             for instruction in &mut function.code {
+                let op = match instruction.op() {
+                    Op::LoadLocal => Op::LoadEnvLocal,
+                    Op::StoreLocal => Op::StoreEnvLocal,
+                    other => other,
+                };
+                instruction.set_op(op);
+            }
+            for instruction in &mut function.wide {
                 let op = match instruction.op() {
                     Op::LoadLocal => Op::LoadEnvLocal,
                     Op::StoreLocal => Op::StoreEnvLocal,
@@ -51,6 +63,7 @@ impl Compiler<'_> {
             rest: value.params.rest.is_some(),
             locals: function.locals.len() as u16,
             code: function.code,
+            wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             handlers: function.handlers,

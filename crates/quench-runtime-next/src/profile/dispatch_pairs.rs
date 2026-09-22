@@ -15,8 +15,18 @@ fn derive(profile: &Profile, program: &ResidualProgram) -> Matrix {
     for (&(function_id, pc), &count) in &profile.pair_sites {
         let function = &program.functions[function_id as usize];
         let class = usize::from(function.dispatch == DispatchClass::Numeric);
-        let first = function.code[pc as usize].op() as usize;
-        let second = function.code[pc as usize + 1].op() as usize;
+        let first = function.code[pc as usize];
+        let second = function.code[pc as usize + 1];
+        let first = if first.is_wide() {
+            function.wide[first.wide_index()].op()
+        } else {
+            first.op()
+        } as usize;
+        let second = if second.is_wide() {
+            function.wide[second.wide_index()].op()
+        } else {
+            second.op()
+        } as usize;
         pairs[class][first * Op::COUNT + second] += count;
         outgoing[class][first] += count;
     }
@@ -95,6 +105,7 @@ mod tests {
             rest: false,
             locals: 0,
             code: ops.iter().map(|op| Instr::new(*op, 0, 0, 0, 0)).collect(),
+            wide: Vec::new(),
             registers: 1,
             dispatch,
             handlers: Vec::new(),

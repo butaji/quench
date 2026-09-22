@@ -1,7 +1,7 @@
 use crate::Value;
 use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, NUMERIC_LOCAL_TARGET, Op, Operand,
-    REGISTER_MASK, RETURN_REGISTER, Register, ResidualProgram, SET_THIS_REGISTER,
+    REGISTER_MASK, RETURN_REGISTER, Register, ResidualProgram, SET_THIS_REGISTER, WideInstruction,
 };
 use crate::heap::{Cell, FunctionKind, Heap, IteratorKind, Native, Object, RootId, TypedArrayKind};
 use crate::host::Host;

@@ -166,4 +166,31 @@ mod tests {
             generic_view.0.borrow().as_slice()
         );
     }
+
+    #[test]
+    fn wide_instruction_side_table_executes_through_the_general_core() {
+        let source = format!("print([{}].length);", "0,".repeat(4097));
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        let program = Engine::specialize(&source, "wide.js").unwrap();
+        assert!(
+            program
+                .functions
+                .iter()
+                .any(|function| !function.wide.is_empty())
+        );
+        let path = std::env::temp_dir().join(format!("rqj-wide-{}", std::process::id()));
+        program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            decoded
+                .functions
+                .iter()
+                .any(|function| !function.wide.is_empty())
+        );
+        runtime.execute(&decoded).unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["4097"]);
+    }
 }

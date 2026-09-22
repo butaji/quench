@@ -9,7 +9,8 @@ use std::rc::Rc;
 
 use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
-    MethodSite, ObjectSite, Op, Operand, Register, ResidualProgram, Superinstruction,
+    MethodSite, ObjectSite, Op, Operand, Register, ResidualProgram, SET_THIS_REGISTER,
+    Superinstruction, WideInstruction,
 };
 
 mod arrow;
@@ -213,7 +214,7 @@ impl<'a> Compiler<'a> {
         }
         for function in &mut functions {
             function.dispatch = if self.mode == SpecializationMode::Enabled {
-                Self::dispatch_class(&function.code)
+                Self::dispatch_class(&function.code, &function.wide)
             } else {
                 DispatchClass::General
             };
@@ -373,18 +374,24 @@ impl<'a> Compiler<'a> {
         function.statements(body);
         let undefined = function.literal(Constant::Undefined);
         function.emit(Op::Return, undefined, 0, 0, 0);
-        if function.code.len() > usize::from(u16::MAX) {
-            function.owner.reject(
-                Span::default(),
-                "function exceeds the packed instruction-count limit",
-            );
-        }
         let captures_locals = function
             .code
             .iter()
-            .any(|instruction| instruction.op() == Op::MakeClosure);
+            .any(|instruction| instruction.op() == Op::MakeClosure)
+            || function
+                .wide
+                .iter()
+                .any(|instruction| instruction.op() == Op::MakeClosure);
         if captures_locals {
             for instruction in &mut function.code {
+                let op = match instruction.op() {
+                    Op::LoadLocal => Op::LoadEnvLocal,
+                    Op::StoreLocal => Op::StoreEnvLocal,
+                    other => other,
+                };
+                instruction.set_op(op);
+            }
+            for instruction in &mut function.wide {
                 let op = match instruction.op() {
                     Op::LoadLocal => Op::LoadEnvLocal,
                     Op::StoreLocal => Op::StoreEnvLocal,
@@ -401,6 +408,7 @@ impl<'a> Compiler<'a> {
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             locals: function.locals.len() as u16,
             code: function.code,
+            wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             handlers: function.handlers,
@@ -416,11 +424,16 @@ impl<'a> Compiler<'a> {
         superinstructions: &mut Vec<Superinstruction>,
     ) {
         for function in functions {
-            rewrite::apply(function, field_sites, superinstructions);
+            if function.wide.is_empty() {
+                rewrite::apply(function, field_sites, superinstructions);
+            }
         }
     }
 
-    fn dispatch_class(code: &[Instr]) -> DispatchClass {
+    fn dispatch_class(code: &[Instr], wide: &[WideInstruction]) -> DispatchClass {
+        if !wide.is_empty() {
+            return DispatchClass::General;
+        }
         let binaries = code
             .iter()
             .filter(|instruction| instruction.op() == Op::Binary)
