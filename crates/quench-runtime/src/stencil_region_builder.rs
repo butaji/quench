@@ -20,7 +20,7 @@ type F64Entry = extern "C" fn(f64, f64) -> f64;
 pub(crate) struct NativeLinearF64Plan {
     image: VerifiedRegionImage,
     physical: crate::stencil_installation::SharedPhysicalEntry<F64Entry>,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     witness: NativeLinearWitness,
     #[cfg(test)]
     entries: u64,
@@ -28,7 +28,7 @@ pub(crate) struct NativeLinearF64Plan {
     last_entered: bool,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct NativeLinearWitness {
     pub(crate) identity: RegionImageIdentity,
@@ -66,12 +66,12 @@ impl NativeLinearF64Plan {
         let site = crate::quickening::QuickeningSite::<4>::new(crate::ir::Opcode::Add);
         let values = PatchValues::from_site(&site);
         let image = compose_fragment_chain(&views, &values).ok()?;
-        #[cfg(test)]
+        #[cfg(all(test, feature = "legacy-native-tests"))]
         let witness = linear_witness(&image, &views)?;
         Some(Self {
             image,
             physical: crate::stencil_installation::SharedPhysicalEntry::new(owner),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "legacy-native-tests"))]
             witness,
             #[cfg(test)]
             entries: 0,
@@ -111,12 +111,12 @@ impl NativeLinearF64Plan {
         Some(value)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn native_entry_count(&self) -> u64 {
         self.entries
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn last_native_witness(&self) -> Option<NativeLinearWitness> {
         self.last_entered.then_some(self.witness)
     }
@@ -263,7 +263,7 @@ impl NativeBinarySeriesPlan {
         self.execute_with_lhs(registers, lhs)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.chain.native_entry_count()
     }
@@ -345,7 +345,7 @@ impl NativeConstantBinarySeriesPlan {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn linear_witness(
     image: &VerifiedRegionImage,
     views: &[PhysicalStencilView],
@@ -367,7 +367,7 @@ fn series_view(operator: crate::ops::BinaryOp) -> Option<PhysicalStencilView> {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn compose_linear_chain<const N: usize>(
     view: PhysicalStencilView,
     repetitions: u8,
@@ -438,7 +438,7 @@ fn compatible_fragment(first: PhysicalStencilView, view: PhysicalStencilView) ->
         && view.fallthrough.is_some_and(|tail| tail.stencil.validate())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn validate_linear_view(view: PhysicalStencilView, repetitions: u8) -> Result<(), LayoutError> {
     let contract = view.contract();
     let valid = repetitions > 0

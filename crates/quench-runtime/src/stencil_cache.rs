@@ -174,7 +174,7 @@ impl RenderedRegionCache {
         release_global(std::mem::take(&mut self.reserved_bytes));
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn allocated_entries(&self) -> usize {
         self.entries.capacity()
     }

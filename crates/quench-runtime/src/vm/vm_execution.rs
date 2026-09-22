@@ -41,7 +41,7 @@ pub(crate) fn current_context_or_default() -> Rc<VmContext> {
         .unwrap_or_else(|| Rc::new(VmContext::default()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn execute_completion_in_place(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -219,7 +219,7 @@ pub fn execute_code_in_place_context(
     execute_code_in_environment(code, registers, context, environment)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn execute_code_in_place(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
@@ -228,7 +228,7 @@ pub(crate) fn execute_code_in_place(
     execute_code_in_place_context(code, registers, &context)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn execute_completion_in_place_context(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -240,7 +240,7 @@ fn execute_completion_in_place_context(
     drive_completion(ops, registers, context)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn execute_completion_in_current_frame(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -339,7 +339,7 @@ pub(crate) fn execute_function_code_completion_with_context(
 /// Execute residual compact code with a context already owned by the caller.
 /// Structured loops use this to avoid re-reading and cloning the same TLS
 /// context for every iteration.
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn execute_code_completion_with_context(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
@@ -413,7 +413,7 @@ pub(crate) fn execute_code_completion_step_with_owner(
     run_code_completion_step_from_with_owner(code, pc, registers, &context, Some(owner))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn drive_completion(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -757,7 +757,7 @@ pub(crate) fn execute_code_in_environment(
         }
     }
 }
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn execute_frame_completion(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -791,7 +791,7 @@ pub(crate) fn execute_frame_completion(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn execute_code_frame_completion(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
@@ -801,7 +801,7 @@ pub(crate) fn execute_code_frame_completion(
     execute_code_frame_completion_with_plan(code, registers, context, environment, None)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn execute_code_frame_completion_with_plan(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,

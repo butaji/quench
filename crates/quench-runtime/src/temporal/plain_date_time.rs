@@ -2695,7 +2695,7 @@ fn from_overflow_option(options: Option<&Value>) -> Result<String, VmError> {
     crate::temporal::options::overflow(options)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn month_code_number(value: &Value) -> Result<Value, VmError> {
     let code = month_code_text(value)?;
     let core = code.strip_suffix('L').unwrap_or(&code);

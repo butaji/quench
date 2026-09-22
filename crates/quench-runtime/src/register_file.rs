@@ -297,7 +297,7 @@ impl SlotWord {
         unsafe { (&mut *self.0.get()).store(value) }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     #[inline(always)]
     pub(crate) fn store_object_or_null(
         &self,
@@ -317,7 +317,7 @@ impl SlotWord {
     /// balances ownership once per object entering or leaving the graph; nodes
     /// retained by the graph keep the same single incoming graph edge even
     /// when its physical owner slot changes.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     #[inline(always)]
     pub(crate) unsafe fn store_graph_object_or_null_balanced(
         &self,
