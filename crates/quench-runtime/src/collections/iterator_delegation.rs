@@ -37,16 +37,16 @@ pub fn delegate_next(
                 index,
                 done,
             } => {
-                return native_delegation_step(
+                return native_delegation_step(NativeIteratorState {
                     values,
-                    receiver.as_ref(),
-                    typed_receiver.as_ref(),
-                    *typed_keys,
-                    *entries,
-                    *keys,
+                    receiver: receiver.as_ref(),
+                    typed_receiver: typed_receiver.as_ref(),
+                    typed_keys: *typed_keys,
+                    entries: *entries,
+                    keys: *keys,
                     index,
                     done,
-                );
+                });
             }
             IteratorState::Set { .. }
             | IteratorState::Map { .. }
@@ -112,27 +112,11 @@ fn close_after_missing_throw(
     Ok(())
 }
 fn native_delegation_step(
-    values: &[Value],
-    receiver: Option<&Rc<crate::value::ArrayData>>,
-    typed_receiver: Option<&Value>,
-    typed_keys: bool,
-    entries: bool,
-    keys: bool,
-    index: &mut usize,
-    done: &mut bool,
+    mut state: NativeIteratorState<'_>,
 ) -> Result<DelegationResult, crate::execute::VmError> {
-    let value = native_step(
-        values,
-        receiver,
-        typed_receiver,
-        typed_keys,
-        entries,
-        keys,
-        index,
-        done,
-    )?
+    let value = native_step(&mut state)?
         .unwrap_or(Value::Undefined);
-    if *done {
+    if *state.done {
         Ok(DelegationResult::Done(value))
     } else {
         Ok(DelegationResult::Ongoing {

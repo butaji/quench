@@ -3,6 +3,7 @@
 use super::{
     close, close_iterators, iterator_map, iterator_protocol, mark_done, native_step, not_iterable,
 };
+use crate::collections::iterator::NativeIteratorState;
 use crate::value::{IteratorData, IteratorState, Value};
 
 pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
@@ -436,16 +437,19 @@ fn step_target_state(
             keys,
             index,
             done,
-        } => StepTarget::Value(native_step(
-            values,
-            receiver.as_ref(),
-            typed_receiver.as_ref(),
-            *typed_keys,
-            *entries,
-            *keys,
-            index,
-            done,
-        )?),
+        } => {
+            let mut native = NativeIteratorState {
+                values,
+                receiver: receiver.as_ref(),
+                typed_receiver: typed_receiver.as_ref(),
+                typed_keys: *typed_keys,
+                entries: *entries,
+                keys: *keys,
+                index,
+                done,
+            };
+            StepTarget::Value(native_step(&mut native)?)
+        }
         IteratorState::String { input, index, done } => {
             StepTarget::Value(string_step(input, index, done))
         }
