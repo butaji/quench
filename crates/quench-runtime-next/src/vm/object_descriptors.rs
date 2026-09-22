@@ -26,7 +26,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     let text =
                         self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                    self.heap.alloc(Cell::String(text))
+                    self.heap.alloc(Cell::String(text.into()))
                 };
                 let result = self.call_value(p, trap, handler, &[target, key])?;
                 if result.is_undefined() {

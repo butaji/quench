@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
                         .unwrap_or(Value::UNDEFINED);
                     result.push_str(&self.to_string(p, value)?);
                 }
-                Ok(self.heap.alloc(Cell::String(result)))
+                Ok(self.heap.alloc(Cell::String(result.into())))
             }
             _ => unreachable!(),
         }

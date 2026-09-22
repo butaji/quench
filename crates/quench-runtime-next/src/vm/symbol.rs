@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
         match native {
             Native::SymbolToString => {
                 let text = self.to_string(p, this)?;
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::SymbolValueOf => Ok(this),
             _ => Err(JsError("invalid Symbol method".into())),
@@ -57,7 +57,8 @@ impl<H: Host> Vm<H> {
                     .symbol_registry
                     .iter()
                     .find_map(|(key, candidate)| {
-                        (*candidate == value).then(|| self.heap.alloc(Cell::String(key.clone())))
+                        (*candidate == value)
+                            .then(|| self.heap.alloc(Cell::String(key.clone().into())))
                     })
                     .unwrap_or(Value::UNDEFINED))
             }

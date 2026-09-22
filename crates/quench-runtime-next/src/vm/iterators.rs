@@ -148,10 +148,35 @@ impl<H: Host> Vm<H> {
             | IteratorKind::ArrayValues
             | IteratorKind::ArrayEntries => self.array_iterator_item(source, kind, index),
             _ => match (kind, self.heap.get(source)) {
-                (IteratorKind::String, Some(Cell::String(text))) => text
-                    .chars()
-                    .nth(index)
-                    .map(|value| (self.heap.alloc(Cell::String(value.to_string())), None)),
+                (IteratorKind::String, Some(Cell::String(text))) => {
+                    let units = text.units();
+                    {
+                        let mut element = 0;
+                        let mut offset = 0;
+                        let mut selected = None;
+                        while offset < units.len() {
+                            let end = if (0xD800..=0xDBFF).contains(&units[offset])
+                                && units
+                                    .get(offset + 1)
+                                    .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
+                            {
+                                offset + 2
+                            } else {
+                                offset + 1
+                            };
+                            if element == index {
+                                let value = self.heap.alloc(Cell::String(
+                                    super::wtf16::JsString::from_units(&units[offset..end]),
+                                ));
+                                selected = Some((value, None));
+                                break;
+                            }
+                            element += 1;
+                            offset = end;
+                        }
+                        selected
+                    }
+                }
                 (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
                     entries.get(index).map(|(key, _)| (*key, None))
                 }

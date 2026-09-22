@@ -477,7 +477,8 @@ impl Heap {
             Cell::WeakRef { .. } => 0,
             Cell::Function { .. } => size_of::<Object>(),
             Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
-            Cell::String(value) | Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
+            Cell::String(value) => value.capacity(),
+            Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
             Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
         }
     }

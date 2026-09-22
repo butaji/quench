@@ -205,7 +205,7 @@ impl<H: Host> Vm<H> {
                     return Ok(match self.atom_name(atom) {
                         "description" => description
                             .as_ref()
-                            .map(|value| self.heap.alloc(Cell::String(value.clone())))
+                            .map(|value| self.heap.alloc(Cell::String(value.clone().into())))
                             .unwrap_or(Value::UNDEFINED),
                         "toString" => self.native_value(Native::SymbolToString),
                         "valueOf" => self.native_value(Native::SymbolValueOf),

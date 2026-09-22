@@ -116,7 +116,7 @@ impl<H: Host> Vm<H> {
             Native::String => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::Number => Ok(Value::number(
                 self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?,

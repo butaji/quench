@@ -1,5 +1,6 @@
 use crate::value::Value;
 use crate::value_vec::ValueVec;
+use crate::vm::wtf16::JsString;
 use std::rc::Rc;
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -388,7 +389,7 @@ pub(crate) enum Cell {
         parent: Value,
         slots: Box<[Value]>,
     },
-    String(String),
+    String(JsString),
     BigInt(String),
     Symbol(Option<String>),
     Date(f64),

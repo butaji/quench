@@ -195,17 +195,21 @@ impl<H: Host> Vm<H> {
             Native::NumberFixed => {
                 let number = self.to_number(p, this)?;
                 let digits = args.first().and_then(|v| v.as_number()).unwrap_or(0.0) as usize;
-                Ok(self.heap.alloc(Cell::String(format!("{number:.digits$}"))))
+                Ok(self
+                    .heap
+                    .alloc(Cell::String(format!("{number:.digits$}").into())))
             }
             Native::NumberPrecision => {
                 let number = self.to_number(p, this)?;
                 let digits = args.first().and_then(|v| v.as_number()).unwrap_or(3.0) as usize;
-                Ok(self.heap.alloc(Cell::String(format!("{number:.digits$}"))))
+                Ok(self
+                    .heap
+                    .alloc(Cell::String(format!("{number:.digits$}").into())))
             }
             Native::String => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::Symbol => self.call_symbol_constructor(p, args),
             Native::SymbolToString | Native::SymbolValueOf => {
@@ -477,22 +481,5 @@ impl<H: Host> Vm<H> {
             return Ok(self.to_number(p, a)? == self.to_number(p, b)?);
         }
         Ok(false)
-    }
-    fn strict_equal(&self, a: Value, b: Value) -> bool {
-        if a == b {
-            return true;
-        }
-        matches!(
-            (self.heap.get(a), self.heap.get(b)),
-            (Some(Cell::String(a)), Some(Cell::String(b))) if a == b
-        )
-    }
-    #[inline(always)]
-    pub(super) fn truthy(&self, v: Value) -> bool {
-        !(v.is_null()
-            || v.is_undefined()
-            || v.is_deleted()
-            || v == Value::FALSE
-            || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan()))
     }
 }
