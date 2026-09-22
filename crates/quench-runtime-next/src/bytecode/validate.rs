@@ -35,7 +35,43 @@ fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
 fn cache_in_bounds(cache: u16, caches: u16) -> bool {
     cache < caches
 }
-
+fn control_flow_is_bounded(code: &[super::Instr], handlers: &[super::Handler]) -> bool {
+    let mut reachable = vec![false; code.len()];
+    let mut work = vec![0usize];
+    work.extend(handlers.iter().map(|handler| handler.target as usize));
+    while let Some(pc) = work.pop() {
+        if pc >= code.len() || reachable[pc] {
+            if pc >= code.len() {
+                return false;
+            }
+            continue;
+        }
+        reachable[pc] = true;
+        let instruction = code[pc];
+        match instruction.op() {
+            Op::Return | Op::Throw => {}
+            Op::Jump => work.push(instruction.imm() as usize),
+            Op::JumpFalse | Op::JumpBinaryFalse => {
+                work.push(instruction.imm() as usize);
+                work.push(pc + 1);
+            }
+            Op::Binary
+            | Op::NumericAdd
+            | Op::NumericMultiply
+            | Op::GetField
+            | Op::MakeObject2
+            | Op::SuperConstArrayObject2
+            | Op::Call
+            | Op::CallKnown
+            | Op::CallMethod
+            | Op::CallThisMethod
+            | Op::Construct
+                if instruction.a() & super::RETURN_REGISTER != 0 => {}
+            _ => work.push(pc + 1),
+        }
+    }
+    true
+}
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
     pub(crate) fn validate(&self) -> Result<(), String> {
@@ -46,6 +82,11 @@ impl ResidualProgram {
             return Err("register root table is too large".into());
         }
         for (index, function) in self.functions.iter().enumerate() {
+            if function.code.is_empty()
+                || !control_flow_is_bounded(&function.code, &function.handlers)
+            {
+                return Err(format!("function {index} can fall off its code"));
+            }
             if function.registers > REGISTER_MASK {
                 return Err(format!("function {index} has too many registers"));
             }
@@ -433,5 +474,26 @@ mod tests {
             vec![],
         );
         assert!(invalid_call.validate().is_err());
+    }
+
+    #[test]
+    fn reachable_control_flow_cannot_fall_off_code() {
+        let fallthrough = program(
+            function(vec![Instr::new(Op::Nop, 0, 0, 0, 0)], 1, u32::MAX),
+            vec![],
+        );
+        assert!(fallthrough.validate().is_err());
+
+        let branch_fallthrough = program(
+            function(vec![Instr::new(Op::JumpFalse, 0, 0, 0, 0)], 1, u32::MAX),
+            vec![],
+        );
+        assert!(branch_fallthrough.validate().is_err());
+
+        let loop_forever = program(
+            function(vec![Instr::new(Op::Jump, 0, 0, 0, 0)], 1, u32::MAX),
+            vec![],
+        );
+        assert!(loop_forever.validate().is_ok());
     }
 }
