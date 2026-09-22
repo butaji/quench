@@ -6,6 +6,7 @@
 
 use super::SharedStencilSlab;
 
+#[cfg(any(test, feature = "execution-trace"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ExecutableResourceSnapshot {
     pub resident_bytes: usize,
@@ -18,6 +19,7 @@ pub(crate) struct ExecutableResourceSnapshot {
 }
 
 impl SharedStencilSlab {
+    #[cfg(any(test, feature = "execution-trace"))]
     pub(crate) fn resource_snapshot(&self) -> ExecutableResourceSnapshot {
         let retired_live_bytes = self
             .slabs
