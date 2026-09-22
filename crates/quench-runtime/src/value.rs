@@ -2635,7 +2635,6 @@ mod pointer_source_invariants {
 }
 
 #[cfg(test)]
-
 mod layout_tests {
     use super::{
         ObjectData, ObjectShape, Value, IMMEDIATE_WORD_BYTES, SMALL_INTEGER_MAX, SMALL_INTEGER_MIN,

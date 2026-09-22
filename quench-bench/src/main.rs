@@ -606,8 +606,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(score_ci95(&samples).is_some_and(|v| v > 0.0));
-        assert!(geometric_mean(std::iter::repeat(2.0).take(8))
+        assert!(geometric_mean(std::iter::repeat_n(2.0, 8))
             .is_some_and(|v| (v - 2.0).abs() < f64::EPSILON));
-        assert!(geometric_mean(std::iter::repeat(2.0).take(7)).is_none());
+        assert!(geometric_mean(std::iter::repeat_n(2.0, 7)).is_none());
     }
 }
