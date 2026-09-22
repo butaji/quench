@@ -76,18 +76,18 @@ fn format_duration_shape(
         }
         let show_hours = slot_value(slots, "hoursDisplay") == Some("always") || fields.hours != 0;
         let hours_numeric = matches!(slot_value(slots, "hours"), Some("numeric" | "2-digit"));
-        let text = format_clock_duration(
-            fields.days,
-            fields.hours,
-            fields.minutes,
-            fields.seconds,
-            fields.milliseconds,
-            fields.microseconds,
-            fields.nanoseconds,
+        let text = format_clock_duration(ClockDuration {
+            days: fields.days,
+            hours: fields.hours,
+            minutes: fields.minutes,
+            seconds: fields.seconds,
+            milliseconds: fields.milliseconds,
+            microseconds: fields.microseconds,
+            nanoseconds: fields.nanoseconds,
             slots,
             show_hours,
             hours_numeric,
-        );
+        });
         return Ok(if negative { format!("-{text}") } else { text });
     }
     if style == "digital" {
@@ -137,7 +137,7 @@ fn fields_from(values: [i64; 10]) -> DurationFields {
     }
 }
 
-fn format_clock_duration(
+struct ClockDuration<'a> {
     days: i64,
     hours: i64,
     minutes: i64,
@@ -145,10 +145,24 @@ fn format_clock_duration(
     milliseconds: i64,
     microseconds: i64,
     nanoseconds: i64,
-    slots: &[(String, Value)],
+    slots: &'a [(String, Value)],
     show_hours: bool,
     hours_numeric: bool,
-) -> String {
+}
+
+fn format_clock_duration(input: ClockDuration<'_>) -> String {
+    let ClockDuration {
+        days,
+        hours,
+        minutes,
+        seconds,
+        milliseconds,
+        microseconds,
+        nanoseconds,
+        slots,
+        show_hours,
+        hours_numeric,
+    } = input;
     if !show_hours && hours == 0 && minutes == 0 && seconds == 0 {
         return "0".to_string();
     }
