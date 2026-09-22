@@ -377,4 +377,18 @@ mod tests {
         assert_eq!(runtime.root_value(root), Some(Value::number(42.0)));
         assert!(runtime.release_root(root));
     }
+
+    #[test]
+    fn array_length_descriptor_is_an_own_non_enumerable_property() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var descriptor = Object.getOwnPropertyDescriptor([1, 2], 'length'); print(descriptor.value); print(descriptor.enumerable); print(descriptor.configurable);",
+                "array-length-descriptor.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["2", "false", "false"]);
+    }
 }
