@@ -160,6 +160,20 @@ fn proxy_is_extensible_trap_controls_integrity_queries() {
 }
 
 #[test]
+fn callable_and_constructable_proxies_share_apply_and_construct_traps() {
+    let source = r#"
+      function target(value) { return value + 1; }
+      var proxy = new Proxy(target, {
+        apply: function(t, thisArg, args) { print(thisArg.answer); return t(args[0]) * 2; },
+        construct: function(t, args, newTarget) { print(newTarget === proxy); return { value: args[0] + 1 }; }
+      });
+      print(proxy.call({ answer: 4 }, 5));
+      print(new proxy(8).value);
+    "#;
+    assert_eq!(output(source), ["4", "12", "true", "9"]);
+}
+
+#[test]
 fn well_known_symbols_are_realm_stable_values() {
     assert_eq!(
         output(
