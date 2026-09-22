@@ -48,11 +48,16 @@ impl FunctionCompiler<'_, '_> {
             self.return_expression(value);
         } else {
             let value = self.literal(Constant::Undefined);
-            self.emit(Op::Return, value, 0, 0, 0);
+            self.emit_return(value);
         }
     }
 
     fn return_expression(&mut self, expression: &Expression<'_>) {
+        if !self.finally_contexts.is_empty() {
+            let value = self.expression(expression);
+            self.emit_return(value);
+            return;
+        }
         match expression {
             Expression::LogicalExpression(value) => self.return_logical(value),
             Expression::ConditionalExpression(value) => {
@@ -66,6 +71,21 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::Return, value, 0, 0, 0);
             }
         }
+    }
+
+    fn emit_return(&mut self, value: Register) {
+        let Some(context) = self.finally_contexts.last() else {
+            self.emit(Op::Return, value, 0, 0, 0);
+            return;
+        };
+        let return_atom = context.return_atom;
+        self.store_atom(return_atom, value);
+        let edge = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.finally_contexts
+            .last_mut()
+            .expect("finally context remains active")
+            .return_edges
+            .push(edge);
     }
 
     fn return_logical(&mut self, value: &LogicalExpression<'_>) {

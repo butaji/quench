@@ -1889,6 +1889,23 @@ fn try_catch_finally_runs_finalizer_after_both_paths() {
 }
 
 #[test]
+fn try_finally_routes_return_values_through_the_finalizer() {
+    let source = r#"
+      function direct() { try { return 7; } finally { print('direct-finally'); } }
+      function caught() {
+        try { throw 4; }
+        catch (error) { return error + 1; }
+        finally { print('caught-finally'); }
+      }
+      print(direct()); print(caught());
+    "#;
+    assert_eq!(
+        output(source),
+        ["direct-finally", "7", "caught-finally", "5"]
+    );
+}
+
+#[test]
 fn class_static_blocks_run_with_the_class_as_this() {
     let source = r#"
       var order = 0;

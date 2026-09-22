@@ -28,6 +28,11 @@ struct ControlTarget {
     continues: Vec<usize>,
 }
 
+pub(super) struct FinallyContext {
+    return_atom: Atom,
+    return_edges: Vec<usize>,
+}
+
 pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) owner: &'a mut Compiler<'b>,
     pub(super) locals: Vec<Atom>,
@@ -39,6 +44,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) function_id: u32,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     controls: Vec<ControlTarget>,
+    pub(super) finally_contexts: Vec<FinallyContext>,
     packed_domain_error: bool,
     pub(super) super_static: bool,
 }
@@ -72,6 +78,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             function_id,
             handlers: vec![],
             controls: vec![],
+            finally_contexts: vec![],
             packed_domain_error: false,
             super_static,
         }
