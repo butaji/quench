@@ -77,6 +77,21 @@ fn proxy_symbol_get_and_set_traps_preserve_symbol_identity() {
 }
 
 #[test]
+fn proxy_own_keys_trap_drives_reflection_order_and_filters() {
+    let source = r#"
+      var symbol = Symbol('s');
+      var target = { hidden: 1, visible: 2 }; target[symbol] = 3;
+      Object.defineProperty(target, 'hidden', { enumerable: false });
+      var proxy = new Proxy(target, { ownKeys: function() { return ['visible', 'hidden', symbol]; } });
+      print(Reflect.ownKeys(proxy).length);
+      print(Object.keys(proxy).join(','));
+      print(Object.getOwnPropertyNames(proxy).join(','));
+      print(Object.getOwnPropertySymbols(proxy).length);
+    "#;
+    assert_eq!(output(source), ["3", "visible", "visible,hidden", "1"]);
+}
+
+#[test]
 fn well_known_symbols_are_realm_stable_values() {
     assert_eq!(
         output(

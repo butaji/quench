@@ -1,6 +1,61 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn proxy_own_keys(
+        &mut self,
+        p: &ResidualProgram,
+        proxy: Value,
+    ) -> Result<Option<Vec<Value>>, JsError> {
+        let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(proxy).cloned()
+        else {
+            return Ok(None);
+        };
+        if handler.is_null() {
+            return Err(JsError("cannot access a revoked proxy".into()));
+        }
+        let trap_atom = self.intern_atom("ownKeys");
+        let trap = self.get_property(p, handler, trap_atom)?;
+        if trap.is_undefined() || trap.is_null() {
+            return Ok(None);
+        }
+        if !self.is_function(trap) {
+            return Err(JsError("proxy ownKeys trap is not callable".into()));
+        }
+        let result = self.call_value(p, trap, handler, &[target])?;
+        let Some(Cell::Array { elements, .. }) = self.heap.get(result) else {
+            return Err(JsError("proxy ownKeys trap must return an array".into()));
+        };
+        let mut keys = Vec::with_capacity(elements.len());
+        for key in elements.iter().copied() {
+            if !matches!(self.heap.get(key), Some(Cell::String(_) | Cell::Symbol(_))) {
+                return Err(JsError(
+                    "proxy ownKeys result contains an invalid key".into(),
+                ));
+            }
+            if keys
+                .iter()
+                .copied()
+                .any(|previous| self.same_property_key(previous, key))
+            {
+                return Err(JsError(
+                    "proxy ownKeys result contains duplicate keys".into(),
+                ));
+            }
+            keys.push(key);
+        }
+        Ok(Some(keys))
+    }
+
+    fn same_property_key(&self, left: Value, right: Value) -> bool {
+        match (self.heap.get(left), self.heap.get(right)) {
+            (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
+            (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => left == right,
+            _ => false,
+        }
+    }
+
     pub(super) fn symbol_property(&self, object: Value, key: Value) -> Option<Value> {
         self.symbol_properties.get(&(object, key)).copied()
     }
@@ -77,7 +132,21 @@ impl<H: Host> Vm<H> {
         Ok(target)
     }
 
-    pub(super) fn object_symbols(&mut self, object: Value) -> Result<Value, JsError> {
+    pub(super) fn object_symbols(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(keys) = self.proxy_own_keys(p, object)? {
+            let values = keys
+                .into_iter()
+                .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
+                .collect();
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(values),
+            }));
+        }
         let object = self.proxy_target(object);
         let object = self.box_object(object)?;
         let values = self
@@ -91,9 +160,19 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    pub(super) fn object_own_keys(&mut self, object: Value) -> Result<Value, JsError> {
+    pub(super) fn object_own_keys(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(keys) = self.proxy_own_keys(p, object)? {
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(keys),
+            }));
+        }
         let target = self.proxy_target(object);
-        let names = self.object_names(target)?;
+        let names = self.object_names(p, target)?;
         let mut values = match self.heap.get(names) {
             Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
             _ => Vec::new(),
