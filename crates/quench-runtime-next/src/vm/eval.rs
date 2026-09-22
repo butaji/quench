@@ -426,6 +426,9 @@ impl<H: Host> Vm<H> {
         if let Some((left, operator, right)) = find_unquoted_operator(expression) {
             let left = self.eval_simple_expression(p, left, strict)?;
             let right = self.eval_simple_expression(p, right, strict)?;
+            if let Some(op) = arithmetic_operator(operator) {
+                return self.binary(p, op, left, right);
+            }
             let equal = if operator == "==" || operator == "!=" {
                 self.equal(p, left, right)?
             } else {
@@ -1023,10 +1026,76 @@ fn find_unquoted_operator(expression: &str) -> Option<(&str, &str, &str)> {
                     &expression[index + operator.len()..],
                 ));
             }
+            (None, '+') if index > 0
+                && !expression[..index].ends_with('+')
+                && !expression[index..].starts_with("++")
+                && !expression[index..].starts_with("+=") =>
+            {
+                return Some((&expression[..index], "+", &expression[index + 1..]));
+            }
+            (None, '-') if index > 0
+                && !expression[..index].ends_with('-')
+                && !expression[index..].starts_with("--")
+                && !expression[index..].starts_with("-=") =>
+            {
+                return Some((&expression[..index], "-", &expression[index + 1..]));
+            }
+            (None, '*') if expression[index..].starts_with("**") => {
+                return Some((&expression[..index], "**", &expression[index + 2..]));
+            }
+            (None, '<') if expression[index..].starts_with("<<") => {
+                return Some((&expression[..index], "<<", &expression[index + 2..]));
+            }
+            (None, '>') if expression[index..].starts_with(">>>") => {
+                return Some((&expression[..index], ">>>", &expression[index + 3..]));
+            }
+            (None, '>') if expression[index..].starts_with(">>") => {
+                return Some((&expression[..index], ">>", &expression[index + 2..]));
+            }
+            (None, '*') if !expression[index..].starts_with("*=") => {
+                return Some((&expression[..index], "*", &expression[index + 1..]));
+            }
+            (None, '/') if !expression[index..].starts_with("/=") => {
+                return Some((&expression[..index], "/", &expression[index + 1..]));
+            }
+            (None, '%') if !expression[index..].starts_with("%=") => {
+                return Some((&expression[..index], "%", &expression[index + 1..]));
+            }
+            (None, '&') if !expression[index..].starts_with("&&")
+                && !expression[index..].starts_with("&=") =>
+            {
+                return Some((&expression[..index], "&", &expression[index + 1..]));
+            }
+            (None, '|') if !expression[index..].starts_with("||")
+                && !expression[index..].starts_with("|=") =>
+            {
+                return Some((&expression[..index], "|", &expression[index + 1..]));
+            }
+            (None, '^') if !expression[index..].starts_with("^=") => {
+                return Some((&expression[..index], "^", &expression[index + 1..]));
+            }
             _ => {}
         }
     }
     None
+}
+
+fn arithmetic_operator(operator: &str) -> Option<u32> {
+    Some(match operator {
+        "+" => 8,
+        "-" => 9,
+        "*" => 10,
+        "/" => 11,
+        "%" => 12,
+        "**" => 13,
+        "<<" => 14,
+        ">>" => 15,
+        ">>>" => 16,
+        "|" => 17,
+        "^" => 18,
+        "&" => 19,
+        _ => return None,
+    })
 }
 
 fn is_empty_eval_statement(statement: &str) -> bool {
