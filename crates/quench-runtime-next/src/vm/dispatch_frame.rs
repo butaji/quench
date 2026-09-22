@@ -123,6 +123,102 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Replace the active frame for a terminal user call.  This is the
+    /// interpreter's proper-tail-call boundary: the callee reuses the
+    /// caller's frame storage, so recursive tail calls do not grow the Rust
+    /// stack or the VM frame vector.
+    pub(super) fn prepare_user_tail(
+        &mut self,
+        p: &ResidualProgram,
+        frame_index: usize,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+    ) -> Result<(), JsError> {
+        self.profile.function(id as usize);
+        if p.functions[id as usize].parameter_eval_arguments_error {
+            return Err(self
+                .syntax_error_result(p, "arguments binding is not allowed in function parameters")
+                .expect_err("syntax_error_result must throw"));
+        }
+        let function = &p.functions[id as usize];
+        let old = std::mem::replace(
+            &mut self.frames[frame_index],
+            Frame {
+                function: 0,
+                pc: 0,
+                env: Value::NULL,
+                this: Value::UNDEFINED,
+                locals: vec![],
+                dynamic_bindings: vec![],
+                captured: false,
+                registers: vec![],
+                with_base: self.with_stack.len(),
+            },
+        );
+        self.with_stack.truncate(old.with_base);
+        let mut frame = Self::recycle_frame(old);
+        frame
+            .locals
+            .resize(function.locals as usize, Value::UNDEFINED);
+        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
+        let fixed = usize::from(function.params) - usize::from(function.rest);
+        for index in 0..fixed {
+            frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+        }
+        if function.rest {
+            let elements = args.get(fixed..).unwrap_or_default().to_vec();
+            frame.locals[fixed] = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(elements),
+            });
+        }
+        if let Some(encoded_slot) = function.arguments_slot {
+            let mapped = encoded_slot & MAPPED_ARGUMENTS_BIT != 0;
+            let slot = encoded_slot & !MAPPED_ARGUMENTS_BIT;
+            let arguments = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.object_proto),
+                elements: Rc::new(args.to_vec()),
+            });
+            frame.locals[usize::from(slot)] = arguments;
+            self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
+            if mapped {
+                let mapping = (0..function.params.min(args.len() as u16)).collect();
+                if let Some(object) = self.object_data_mut(arguments) {
+                    object.arguments_map = Some(mapping);
+                }
+            }
+        }
+        frame.function = id;
+        frame.pc = 0;
+        frame.env = parent;
+        frame.this = if function.strict {
+            this
+        } else if this.is_null() || this.is_undefined() {
+            self.realm.globals
+        } else {
+            self.box_object(this)?
+        };
+        frame.captured = false;
+        frame.with_base = self.with_stack.len();
+        let new_target_atom = self.intern_atom("\0rqj:new-target");
+        frame.dynamic_bindings.push((
+            new_target_atom,
+            self.construct_target.unwrap_or(Value::UNDEFINED),
+        ));
+        let register_count = function.registers as usize;
+        if frame.registers.capacity() < register_count {
+            frame
+                .registers
+                .reserve_exact(register_count - frame.registers.len());
+        }
+        // SAFETY: compiler-issued registers are defined before use; Value has no drop glue.
+        unsafe { frame.registers.set_len(register_count) };
+        self.frames[frame_index] = frame;
+        Ok(())
+    }
+
     pub(super) fn initialize_arguments_object(
         &mut self,
         p: &ResidualProgram,
@@ -228,10 +324,19 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn clone_frame_environment(&mut self, frame: usize) {
         let source = self.promote_frame_environment(frame);
-        let Some(Cell::Environment { parent, slots, dynamic_bindings }) = self.heap.get(source).cloned() else {
+        let Some(Cell::Environment {
+            parent,
+            slots,
+            dynamic_bindings,
+        }) = self.heap.get(source).cloned()
+        else {
             return;
         };
-        let env = self.heap.alloc(Cell::Environment { parent, slots, dynamic_bindings });
+        let env = self.heap.alloc(Cell::Environment {
+            parent,
+            slots,
+            dynamic_bindings,
+        });
         self.frames[frame].env = env;
     }
 
@@ -268,12 +373,11 @@ impl<H: Host> Vm<H> {
         frame: usize,
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
-        let function = self.frames[frame].function as usize;
-        let code = &p.functions[function].code;
+        let initial_function = self.frames[frame].function as usize;
         let mut pc = self.frames[frame].pc;
         if let Some(error) = initial_error {
             let throwing_pc = pc.saturating_sub(1) as u32;
-            let handler = p.functions[function]
+            let handler = p.functions[initial_function]
                 .handlers
                 .iter()
                 .find(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
@@ -296,6 +400,8 @@ impl<H: Host> Vm<H> {
             pc = handler.target as usize;
         }
         loop {
+            let function = self.frames[frame].function as usize;
+            let code = &p.functions[function].code;
             let instruction_pc = pc;
             // SAFETY: the validated residual program has in-range branch targets
             // and a terminal Return. Effect edges publish `pc` to the frame.
@@ -317,6 +423,9 @@ impl<H: Host> Vm<H> {
                     return Ok(FrameOutcome::Complete(value));
                 }
                 Ok(StepResult::Continue) => {}
+                Ok(StepResult::TailCall) => {
+                    pc = self.frames[frame].pc;
+                }
                 Ok(StepResult::Await { value, destination }) => {
                     self.frames[frame].pc = pc;
                     return Ok(FrameOutcome::Await {
