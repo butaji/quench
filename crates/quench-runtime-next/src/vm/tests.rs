@@ -76,6 +76,17 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
       var lockedReceiver = Object.create(lockedPrototype);
       try { lockedReceiver.locked = 2; print("not-blocked"); }
       catch (error) { print("blocked"); }
+      class Accessor {
+        constructor(value) { this._value = value; }
+        get value() { return this._value; }
+        set value(next) { this._value = next; }
+        static get kind() { return "class"; }
+      }
+      var instance = new Accessor(4);
+      print(instance.value);
+      instance.value = 6;
+      print(instance.value);
+      print(Accessor.kind);
     "#;
     let program = Engine::specialize(source, "accessor.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
@@ -83,7 +94,9 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
     vm.execute(&program).unwrap();
     assert_eq!(
         output.borrow().as_slice(),
-        ["3", "9", "function", "function", "7", "true", "blocked"]
+        [
+            "3", "9", "function", "function", "7", "true", "blocked", "4", "6", "class"
+        ]
     );
 }
 
