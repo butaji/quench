@@ -1,5 +1,4 @@
 use super::*;
-use crate::host::{CapabilityId, HostContext};
 impl<H: Host> Vm<H> {
     pub(super) fn call_native(
         &mut self,
@@ -37,6 +36,7 @@ impl<H: Host> Vm<H> {
         }
         match native {
             Native::ProxyRevocable => self.proxy_revocable(p, args),
+            Native::HostDone => self.call_host_done(p, args),
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, v)?;
@@ -48,6 +48,7 @@ impl<H: Host> Vm<H> {
             )),
             Native::DateGetTime
             | Native::DateValueOf
+            | Native::DateGetTimezoneOffset
             | Native::DateToISOString
             | Native::DateToJSON => self.date_native(native, this),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
@@ -230,7 +231,6 @@ impl<H: Host> Vm<H> {
             ))),
             Native::Object
             | Native::Array
-            | Native::Error
             | Native::Map
             | Native::Set
             | Native::WeakMap
@@ -239,6 +239,7 @@ impl<H: Host> Vm<H> {
             | Native::FinalizationRegistry
             | Native::DisposableStack
             | Native::RegExp => self.construct_native(p, native, args),
+            native if native.is_error_constructor() => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }
     }
@@ -418,7 +419,6 @@ impl<H: Host> Vm<H> {
         };
         Ok(if answer { Value::TRUE } else { Value::FALSE })
     }
-
     #[inline(always)]
     pub(super) fn binary_truthy(
         &mut self,

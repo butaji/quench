@@ -4,7 +4,7 @@ use crate::bytecode::{
     REGISTER_MASK, RETURN_REGISTER, Register, ResidualProgram, SET_THIS_REGISTER, WideInstruction,
 };
 use crate::heap::{Cell, FunctionKind, Heap, IteratorKind, Native, Object, RootId, TypedArrayKind};
-use crate::host::Host;
+use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
@@ -218,7 +218,7 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     setter: None,
 };
 pub struct Vm<H> {
-    host: H,
+    pub(crate) host: H,
     specialized: bool,
     heap: Heap,
     globals: Value,

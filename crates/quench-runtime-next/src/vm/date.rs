@@ -1,5 +1,6 @@
 use super::*;
-use chrono::{DateTime, TimeZone, Utc};
+use crate::host::{CapabilityId, HostContext};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_date(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -52,6 +53,7 @@ impl<H: Host> Vm<H> {
         [
             ("getTime", Native::DateGetTime),
             ("valueOf", Native::DateValueOf),
+            ("getTimezoneOffset", Native::DateGetTimezoneOffset),
             ("toISOString", Native::DateToISOString),
             ("toJSON", Native::DateToJSON),
         ]
@@ -71,6 +73,7 @@ impl<H: Host> Vm<H> {
         let milliseconds = *milliseconds;
         match native {
             Native::DateGetTime | Native::DateValueOf => Ok(Value::number(milliseconds)),
+            Native::DateGetTimezoneOffset => Ok(Value::number(0.0)),
             Native::DateToISOString | Native::DateToJSON => {
                 if !milliseconds.is_finite() {
                     return Err(JsError("Invalid time value".into()));
@@ -95,6 +98,46 @@ impl<H: Host> Vm<H> {
             .timestamp_millis_opt(milliseconds.trunc() as i64)
             .single()?;
         Some(format_date(date))
+    }
+
+    pub(super) fn date_construct_native(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let milliseconds = if args.len() < 2 {
+            match args.first().copied() {
+                None => HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
+                Some(value) => self.to_number(p, value)?,
+            }
+        } else {
+            let mut parts = [0.0; 7];
+            parts[2] = 1.0;
+            for (index, value) in args.iter().take(7).enumerate() {
+                parts[index] = self.to_number(p, *value)?;
+            }
+            let mut year = if (0.0..=99.0).contains(&parts[0]) {
+                parts[0] as i32 + 1900
+            } else {
+                parts[0] as i32
+            };
+            let month = parts[1] as i32;
+            year += month.div_euclid(12);
+            let month = month.rem_euclid(12) as u32 + 1;
+            Utc.with_ymd_and_hms(year, month, 1, 0, 0, 0)
+                .single()
+                .map(|date| {
+                    let day = parts[2].trunc() as i64 - 1;
+                    let time = parts[3].trunc() as i64 * 3_600_000
+                        + parts[4].trunc() as i64 * 60_000
+                        + parts[5].trunc() as i64 * 1_000
+                        + parts[6].trunc() as i64;
+                    (date + Duration::days(day) + Duration::milliseconds(time)).timestamp_millis()
+                        as f64
+                })
+                .unwrap_or(f64::NAN)
+        };
+        Ok(self.heap.alloc(Cell::Date(milliseconds)))
     }
 }
 
