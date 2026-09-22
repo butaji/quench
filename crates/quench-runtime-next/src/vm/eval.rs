@@ -142,18 +142,14 @@ impl<H: Host> Vm<H> {
         {
             return self.syntax_error_result(p, "var declaration conflicts with global lexical binding");
         }
-        if self.direct_eval
-            && self.frames.last().is_some_and(|frame| frame.function == 0)
-        {
+        if !self.direct_eval || self.frames.last().is_some_and(|frame| frame.function == 0) {
             let globals = self.realm.globals;
             for statement in &statements {
                 let statement = statement.trim();
-                if let Some(rest) = statement.strip_prefix("function ") {
-                    if let Some(name) = rest.split_once('(').map(|(name, _)| name.trim()) {
-                        self.check_global_eval_declaration(p, globals, name, true)?;
-                    }
+                if let Some(name) = function_declaration_name(statement) {
+                    self.check_global_eval_declaration(p, globals, name, true)?;
                 }
-                if let Some(rest) = statement.strip_prefix("var ") {
+                if self.direct_eval && let Some(rest) = statement.strip_prefix("var ") {
                     for declaration in split_commas(rest) {
                         let name = declaration
                             .split_once('=')
@@ -195,7 +191,7 @@ impl<H: Host> Vm<H> {
         }
         let strict = source_strict;
         for statement in &statements {
-            if statement.trim_start().starts_with("function ") {
+            if function_declaration_name(statement.trim()).is_some() {
                 self.install_eval_function(p, statement.trim(), strict)?;
             }
         }
@@ -527,7 +523,10 @@ impl<H: Host> Vm<H> {
         statement: &str,
         strict: bool,
     ) -> Result<(), JsError> {
-        let rest = statement.strip_prefix("function ").unwrap_or_default();
+        let rest = statement
+            .strip_prefix("function ")
+            .or_else(|| statement.strip_prefix("function* "))
+            .unwrap_or_default();
         let Some(open) = rest.find('(') else {
             return Ok(());
         };
@@ -947,6 +946,13 @@ fn is_strict_reserved(name: &str) -> bool {
             | "static"
             | "yield"
     )
+}
+
+fn function_declaration_name(statement: &str) -> Option<&str> {
+    let rest = statement
+        .strip_prefix("function ")
+        .or_else(|| statement.strip_prefix("function* "))?;
+    rest.split_once('(').map(|(name, _)| name.trim()).filter(|name| !name.is_empty())
 }
 
 fn split_assignment(statement: &str) -> Option<(&str, &str)> {
