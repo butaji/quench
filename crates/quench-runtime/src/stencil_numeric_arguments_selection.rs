@@ -27,11 +27,8 @@ pub(crate) fn select_arguments_loop(
     validate_loop(code, &i)?;
     IntegerLoopSelection::at(
         0,
-        i[7].b,
-        i[9].a,
-        i[12].a,
-        8,
-        16,
+        (i[7].b, i[9].a, i[12].a),
+        (8, 16),
         multiplier,
         IntegerRecurrence::ArgumentConstants(addend),
     )
