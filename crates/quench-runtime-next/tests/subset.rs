@@ -153,13 +153,14 @@ fn delete_property_uses_one_named_symbol_and_proxy_authority() {
       print(Object.getOwnPropertyDescriptor(array, '0').value);
       Object.defineProperty(array, '1', { value: 5, writable: false, enumerable: false, configurable: false });
       print(array[1]); print(Object.keys(array).join(','));
+      print(Object.values(array).join(',')); print(Object.entries(array)[0][1]);
       try { Object.defineProperty(array, '1', { value: 6 }); } catch (error) { print('readonly'); }
     "#;
     assert_eq!(
         output(source),
         [
             "true", "false", "8", "answer", "true", "0", "true", "true", "false", "value", "true",
-            "9", "true", "true", "2", "1", "[null,2]", "true", "3", "0,1", "3", "5", "0",
+            "9", "true", "true", "2", "1", "[null,2]", "true", "3", "0,1", "3", "5", "0", "3", "3",
             "readonly"
         ]
     );
