@@ -135,6 +135,12 @@ impl fmt::Debug for Value {
 #[cfg(test)]
 mod tests {
     use super::Value;
+    use std::mem::size_of;
+
+    #[test]
+    fn value_is_one_machine_word() {
+        assert_eq!(size_of::<Value>(), size_of::<usize>());
+    }
 
     #[test]
     fn values_round_trip() {
@@ -149,5 +155,15 @@ mod tests {
             Some((-2, 3))
         );
         assert_eq!(Value::int_pair(Value::integer(1), Value::TRUE), None);
+    }
+
+    #[test]
+    fn numbers_preserve_signed_zero_and_canonicalize_nan() {
+        let negative_zero = Value::number(-0.0).as_number().unwrap();
+        assert!(negative_zero == 0.0 && negative_zero.is_sign_negative());
+        assert_eq!(
+            Value::number(f64::NAN),
+            Value::number(f64::from_bits(0x7ff0_0000_0000_0001))
+        );
     }
 }
