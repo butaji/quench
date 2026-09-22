@@ -527,16 +527,16 @@ fn parts_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value,
             if fields.kind != TemporalKind::Instant {
                 let slots = temporal_slots(slots, &fields)?;
                 return Ok(make_array(localize_parts(
-                    parts_for_fields(
-                        &slots,
-                        fields.year,
-                        fields.month,
-                        fields.day,
-                        fields.hour,
-                        fields.minute,
-                        fields.second,
-                        fields.millisecond,
-                    ),
+                    parts_for_fields(TemporalPartFields {
+                        slots: &slots,
+                        year: fields.year,
+                        month: fields.month,
+                        day: fields.day,
+                        hour: fields.hour,
+                        minute: fields.minute,
+                        second: fields.second,
+                        millis: fields.millisecond,
+                    }),
                     &slots,
                 )));
             }
@@ -622,13 +622,20 @@ fn date_time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>>
         ("\0isoMonth".into(), Value::Number(f64::from(month))),
         ("\0isoDay".into(), Value::Number(f64::from(day))),
     ]);
-    Some(parts_for_fields(
-        &parts_slots, year, month, day, hour, minute, second, millis,
-    ))
+    Some(parts_for_fields(TemporalPartFields {
+        slots: &parts_slots,
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millis,
+    }))
 }
 
-fn parts_for_fields(
-    slots: &[(String, Value)],
+struct TemporalPartFields<'a> {
+    slots: &'a [(String, Value)],
     year: i32,
     month: u32,
     day: u32,
@@ -636,7 +643,19 @@ fn parts_for_fields(
     minute: u32,
     second: u32,
     millis: u32,
-) -> Vec<Value> {
+}
+
+fn parts_for_fields(fields: TemporalPartFields<'_>) -> Vec<Value> {
+    let TemporalPartFields {
+        slots,
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millis,
+    } = fields;
     let has_year = slot_string(slots, "year").is_some();
     let has_month = slot_string(slots, "month").is_some();
     let has_day = slot_string(slots, "day").is_some();
@@ -1215,16 +1234,16 @@ fn single_parts(
         if let Some(fields) = temporal_fields(value) {
             if fields.kind != TemporalKind::Instant {
                 let slots = temporal_slots(slots, &fields)?;
-                return Ok(parts_for_fields(
-                    &slots,
-                    fields.year,
-                    fields.month,
-                    fields.day,
-                    fields.hour,
-                    fields.minute,
-                    fields.second,
-                    fields.millisecond,
-                ));
+                return Ok(parts_for_fields(TemporalPartFields {
+                    slots: &slots,
+                    year: fields.year,
+                    month: fields.month,
+                    day: fields.day,
+                    hour: fields.hour,
+                    minute: fields.minute,
+                    second: fields.second,
+                    millis: fields.millisecond,
+                }));
             }
             let slots = temporal_slots(slots, &fields)?;
             let number = range_number(value)?;
