@@ -584,23 +584,40 @@ fn get_method(iterator: &Value, name: &str) -> Result<Option<Value>, crate::exec
 fn missing_throw_method() -> crate::execute::VmError {
     crate::value::error::throw_type_error("delegated iterator has no throw method")
 }
+pub(super) struct NativeIteratorState<'a> {
+    pub(super) values: &'a [Value],
+    pub(super) receiver: Option<&'a Rc<crate::value::ArrayData>>,
+    pub(super) typed_receiver: Option<&'a Value>,
+    pub(super) typed_keys: bool,
+    pub(super) entries: bool,
+    pub(super) keys: bool,
+    pub(super) index: &'a mut usize,
+    pub(super) done: &'a mut bool,
+}
+
 pub(super) fn native_step(
-    values: &[Value],
-    receiver: Option<&Rc<crate::value::ArrayData>>,
-    typed_receiver: Option<&Value>,
-    typed_keys: bool,
-    entries: bool,
-    keys: bool,
-    index: &mut usize,
-    done: &mut bool,
+    state: &mut NativeIteratorState<'_>,
 ) -> Result<Option<Value>, crate::execute::VmError> {
-    if *done {
+    let NativeIteratorState {
+        values,
+        receiver,
+        typed_receiver,
+        typed_keys,
+        entries,
+        keys,
+        index,
+        done,
+    } = state;
+    let typed_keys = *typed_keys;
+    let entries = *entries;
+    let keys = *keys;
+    if **done {
         return Ok(None);
     }
     let value = if let Some(value) = typed_receiver {
         if typed_keys {
             let length = iterator_typed::typed_length(value)?;
-            (*index < length).then_some(Value::Number(*index as f64))
+            (**index < length).then_some(Value::Number(**index as f64))
         } else {
             let detached = typed_receiver_is_detached(value);
             if detached {
@@ -609,16 +626,16 @@ pub(super) fn native_step(
                 ));
             }
             let values = iterator_typed::typed_values(value.clone())?;
-            values.get(*index).cloned()
+            values.get(**index).cloned()
         }
     } else if let Some(data) = receiver {
-        array_receiver_step(data, *index)?
+        array_receiver_step(data, **index)?
     } else {
-        values.get(*index).cloned()
+        values.get(**index).cloned()
     };
-    let current_index = *index;
-    *index = index.saturating_add(1);
-    *done = value.is_none();
+    let current_index = **index;
+    **index = (**index).saturating_add(1);
+    **done = value.is_none();
     Ok(value.map(|value| {
         if keys {
             Value::Number(current_index as f64)
