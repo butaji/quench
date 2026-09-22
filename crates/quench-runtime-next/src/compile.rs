@@ -187,7 +187,16 @@ impl<'a> Compiler<'a> {
                 "SyntaxError: assignment to arguments is not allowed in strict mode",
             );
         }
+        if self.root_strict && early::strict_eval_early_error(self.text) {
+            self.reject(
+                Span::default(),
+                "SyntaxError: assignment to eval is not allowed in strict mode",
+            );
+        }
         if let Some(error) = early::block_early_error(program) {
+            self.reject(Span::default(), error);
+        }
+        if let Some(error) = early::strict_binding_early_error(program) {
             self.reject(Span::default(), error);
         }
         self.compile_function(
