@@ -107,6 +107,19 @@ fn proxy_descriptor_trap_controls_descriptor_reflection() {
 }
 
 #[test]
+fn proxy_define_property_trap_receives_descriptor_and_controls_result() {
+    let source = r#"
+      var target = {};
+      var proxy = new Proxy(target, { defineProperty: function(t, key, descriptor) {
+        print(key); print(descriptor.value); return key === 'answer';
+      } });
+      Object.defineProperty(proxy, 'answer', { value: 42 });
+      print(Reflect.defineProperty(proxy, 'other', { value: 1 }));
+    "#;
+    assert_eq!(output(source), ["answer", "42", "other", "1", "false"]);
+}
+
+#[test]
 fn well_known_symbols_are_realm_stable_values() {
     assert_eq!(
         output(
