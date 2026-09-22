@@ -143,6 +143,18 @@ impl<H: Host> Vm<H> {
                     None => Ok(Value::UNDEFINED),
                 };
             }
+            if let Some(index) = super::object_static::array_index(self.atom_name(atom))
+                && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
+            {
+                let value = elements
+                    .get(index as usize)
+                    .copied()
+                    .filter(|value| !value.is_deleted())
+                    .or_else(|| self.heap.sparse_get(object, index as usize));
+                if let Some(value) = value.filter(|value| !value.is_deleted()) {
+                    return Ok(value);
+                }
+            }
             if let Some(v) = self.own_property(object, atom) {
                 return Ok(v);
             }

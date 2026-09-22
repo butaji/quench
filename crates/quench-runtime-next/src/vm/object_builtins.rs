@@ -22,6 +22,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_object(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let object = self.native_value(Native::Object);
         self.set_named(program, object, "prototype", self.object_proto)?;
+        self.set_named(program, self.object_proto, "constructor", object)?;
         self.set_named(
             program,
             self.function_proto,

@@ -163,6 +163,7 @@ impl<H: Host> Vm<H> {
                     "cannot change non-configurable array index kind".into(),
                 ));
             }
+            self.unmap_argument_index(target, index);
             if !self.set_array_element(target, index, Value::DELETED) {
                 return Err(JsError("cannot define array accessor".into()));
             }
@@ -204,6 +205,9 @@ impl<H: Host> Vm<H> {
         }
         self.descriptors
             .insert((target, PropertyKey::string(atom)), attributes);
+        if !attributes.configurable && !attributes.writable {
+            self.unmap_argument_index(target, index);
+        }
         let _ = p;
         Ok(target)
     }

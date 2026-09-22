@@ -1,5 +1,4 @@
 use super::*;
-
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn step(
@@ -28,6 +27,7 @@ impl<H: Host> Vm<H> {
                     // the frame-local bound before interpretation.
                     unsafe { *self.frames.get_unchecked(f).locals.get_unchecked(slot) }
                 };
+                let v = self.mapped_argument_load(p, f, slot, v);
                 self.write(f, i.a(), v);
             }
             Op::StoreLocal => {
@@ -45,6 +45,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.frames[f].locals[slot] = value;
                 }
+                self.mapped_argument_store(p, f, slot, value);
                 if i.b() != 0 {
                     self.write(f, i.b() - 1, value);
                 }
@@ -59,6 +60,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.frames[f].locals[i.imm() as usize]
                 };
+                let value = self.mapped_argument_load(p, f, i.imm() as usize, value);
                 self.write(f, i.a(), value);
             }
             Op::StoreEnvLocal => {
@@ -73,6 +75,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.frames[f].locals[i.imm() as usize] = value;
                 }
+                self.mapped_argument_store(p, f, i.imm() as usize, value);
             }
             Op::LoadCapture => {
                 let v = self.capture(f, i.imm())?;

@@ -13,6 +13,7 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 mod activation;
 mod activation_lifecycle;
+mod arguments;
 mod array;
 mod array_buffer;
 mod array_builtins;
@@ -286,6 +287,11 @@ pub struct Vm<H> {
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     symbol_properties: FxHashMap<(Value, property_key::PropertyKey), Value>,
     symbol_property_order: FxHashMap<Value, Vec<property_key::PropertyKey>>,
+    /// Arguments-object index -> formal-parameter slot mappings. The array is
+    /// still the authoritative value store; this table only carries the
+    /// environment edge needed for sloppy aliasing.
+    argument_maps: FxHashMap<Value, Vec<u16>>,
+    function_values: FxHashMap<(u32, Value), Value>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -431,6 +437,8 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.symbol_properties.clear();
         self.symbol_property_order.clear();
+        self.argument_maps.clear();
+        self.function_values.clear();
         self.finalization_registry_proto = Value::NULL;
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.globals = self

@@ -6,7 +6,7 @@ use std::rc::Rc;
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, RealmTypeError, Function, FunctionReturnThis, FunctionReturnName,
+    Print, HostDone, CreateRealm, RealmTypeError, Eval, Function, FunctionReturnThis, FunctionReturnName,
     Object,
     ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen,
@@ -165,7 +165,7 @@ pub(crate) enum Native {
     Date,
     DateNow,
     DateGetTime, DateValueOf, DateGetTimezoneOffset, DateToISOString, DateToJSON, DateParse, DateUTC,
-    Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError,
+    Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
     RegExp,
     RegExpExec,
     RegExpTest,

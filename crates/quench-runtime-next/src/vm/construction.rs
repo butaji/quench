@@ -77,6 +77,7 @@ impl<H: Host> Vm<H> {
             },
             env,
         });
+        self.function_values.insert((id, env), function);
         let arrow = p.functions[id as usize]
             .name
             .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow");

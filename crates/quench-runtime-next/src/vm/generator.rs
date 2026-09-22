@@ -36,6 +36,22 @@ impl<H: Host> Vm<H> {
                 elements: Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
             });
         }
+        if let Some(encoded_slot) = function.arguments_slot {
+            let mapped = encoded_slot & crate::bytecode::MAPPED_ARGUMENTS_BIT != 0;
+            let slot = encoded_slot & !crate::bytecode::MAPPED_ARGUMENTS_BIT;
+            let arguments = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.object_proto),
+                elements: Rc::new(args.to_vec()),
+            });
+            frame.locals[usize::from(slot)] = arguments;
+            self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
+            if mapped {
+                self.argument_maps.insert(
+                    arguments,
+                    (0..function.params.min(args.len() as u16)).collect(),
+                );
+            }
+        }
         frame.function = id;
         frame.pc = 0;
         frame.env = parent;

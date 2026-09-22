@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn scalar_constants_reuse_exact_slots() {
-    let mut compiler = Compiler::new_with_mode("test.js", SpecializationMode::Enabled);
+    let mut compiler = Compiler::new_with_mode("test.js", "", SpecializationMode::Enabled);
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
     assert_eq!(compiler.constant(Constant::String("x".into())), 1);
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
@@ -12,7 +12,7 @@ fn scalar_constants_reuse_exact_slots() {
 
 #[test]
 fn scalar_constants_preserve_signed_zero_bits() {
-    let mut compiler = Compiler::new_with_mode("test.js", SpecializationMode::Enabled);
+    let mut compiler = Compiler::new_with_mode("test.js", "", SpecializationMode::Enabled);
     assert_ne!(
         compiler.constant(Constant::Number(0.0)),
         compiler.constant(Constant::Number(-0.0))
@@ -21,7 +21,7 @@ fn scalar_constants_preserve_signed_zero_bits() {
 
 #[test]
 fn constant_runs_remain_fresh_and_contiguous() {
-    let mut compiler = Compiler::new_with_mode("test.js", SpecializationMode::Enabled);
+    let mut compiler = Compiler::new_with_mode("test.js", "", SpecializationMode::Enabled);
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
     let start = compiler.constant_run(vec![Constant::Number(1.0), Constant::Number(1.0)]);
     assert_eq!(start, 1);

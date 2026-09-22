@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -48,6 +49,22 @@ impl<H: Host> Vm<H> {
             iterator,
             self.native_value(Native::IteratorSelf),
         )?;
+        self.set_symbol_property(
+            self.array_proto,
+            iterator,
+            self.native_value(Native::ArrayValues),
+        )?;
+        self.descriptors.insert(
+            (self.array_proto, PropertyKey::symbol(iterator)),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         let Some(async_iterator) = self.well_known_symbols.get("asyncIterator").copied() else {
             return Ok(());
         };
