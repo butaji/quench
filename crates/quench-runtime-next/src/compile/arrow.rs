@@ -7,6 +7,9 @@ impl Compiler<'_> {
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
     ) -> u32 {
+        let inherited_strict = parent
+            .and_then(|id| self.functions.get(id as usize).and_then(Option::as_ref))
+            .is_some_and(|function| function.strict);
         let id = self.functions.len() as u32;
         self.functions.push(None);
         let arrow_marker = self.atom("\0rqj:arrow");
@@ -25,7 +28,9 @@ impl Compiler<'_> {
             value.r#async,
             false,
         );
-        function.strict = matches!(&value.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict"));
+        let strict = inherited_strict
+            || matches!(&value.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict"));
+        function.strict = strict;
         function.emit_parameter_bindings(&value.params);
         match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
@@ -77,7 +82,7 @@ impl Compiler<'_> {
             is_async: value.r#async,
             is_generator: false,
             arguments_slot: None,
-            strict: matches!(&value.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict")),
+            strict,
             locals: function.locals.len() as u16,
             local_atoms: function.locals.clone(),
             code: function.code,

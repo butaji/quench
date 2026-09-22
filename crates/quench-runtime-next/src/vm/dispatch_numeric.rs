@@ -138,7 +138,13 @@ impl<H: Host> Vm<H> {
         frame.function = id;
         frame.pc = 0;
         frame.env = parent;
-        frame.this = this;
+        frame.this = if function.strict {
+            this
+        } else if this.is_null() || this.is_undefined() {
+            self.globals
+        } else {
+            self.box_object(this)?
+        };
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         let register_count = function.registers as usize;
