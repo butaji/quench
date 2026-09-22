@@ -2,7 +2,7 @@ use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::Object,
+    Native::Print, Native::HostDone, Native::Function, Native::FunctionReturnThis, Native::Object,
     Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,

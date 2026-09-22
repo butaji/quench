@@ -53,6 +53,12 @@ impl<H: Host> Vm<H> {
                 elements: Rc::new(elements),
             });
         }
+        if let Some(slot) = function.arguments_slot {
+            frame.locals[usize::from(slot)] = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(args.to_vec()),
+            });
+        }
         frame.function = id;
         frame.pc = 0;
         frame.env = parent;

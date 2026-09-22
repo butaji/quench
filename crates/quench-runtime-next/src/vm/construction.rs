@@ -64,6 +64,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
+            Native::Function => self.function_native(p, args),
             Native::Object => {
                 if let Some(value) = args.first().copied()
                     && self.object_data(value).is_some()

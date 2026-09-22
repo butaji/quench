@@ -366,6 +366,12 @@ impl<'a> Compiler<'a> {
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         self.collect_locals(body, &mut locals);
+        let arguments_slot = if locals.contains(&self.atom("arguments")) {
+            None
+        } else {
+            locals.push(self.atom("arguments"));
+            Some((locals.len() - 1) as u16)
+        };
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -389,6 +395,13 @@ impl<'a> Compiler<'a> {
         function.emit_disposal();
         let undefined = function.literal(Constant::Undefined);
         function.emit(Op::Return, undefined, 0, 0, 0);
+        let arguments_slot = arguments_slot.filter(|slot| {
+            function.code.iter().any(|instruction| {
+                instruction.op() == Op::LoadLocal && instruction.imm() == u32::from(*slot)
+            }) || function.wide.iter().any(|instruction| {
+                instruction.op() == Op::LoadLocal && instruction.imm() == u32::from(*slot)
+            })
+        });
         let captures_locals = function
             .code
             .iter()
@@ -423,6 +436,7 @@ impl<'a> Compiler<'a> {
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
             is_generator: options.generator,
+            arguments_slot,
             locals: function.locals.len() as u16,
             code: function.code,
             wide: function.wide,

@@ -275,27 +275,37 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
-            _ => return Err(JsError("array callback receiver is not array".into())),
+        let values = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => {
+                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+                (0..length)
+                    .map(|index| {
+                        elements
+                            .get(index)
+                            .copied()
+                            .or_else(|| self.heap.sparse_get(this, index))
+                            .unwrap_or(Value::UNDEFINED)
+                    })
+                    .collect::<Vec<_>>()
+            }
+            Some(_) => {
+                let length_atom = self.intern_atom("length");
+                let length = self
+                    .get_property(p, this, length_atom)
+                    .and_then(|value| self.to_number(p, value))?
+                    .max(0.0)
+                    .floor() as usize;
+                (0..length)
+                    .map(|index| self.get_index(p, this, Value::number(index as f64)))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            None => return Err(JsError("array callback receiver is not array".into())),
         };
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
             return Err(JsError("array callback is not callable".into()));
         }
         let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let values = (0..length)
-            .map(|index| {
-                elements
-                    .get(index)
-                    .copied()
-                    .or_else(|| self.heap.sparse_get(this, index))
-                    .unwrap_or(Value::UNDEFINED)
-            })
-            .collect::<Vec<_>>();
         let mut output = Vec::new();
         let indices = if matches!(native, Native::ArrayFindLast | Native::ArrayFindLastIndex) {
             (0..values.len()).rev().collect::<Vec<_>>()
