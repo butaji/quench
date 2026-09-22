@@ -208,11 +208,22 @@ impl<'a> JsonParser<'a> {
 
     fn number(&mut self) -> Result<JsonValue, String> {
         let start = self.index;
-        while self
-            .peek()
-            .is_some_and(|unit| b"-+0123456789.eE".contains(&(unit as u8)))
-        {
+        self.take_if(b'-');
+        match self.take() {
+            Some(48) => {}
+            Some(49..=57) => self.digits(),
+            _ => return Err("invalid number".into()),
+        }
+        if self.take_if(b'.') && !self.digit() {
+            return Err("invalid number".into());
+        }
+        if self.peek().is_some_and(|unit| unit == 69 || unit == 101) {
             self.index += 1;
+            self.take_if(b'+');
+            self.take_if(b'-');
+            if !self.digit() {
+                return Err("invalid number".into());
+            }
         }
         let text = String::from_utf16(&self.units[start..self.index])
             .map_err(|_| "invalid number".to_owned())?;
@@ -222,6 +233,19 @@ impl<'a> JsonParser<'a> {
         let number =
             serde_json::Number::from_f64(number).ok_or_else(|| "invalid number".to_owned())?;
         Ok(JsonValue::Number(number))
+    }
+
+    fn digits(&mut self) {
+        while self.digit() {}
+    }
+
+    fn digit(&mut self) -> bool {
+        if self.peek().is_some_and(|unit| (48..=57).contains(&unit)) {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
     }
 
     fn whitespace(&mut self) {
@@ -457,5 +481,13 @@ mod tests {
             panic!("expected string");
         };
         assert_eq!(value.units(), &[0xD800, b'a' as u16, 0xDC00]);
+    }
+
+    #[test]
+    fn json_parser_rejects_non_json_number_forms() {
+        for source in ["01", "1+2", "1.", "1e"] {
+            let units = source.encode_utf16().collect::<Vec<_>>();
+            assert!(JsonParser::new(&units).parse().is_err(), "{source}");
+        }
     }
 }
