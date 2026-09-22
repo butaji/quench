@@ -305,7 +305,9 @@ pub struct Vm<H> {
     /// environment edge needed for sloppy aliasing.
     argument_maps: FxHashMap<Value, Vec<u16>>,
     argument_objects: FxHashSet<Value>,
-    function_values: FxHashMap<(u32, Value), Value>,
+    // Closure identity cache is indexed by function id; each function keeps
+    // the small set of captured environments it has materialized.
+    function_values: Vec<Vec<(Value, Value)>>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -454,6 +456,7 @@ impl<H: Host> Vm<H> {
         self.argument_maps.clear();
         self.argument_objects.clear();
         self.function_values.clear();
+        self.function_values.resize_with(program.functions.len(), Vec::new);
         self.finalization_registry_proto = Value::NULL;
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.realm.globals = self
