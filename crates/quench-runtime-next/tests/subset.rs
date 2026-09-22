@@ -1860,6 +1860,18 @@ fn catch_patterns_bind_the_thrown_value() {
 }
 
 #[test]
+fn try_finally_runs_before_rethrowing_a_thrown_completion() {
+    let source = r#"
+      try { print('normal'); } finally { print('normal-finally'); }
+      try {
+        try { throw 7; }
+        finally { print('finally'); }
+      } catch (error) { print(error); }
+    "#;
+    assert_eq!(output(source), ["normal", "normal-finally", "finally", "7"]);
+}
+
+#[test]
 fn class_static_blocks_run_with_the_class_as_this() {
     let source = r#"
       var order = 0;
