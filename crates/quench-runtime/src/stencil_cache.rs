@@ -95,6 +95,10 @@ impl RenderedRegionCache {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub const fn capacity(&self) -> usize {
         MAX_RENDERED_REGIONS
     }

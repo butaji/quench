@@ -71,7 +71,7 @@ pub(crate) fn register_agent_report(index: usize, primary: bool) {
     });
 }
 
-pub(crate) fn expire_agent_waiters(reports: &mut Vec<Value>) {
+pub(crate) fn expire_agent_waiters(reports: &mut [Value]) {
     let now = Instant::now();
     AGENT_WAITERS.with(|waiters| {
         let mut waiters = waiters.borrow_mut();

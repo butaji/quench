@@ -351,10 +351,7 @@ fn run_make_object(
         }
         _ => return Ok(()),
     };
-    {
-        let dst = dst;
-        let is_global_view = is_global_view;
-        if is_global_view {
+    if is_global_view {
             let view = crate::execute::read_register(registers, dst)?.clone();
             if let Value::Object(view) = view {
                 let owner = match crate::vm::current_global_object() {
@@ -380,7 +377,6 @@ fn run_make_object(
                 ));
                 crate::execute::write_value(registers, dst, value);
             }
-        }
     }
     Ok(())
 }

@@ -82,6 +82,10 @@ where
         self.entries.iter().flatten().count()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.iter().all(Option::is_none)
+    }
+
     pub const fn capacity(&self) -> usize {
         N
     }

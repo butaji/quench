@@ -480,7 +480,7 @@ pub(crate) fn zero_storage(s: GcStorage) -> Slot {
         GcStorage::Val(crate::hir::Kind::F32) => Slot::Native(Native::F32(0)),
         GcStorage::Val(crate::hir::Kind::F64) => Slot::Native(Native::F64(0)),
         GcStorage::Val(crate::hir::Kind::V128) => Slot::Native(Native::V128(0)),
-        GcStorage::Ref { .. } | _ => Slot::Native(Native::Ref(RefVal::Null)),
+        _ => Slot::Native(Native::Ref(RefVal::Null)),
     }
 }
 

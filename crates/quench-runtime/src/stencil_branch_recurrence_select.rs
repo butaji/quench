@@ -236,8 +236,8 @@ fn binary(instruction: crate::ir::Instruction, values: &mut BTreeMap<u16, Numeri
                 multiplier,
                 addend,
             },
-            Numeric::Constant(value),
-        ) if value == 0.0 => Numeric::Uint32 {
+            Numeric::Constant(0.0),
+        ) => Numeric::Uint32 {
             state_slot,
             multiplier,
             addend,

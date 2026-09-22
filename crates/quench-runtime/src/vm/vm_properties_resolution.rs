@@ -155,9 +155,7 @@ pub(crate) fn get_named_site_cached_payload(
         site.invalidate_shape(shape);
         return None;
     }
-    let Some(slot) = proven_own_slot(object, key) else {
-        return None;
-    };
+    let slot = proven_own_slot(object, key)?;
     let Ok(slot) = u32::try_from(slot) else {
         return None;
     };

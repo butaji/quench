@@ -200,9 +200,7 @@ pub(crate) fn boxed_string_property(
     properties: &Rc<crate::value::ObjectData>,
     key: &str,
 ) -> Option<Value> {
-    let Some((_, value)) = properties.iter().find(|(name, _)| name == "_value") else {
-        return None;
-    };
+    let (_, value) = properties.iter().find(|(name, _)| name == "_value")?;
     if !matches!(value, Value::String(_) | Value::StringUnits(_)) {
         return None;
     }

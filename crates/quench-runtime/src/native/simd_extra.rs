@@ -328,8 +328,8 @@ fn all64(a: u128) -> u32 {
 fn bitmask8(a: u128) -> u128 {
     let b = a.to_le_bytes();
     let mut m = 0u32;
-    for i in 0..16 {
-        if b[i] & 0x80 != 0 {
+    for (i, byte) in b.iter().enumerate() {
+        if byte & 0x80 != 0 {
             m |= 1 << i;
         }
     }

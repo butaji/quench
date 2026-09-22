@@ -48,6 +48,10 @@ impl AtomTable {
         self.by_id.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.by_id.is_empty()
+    }
+
     pub fn intern(&mut self, s: &str) -> Atom {
         if let Some(atom) = self.by_str.get(s) {
             return *atom;

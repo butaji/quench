@@ -10162,6 +10162,10 @@ impl FunctionCode {
         self.range.end.saturating_sub(self.range.start) as usize
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Return the immutable width of this logical activation. Structured
     /// fragments share it; nested function literals own independent frames.
     pub(crate) fn layout(&self) -> Option<FunctionLayout> {
