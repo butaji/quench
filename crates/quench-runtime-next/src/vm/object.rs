@@ -99,6 +99,9 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        if !self.specialized {
+            return self.get_property(p, object, atom);
+        }
         if !object.is_heap()
             || atom == self.length_atom
             || atom == self.size_atom
@@ -345,6 +348,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> Result<(), JsError> {
+        if !self.specialized {
+            return self.set_property(object, atom, value);
+        }
         let existing = self.object_data(object).and_then(|data| {
             self.shapes[data.shape() as usize]
                 .iter()
@@ -451,7 +457,6 @@ impl<H: Host> Vm<H> {
                 .get(shape)
         }
     }
-
     pub(super) fn transition_shape(&mut self, shape: u32, atom: Atom) -> u32 {
         if let Some(next) = self.transitions.get(&(shape, atom)).copied() {
             self.profile.shape_transition(true);
@@ -468,11 +473,9 @@ impl<H: Host> Vm<H> {
         next
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     struct SilentHost;
     impl Host for SilentHost {
         fn write_line(&mut self, _: &str) {}

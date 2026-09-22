@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn decoder_rejects_out_of_range_local_load() {
     let program = ResidualProgram {
+        specialized: true,
         atoms: AtomTable::default(),
         constants: vec![],
         functions: vec![Function {
@@ -35,6 +36,7 @@ fn decoder_rejects_out_of_range_local_load() {
 #[test]
 fn decoder_rejects_runtime_abi_mismatch_before_tables() {
     let program = ResidualProgram {
+        specialized: true,
         atoms: AtomTable::default(),
         constants: vec![],
         functions: vec![Function {

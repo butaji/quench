@@ -209,6 +209,7 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
 };
 pub struct Vm<H> {
     host: H,
+    specialized: bool,
     heap: Heap,
     globals: Value,
     object_proto: Value,
@@ -343,6 +344,7 @@ impl<H: Host> Vm<H> {
         crate::report_allocator_memory(phase);
     }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        self.specialized = program.specialized;
         self.heap.reset();
         self.constants.clear();
         self.const_arrays.clear();

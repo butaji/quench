@@ -60,6 +60,7 @@ fn constant_computed_property_uses_field_cache_site() {
 #[test]
 fn unspecialized_entry_keeps_generic_dispatch_class() {
     let program = Engine::specialize_unspecialized("print(40 + 2);", "generic.js").unwrap();
+    assert!(!program.specialized);
     assert!(
         program
             .functions

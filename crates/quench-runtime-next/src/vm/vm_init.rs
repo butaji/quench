@@ -4,6 +4,7 @@ impl<H: Host> Vm<H> {
     pub fn new(host: H) -> Self {
         Self {
             host,
+            specialized: true,
             heap: Heap::new(),
             globals: Value::NULL,
             object_proto: Value::NULL,
