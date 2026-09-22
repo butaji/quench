@@ -71,6 +71,7 @@ mod tests {
             env: Value::NULL,
             this: Value::UNDEFINED,
             locals: vec![],
+            dynamic_bindings: vec![],
             captured: false,
             registers: vec![],
             with_base: 0,

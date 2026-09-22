@@ -101,6 +101,15 @@ impl<H: Host> Vm<H> {
                     return self.get_property(p, object, atom);
                 }
             }
+            if let Some(value) = self.frames.last().and_then(|frame| {
+                frame
+                    .dynamic_bindings
+                    .iter()
+                    .rev()
+                    .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
+            }) {
+                return Ok(value);
+            }
         }
         let value = self.get_field_cached(p, self.realm.globals, atom, cache)?;
         if value.is_undefined() && self.own_property(self.realm.globals, atom).is_none() {
@@ -129,6 +138,15 @@ impl<H: Host> Vm<H> {
                     return self.get_property(p, object, atom);
                 }
             }
+            if let Some(value) = self.frames.last().and_then(|frame| {
+                frame
+                    .dynamic_bindings
+                    .iter()
+                    .rev()
+                    .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
+            }) {
+                return Ok(value);
+            }
         }
         self.get_field_cached(p, self.realm.globals, atom, cache)
     }
@@ -149,11 +167,21 @@ impl<H: Host> Vm<H> {
                 .map_or(self.with_stack.len(), |frame| frame.with_base)
                 .min(self.with_stack.len());
             let with_objects = self.with_stack[with_base..].to_vec();
-            for object in with_objects.into_iter().rev() {
-                if self.has_property(p, object, key)? {
-                    return self.set_property_with_program(p, object, atom, value);
-                }
+        for object in with_objects.into_iter().rev() {
+            if self.has_property(p, object, key)? {
+                return self.set_property_with_program(p, object, atom, value);
             }
+        }
+        if let Some(frame) = self.frames.last_mut()
+            && let Some((_, current)) = frame
+                .dynamic_bindings
+                .iter_mut()
+                .rev()
+                .find(|(candidate, _)| *candidate == atom)
+        {
+            *current = value;
+            return Ok(());
+        }
         }
         let strict_local = self
             .frames

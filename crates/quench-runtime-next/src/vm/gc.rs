@@ -173,6 +173,7 @@ impl<H: Host> Vm<H> {
                     [frame.env, frame.this]
                         .into_iter()
                         .chain(frame.locals.iter().copied())
+                        .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
                         // Register-root masks are an optimization over the
                         // canonical activation state. Keep every live-frame
                         // register rooted until the mask proof is complete;

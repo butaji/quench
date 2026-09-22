@@ -18,6 +18,20 @@ impl FunctionCompiler<'_, '_> {
                     self.emit(Op::LoadNameTypeof, input, 0, cache, atom);
                     input
                 }
+            } else if let Expression::ParenthesizedExpression(parenthesized) = &value.argument
+                && let Expression::Identifier(identifier) = &parenthesized.expression
+            {
+                let atom = self.owner.atom(identifier.name.as_str());
+                let bound = self.local_slots.contains_key(&atom)
+                    || self.scopes.iter().any(|scope| scope.contains_key(&atom));
+                if bound {
+                    self.expression(&value.argument)
+                } else {
+                    let input = self.reg();
+                    let cache = self.owner.cache_site();
+                    self.emit(Op::LoadNameTypeof, input, 0, cache, atom);
+                    input
+                }
             } else {
                 self.expression(&value.argument)
             }

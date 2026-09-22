@@ -339,7 +339,21 @@ impl<H: Host> Vm<H> {
                         _ => None,
                     })
                     .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
-                self.eval_source_simple(program, &source, false)
+                let source = source.trim();
+                let body_strict = source.starts_with("'use strict';")
+                    || source.starts_with("\"use strict\";");
+                let source = source
+                    .strip_prefix("'use strict';")
+                    .or_else(|| source.strip_prefix("\"use strict\";"))
+                    .map(str::trim)
+                    .unwrap_or(source);
+                if let Some(expression) = source
+                    .strip_prefix("return ")
+                    .map(|expression| expression.trim().trim_end_matches(';').trim())
+                {
+                    return self.eval_simple_expression(program, expression, body_strict);
+                }
+                self.eval_source_simple(program, source, body_strict)
             }
             _ => self.function_native(program, args),
         }

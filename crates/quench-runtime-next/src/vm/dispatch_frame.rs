@@ -36,6 +36,7 @@ impl<H: Host> Vm<H> {
             env: Value::NULL,
             this: Value::UNDEFINED,
             locals: vec![],
+            dynamic_bindings: vec![],
             captured: false,
             registers: vec![],
             with_base: self.with_stack.len(),
@@ -236,6 +237,12 @@ impl<H: Host> Vm<H> {
         if frame.registers.capacity() > RETAINED_VALUES {
             frame.registers.clear();
             frame.registers.shrink_to(RETAINED_VALUES);
+        }
+        if frame.dynamic_bindings.capacity() > RETAINED_VALUES {
+            frame.dynamic_bindings.clear();
+            frame.dynamic_bindings.shrink_to(RETAINED_VALUES);
+        } else {
+            frame.dynamic_bindings.clear();
         }
         frame
     }

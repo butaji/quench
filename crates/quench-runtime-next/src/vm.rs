@@ -96,6 +96,7 @@ pub(super) struct Frame {
     env: Value,
     this: Value,
     locals: Vec<Value>,
+    dynamic_bindings: Vec<(Atom, Value)>,
     captured: bool,
     registers: Vec<Value>,
     with_base: usize,
