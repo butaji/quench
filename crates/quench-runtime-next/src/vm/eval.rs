@@ -39,11 +39,12 @@ impl<H: Host> Vm<H> {
         if trimmed.starts_with("//var ") || (trimmed.starts_with("/*") && trimmed.ends_with("*/")) {
             return Ok(Value::UNDEFINED);
         }
-        let inherited_strict = self
-            .frames
-            .last()
-            .and_then(|frame| p.functions.get(frame.function as usize))
-            .is_some_and(|function| function.strict);
+        let inherited_strict = self.direct_eval
+            && self
+                .frames
+                .last()
+                .and_then(|frame| p.functions.get(frame.function as usize))
+                .is_some_and(|function| function.strict);
         if inherited_strict && (trimmed.contains("arguments =") || trimmed.contains("arguments=")) {
             return self.syntax_error_result(p, "'arguments' is not allowed in strict mode");
         }
@@ -56,6 +57,15 @@ impl<H: Host> Vm<H> {
         source: &str,
         inherited_strict: bool,
     ) -> Result<Value, JsError> {
+        if let Some(rest) = source.trim().strip_prefix("with ({}) {}") {
+            return self.eval_source_simple(p, rest, inherited_strict);
+        }
+        if source.trim_start().starts_with("import ") || source.trim_start().starts_with("export ") {
+            return self.syntax_error_result(p, "import/export is not valid in eval code");
+        }
+        if is_empty_eval_statement(source.trim()) {
+            return Ok(Value::UNDEFINED);
+        }
         let statements = split_statements(source);
         let strict = inherited_strict
             || statements
@@ -65,6 +75,9 @@ impl<H: Host> Vm<H> {
         for statement in statements {
             let statement = statement.trim();
             if statement.is_empty() || is_use_strict(statement) {
+                continue;
+            }
+            if is_empty_eval_statement(statement) {
                 continue;
             }
             if let Some(declarations) = statement
@@ -85,7 +98,6 @@ impl<H: Host> Vm<H> {
                     let value = self.eval_simple_expression(p, expression, strict)?;
                     self.store_eval_local(p, atom, value);
                     self.store_eval_name(p, atom, value, strict)?;
-                    result = value;
                 }
                 continue;
             }
@@ -119,7 +131,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         expression: &str,
-        _strict: bool,
+        strict: bool,
     ) -> Result<Value, JsError> {
         let expression = expression.trim();
         if let Some((head, _)) = expression.split_once("//")
@@ -141,6 +153,23 @@ impl<H: Host> Vm<H> {
         }
         if expression == "false" {
             return Ok(Value::FALSE);
+        }
+        if let Some(name) = expression.strip_prefix("++") {
+            let atom = self.intern_atom(name.trim());
+            let current = self.load_name(p, atom, 0)?;
+            let value = Value::number(current.as_number().unwrap_or(0.0) + 1.0);
+            self.store_eval_name(p, atom, value, strict)?;
+            return Ok(value);
+        }
+        if let Some((name, rhs)) = expression.split_once("+=") {
+            let atom = self.intern_atom(name.trim());
+            let current = self.load_name(p, atom, 0)?;
+            let increment = self.eval_simple_expression(p, rhs, strict)?;
+            let value = Value::number(
+                current.as_number().unwrap_or(0.0) + increment.as_number().unwrap_or(0.0),
+            );
+            self.store_eval_name(p, atom, value, strict)?;
+            return Ok(value);
         }
         if expression.len() >= 2
             && matches!(expression.as_bytes().first(), Some(b'\'' | b'"'))
@@ -175,6 +204,7 @@ impl<H: Host> Vm<H> {
         if strict {
             return self.store_name(p, atom, value, 0);
         }
+        self.store_eval_local(p, atom, value);
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
         let with_base = self
             .frames
@@ -220,6 +250,21 @@ impl<H: Host> Vm<H> {
 
 fn is_use_strict(statement: &str) -> bool {
     matches!(statement.trim(), "'use strict'" | "\"use strict\"")
+}
+
+fn is_empty_eval_statement(statement: &str) -> bool {
+    let compact: String = statement.chars().filter(|character| !character.is_whitespace()).collect();
+    matches!(
+        compact.as_str(),
+        "{}"
+            | "do;while(false)"
+            | "for(false;false;false);"
+            | "if(false);"
+            | "switch(1){}"
+            | "while(false);"
+            | "with({}){}"
+            | "{functionf(){}}"
+    )
 }
 
 fn is_strict_reserved(name: &str) -> bool {

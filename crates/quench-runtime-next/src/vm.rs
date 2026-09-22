@@ -302,6 +302,7 @@ pub struct Vm<H> {
     // Closure identity cache is indexed by function id; each function keeps
     // the small set of captured environments it has materialized.
     function_values: Vec<Vec<(Value, Value)>>,
+    direct_eval: bool,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -407,6 +408,7 @@ impl<H: Host> Vm<H> {
         self.with_stack.clear();
         self.suspended.clear();
         self.suspended_free.clear();
+        self.direct_eval = false;
         self.promise = Default::default();
         self.numeric_sites.clear();
         self.shapes.truncate(1);
