@@ -37,9 +37,7 @@ enum StaticValue {
 pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
     match value {
         Expression::NumericLiteral(value) => BindingTime::Static(Constant::Number(value.value)),
-        Expression::StringLiteral(value) => {
-            BindingTime::Static(Constant::String(value.value.to_string()))
-        }
+        Expression::StringLiteral(value) => BindingTime::Static(super::string::constant(value)),
         Expression::BigIntLiteral(value) => {
             BindingTime::Static(Constant::BigInt(value.value.to_string()))
         }
