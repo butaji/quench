@@ -100,6 +100,14 @@ impl<H: Host> Runtime<H> {
         self.vm.drain_jobs(program)
     }
 
+    /// Force the VM's named GC safepoint. The residual program supplies the
+    /// frame root maps used when a host asks for collection between calls.
+    pub fn collect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        program.validate().map_err(JsError::validation)?;
+        self.vm.collect_now(program);
+        Ok(())
+    }
+
     pub fn compile_and_execute(
         &mut self,
         request: ExecutionRequest<'_>,
@@ -357,5 +365,16 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["1", "2", "b", "9", "x"]);
+    }
+
+    #[test]
+    fn explicit_collection_preserves_runtime_roots() {
+        let mut runtime = Runtime::new(Capture::default());
+        let program = Engine::specialize("print(0);", "collect.js").unwrap();
+        runtime.execute(&program).unwrap();
+        let root = runtime.root(Value::number(42.0));
+        runtime.collect(&program).unwrap();
+        assert_eq!(runtime.root_value(root), Some(Value::number(42.0)));
+        assert!(runtime.release_root(root));
     }
 }

@@ -1,6 +1,14 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    /// Run a named collection safepoint even when the allocation threshold has
+    /// not been reached. Hosts and focused conformance tests use this boundary
+    /// to validate root ownership and weak/finalization ordering without
+    /// reaching into heap internals.
+    pub(crate) fn collect_now(&mut self, program: &ResidualProgram) {
+        self.collect_slow(program);
+    }
+
     #[inline(always)]
     pub(super) fn maybe_collect(&mut self, program: &ResidualProgram) {
         if !self.heap.should_collect() {
@@ -31,12 +39,25 @@ impl<H: Host> Vm<H> {
                     self.object_proto,
                     self.function_proto,
                     self.array_proto,
+                    self.array_buffer_proto,
+                    self.uint8_array_proto,
+                    self.uint8_clamped_array_proto,
+                    self.uint16_array_proto,
+                    self.uint32_array_proto,
+                    self.int8_array_proto,
+                    self.int16_array_proto,
+                    self.int32_array_proto,
+                    self.float32_array_proto,
+                    self.float64_array_proto,
+                    self.data_view_proto,
                     self.map_proto,
                     self.set_proto,
                     self.weak_map_proto,
                     self.weak_set_proto,
                     self.weak_ref_proto,
+                    self.finalization_registry_proto,
                     self.iterator_proto,
+                    self.regexp_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(self.jobs.iter().flat_map(|job| {
