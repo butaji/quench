@@ -45,8 +45,13 @@ impl<H: Host> Vm<H> {
             if !self.truthy(enumerable) {
                 continue;
             }
-            let atom = self.intern_atom(&name);
-            values.push(self.get_property(p, object, atom)?);
+            let value = if let Some(index) = super::object_static::array_index(&name) {
+                self.get_index(p, object, Value::number(index as f64))?
+            } else {
+                let atom = self.intern_atom(&name);
+                self.get_property(p, object, atom)?
+            };
+            values.push(value);
         }
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -74,8 +79,12 @@ impl<H: Host> Vm<H> {
             if !self.truthy(enumerable) {
                 continue;
             }
-            let atom = self.intern_atom(&name);
-            let value = self.get_property(p, object, atom)?;
+            let value = if let Some(index) = super::object_static::array_index(&name) {
+                self.get_index(p, object, Value::number(index as f64))?
+            } else {
+                let atom = self.intern_atom(&name);
+                self.get_property(p, object, atom)?
+            };
             let key = self.heap.alloc(Cell::String(name));
             entries.push(self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.array_proto),
