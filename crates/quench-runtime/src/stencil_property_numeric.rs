@@ -132,6 +132,7 @@ impl PropertyNumericSelection {
         self.span as usize
     }
 
+    #[cfg(test)]
     pub(crate) const fn property_count(self) -> u8 {
         self.property_count
     }

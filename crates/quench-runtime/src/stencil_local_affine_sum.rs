@@ -65,6 +65,7 @@ impl NativeLocalAffineSumPlan {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn route(&self) -> [&'static str; 2] {
         if self.selection.eliminated_ops > 0 {
             ["locals", "body_size"]

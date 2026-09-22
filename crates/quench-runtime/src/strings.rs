@@ -4,6 +4,7 @@ use crate::value::Value;
 ///
 /// This is the canonical computation used by the owner-local `StringUnits`
 /// cache and by direct hashing of well-formed UTF-8 strings.
+#[cfg(test)]
 pub(crate) fn hash_units(units: &[u16]) -> u64 {
     units
         .iter()
@@ -26,6 +27,7 @@ pub(crate) fn hash_str(value: &str) -> u64 {
 /// cache. Clones share both through the same `Rc`, so the cache lifecycle is
 /// exactly the canonical value lifecycle; well-formed `String` values remain
 /// derived from their owned UTF-8 source.
+#[cfg(test)]
 #[inline]
 pub(crate) fn hash_value(value: &Value) -> Option<u64> {
     match value {
@@ -71,11 +73,12 @@ fn units_add_fits_limit(left: usize, right: usize) -> Option<usize> {
 }
 
 #[inline]
-
+#[cfg(test)]
 pub(crate) fn string_bytes_fit_limit(value: &str) -> bool {
     string_byte_len_fits_limit(value.len())
 }
 
+#[cfg(test)]
 pub(crate) fn replace_discard_string(
     input: &str,
     regexp: &Value,
@@ -218,6 +221,7 @@ pub(crate) fn is_latin1(units: &[u16]) -> bool {
 }
 
 #[inline]
+#[cfg(test)]
 pub(crate) fn is_short_string(value: &str) -> bool {
     value.encode_utf16().count() <= SHORT_STRING_MAX_UNITS
 }
@@ -236,12 +240,14 @@ pub(crate) enum StringEncoding {
 /// description of the owning value, not a second buffer or a conversion
 /// cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum StringSourceEncoding {
     Utf8,
     Utf16,
 }
 
 #[inline]
+#[cfg(test)]
 pub(crate) fn source_encoding(value: &Value) -> Option<StringSourceEncoding> {
     match value {
         Value::String(_) => Some(StringSourceEncoding::Utf8),
@@ -252,12 +258,14 @@ pub(crate) fn source_encoding(value: &Value) -> Option<StringSourceEncoding> {
 
 /// Storage family derived from the canonical value; no semantic bytes retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum ShortStringLayout {
     Utf8,
     Utf16,
 }
 
 #[inline]
+#[cfg(test)]
 pub(crate) fn short_string_layout(value: &Value) -> Option<ShortStringLayout> {
     match value {
         Value::String(text) if text.encode_utf16().count() <= SHORT_STRING_MAX_UNITS => {
@@ -283,6 +291,7 @@ pub(crate) fn encoding_of(units: &[u16]) -> StringEncoding {
 /// family. Latin-1 is valid exactly when every UTF-16 code unit is at most
 /// `0xff`, including empty strings.
 #[inline]
+#[cfg(test)]
 pub(crate) fn encoding_of_value(value: &Value) -> Option<StringEncoding> {
     match value {
         Value::String(text) => Some(if text.encode_utf16().all(|unit| unit <= 0xff) {
@@ -300,6 +309,7 @@ pub(crate) fn encoding_of_value(value: &Value) -> Option<StringEncoding> {
 /// This is an accounting helper only: bytes are not retained alongside the
 /// canonical `Value`, so classification cannot make semantic copies stale.
 #[inline]
+#[cfg(test)]
 pub(crate) fn compact_storage_bytes(units: &[u16]) -> usize {
     match encoding_of(units) {
         StringEncoding::Latin1 => units.len(),
@@ -308,11 +318,13 @@ pub(crate) fn compact_storage_bytes(units: &[u16]) -> usize {
 }
 
 #[inline]
+#[cfg(test)]
 pub(crate) fn latin1_to_units(bytes: &[u8]) -> Vec<u16> {
     bytes.iter().map(|&byte| u16::from(byte)).collect()
 }
 
 #[inline]
+#[cfg(test)]
 pub(crate) fn units_to_latin1(units: &[u16]) -> Option<Vec<u8>> {
     if !is_latin1(units) {
         return None;
@@ -325,6 +337,7 @@ pub(crate) fn units_to_latin1(units: &[u16]) -> Option<Vec<u8>> {
 /// canonical UTF-16/UTF-8 representation and is never retained as a second
 /// semantic buffer. Every byte is valid Latin-1, including an empty slice.
 #[inline]
+#[cfg(test)]
 pub(crate) fn from_latin1(bytes: &[u8]) -> Value {
     from_units(latin1_to_units(bytes))
 }
@@ -488,6 +501,7 @@ fn is_low_surrogate(unit: u16) -> bool {
     (0xDC00..0xE000).contains(&unit)
 }
 
+#[cfg(test)]
 fn is_surrogate(code: u32) -> bool {
     (0xD800..0xE000).contains(&code)
 }

@@ -108,6 +108,7 @@ fn validate_shape(
     .then_some(())
 }
 
+#[cfg(test)]
 pub(crate) fn route() -> impl Iterator<Item = &'static str> {
     ["SetN", "GetNQuickened", "Return"].into_iter()
 }

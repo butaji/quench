@@ -781,6 +781,7 @@ pub(crate) fn load_parameter(
     Ok(())
 }
 
+#[cfg(not(feature = "execution-trace"))]
 #[inline(always)]
 pub(crate) fn load_parameter_in(
     environment: &Environment,

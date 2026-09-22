@@ -8,6 +8,7 @@ pub(crate) struct GeneratorStep {
 /// operation slice. It deliberately has no `CodeStore` identity; code-backed
 /// generator paths must use `execute_generator_code_step` so suspension and
 /// call continuations retain canonical ranges.
+#[cfg(test)]
 pub(crate) fn execute_generator_step(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -171,6 +172,7 @@ fn run_generator_code_steps(
     })
 }
 
+#[cfg(test)]
 fn run_generator_steps(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -257,6 +259,7 @@ fn run_yield_star_step(
     }))
 }
 
+#[cfg(test)]
 fn run_generator_op(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,

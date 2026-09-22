@@ -367,6 +367,7 @@ fn series_view(operator: crate::ops::BinaryOp) -> Option<PhysicalStencilView> {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn compose_linear_chain<const N: usize>(
     view: PhysicalStencilView,
     repetitions: u8,
@@ -437,6 +438,7 @@ fn compatible_fragment(first: PhysicalStencilView, view: PhysicalStencilView) ->
         && view.fallthrough.is_some_and(|tail| tail.stencil.validate())
 }
 
+#[cfg(test)]
 fn validate_linear_view(view: PhysicalStencilView, repetitions: u8) -> Result<(), LayoutError> {
     let contract = view.contract();
     let valid = repetitions > 0

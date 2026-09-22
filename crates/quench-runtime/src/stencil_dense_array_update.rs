@@ -168,6 +168,7 @@ impl NativeDenseUpdatePlan {
         Ok(Some(outcome))
     }
 
+    #[cfg(test)]
     pub(crate) fn route() -> impl Iterator<Item = &'static str> {
         [
             "LoadLocalChecked",

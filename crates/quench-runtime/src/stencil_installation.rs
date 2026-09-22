@@ -147,11 +147,13 @@ impl<F: Copy> SharedPhysicalEntry<F> {
         self.installed.is_some()
     }
 
+    #[cfg(test)]
     pub(crate) fn clear(&mut self) {
         self.installed = None;
         self.state.clear();
     }
 
+    #[cfg(test)]
     pub(crate) fn retire(&mut self) {
         if let Some(entry) = self.installed.take() {
             let _ = self

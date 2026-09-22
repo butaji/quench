@@ -49,6 +49,7 @@ pub(crate) fn with_unobservable_completion<T>(reduce: impl FnOnce() -> T) -> T {
     with_result_use(StatementResultUse::Unobservable, reduce)
 }
 
+#[cfg(test)]
 pub(crate) fn statement_result_use() -> StatementResultUse {
     RESULT_USE.get()
 }

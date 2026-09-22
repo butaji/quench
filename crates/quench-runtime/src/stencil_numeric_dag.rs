@@ -78,6 +78,7 @@ impl NumericDagSelection {
         self.span as usize
     }
 
+    #[cfg(test)]
     pub(crate) fn route(self) -> impl Iterator<Item = &'static str> {
         self.route
             .into_iter()
@@ -129,6 +130,7 @@ impl NativeNumericDagPlan {
         self.selection.span()
     }
 
+    #[cfg(test)]
     pub(crate) fn route(&self) -> impl Iterator<Item = &'static str> {
         self.selection.route()
     }

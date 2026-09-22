@@ -229,6 +229,7 @@ impl VmContext {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn consume_execution_budget(&self) -> bool {
         let Some(budget) = &self.execution_budget else { return true };
         let remaining = budget.get();
@@ -237,6 +238,7 @@ impl VmContext {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn request_interrupt(&self) {
         self.interrupt
             .store(true, std::sync::atomic::Ordering::Release);

@@ -71,6 +71,7 @@ impl NativeCallReturnPlan {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn route(&self) -> impl Iterator<Item = &'static str> {
         ["LoadLocalChecked", "Call", "Return"].into_iter()
     }

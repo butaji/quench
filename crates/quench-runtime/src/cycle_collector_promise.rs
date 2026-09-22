@@ -88,9 +88,6 @@ fn append_continuation_edges(
                 output,
             );
         }
-        PromiseContinuation::Aggregate { aggregate, .. } => {
-            append_aggregate_edges(aggregate, ids, output);
-        }
         PromiseContinuation::Thenable {
             target,
             thenable,

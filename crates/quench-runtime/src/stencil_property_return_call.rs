@@ -74,6 +74,7 @@ pub(crate) fn select_property_return_call(
     crate::stencil_prototype_call::select_single_argument_call(entries, cfg, start)
 }
 
+#[cfg(test)]
 pub(crate) fn route() -> impl Iterator<Item = &'static str> {
     ["GetNQuickened", "Return"].into_iter()
 }

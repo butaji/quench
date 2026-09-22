@@ -232,6 +232,7 @@ impl NativeReductionPlan {
             .map_err(|error| NativeDispatchError::Physical(format!("reduction entry: {error:?}")))
     }
 
+    #[cfg(test)]
     pub(crate) fn route() -> impl Iterator<Item = &'static str> {
         ["AGetI", "Add", "AddConst", "Jump", "Return"].into_iter()
     }
@@ -245,6 +246,7 @@ impl NativeReductionPlan {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn profile_route(&self) -> Vec<&'static str> {
         match self.selection.profile {
             ReductionProfile::OrderedF64 => Self::route().collect(),

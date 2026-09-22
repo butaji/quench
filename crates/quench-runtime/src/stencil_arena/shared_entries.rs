@@ -75,18 +75,6 @@ impl SharedStencilSlab {
         })
     }
 
-    pub(crate) fn acquire_address_lease(
-        owner: &std::rc::Rc<std::cell::RefCell<Self>>,
-        address: usize,
-        abi: crate::stencil_select::RegionAbi,
-    ) -> Result<AllocationLease, ArenaError> {
-        let owner_id = owner
-            .borrow()
-            .owner_for(address)
-            .ok_or(ArenaError::ProtectionFailed)?;
-        Self::acquire_lease(owner, address, owner_id, abi)
-    }
-
     pub(crate) fn acquire_owned<F: Copy>(
         owner: &std::rc::Rc<std::cell::RefCell<Self>>,
         token: EntryToken<F>,
@@ -264,15 +252,6 @@ impl SharedStencilSlab {
         owned_numeric_f64_mixed_loop_entry,
         crate::stencil_select::RegionAbi::NumericF64MixedLoop
     );
-
-    pub(crate) fn with_owned<F: Copy, R>(
-        &self,
-        owned: EntryToken<F>,
-        invoke: impl FnOnce(F) -> R,
-    ) -> Result<R, ArenaError> {
-        self.validate_token(owned)?;
-        self.with_active(owned.address, || invoke(owned.entry))
-    }
 
     pub fn make_executable(&mut self, address: usize) -> Result<(), ArenaError> {
         self.slab_for_mut(address)

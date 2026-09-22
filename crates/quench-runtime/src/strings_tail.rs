@@ -132,6 +132,7 @@ fn string_match_all(
         .map(|(result, _)| result)
 }
 
+#[cfg(test)]
 fn number(value: &Value) -> Option<f64> {
     match value {
         Value::Number(value) => Some(*value),

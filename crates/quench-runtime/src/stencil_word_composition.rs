@@ -272,16 +272,6 @@ impl NativeWordBranchPlan {
     /// ABI. The condition is supplied as a constant Boolean at execution, so
     /// the copied bytes still own only the physical transfer; the canonical
     /// `Jump` target and CFG edge remain the source of truth.
-    pub(crate) fn new_unconditional(
-        entries: &[crate::machine::BaselineEntry],
-        jump_pc: usize,
-        target_pc: usize,
-        owner: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
-    ) -> Option<Self> {
-        let jump = entries.get(jump_pc)?;
-        Self::new_unconditional_from_instruction(jump.instruction, target_pc, owner)
-    }
-
     /// Build an unconditional transfer image from an already decoded Jump.
     /// This keeps dynamic Bridge setup free of a full baseline-entry snapshot.
     pub(crate) fn new_unconditional_from_instruction(

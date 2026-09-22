@@ -170,6 +170,7 @@ fn number_constant(code: CodeView<'_>, id: u16) -> Option<i32> {
     crate::stencil_numeric_integer_selection::exact_i32(*value)
 }
 
+#[cfg(test)]
 pub(crate) fn route() -> impl Iterator<Item = &'static str> {
     ["GetN", "CallN", "Return"].into_iter()
 }
