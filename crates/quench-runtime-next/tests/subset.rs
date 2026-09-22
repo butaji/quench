@@ -160,6 +160,20 @@ fn proxy_is_extensible_trap_controls_integrity_queries() {
 }
 
 #[test]
+fn proxy_own_keys_enforces_target_key_invariants() {
+    let source = r#"
+      var target = {};
+      Object.defineProperty(target, 'fixed', { value: 1, configurable: false });
+      var omitted = new Proxy(target, { ownKeys: function() { return []; } });
+      try { Reflect.ownKeys(omitted); } catch (error) { print('omitted'); }
+      Object.preventExtensions(target);
+      var extra = new Proxy(target, { ownKeys: function() { return ['fixed', 'extra']; } });
+      try { Reflect.ownKeys(extra); } catch (error) { print('extra'); }
+    "#;
+    assert_eq!(output(source), ["omitted", "extra"]);
+}
+
+#[test]
 fn callable_and_constructable_proxies_share_apply_and_construct_traps() {
     let source = r#"
       function target(value) { return value + 1; }
