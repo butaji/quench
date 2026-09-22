@@ -386,6 +386,7 @@ impl<'a> Compiler<'a> {
             function.emit_instance_fields(fields);
         }
         function.statements(body);
+        function.emit_disposal();
         let undefined = function.literal(Constant::Undefined);
         function.emit(Op::Return, undefined, 0, 0, 0);
         let captures_locals = function

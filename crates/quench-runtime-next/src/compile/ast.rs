@@ -3,6 +3,7 @@ use super::*;
 mod array_literal;
 mod call;
 mod destructure;
+mod disposal;
 mod expression;
 mod object;
 mod optional;
@@ -60,6 +61,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) super_static: bool,
     pub(super) async_function: bool,
     pub(super) generator: bool,
+    disposable_stack: Option<Atom>,
 }
 
 impl<'a, 'b> FunctionCompiler<'a, 'b> {
@@ -100,6 +102,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             super_static,
             async_function,
             generator,
+            disposable_stack: None,
         }
     }
 
