@@ -117,6 +117,31 @@ fn abrupt_for_of_break_closes_custom_iterators() {
 }
 
 #[test]
+fn abrupt_for_of_return_and_throw_close_custom_iterators() {
+    let source = r#"
+      function return_value(iterable) {
+        for (var value of iterable) return value;
+      }
+      function throw_value(iterable) {
+        for (var value of iterable) throw 'boom';
+      }
+      function make_iterable() {
+        var iterable = {};
+        iterable[Symbol.iterator] = function() {
+          return {
+            next: function() { return { value: 7, done: false }; },
+            return: function() { print('closed'); return {}; }
+          };
+        };
+        return iterable;
+      }
+      print(return_value(make_iterable()));
+      try { throw_value(make_iterable()); } catch (error) { print(error); }
+    "#;
+    assert_eq!(output(source), ["closed", "7", "closed", "boom"]);
+}
+
+#[test]
 fn closures_prototypes_arrays_and_integer_ops() {
     let source = r#"
       var K = 40;
