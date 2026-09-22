@@ -1545,6 +1545,19 @@ fn spread_calls_use_function_apply_semantics() {
 }
 
 #[test]
+fn spread_calls_expand_custom_iterables_left_to_right() {
+    let source = r#"
+      function add(left, right) { return left + right; }
+      var iterable = {}; var next = 0;
+      iterable[Symbol.iterator] = function() {
+        return { next: function() { next = next + 1; return { value: next, done: next > 2 }; } };
+      };
+      print(add(...iterable));
+    "#;
+    assert_eq!(output(source), ["3"]);
+}
+
+#[test]
 fn computed_object_keys_use_indexed_property_semantics() {
     let source = r#"
       var key = 'answer';
