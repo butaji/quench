@@ -63,6 +63,15 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         cache: u16,
     ) -> Result<Value, JsError> {
+        let name = self.atom_name(atom);
+        if !name.starts_with('\0') {
+            let key = self.heap.alloc(Cell::String(name.into()));
+            for object in self.with_stack.clone().into_iter().rev() {
+                if self.has_property(p, object, key)? {
+                    return self.get_property(p, object, atom);
+                }
+            }
+        }
         let value = self.get_field_cached(p, self.globals, atom, cache)?;
         if value.is_undefined() && self.own_property(self.globals, atom).is_none() {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
@@ -76,6 +85,15 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         cache: u16,
     ) -> Result<Value, JsError> {
+        let name = self.atom_name(atom);
+        if !name.starts_with('\0') {
+            let key = self.heap.alloc(Cell::String(name.into()));
+            for object in self.with_stack.clone().into_iter().rev() {
+                if self.has_property(p, object, key)? {
+                    return self.get_property(p, object, atom);
+                }
+            }
+        }
         self.get_field_cached(p, self.globals, atom, cache)
     }
 
@@ -86,6 +104,15 @@ impl<H: Host> Vm<H> {
         value: Value,
         cache: u16,
     ) -> Result<(), JsError> {
+        let name = self.atom_name(atom);
+        if !name.starts_with('\0') {
+            let key = self.heap.alloc(Cell::String(name.into()));
+            for object in self.with_stack.clone().into_iter().rev() {
+                if self.has_property(p, object, key)? {
+                    return self.set_property_with_program(p, object, atom, value);
+                }
+            }
+        }
         self.set_field_cached(p, self.globals, atom, value, cache)
     }
 }

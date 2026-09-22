@@ -99,9 +99,9 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn load_atom(&mut self, atom: Atom) -> Register {
         let atom = self.resolve_lexical(atom);
         let dst = self.reg();
-        if let Some(slot) = self.local_slots.get(&atom).copied() {
+        if self.with_depth == 0 && let Some(slot) = self.local_slots.get(&atom).copied() {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
-        } else if let Some((depth, slot)) = self
+        } else if self.with_depth == 0 && let Some((depth, slot)) = self
             .scopes
             .iter()
             .enumerate()
@@ -123,13 +123,13 @@ impl FunctionCompiler<'_, '_> {
 
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
         let atom = self.resolve_lexical(atom);
-        if let Some(slot) = self.local_slots.get(&atom).copied() {
+        if self.with_depth == 0 && let Some(slot) = self.local_slots.get(&atom).copied() {
             self.emit(Op::StoreLocal, value, 0, 0, u32::from(slot));
             if self.function_id == 0 {
                 let cache = self.owner.cache_site();
                 self.emit(Op::StoreName, value, 0, cache, atom);
             }
-        } else if let Some((depth, slot)) = self
+        } else if self.with_depth == 0 && let Some((depth, slot)) = self
             .scopes
             .iter()
             .enumerate()

@@ -344,6 +344,22 @@ impl<H: Host> Vm<H> {
                 length,
                 length_tracking: false,
             }),
+            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::BigInt64,
+                object: Self::empty_object(self.bigint64_array_proto),
+                buffer,
+                offset,
+                length,
+                length_tracking: false,
+            }),
+            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::BigUint64,
+                object: Self::empty_object(self.biguint64_array_proto),
+                buffer,
+                offset,
+                length,
+                length_tracking: false,
+            }),
             TypedArrayKind::Float32 => self.heap.alloc(Cell::TypedArray {
                 kind: TypedArrayKind::Float32,
                 object: Self::empty_object(self.float32_array_proto),

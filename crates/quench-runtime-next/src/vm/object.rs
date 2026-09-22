@@ -3,9 +3,9 @@ use super::*;
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn shape_slot(&self, shape: u32, atom: Atom) -> Option<usize> {
-        self.shape_slots
+        self.shapes
             .get(shape as usize)
-            .and_then(|slots| slots.get(&atom).copied())
+            .and_then(|shape| shape.slots.get(&atom).copied())
             .map(usize::from)
     }
     pub(super) fn invalidate_field_caches(&mut self) {
@@ -478,15 +478,14 @@ impl<H: Host> Vm<H> {
             return next;
         }
         self.profile.shape_transition(false);
-        let mut fields = self.shapes[shape as usize].clone();
-        let mut slots = self.shape_slots[shape as usize].clone();
+        let mut fields = self.shapes[shape as usize].keys.clone();
+        let mut slots = self.shapes[shape as usize].slots.clone();
         slots.insert(atom, fields.len() as u16);
         fields.push(atom);
         let next = self.shapes.len() as u32;
-        self.shapes.push(fields);
-        self.shape_slots.push(slots);
+        self.shapes.push(Shape { keys: fields, slots });
         self.heap
-            .register_property_shape(next, self.shapes[next as usize].len());
+            .register_property_shape(next, self.shapes[next as usize].keys.len());
         self.transitions.insert((shape, atom), next);
         next
     }
