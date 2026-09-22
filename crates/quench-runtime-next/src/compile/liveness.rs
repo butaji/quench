@@ -140,6 +140,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::LoadEnvLocal
         | Op::LoadCapture
         | Op::LoadName
+        | Op::LoadNameTypeof
         | Op::LoadThis
         | Op::MakeClosure
         | Op::MakeArray
