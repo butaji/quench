@@ -157,41 +157,6 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
     }
-    pub(super) fn array_expression(&mut self, value: &ArrayExpression<'_>) -> Register {
-        let dst = self.reg();
-        let constants = value
-            .elements
-            .iter()
-            .map(|item| {
-                item.as_expression()
-                    .and_then(|value| binding_time::expression(value).static_value())
-            })
-            .collect::<Option<Vec<_>>>();
-        if let Some(constants) = constants
-            && !constants.is_empty()
-            && constants.len() <= u16::MAX as usize
-        {
-            let start = self.owner.constant_run(constants);
-            self.emit(
-                Op::MakeConstArray,
-                dst,
-                value.elements.len() as u16,
-                0,
-                start,
-            );
-            return dst;
-        }
-        self.emit(Op::MakeArray, dst, 0, 0, value.elements.len() as u32);
-        for (index, item) in value.elements.iter().enumerate() {
-            let Some(expr) = item.as_expression() else {
-                continue;
-            };
-            let key = self.literal(Constant::Number(index as f64));
-            let item = self.expression(expr);
-            self.emit(Op::SetIndex, item, dst, key, 0);
-        }
-        dst
-    }
     pub(super) fn static_get(&mut self, object: &Expression<'_>, key: &str) -> Register {
         if let Expression::StaticMemberExpression(inner) = object
             && matches!(&inner.object, Expression::ThisExpression(_))

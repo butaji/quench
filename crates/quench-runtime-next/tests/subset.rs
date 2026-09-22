@@ -1558,6 +1558,19 @@ fn spread_calls_expand_custom_iterables_left_to_right() {
 }
 
 #[test]
+fn array_literals_expand_custom_iterables() {
+    let source = r#"
+      var iterable = {}; var next = 0;
+      iterable[Symbol.iterator] = function() {
+        return { next: function() { next = next + 1; return { value: next, done: next > 2 }; } };
+      };
+      var values = [0, ...iterable, 3];
+      print(values.length); print(values[0]); print(values[1]); print(values[2]); print(values[3]);
+    "#;
+    assert_eq!(output(source), ["4", "0", "1", "2", "3"]);
+}
+
+#[test]
 fn computed_object_keys_use_indexed_property_semantics() {
     let source = r#"
       var key = 'answer';
