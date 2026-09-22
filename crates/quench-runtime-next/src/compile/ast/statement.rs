@@ -203,9 +203,9 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn for_of_statement_labeled(&mut self, item: &ForOfStatement<'_>, label: Option<Atom>) {
-        if item.r#await {
+        if item.r#await && !self.async_function {
             self.owner
-                .reject(item.span, "for-await-of is outside the supported subset");
+                .reject(item.span, "for-await-of requires an async function");
             return;
         }
         let iterator_atom = self.hidden_local("\0rqj:for-of:iterator");
@@ -221,8 +221,13 @@ impl FunctionCompiler<'_, '_> {
         self.owner
             .method_sites
             .push((next_atom, next_cache, Vec::new(), None));
-        let result = self.reg();
+        let mut result = self.reg();
         self.emit(Op::CallMethod, result, iterator, 0, method_site);
+        if item.r#await {
+            let awaited = self.reg();
+            self.emit(Op::Await, awaited, result, 0, 0);
+            result = awaited;
+        }
         let done = self.reg();
         let done_atom = self.owner.atom("done");
         let done_cache = self.owner.cache_site();

@@ -209,3 +209,17 @@ fn generators_share_continuations_with_iterator_results() {
         ["1", "5", "9", "true", "true", "function", "6"]
     );
 }
+
+#[test]
+fn async_for_of_uses_the_shared_await_continuation() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "async function sum() { var result = 0; for await (var value of [1, 2, 3]) { result = result + value; } return result; } sum().then(print);",
+            "async-for-of.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["6"]);
+}
