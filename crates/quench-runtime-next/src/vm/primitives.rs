@@ -400,7 +400,7 @@ impl<H: Host> Vm<H> {
 
     fn string_units(&self, value: Value) -> Result<Vec<u16>, JsError> {
         match self.heap.get(value) {
-            Some(Cell::String(text)) => Ok(text.encode_utf16().collect()),
+            Some(Cell::String(text)) => Ok(super::wtf16::Wtf16::from_str(text).units().to_vec()),
             _ => Err(JsError("string method receiver is not a string".into())),
         }
     }
@@ -426,8 +426,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {
-        Ok(self
-            .heap
-            .alloc(Cell::String(String::from_utf16_lossy(units))))
+        let text = super::wtf16::Wtf16::from_units(units).to_host_string();
+        Ok(self.heap.alloc(Cell::String(text)))
     }
 }

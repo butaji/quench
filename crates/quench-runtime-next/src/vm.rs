@@ -71,6 +71,7 @@ mod typed_array_install;
 mod typed_array_signed;
 mod typed_array_uint16;
 mod vm_init;
+mod wtf16;
 pub use error::JsError;
 #[cfg(test)]
 mod tests;
