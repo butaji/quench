@@ -253,4 +253,18 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["true", "false"]);
     }
+
+    #[test]
+    fn finalization_registry_uses_generic_property_traversal() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        let program = Engine::specialize_unspecialized(
+            "var registry = new FinalizationRegistry(function() {}); var token = {}; registry.register({}, 1, token); print(typeof registry.unregister); print(registry.unregister(token));",
+            "finalization-generic.js",
+        )
+        .unwrap();
+        runtime.execute(&program).unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["function", "true"]);
+    }
 }
