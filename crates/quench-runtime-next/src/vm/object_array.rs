@@ -82,7 +82,10 @@ impl<H: Host> Vm<H> {
             _ => None,
         }
         .or_else(|| self.heap.sparse_get(target, index));
-        let is_new = existing.is_none();
+        let is_new = existing.is_none()
+            && !self
+                .descriptors
+                .contains_key(&(target, PropertyKey::string(atom)));
         if is_new
             && self
                 .object_data(target)
@@ -205,7 +208,7 @@ impl<H: Host> Vm<H> {
         }
         self.descriptors
             .insert((target, PropertyKey::string(atom)), attributes);
-        if !attributes.configurable && !attributes.writable {
+        if !attributes.writable {
             self.unmap_argument_index(target, index);
         }
         let _ = p;

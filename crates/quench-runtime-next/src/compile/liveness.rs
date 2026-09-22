@@ -114,6 +114,7 @@ fn uses(
             operand(instruction.b(), fields) | operand(instruction.c(), fields)
         }
         Op::IncDec | Op::Unary | Op::Move => bit(instruction.b()),
+        Op::Delete => bit(instruction.b()) | bit(instruction.c()),
         Op::JumpFalse | Op::Return | Op::Throw => bit(instruction.a()),
         Op::Call => {
             bit(instruction.b())
@@ -156,6 +157,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::NumericMultiply
         | Op::IncDec
         | Op::Unary
+        | Op::Delete
         | Op::Move
         | Op::Call
         | Op::CallKnown
@@ -232,6 +234,7 @@ mod tests {
             is_async: false,
             is_generator: false,
             arguments_slot: None,
+            strict: false,
             locals: 0,
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),
