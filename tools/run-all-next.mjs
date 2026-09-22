@@ -46,7 +46,7 @@ for (const source of sources) {
     record = JSON.parse(result.stdout);
   } catch {
     record = {
-      schema: 1,
+      schema: 2,
       source,
       runner_status: result.status,
       runner_signal: result.signal,
@@ -58,13 +58,15 @@ for (const source of sources) {
   records.push(record);
 }
 
-const mismatches = records.filter((record) =>
-  Array.isArray(record.matches_node) && record.matches_node.some((match) => !match),
-).length;
+const mismatches = records.filter((record) => {
+  const nodeMismatch =
+    Array.isArray(record.matches_node) && record.matches_node.some((match) => !match);
+  return nodeMismatch || record.matches_next !== true;
+}).length;
 console.log(
   JSON.stringify(
     {
-      schema: 1,
+      schema: 2,
       root: directory,
       fixture_count: sources.length,
       deterministic_order: sources.map((source) => path.relative(directory, source)),

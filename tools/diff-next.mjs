@@ -61,12 +61,29 @@ if (!fs.existsSync(absoluteSource)) {
 const sourceSha256 = createHash("sha256").update(fs.readFileSync(absoluteSource)).digest("hex");
 
 const entries = [
-  ["legacy-quench", process.env.LEGACY_QUENCH_BIN ?? "target/debug/quench-node"],
-  ["next-quench", process.env.NEXT_QUENCH_BIN ?? "target/debug/quench-next"],
-  ["node-oracle", process.env.NODE_BIN ?? process.execPath],
+  {
+    label: "legacy-quench",
+    command: process.env.LEGACY_QUENCH_BIN ?? "target/debug/quench-node",
+    args: () => [absoluteSource],
+  },
+  {
+    label: "next-quench",
+    command: process.env.NEXT_QUENCH_BIN ?? "target/debug/quench-next",
+    args: () => [absoluteSource],
+  },
+  {
+    label: "next-quench-generic",
+    command: process.env.NEXT_QUENCH_BIN ?? "target/debug/quench-next",
+    args: () => ["--generic", absoluteSource],
+  },
+  {
+    label: "node-oracle",
+    command: process.env.NODE_BIN ?? process.execPath,
+    args: () => [absoluteSource],
+  },
 ];
 
-function execute(label, command, args = [absoluteSource], timeout = Number(process.env.DIFF_TIMEOUT_MS ?? 30_000)) {
+function execute(label, command, args, timeout = Number(process.env.DIFF_TIMEOUT_MS ?? 30_000)) {
   const started = performance.now();
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
@@ -90,18 +107,20 @@ function execute(label, command, args = [absoluteSource], timeout = Number(proce
   };
 }
 
-const results = entries.map(([label, command]) => execute(label, command));
-const reference = semanticObservable(results[2]);
+const results = entries.map((entry) => execute(entry.label, entry.command, entry.args()));
+const reference = semanticObservable(results[3]);
+const optimized = semanticObservable(results[1]);
 
 console.log(
   JSON.stringify(
     {
-      schema: 1,
+      schema: 2,
       source: absoluteSource,
       source_sha256: sourceSha256,
       timeout_ms: Number(process.env.DIFF_TIMEOUT_MS ?? 30_000),
       results,
-      matches_node: results.slice(0, 2).map((result) => semanticObservable(result) === reference),
+      matches_node: results.slice(0, 3).map((result) => semanticObservable(result) === reference),
+      matches_next: semanticObservable(results[2]) === optimized,
     },
     null,
     2,
