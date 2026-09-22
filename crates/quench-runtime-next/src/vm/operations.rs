@@ -35,24 +35,7 @@ impl<H: Host> Vm<H> {
             return self.data_view_native(p, native, this, args);
         }
         match native {
-            Native::Eval => {
-                let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let text = match self.heap.get(source) {
-                    Some(Cell::String(value)) => value.host_string().to_owned(),
-                    _ => return Ok(source),
-                };
-                if text.contains("arguments =") || text.contains("arguments=") {
-                    let message = self.heap.alloc(Cell::String(
-                        "'arguments' is not allowed in strict mode".into(),
-                    ));
-                    let error = self.construct_error_native(p, Native::SyntaxError, &[message])?;
-                    return Err(JsError::thrown(
-                        error,
-                        "SyntaxError: arguments assignment".into(),
-                    ));
-                }
-                Ok(Value::UNDEFINED)
-            }
+            Native::Eval => self.eval_native(p, args),
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::Print => {

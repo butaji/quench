@@ -326,12 +326,6 @@ impl FunctionCompiler<'_, '_> {
         );
     }
 
-    fn capture_scopes(&self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
-        let mut scopes = vec![Rc::clone(&self.local_slots)];
-        scopes.extend(self.scopes.iter().cloned());
-        scopes
-    }
-
     pub(super) fn emit_instance_fields(&mut self, fields: &[&PropertyDefinition<'_>]) {
         let this = self.reg();
         self.emit(Op::LoadThis, this, 0, 0, 0);

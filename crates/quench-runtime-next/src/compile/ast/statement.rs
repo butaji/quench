@@ -31,7 +31,10 @@ impl FunctionCompiler<'_, '_> {
                             )
                     )
                 });
+                self.push_lexical_scope(&block.body);
+                self.emit_hoisted(&block.body);
                 self.statements(&block.body);
+                self.lexical_scopes.pop();
                 if has_using {
                     self.emit_disposal();
                 }
@@ -218,6 +221,22 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn for_statement_labeled(&mut self, item: &ForStatement<'_>, label: Option<Atom>) {
+        let scoped = match item.init.as_ref() {
+            Some(ForStatementInit::VariableDeclaration(declaration))
+                if matches!(
+                    declaration.kind,
+                    VariableDeclarationKind::Let | VariableDeclarationKind::Const
+                ) =>
+            {
+                let mut scope = FxHashMap::default();
+                for item in &declaration.declarations {
+                    self.map_pattern_lexicals(&item.id, &mut scope);
+                }
+                self.lexical_scopes.push(scope);
+                true
+            }
+            _ => false,
+        };
         self.for_initializer(item.init.as_ref());
         let head = self.code.len() as u32;
         let condition_end = item.test.as_ref().map(|test| self.condition(test));
@@ -235,6 +254,9 @@ impl FunctionCompiler<'_, '_> {
             self.patch_to(edge, end);
         }
         self.patch_edges(&control.breaks, end);
+        if scoped {
+            self.lexical_scopes.pop();
+        }
     }
 
     fn for_initializer(&mut self, init: Option<&ForStatementInit<'_>>) {

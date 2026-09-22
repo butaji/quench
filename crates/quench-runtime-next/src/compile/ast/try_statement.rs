@@ -17,7 +17,7 @@ impl FunctionCompiler<'_, '_> {
         };
         let (slot, binding) = self.catch_slot(handler);
         let start = self.code.len() as u32;
-        self.statements(&item.block.body);
+        self.scoped_statements(&item.block.body);
         let end = self.code.len() as u32;
         let skip = self.emit(Op::Jump, 0, 0, 0, 0);
         let target = self.code.len() as u32;
@@ -27,8 +27,10 @@ impl FunctionCompiler<'_, '_> {
             target,
             slot,
         });
+        self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
-        self.statements(&handler.body.body);
+        self.scoped_statements(&handler.body.body);
+        self.lexical_scopes.pop();
         self.patch(skip);
     }
 
@@ -41,20 +43,20 @@ impl FunctionCompiler<'_, '_> {
             abrupt_edges: vec![],
         });
         let start = self.code.len() as u32;
-        self.statements(&item.block.body);
+        self.scoped_statements(&item.block.body);
         let context = self
             .finally_contexts
             .pop()
             .expect("try body finally context");
         let end = self.code.len() as u32;
-        self.statements(&finalizer.body);
+        self.scoped_statements(&finalizer.body);
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let exceptional_target = self.code.len() as u32;
-        self.statements(&finalizer.body);
+        self.scoped_statements(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
         let return_target = self.code.len() as u32;
-        self.statements(&finalizer.body);
+        self.scoped_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
         self.patch_edges(&context.return_edges, return_target);
@@ -84,7 +86,7 @@ impl FunctionCompiler<'_, '_> {
             abrupt_edges: vec![],
         });
         let start = self.code.len() as u32;
-        self.statements(&item.block.body);
+        self.scoped_statements(&item.block.body);
         let end = self.code.len() as u32;
         let body_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let catch_target = self.code.len() as u32;
@@ -94,9 +96,11 @@ impl FunctionCompiler<'_, '_> {
             target: catch_target,
             slot: catch_slot,
         });
+        self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
         let catch_start = self.code.len() as u32;
-        self.statements(&handler.body.body);
+        self.scoped_statements(&handler.body.body);
+        self.lexical_scopes.pop();
         let context = self
             .finally_contexts
             .pop()
@@ -104,14 +108,14 @@ impl FunctionCompiler<'_, '_> {
         let catch_end = self.code.len() as u32;
         let catch_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let finalizer_target = self.code.len() as u32;
-        self.statements(&finalizer.body);
+        self.scoped_statements(&finalizer.body);
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let exceptional_target = self.code.len() as u32;
-        self.statements(&finalizer.body);
+        self.scoped_statements(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
         let return_target = self.code.len() as u32;
-        self.statements(&finalizer.body);
+        self.scoped_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
         self.patch_to(body_exit, finalizer_target);
@@ -146,7 +150,7 @@ impl FunctionCompiler<'_, '_> {
                 continue;
             }
             let path = self.code.len() as u32;
-            self.statements(&finalizer.body);
+            self.scoped_statements(&finalizer.body);
             let tail = self.emit(Op::Jump, 0, 0, 0, 0);
             paths.push((abrupt.control, abrupt.continue_edge, path, tail));
             self.patch_to(abrupt.edge, path);
@@ -165,11 +169,11 @@ impl FunctionCompiler<'_, '_> {
             Some(parameter)
                 if matches!(&parameter.pattern, BindingPattern::BindingIdentifier(_)) =>
             {
-                let BindingPattern::BindingIdentifier(id) = &parameter.pattern else {
+                let BindingPattern::BindingIdentifier(_) = &parameter.pattern else {
                     unreachable!()
                 };
-                let atom = self.owner.atom(id.name.as_str());
-                (self.local_slot(atom), None)
+                let binding = self.hidden_local("\0rqj:catch-binding");
+                (self.local_slot(binding), Some(binding))
             }
             None => (None, None),
             Some(_) => {
