@@ -25,6 +25,19 @@ pub(crate) struct Continuation {
     pub completion: Completion,
 }
 
+/// A generation-checked slot for a suspended activation. Resumption consumes
+/// the slot, so a stale host/compiler token cannot resume a replacement frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ContinuationId {
+    pub(crate) slot: u32,
+    pub(crate) generation: u32,
+}
+
+pub(crate) struct SuspendedEntry {
+    pub(crate) generation: u32,
+    pub(crate) continuation: Option<Continuation>,
+}
+
 impl Continuation {
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
         std::iter::once(self.env)
@@ -65,5 +78,18 @@ mod tests {
                 Value::heap(6)
             ]
         );
+    }
+
+    #[test]
+    fn continuation_slots_use_distinct_generation_tokens() {
+        let first = ContinuationId {
+            slot: 2,
+            generation: 1,
+        };
+        let second = ContinuationId {
+            slot: 2,
+            generation: 2,
+        };
+        assert_ne!(first, second);
     }
 }
