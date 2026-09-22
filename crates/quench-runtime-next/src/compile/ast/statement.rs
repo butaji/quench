@@ -335,7 +335,15 @@ impl FunctionCompiler<'_, '_> {
             return;
         };
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
-        self.controls[index].breaks.push(edge);
+        if let Some(context) = self.finally_contexts.last_mut() {
+            context.abrupt_edges.push(FinallyAbrupt {
+                edge,
+                control: index,
+                continue_edge: false,
+            });
+        } else {
+            self.controls[index].breaks.push(edge);
+        }
     }
 
     fn continue_statement(&mut self, item: &ContinueStatement<'_>) {
@@ -361,7 +369,15 @@ impl FunctionCompiler<'_, '_> {
             return;
         };
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
-        self.controls[index].continues.push(edge);
+        if let Some(context) = self.finally_contexts.last_mut() {
+            context.abrupt_edges.push(FinallyAbrupt {
+                edge,
+                control: index,
+                continue_edge: true,
+            });
+        } else {
+            self.controls[index].continues.push(edge);
+        }
     }
 
     fn labeled_statement(&mut self, item: &LabeledStatement<'_>) {

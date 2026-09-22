@@ -31,6 +31,14 @@ struct ControlTarget {
 pub(super) struct FinallyContext {
     return_atom: Atom,
     return_edges: Vec<usize>,
+    abrupt_edges: Vec<FinallyAbrupt>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct FinallyAbrupt {
+    edge: usize,
+    control: usize,
+    continue_edge: bool,
 }
 
 pub(super) struct FunctionCompiler<'a, 'b> {
