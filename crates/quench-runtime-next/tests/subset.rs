@@ -151,12 +151,28 @@ fn proxy_prevent_extensions_trap_controls_integrity_operations() {
 #[test]
 fn proxy_is_extensible_trap_controls_integrity_queries() {
     let source = r#"
-      var target = {};
+      var target = {}; Object.preventExtensions(target);
       var proxy = new Proxy(target, { isExtensible: function(t) { print('trap'); return false; } });
       print(Object.isExtensible(proxy));
       print(Reflect.isExtensible(proxy));
     "#;
     assert_eq!(output(source), ["trap", "false", "trap", "false"]);
+}
+
+#[test]
+fn proxy_integrity_traps_enforce_non_extensible_target_agreement() {
+    let source = r#"
+      var target = {}; Object.preventExtensions(target);
+      var wrong_proto = new Proxy(target, { getPrototypeOf: function() { return {}; } });
+      try { Object.getPrototypeOf(wrong_proto); } catch (error) { print('proto'); }
+      var wrong_set = new Proxy(target, { setPrototypeOf: function() { return true; } });
+      print(Reflect.setPrototypeOf(wrong_set, null));
+      var wrong_ext = new Proxy({}, { isExtensible: function() { return false; } });
+      try { Object.isExtensible(wrong_ext); } catch (error) { print('ext'); }
+      var wrong_prevent = new Proxy({}, { preventExtensions: function() { return true; } });
+      try { Object.preventExtensions(wrong_prevent); } catch (error) { print('prevent'); }
+    "#;
+    assert_eq!(output(source), ["proto", "false", "ext", "prevent"]);
 }
 
 #[test]
