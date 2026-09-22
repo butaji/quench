@@ -188,15 +188,6 @@ fn lanes16(a: u128) -> [i32; 8] {
     o
 }
 
-fn lanes16u(a: u128) -> [i32; 8] {
-    let b = a.to_le_bytes();
-    let mut o = [0i32; 8];
-    for i in 0..8 {
-        o[i] = u16::from_le_bytes([b[i * 2], b[i * 2 + 1]]) as i32;
-    }
-    o
-}
-
 fn narrow8(a: u128, b: u128, signed: bool) -> u128 {
     let mut o = [0u8; 16];
     let src = [a, b];
@@ -214,15 +205,6 @@ fn lanes32(a: u128) -> [i64; 4] {
     let mut o = [0i64; 4];
     for i in 0..4 {
         o[i] = i32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap()) as i64;
-    }
-    o
-}
-
-fn lanes32u(a: u128) -> [i64; 4] {
-    let b = a.to_le_bytes();
-    let mut o = [0i64; 4];
-    for i in 0..4 {
-        o[i] = u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap()) as i64;
     }
     o
 }
