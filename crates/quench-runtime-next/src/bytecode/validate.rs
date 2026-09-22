@@ -211,7 +211,9 @@ impl ResidualProgram {
                     Op::Move if !register(instruction.a()) || !register(instruction.b()) => {
                         return Err(format!("function {index} move operand is invalid"));
                     }
-                    Op::GetIterator | Op::Return | Op::Throw if !register(instruction.a()) => {
+                    Op::GetIterator | Op::GetAsyncIterator | Op::Return | Op::Throw
+                        if !register(instruction.a()) =>
+                    {
                         return Err(format!("function {index} result register is invalid"));
                     }
                     Op::JumpFalse if !register(instruction.a()) => {

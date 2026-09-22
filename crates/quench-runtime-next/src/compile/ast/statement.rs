@@ -211,7 +211,12 @@ impl FunctionCompiler<'_, '_> {
         let iterator_atom = self.hidden_local("\0rqj:for-of:iterator");
         let source_value = self.expression(&item.right);
         let iterator = self.reg();
-        self.emit(Op::GetIterator, iterator, source_value, 0, 0);
+        let iterator_op = if item.r#await {
+            Op::GetAsyncIterator
+        } else {
+            Op::GetIterator
+        };
+        self.emit(iterator_op, iterator, source_value, 0, 0);
         self.store_atom(iterator_atom, iterator);
         let head = self.code.len() as u32;
         let iterator = self.load_atom(iterator_atom);

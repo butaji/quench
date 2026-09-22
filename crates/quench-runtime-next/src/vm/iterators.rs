@@ -101,6 +101,35 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    pub(super) fn get_async_iterator(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(symbol) = self.well_known_symbols.get("asyncIterator").copied() {
+            let method = self.get_index(p, source, symbol)?;
+            if !method.is_undefined() {
+                if !self.is_function(method) {
+                    return Err(JsError("async iterator method is not callable".into()));
+                }
+                let iterator = self.call_value(p, method, source, &[])?;
+                if !self.is_object_like(iterator) {
+                    return Err(JsError(
+                        "async iterator method did not return an object".into(),
+                    ));
+                }
+                return Ok(iterator);
+            }
+        }
+        let iterator = self.get_iterator(p, source)?;
+        Ok(self.heap.alloc(Cell::Iterator {
+            object: Self::empty_object(self.iterator_proto),
+            source: iterator,
+            kind: IteratorKind::AsyncFromSync,
+            index: 0,
+        }))
+    }
+
     pub(super) fn array_iterator_native(
         &mut self,
         native: Native,
@@ -165,6 +194,12 @@ impl<H: Host> Vm<H> {
         };
         if kind == IteratorKind::Generator {
             return self.generator_next(p, this, args);
+        }
+        if kind == IteratorKind::AsyncFromSync {
+            let result = self.iterator_next_with_args(p, source, args)?;
+            let promise = self.promise_object();
+            self.promise_resolve_value(p, promise, result)?;
+            return Ok(promise);
         }
         let selected = match kind {
             IteratorKind::Array

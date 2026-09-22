@@ -231,6 +231,7 @@ impl Instr {
                 | Op::NumericAdd
                 | Op::NumericMultiply
                 | Op::GetIterator
+                | Op::GetAsyncIterator
                 | Op::GetField
                 | Op::Call
                 | Op::CallKnown

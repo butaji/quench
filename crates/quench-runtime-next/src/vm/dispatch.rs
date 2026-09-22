@@ -141,6 +141,10 @@ impl<H: Host> Vm<H> {
                 let value = self.get_iterator(p, self.read(f, i.b()))?;
                 self.write(f, i.a(), value);
             }
+            Op::GetAsyncIterator => {
+                let value = self.get_async_iterator(p, self.read(f, i.b()))?;
+                self.write(f, i.a(), value);
+            }
             Op::Await => {
                 return Ok(StepResult::Await {
                     value: self.read(f, i.b()),

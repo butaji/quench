@@ -8,7 +8,7 @@ pub(super) fn write_program(
     path: &std::path::Path,
 ) -> Result<(), String> {
     let mut out = BinaryWriter::new();
-    out.bytes.extend_from_slice(b"RQJ\0\x0c");
+    out.bytes.extend_from_slice(b"RQJ\0\x0d");
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
     out.u8(u8::from(program.specialized));
     out.strings(&program.atoms);
@@ -116,7 +116,7 @@ pub(super) fn write_program(
 pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let mut input = BinaryReader::new(&bytes);
-    input.magic(b"RQJ\0\x0c")?;
+    input.magic(b"RQJ\0\x0d")?;
     let abi = input.u64()?;
     if abi != super::ResidualProgram::RUNTIME_ABI_FINGERPRINT {
         return Err("residual runtime ABI mismatch".into());
