@@ -645,11 +645,6 @@ fn compile_and_find<'a>(
             result = find_match_from_sticky(&fallback, text, start, sticky);
         }
     }
-    #[cfg(feature = "execution-trace")]
-    {
-        let match_ns = match_start.elapsed().as_nanos();
-        crate::execution_trace::regexp(source, compile_ns, match_ns);
-    }
     result
 }
 
