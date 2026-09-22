@@ -223,7 +223,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn same_value(&self, left: Value, right: Value) -> bool {
+    pub(super) fn same_value(&self, left: Value, right: Value) -> bool {
         if let (Some(a), Some(b)) = (left.as_number(), right.as_number()) {
             return (a.is_nan() && b.is_nan())
                 || (a == b && (a != 0.0 || a.is_sign_negative() == b.is_sign_negative()));
@@ -307,10 +307,14 @@ impl<H: Host> Vm<H> {
                     self.heap.alloc(Cell::String(text))
                 };
                 let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+                if self.object_data(descriptor).is_none() {
+                    return Err(JsError("property descriptor is not an object".into()));
+                }
                 let result = self.call_value(p, trap, handler, &[target, key, descriptor])?;
                 if !self.truthy(result) {
                     return Err(JsError("proxy defineProperty trap returned false".into()));
                 }
+                self.validate_proxy_define_property(p, target, key, descriptor)?;
                 return Ok(source);
             }
         }
