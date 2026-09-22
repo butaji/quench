@@ -112,6 +112,16 @@ fn calls_preserve_argument_vectors_beyond_the_old_eight_value_cap() {
 }
 
 #[test]
+fn wide_method_and_constructor_calls_use_the_same_argument_buffer() {
+    assert_eq!(
+        output(
+            "var object = { pick: function(a, b, c, d, e, f, g, h, i) { return i; } }; print(object.pick(1, 2, 3, 4, 5, 6, 7, 8, 9)); function Box(a, b, c, d, e, f, g, h, i) { this.value = i; } print(new Box(1, 2, 3, 4, 5, 6, 7, 8, 9).value);"
+        ),
+        ["9", "9"],
+    );
+}
+
+#[test]
 fn object_is_uses_same_value_semantics() {
     assert_eq!(
         output(
