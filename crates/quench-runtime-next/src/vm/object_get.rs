@@ -179,7 +179,7 @@ impl<H: Host> Vm<H> {
                 }
                 Some(Cell::String(v)) => {
                     return Ok(if atom == self.length_atom {
-                        Value::number(v.encode_utf16().count() as f64)
+                        Value::number(v.units().len() as f64)
                     } else if atom == self.primitive_atoms[0] {
                         self.native_value(Native::StringCharCodeAt)
                     } else if atom == self.primitive_atoms[1] {

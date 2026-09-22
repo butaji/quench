@@ -230,13 +230,13 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("invalid string repeat count".into()));
                 }
                 let count = count.trunc() as usize;
-                let Some(size) = receiver.len().checked_mul(count) else {
+                let Some(size) = receiver.units().len().checked_mul(count) else {
                     return Err(JsError("string repeat count is too large".into()));
                 };
                 if size > 64 * 1024 * 1024 {
                     return Err(JsError("string repeat count is too large".into()));
                 }
-                Ok(self.heap.alloc(Cell::String(receiver.repeat(count).into())))
+                Ok(self.heap.alloc(Cell::String(receiver.repeat(count))))
             }
             Native::StringPadStart | Native::StringPadEnd => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
