@@ -38,6 +38,7 @@ impl FunctionCompiler<'_, '_> {
         self.finally_contexts.push(FinallyContext {
             return_atom,
             return_edges: vec![],
+            abrupt_edges: vec![],
         });
         let start = self.code.len() as u32;
         self.statements(&item.block.body);
@@ -59,6 +60,7 @@ impl FunctionCompiler<'_, '_> {
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
         self.patch_edges(&context.return_edges, return_target);
+        self.emit_abrupt_paths(finalizer, &context);
         self.handlers.push(crate::bytecode::Handler {
             start,
             end,
@@ -79,6 +81,7 @@ impl FunctionCompiler<'_, '_> {
         self.finally_contexts.push(FinallyContext {
             return_atom,
             return_edges: vec![],
+            abrupt_edges: vec![],
         });
         let start = self.code.len() as u32;
         self.statements(&item.block.body);
@@ -116,6 +119,7 @@ impl FunctionCompiler<'_, '_> {
         self.patch_to(catch_exit, finalizer_target);
         self.patch_to(normal_exit, end_target);
         self.patch_edges(&context.return_edges, return_target);
+        self.emit_abrupt_paths(finalizer, &context);
         self.handlers.push(crate::bytecode::Handler {
             start: catch_start,
             end: catch_end,
@@ -129,6 +133,30 @@ impl FunctionCompiler<'_, '_> {
             let value = self.load_atom(atom);
             let parameter = handler.param.as_ref().unwrap();
             self.bind_pattern(&parameter.pattern, value);
+        }
+    }
+
+    fn emit_abrupt_paths(&mut self, finalizer: &BlockStatement<'_>, context: &FinallyContext) {
+        let mut paths = Vec::new();
+        for abrupt in &context.abrupt_edges {
+            if let Some((_, _, path, _)) = paths.iter().find(|(control, continue_edge, _, _)| {
+                *control == abrupt.control && *continue_edge == abrupt.continue_edge
+            }) {
+                self.patch_to(abrupt.edge, *path);
+                continue;
+            }
+            let path = self.code.len() as u32;
+            self.statements(&finalizer.body);
+            let tail = self.emit(Op::Jump, 0, 0, 0, 0);
+            paths.push((abrupt.control, abrupt.continue_edge, path, tail));
+            self.patch_to(abrupt.edge, path);
+        }
+        for (control, continue_edge, _, tail) in paths {
+            if continue_edge {
+                self.controls[control].continues.push(tail);
+            } else {
+                self.controls[control].breaks.push(tail);
+            }
         }
     }
 

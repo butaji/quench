@@ -1906,6 +1906,22 @@ fn try_finally_routes_return_values_through_the_finalizer() {
 }
 
 #[test]
+fn try_finally_routes_loop_break_and_continue_completions() {
+    let source = r#"
+      var log = '';
+      for (var i = 0; i < 3; i = i + 1) {
+        try {
+          if (i === 1) { break; }
+          if (i === 0) { continue; }
+          log = log + 'body';
+        } finally { log = log + i; }
+      }
+      print(log);
+    "#;
+    assert_eq!(output(source), ["01"]);
+}
+
+#[test]
 fn class_static_blocks_run_with_the_class_as_this() {
     let source = r#"
       var order = 0;
