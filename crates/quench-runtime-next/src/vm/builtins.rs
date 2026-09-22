@@ -156,6 +156,7 @@ const NATIVES: &[Native] = &[
     Native::FinalizationRegistry,
     Native::FinalizationRegistryRegister,
     Native::FinalizationRegistryUnregister,
+    Native::DisposableStack, Native::DisposableStackUse, Native::DisposableStackAdopt, Native::DisposableStackDefer, Native::DisposableStackDispose,
     Native::FunctionCall,
     Native::FunctionApply,
     Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateToISOString, Native::DateToJSON, Native::DateParse, Native::DateUTC,
@@ -278,6 +279,7 @@ impl<H: Host> Vm<H> {
         }
         self.global(program, "Symbol", symbol)?;
         self.install_iterator_self(program)?;
+        self.install_disposal(program)?;
         let string = self.native_value(Native::String);
         self.set_named(
             program,
@@ -480,10 +482,8 @@ impl<H: Host> Vm<H> {
         name: &str,
         value: Value,
     ) -> Result<(), JsError> {
-        if let Some(atom) = self.lookup_atom(name) {
-            self.set_property(self.globals, atom, value)?;
-        }
-        Ok(())
+        let atom = self.intern_atom(name);
+        self.set_property(self.globals, atom, value)
     }
     pub(super) fn set_named(
         &mut self,
@@ -492,9 +492,7 @@ impl<H: Host> Vm<H> {
         name: &str,
         value: Value,
     ) -> Result<(), JsError> {
-        if let Some(atom) = self.lookup_atom(name) {
-            self.set_property(object, atom, value)?;
-        }
-        Ok(())
+        let atom = self.intern_atom(name);
+        self.set_property(object, atom, value)
     }
 }
