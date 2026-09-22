@@ -75,7 +75,8 @@ impl<H: Host> Vm<H> {
             if offset > buffer_length || offset.saturating_add(length) > buffer_length {
                 return Err(JsError("Uint8ClampedArray length is out of range".into()));
             }
-            return Ok(self.heap.alloc(Cell::Uint8ClampedArray {
+            return Ok(self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Uint8Clamped,
                 object: Self::empty_object(self.uint8_clamped_array_proto),
                 buffer: source,
                 offset,
@@ -116,7 +117,8 @@ impl<H: Host> Vm<H> {
             };
             Rc::make_mut(bytes).copy_from_slice(&converted);
         }
-        Ok(self.heap.alloc(Cell::Uint8ClampedArray {
+        Ok(self.heap.alloc(Cell::TypedArray {
+            kind: TypedArrayKind::Uint8Clamped,
             object: Self::empty_object(self.uint8_clamped_array_proto),
             buffer,
             offset: 0,
@@ -195,7 +197,8 @@ impl<H: Host> Vm<H> {
             if offset.saturating_add(length.saturating_mul(2)) > buffer_length {
                 return Err(JsError("Uint16Array length is out of range".into()));
             }
-            return Ok(self.heap.alloc(Cell::Uint16Array {
+            return Ok(self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Uint16,
                 object: Self::empty_object(self.uint16_array_proto),
                 buffer: source,
                 offset,
@@ -237,7 +240,8 @@ impl<H: Host> Vm<H> {
                 bytes[index * 2..index * 2 + 2].copy_from_slice(&value.to_ne_bytes());
             }
         }
-        Ok(self.heap.alloc(Cell::Uint16Array {
+        Ok(self.heap.alloc(Cell::TypedArray {
+            kind: TypedArrayKind::Uint16,
             object: Self::empty_object(self.uint16_array_proto),
             buffer,
             offset: 0,
@@ -318,7 +322,8 @@ impl<H: Host> Vm<H> {
             if offset.saturating_add(length.saturating_mul(4)) > buffer_length {
                 return Err(JsError("Uint32Array length is out of range".into()));
             }
-            return Ok(self.heap.alloc(Cell::Uint32Array {
+            return Ok(self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Uint32,
                 object: Self::empty_object(self.uint32_array_proto),
                 buffer: source,
                 offset,
@@ -360,7 +365,8 @@ impl<H: Host> Vm<H> {
                 bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_ne_bytes());
             }
         }
-        Ok(self.heap.alloc(Cell::Uint32Array {
+        Ok(self.heap.alloc(Cell::TypedArray {
+            kind: TypedArrayKind::Uint32,
             object: Self::empty_object(self.uint32_array_proto),
             buffer,
             offset: 0,

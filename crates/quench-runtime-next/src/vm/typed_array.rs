@@ -67,15 +67,7 @@ impl<H: Host> Vm<H> {
     }
     fn typed_array_view(&self, object: Value) -> Option<(Value, usize, usize)> {
         match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, offset, .. })
-            | Some(Cell::Uint8ClampedArray { buffer, offset, .. })
-            | Some(Cell::Uint16Array { buffer, offset, .. })
-            | Some(Cell::Uint32Array { buffer, offset, .. })
-            | Some(Cell::Int8Array { buffer, offset, .. })
-            | Some(Cell::Int16Array { buffer, offset, .. })
-            | Some(Cell::Int32Array { buffer, offset, .. })
-            | Some(Cell::Float32Array { buffer, offset, .. })
-            | Some(Cell::Float64Array { buffer, offset, .. }) => {
+            Some(Cell::TypedArray { buffer, offset, .. }) => {
                 Some((*buffer, *offset, self.typed_array_length(object)?))
             }
             _ => None,
@@ -92,16 +84,7 @@ impl<H: Host> Vm<H> {
             return Ok(
                 if matches!(
                     args.first().and_then(|value| self.heap.get(*value)),
-                    Some(Cell::Uint8Array { .. })
-                        | Some(Cell::Uint8ClampedArray { .. })
-                        | Some(Cell::Uint16Array { .. })
-                        | Some(Cell::Uint32Array { .. })
-                        | Some(Cell::Int8Array { .. })
-                        | Some(Cell::Int16Array { .. })
-                        | Some(Cell::Int32Array { .. })
-                        | Some(Cell::Float32Array { .. })
-                        | Some(Cell::Float64Array { .. })
-                        | Some(Cell::DataView { .. })
+                    Some(Cell::TypedArray { .. }) | Some(Cell::DataView { .. })
                 ) {
                     Value::TRUE
                 } else {
@@ -296,63 +279,72 @@ impl<H: Host> Vm<H> {
         kind: TypedArrayKind,
     ) -> Result<Value, JsError> {
         Ok(match kind {
-            TypedArrayKind::Uint8 => self.heap.alloc(Cell::Uint8Array {
+            TypedArrayKind::Uint8 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Uint8,
                 object: Self::empty_object(self.uint8_array_proto),
                 buffer,
                 offset,
                 length,
                 length_tracking: false,
             }),
-            TypedArrayKind::Uint8Clamped => self.heap.alloc(Cell::Uint8ClampedArray {
+            TypedArrayKind::Uint8Clamped => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Uint8Clamped,
                 object: Self::empty_object(self.uint8_clamped_array_proto),
                 buffer,
                 offset,
                 length,
                 length_tracking: false,
             }),
-            TypedArrayKind::Uint16 => self.heap.alloc(Cell::Uint16Array {
+            TypedArrayKind::Uint16 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Uint16,
                 object: Self::empty_object(self.uint16_array_proto),
                 buffer,
                 offset,
                 length,
                 length_tracking: false,
             }),
-            TypedArrayKind::Uint32 => self.heap.alloc(Cell::Uint32Array {
+            TypedArrayKind::Uint32 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Uint32,
                 object: Self::empty_object(self.uint32_array_proto),
                 buffer,
                 offset,
                 length,
                 length_tracking: false,
             }),
-            TypedArrayKind::Int8 => self.heap.alloc(Cell::Int8Array {
+            TypedArrayKind::Int8 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Int8,
                 object: Self::empty_object(self.int8_array_proto),
                 buffer,
                 offset,
                 length,
                 length_tracking: false,
             }),
-            TypedArrayKind::Int16 => self.heap.alloc(Cell::Int16Array {
+            TypedArrayKind::Int16 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Int16,
                 object: Self::empty_object(self.int16_array_proto),
                 buffer,
                 offset,
                 length,
                 length_tracking: false,
             }),
-            TypedArrayKind::Int32 => self.heap.alloc(Cell::Int32Array {
+            TypedArrayKind::Int32 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Int32,
                 object: Self::empty_object(self.int32_array_proto),
                 buffer,
                 offset,
                 length,
                 length_tracking: false,
             }),
-            TypedArrayKind::Float32 => self.heap.alloc(Cell::Float32Array {
+            TypedArrayKind::Float32 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Float32,
                 object: Self::empty_object(self.float32_array_proto),
                 buffer,
                 offset,
                 length,
                 length_tracking: false,
             }),
-            TypedArrayKind::Float64 => self.heap.alloc(Cell::Float64Array {
+            TypedArrayKind::Float64 => self.heap.alloc(Cell::TypedArray {
+                kind: TypedArrayKind::Float64,
                 object: Self::empty_object(self.float64_array_proto),
                 buffer,
                 offset,
@@ -449,7 +441,8 @@ impl<H: Host> Vm<H> {
                 bytes[index] = value;
             }
         }
-        Ok(self.heap.alloc(Cell::Uint8Array {
+        Ok(self.heap.alloc(Cell::TypedArray {
+            kind: TypedArrayKind::Uint8,
             object: Self::empty_object(self.uint8_array_proto),
             buffer,
             offset,
