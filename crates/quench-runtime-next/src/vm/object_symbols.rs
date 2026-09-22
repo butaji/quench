@@ -124,20 +124,6 @@ impl<H: Host> Vm<H> {
             .copied()
     }
 
-    pub(super) fn inherited_symbol_property(&self, object: Value, key: Value) -> Option<Value> {
-        let property = PropertyKey::symbol(key);
-        let mut current = object;
-        loop {
-            if let Some(value) = self.symbol_properties.get(&(current, property)).copied() {
-                return Some(value);
-            }
-            current = self.object_data(current)?.proto;
-            if current.is_null() {
-                return None;
-            }
-        }
-    }
-
     pub(super) fn set_symbol_property(
         &mut self,
         object: Value,
@@ -200,6 +186,15 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             });
+        let getter_atom = self.intern_atom("get");
+        let setter_atom = self.intern_atom("set");
+        let getter = self.own_property(descriptor, getter_atom);
+        let setter = self.own_property(descriptor, setter_atom);
+        if getter.is_some() || setter.is_some() {
+            attributes.accessor = true;
+            attributes.getter = getter.filter(|value| !value.is_undefined());
+            attributes.setter = setter.filter(|value| !value.is_undefined());
+        }
         for (name, slot) in [
             ("writable", &mut attributes.writable),
             ("enumerable", &mut attributes.enumerable),
