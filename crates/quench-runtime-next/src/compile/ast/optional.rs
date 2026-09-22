@@ -65,6 +65,7 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn chain_expression(&mut self, value: &ChainElement<'_>) -> Register {
         match value {
             ChainElement::CallExpression(item) => self.optional_call(item),
+            ChainElement::TSNonNullExpression(item) => self.expression(&item.expression),
             ChainElement::StaticMemberExpression(item) => {
                 self.optional_static_get(&item.object, item.property.name.as_str())
             }
