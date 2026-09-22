@@ -136,7 +136,7 @@ fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn agent_get_report() -> Value {
     run_due_agent_timers();
-    // `getReport()` is the host polling boundary used by Test262 agents.
+    // `getReport()` is the host polling boundary used by agents.
     // Expire finite Atomics.waitAsync deadlines here so a tight guest polling
     // loop observes the queued promise reaction without requiring a separate
     // event-loop thread.
