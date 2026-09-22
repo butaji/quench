@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use super::const_eval;
 use super::{registry, Func, Global, Inner, Instance, InvokeError, Memory, ResolvedImport, Table};
-use crate::hir::{ConstExpr, Export, HirElem, HirMemory, HirModule, HirTable};
+use crate::hir::{ConstExpr, HirElem, HirMemory, HirModule, HirTable};
 use crate::native::{Native, RefVal};
 use crate::slot::Slot;
 use crate::unwind::{Failure, Trap};
@@ -280,8 +280,4 @@ fn write_table(
     }
     tab.elems[offset as usize..end as usize].copy_from_slice(&items);
     Ok(())
-}
-
-pub fn empty_exports() -> std::collections::HashMap<String, Export> {
-    std::collections::HashMap::new()
 }
