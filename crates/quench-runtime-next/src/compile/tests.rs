@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn scalar_constants_reuse_exact_slots() {
-    let mut compiler = Compiler::new("test.js");
+    let mut compiler = Compiler::new_with_mode("test.js", SpecializationMode::Enabled);
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
     assert_eq!(compiler.constant(Constant::String("x".into())), 1);
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
@@ -12,7 +12,7 @@ fn scalar_constants_reuse_exact_slots() {
 
 #[test]
 fn scalar_constants_preserve_signed_zero_bits() {
-    let mut compiler = Compiler::new("test.js");
+    let mut compiler = Compiler::new_with_mode("test.js", SpecializationMode::Enabled);
     assert_ne!(
         compiler.constant(Constant::Number(0.0)),
         compiler.constant(Constant::Number(-0.0))
@@ -21,7 +21,7 @@ fn scalar_constants_preserve_signed_zero_bits() {
 
 #[test]
 fn constant_runs_remain_fresh_and_contiguous() {
-    let mut compiler = Compiler::new("test.js");
+    let mut compiler = Compiler::new_with_mode("test.js", SpecializationMode::Enabled);
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
     let start = compiler.constant_run(vec![Constant::Number(1.0), Constant::Number(1.0)]);
     assert_eq!(start, 1);
@@ -55,4 +55,15 @@ fn constant_computed_property_uses_field_cache_site() {
     );
     assert!(program.field_sites.is_empty());
     assert!(program.cache_sites > 0);
+}
+
+#[test]
+fn unspecialized_entry_keeps_generic_dispatch_class() {
+    let program = Engine::specialize_unspecialized("print(40 + 2);", "generic.js").unwrap();
+    assert!(
+        program
+            .functions
+            .iter()
+            .all(|function| function.dispatch == DispatchClass::General)
+    );
 }
