@@ -174,6 +174,20 @@ fn proxy_own_keys_enforces_target_key_invariants() {
 }
 
 #[test]
+fn proxy_descriptor_trap_enforces_target_invariants() {
+    let source = r#"
+      var target = {};
+      Object.defineProperty(target, 'fixed', { value: 1, configurable: false });
+      var omitted = new Proxy(target, { getOwnPropertyDescriptor: function() { return undefined; } });
+      try { Reflect.getOwnPropertyDescriptor(omitted, 'fixed'); } catch (error) { print('hidden'); }
+      Object.preventExtensions(target);
+      var extra = new Proxy(target, { getOwnPropertyDescriptor: function() { return { value: 2, configurable: true }; } });
+      try { Reflect.getOwnPropertyDescriptor(extra, 'new'); } catch (error) { print('extra'); }
+    "#;
+    assert_eq!(output(source), ["hidden", "extra"]);
+}
+
+#[test]
 fn callable_and_constructable_proxies_share_apply_and_construct_traps() {
     let source = r#"
       function target(value) { return value + 1; }
