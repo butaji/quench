@@ -13,7 +13,6 @@ pub(super) struct PromiseReaction {
     pub(super) on_rejected: Value,
     pub(super) next: Value,
 }
-
 #[derive(Clone, Copy, Debug)]
 pub(super) struct FinallyReaction {
     pub(super) handler: Value,
@@ -27,7 +26,6 @@ pub(super) struct PromiseRecord {
     pub(super) reactions: Vec<PromiseReaction>,
     pub(super) finally_reactions: Vec<FinallyReaction>,
 }
-
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PromiseJob {
     pub(super) handler: Value,
@@ -64,6 +62,7 @@ pub(super) enum AggregateMode {
     All,
     Race,
     AllSettled,
+    Any,
 }
 
 #[derive(Clone, Debug)]
@@ -184,6 +183,12 @@ impl<H: Host> Vm<H> {
             "allSettled",
             self.native_value(Native::PromiseAllSettled),
         )?;
+        self.set_named(
+            program,
+            promise,
+            "any",
+            self.native_value(Native::PromiseAny),
+        )?;
         self.global(program, "Promise", promise)
     }
 
@@ -298,6 +303,7 @@ impl<H: Host> Vm<H> {
             Native::PromiseAll => self.promise_aggregate(p, args, AggregateMode::All),
             Native::PromiseRace => self.promise_aggregate(p, args, AggregateMode::Race),
             Native::PromiseAllSettled => self.promise_aggregate(p, args, AggregateMode::AllSettled),
+            Native::PromiseAny => self.promise_aggregate(p, args, AggregateMode::Any),
             Native::PromiseReactionJob => {
                 self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }

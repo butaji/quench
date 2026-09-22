@@ -5,6 +5,27 @@ use super::promise::{
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn aggregate_error(&mut self, errors: Vec<Value>) -> Result<Value, JsError> {
+        let errors = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: std::rc::Rc::new(errors),
+        });
+        let error = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        let name_atom = self.intern_atom("name");
+        let message_atom = self.intern_atom("message");
+        let errors_atom = self.intern_atom("errors");
+        let name = self.heap.alloc(Cell::String("AggregateError".into()));
+        let message = self
+            .heap
+            .alloc(Cell::String("All promises were rejected".into()));
+        self.set_property(error, name_atom, name)?;
+        self.set_property(error, message_atom, message)?;
+        self.set_property(error, errors_atom, errors)?;
+        Ok(error)
+    }
+
     fn enqueue_finally_continuation(
         &mut self,
         p: &ResidualProgram,
@@ -125,6 +146,9 @@ impl<H: Host> Vm<H> {
                 elements: std::rc::Rc::new(vec![]),
             });
             self.promise_settle(p, output, PromiseState::Fulfilled, values)?;
+        } else if length == 0 && mode == AggregateMode::Any {
+            let error = self.aggregate_error(vec![])?;
+            self.promise_settle(p, output, PromiseState::Rejected, error)?;
         }
         Ok(output)
     }
@@ -197,6 +221,28 @@ impl<H: Host> Vm<H> {
                     elements: std::rc::Rc::new(values),
                 });
                 self.promise_settle(p, output, PromiseState::Fulfilled, values)?;
+            }
+            return Ok(Value::UNDEFINED);
+        }
+        if mode == AggregateMode::Any {
+            if !aggregate_job.rejected {
+                let output = self.promise.aggregates[&aggregate_job.aggregate].output;
+                self.promise_settle(p, output, PromiseState::Fulfilled, value)?;
+                return Ok(Value::UNDEFINED);
+            }
+            let (output, complete, errors) = {
+                let record = self
+                    .promise
+                    .aggregates
+                    .get_mut(&aggregate_job.aggregate)
+                    .expect("aggregate record exists");
+                record.values[aggregate_job.index] = value;
+                record.remaining = record.remaining.saturating_sub(1);
+                (record.output, record.remaining == 0, record.values.clone())
+            };
+            if complete {
+                let error = self.aggregate_error(errors)?;
+                self.promise_settle(p, output, PromiseState::Rejected, error)?;
             }
             return Ok(Value::UNDEFINED);
         }
