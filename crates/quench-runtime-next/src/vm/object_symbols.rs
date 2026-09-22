@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
         Ok(Some(keys))
     }
 
-    fn object_own_key_values(
+    pub(super) fn object_own_key_values(
         &mut self,
         p: &ResidualProgram,
         object: Value,

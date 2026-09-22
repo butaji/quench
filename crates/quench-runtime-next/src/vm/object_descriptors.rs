@@ -155,6 +155,25 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if matches!(self.heap.get(source), Some(Cell::Proxy { .. })) {
+            let result = self.object();
+            for key in self.object_own_key_values(p, source)? {
+                let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
+                if descriptor.is_undefined() {
+                    continue;
+                }
+                match self.heap.get(key).cloned() {
+                    Some(Cell::Symbol(_)) => self.set_symbol_property(result, key, descriptor)?,
+                    Some(Cell::String(name)) => {
+                        let atom = self.intern_atom(&name);
+                        self.set_property(result, atom, descriptor)?;
+                    }
+                    _ => unreachable!("validated own property key"),
+                }
+            }
+            return Ok(result);
+        }
         let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
         let target = self.box_object(target)?;
         let data = self.object_data(target).expect("boxed target is object");
