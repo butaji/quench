@@ -8,7 +8,7 @@ impl<H: Host> Vm<H> {
         f: usize,
         i: WideInstruction,
         pc: &mut usize,
-    ) -> Result<Option<Value>, JsError> {
+    ) -> Result<StepResult, JsError> {
         match i.op() {
             Op::Nop => {}
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
@@ -85,13 +85,13 @@ impl<H: Host> Vm<H> {
                     self.read(f, i.c()),
                 );
                 if i.a() & RETURN_REGISTER != 0 {
-                    return Ok(Some(v));
+                    return Ok(StepResult::Return(v));
                 }
                 self.write(f, i.a() & REGISTER_MASK, v);
             }
             Op::SuperConstArrayObject2 => {
                 if let Some(value) = self.execute_const_array_object2(p, f, i.a(), i.imm())? {
-                    return Ok(Some(value));
+                    return Ok(StepResult::Return(value));
                 }
             }
             Op::MakeArray => {
@@ -127,7 +127,7 @@ impl<H: Host> Vm<H> {
                     self.set_field_cached(p, self.frames[f].this, sink.0, v, sink.1)?;
                 }
                 if i.a() & RETURN_REGISTER != 0 {
-                    return Ok(Some(v));
+                    return Ok(StepResult::Return(v));
                 }
                 self.write(f, i.a() & REGISTER_MASK, v);
             }
@@ -140,6 +140,12 @@ impl<H: Host> Vm<H> {
             Op::GetIterator => {
                 let value = self.get_iterator(p, self.read(f, i.b()))?;
                 self.write(f, i.a(), value);
+            }
+            Op::Await => {
+                return Ok(StepResult::Await {
+                    value: self.read(f, i.b()),
+                    destination: i.a(),
+                });
             }
             Op::SetField => {
                 self.set_field_cached(p, self.read(f, i.b()), i.imm(), self.read(f, i.a()), i.c())?
@@ -176,7 +182,7 @@ impl<H: Host> Vm<H> {
                     self.binary(p, i.imm(), left, right)?
                 };
                 if i.a() & RETURN_REGISTER != 0 {
-                    return Ok(Some(v));
+                    return Ok(StepResult::Return(v));
                 }
                 self.write(f, i.a() & REGISTER_MASK, v);
             }
@@ -239,7 +245,7 @@ impl<H: Host> Vm<H> {
                 let value = self.call_value(p, callee, this, args)?;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(0);
-                    return Ok(Some(value));
+                    return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.a(), value);
             }
@@ -256,7 +262,7 @@ impl<H: Host> Vm<H> {
                     self.call_user_maybe_async(p, u32::from(i.b()), parent, self.globals, args)?;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(0);
-                    return Ok(Some(value));
+                    return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.a(), value);
             }
@@ -267,7 +273,7 @@ impl<H: Host> Vm<H> {
                 let value = self.call_method_site(p, f, i.imm() as usize, this)?;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(1);
-                    return Ok(Some(value));
+                    return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.a(), value);
             }
@@ -283,7 +289,7 @@ impl<H: Host> Vm<H> {
                 let value = self.call_method_site(p, f, i.imm() as usize, this)?;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(2);
-                    return Ok(Some(value));
+                    return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.a(), value);
             }
@@ -295,18 +301,18 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc = *pc;
                 let v = self.construct_value(p, self.read(f, i.b()), args)?;
                 if i.a() & RETURN_REGISTER != 0 {
-                    return Ok(Some(v));
+                    return Ok(StepResult::Return(v));
                 }
                 self.write(f, i.a(), v);
             }
-            Op::Return => return Ok(Some(self.read(f, i.a()))),
+            Op::Return => return Ok(StepResult::Return(self.read(f, i.a()))),
             Op::Throw => {
                 let value = self.read(f, i.a());
                 let message = self.to_string(p, value)?;
                 return Err(JsError::thrown(value, message));
             }
         }
-        Ok(None)
+        Ok(StepResult::Continue)
     }
     #[inline(always)]
     pub(super) fn resolve_operand(
