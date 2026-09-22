@@ -123,7 +123,7 @@ impl<H: Host> Vm<H> {
                     let sink = p.field_sites[i.imm() as usize]
                         .sink
                         .expect("fused field sink");
-                    self.set_field_cached(self.frames[f].this, sink.0, v, sink.1)?;
+                    self.set_field_cached(p, self.frames[f].this, sink.0, v, sink.1)?;
                 }
                 if i.a() & RETURN_REGISTER != 0 {
                     return Ok(Some(v));
@@ -141,10 +141,10 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), value);
             }
             Op::SetField => {
-                self.set_field_cached(self.read(f, i.b()), i.imm(), self.read(f, i.a()), i.c())?
+                self.set_field_cached(p, self.read(f, i.b()), i.imm(), self.read(f, i.a()), i.c())?
             }
             Op::SetThisField => {
-                self.set_field_cached(self.frames[f].this, i.imm(), self.read(f, i.a()), i.c())?
+                self.set_field_cached(p, self.frames[f].this, i.imm(), self.read(f, i.a()), i.c())?
             }
             Op::SetIndex => {
                 #[cfg(feature = "profile-aggregate")]

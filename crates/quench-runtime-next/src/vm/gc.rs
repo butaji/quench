@@ -40,6 +40,12 @@ impl<H: Host> Vm<H> {
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(self.symbol_registry.values().copied())
+                .chain(
+                    self.descriptors
+                        .values()
+                        .flat_map(|attributes| [attributes.getter, attributes.setter])
+                        .flatten(),
+                )
                 .chain(self.frames.iter().flat_map(|frame| {
                     let function = &program.functions[frame.function as usize];
                     let roots = (function.register_root_offset != u32::MAX).then(|| {
