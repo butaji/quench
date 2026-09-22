@@ -141,8 +141,7 @@ fn ordinary_object_shape_tracks_public_layout_not_metadata() {
 
 #[test]
 fn descriptor_metadata_lookup_is_cold_and_last_write_wins() {
-    let properties = vec![
-        ("alpha".to_string(), Value::Number(1.0)),
+    let properties = [("alpha".to_string(), Value::Number(1.0)),
         (
             crate::builtins::descriptor_key("alpha"),
             Value::String("old".to_string()),
@@ -151,8 +150,7 @@ fn descriptor_metadata_lookup_is_cold_and_last_write_wins() {
         (
             crate::builtins::descriptor_key("alpha"),
             Value::String("new".to_string()),
-        ),
-    ];
+        )];
     assert_eq!(
         crate::builtins::descriptor_metadata(&properties[..], "alpha"),
         Some(&Value::String("new".to_string())).cloned()

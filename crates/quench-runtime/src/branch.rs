@@ -137,6 +137,49 @@ fn wrap_suspension(
     }
 }
 
+pub(crate) fn reduce_with_registers(
+    statement: &oxc::ast::ast::Statement<'_>,
+    facts: &mut crate::facts::ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
+    match statement {
+        oxc::ast::ast::Statement::BlockStatement(block) => {
+            let mut block_locals = locals.clone();
+            crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
+            let mut ops = Vec::new();
+            let mut last = None;
+            for child in &block.body {
+                last = crate::reduce::reduce_statement(
+                    child,
+                    &mut ops,
+                    facts,
+                    next_register,
+                    next_slot,
+                    &mut block_locals,
+                )?
+                .or(last);
+            }
+            let (ops, last) = (ops, last);
+            Ok((ops, last))
+        }
+        statement => {
+            let mut ops = Vec::new();
+            let mut locals = locals.clone();
+            let last = crate::reduce::reduce_statement(
+                statement,
+                &mut ops,
+                facts,
+                next_register,
+                next_slot,
+                &mut locals,
+            )?;
+            Ok((ops, last))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,48 +253,5 @@ mod tests {
             ));
         }
         assert_eq!(then_ops.tier(), crate::machine::ExecutionTier::Baseline);
-    }
-}
-
-pub(crate) fn reduce_with_registers(
-    statement: &oxc::ast::ast::Statement<'_>,
-    facts: &mut crate::facts::ProgramDb,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
-    match statement {
-        oxc::ast::ast::Statement::BlockStatement(block) => {
-            let mut block_locals = locals.clone();
-            crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
-            let mut ops = Vec::new();
-            let mut last = None;
-            for child in &block.body {
-                last = crate::reduce::reduce_statement(
-                    child,
-                    &mut ops,
-                    facts,
-                    next_register,
-                    next_slot,
-                    &mut block_locals,
-                )?
-                .or(last);
-            }
-            let (ops, last) = (ops, last);
-            Ok((ops, last))
-        }
-        statement => {
-            let mut ops = Vec::new();
-            let mut locals = locals.clone();
-            let last = crate::reduce::reduce_statement(
-                statement,
-                &mut ops,
-                facts,
-                next_register,
-                next_slot,
-                &mut locals,
-            )?;
-            Ok((ops, last))
-        }
     }
 }

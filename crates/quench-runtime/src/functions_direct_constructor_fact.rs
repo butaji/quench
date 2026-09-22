@@ -369,7 +369,6 @@ mod direct_constructor_tests {
         };
         direct_constructor_fact(function, &std::collections::HashMap::new())
             .iter()
-            .into_iter()
             .map(|field| (field.name.clone(), field.source.clone()))
             .collect()
     }
