@@ -71,6 +71,41 @@ impl JsError {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn type_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
+        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let object = self
+            .construct_error_native(program, Native::TypeError, &[message])
+            .unwrap_or(Value::UNDEFINED);
+        JsError::thrown(object, text)
+    }
+
+    pub(super) fn reference_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
+        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let object = self
+            .construct_error_native(program, Native::ReferenceError, &[message])
+            .unwrap_or(Value::UNDEFINED);
+        JsError::thrown(object, text)
+    }
+
+    pub(super) fn thrown_value_for(&mut self, program: &ResidualProgram, error: JsError) -> Value {
+        if let Some(value) = error.thrown_value() {
+            return value;
+        }
+        let text = error.into_message();
+        let native = if text.starts_with("cannot ")
+            || text.contains("not callable")
+            || text.contains("must be ")
+            || text.contains("requires ")
+        {
+            Native::TypeError
+        } else {
+            Native::Error
+        };
+        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        self.construct_error_native(program, native, &[message])
+            .unwrap_or(Value::UNDEFINED)
+    }
+
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
         let (constructor, marker) = match self.heap.get(value) {
             Some(Cell::String(_)) => (Native::String, "\0rqj:string-value"),
@@ -207,10 +242,24 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let source = args.last().copied().unwrap_or(Value::UNDEFINED);
         let source = self.to_string(program, source)?;
-        if source.trim() != "return this;" {
-            return Err(JsError("dynamic Function source is unsupported".into()));
+        let source = source.trim();
+        if source == "return this;" {
+            return Ok(self.native_with_env(Native::FunctionReturnThis, Value::NULL));
         }
-        Ok(self.native_with_env(Native::FunctionReturnThis, Value::NULL))
+        let Some(name) = source
+            .strip_prefix("return ")
+            .map(|name| name.trim().trim_end_matches(';').trim())
+            .filter(|name| {
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+            })
+        else {
+            return Err(JsError("dynamic Function source is unsupported".into()));
+        };
+        let name = self.heap.alloc(Cell::String(JsString::from_str(name)));
+        Ok(self.native_with_env(Native::FunctionReturnName, name))
     }
 
     pub(super) fn call_function_dispatch(
@@ -219,10 +268,20 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if native == Native::FunctionReturnThis {
-            Ok(self.globals)
-        } else {
-            self.function_native(program, args)
+        match native {
+            Native::FunctionReturnThis => Ok(self.globals),
+            Native::FunctionReturnName => {
+                let name = self
+                    .active_native_env()
+                    .and_then(|value| match self.heap.get(value) {
+                        Some(Cell::String(name)) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
+                let atom = self.intern_js_atom(&name);
+                self.get_property(program, self.globals, atom)
+            }
+            _ => self.function_native(program, args),
         }
     }
 

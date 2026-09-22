@@ -119,6 +119,10 @@ impl FunctionCompiler<'_, '_> {
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
         if let Some(slot) = self.local_slots.get(&atom).copied() {
             self.emit(Op::StoreLocal, value, 0, 0, u32::from(slot));
+            if self.function_id == 0 {
+                let cache = self.owner.cache_site();
+                self.emit(Op::StoreName, value, 0, cache, atom);
+            }
         } else if let Some((depth, slot)) = self
             .scopes
             .iter()
@@ -293,6 +297,12 @@ impl FunctionCompiler<'_, '_> {
                 let value = self.compound_field(object, atom, right, operator);
                 let site = self.owner.cache_site();
                 self.emit(Op::SetField, value, object, site, atom);
+                // A top-level global declaration is represented by the root
+                // frame while `globalThis` is its object view. Keep both
+                // views coherent at this explicit mutation boundary.
+                if matches!(&item.object, Expression::Identifier(id) if id.name == "globalThis") {
+                    self.store_atom(atom, value);
+                }
                 value
             }
             SimpleAssignmentTarget::ComputedMemberExpression(item) => {

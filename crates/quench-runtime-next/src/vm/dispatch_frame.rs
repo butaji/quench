@@ -149,9 +149,7 @@ impl<H: Host> Vm<H> {
                 return Err(error);
             };
             if let Some(slot) = handler.slot {
-                let value = error
-                    .thrown_value()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                let value = self.thrown_value_for(p, error);
                 if self.frames[frame].captured {
                     let env = self.frames[frame].env;
                     let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) else {
@@ -214,9 +212,7 @@ impl<H: Host> Vm<H> {
                         return Err(error);
                     };
                     if let Some(slot) = handler.slot {
-                        let value = error
-                            .thrown_value()
-                            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                        let value = self.thrown_value_for(p, error);
                         if self.frames[frame].captured {
                             let env = self.frames[frame].env;
                             let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env)

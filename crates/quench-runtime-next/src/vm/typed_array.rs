@@ -20,8 +20,20 @@ impl<H: Host> Vm<H> {
         self.intern_atom("value");
         self.intern_atom("done");
         let uint8_array = self.native_value(Native::Uint8Array);
+        let typed_array = self.native_value(Native::TypedArray);
         self.uint8_array_proto = self.object();
+        self.object_data_mut(typed_array)
+            .expect("TypedArray constructor")
+            .proto = self.function_proto;
+        self.set_named(program, typed_array, "prototype", self.uint8_array_proto)?;
+        let typed_name = self.heap.alloc(Cell::String("TypedArray".into()));
+        self.set_named(program, typed_array, "name", typed_name)?;
+        self.object_data_mut(uint8_array)
+            .expect("Uint8Array constructor")
+            .proto = typed_array;
         self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
+        let name = self.heap.alloc(Cell::String("Uint8Array".into()));
+        self.set_named(program, uint8_array, "name", name)?;
         self.set_named(
             program,
             uint8_array,

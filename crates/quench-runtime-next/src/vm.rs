@@ -33,9 +33,11 @@ mod dispatch_frame;
 mod dispatch_numeric;
 mod dynamic_strings;
 mod environment;
+mod equality;
 mod error;
 mod field_cache;
-mod finalization; mod function;
+mod finalization;
+mod function;
 mod gc;
 mod generator;
 mod index;
@@ -460,7 +462,10 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
             return self.proxy_call(p, callee, this, args);
         }
-        match self.call_target(callee)? {
+        let target = self
+            .call_target(callee)
+            .map_err(|error| self.type_error(p, error.to_string()))?;
+        match target {
             CallTarget::Native(native) => {
                 self.profile.call_target(0, args.len());
                 if native == Native::ProxyRevoke {
@@ -476,25 +481,6 @@ impl<H: Host> Vm<H> {
                 self.profile.call_target(2, args.len());
                 self.call_user_numeric(p, id, env, this, NumericArguments::Values(args))
             }
-        }
-    }
-    fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
-        match self.heap.get(callee) {
-            Some(Cell::Function {
-                kind: FunctionKind::User(id),
-                env,
-                ..
-            }) => Ok(CallTarget::User(*id, *env)),
-            Some(Cell::Function {
-                kind: FunctionKind::NumericUser(id),
-                env,
-                ..
-            }) => Ok(CallTarget::NumericUser(*id, *env)),
-            Some(Cell::Function {
-                kind: FunctionKind::Native(native),
-                ..
-            }) => Ok(CallTarget::Native(*native)),
-            other => self.non_callable_target(callee, other),
         }
     }
 }

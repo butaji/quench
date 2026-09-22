@@ -6,7 +6,7 @@ use std::rc::Rc;
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, RealmTypeError, Function, FunctionReturnThis,
+    Print, HostDone, CreateRealm, RealmTypeError, Function, FunctionReturnThis, FunctionReturnName,
     Object,
     ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen,
@@ -20,7 +20,7 @@ pub(crate) enum Native {
     Proxy, ProxyRevocable, ProxyRevoke,
     JsonParse,
     JsonStringify,
-    Array,
+    Array, TypedArray,
     ArrayIsArray,
     ArrayPush,
     ArrayPop,
@@ -174,7 +174,7 @@ pub(crate) enum Native {
     BigInt, BigIntValueOf,
     SymbolFor,
     SymbolKeyFor,
-    StringCharCodeAt,
+    StringCharCodeAt, StringSlice,
     StringCharAt,
     StringSubstring,
     StringSubstr,
@@ -240,7 +240,10 @@ impl TypedArrayKind {
 }
 impl Native {
     pub(crate) fn is_function_native(self) -> bool {
-        matches!(self, Self::Function | Self::FunctionReturnThis)
+        matches!(
+            self,
+            Self::Function | Self::FunctionReturnThis | Self::FunctionReturnName
+        )
     }
 
     pub(crate) fn is_host_control_native(self) -> bool {
@@ -417,6 +420,7 @@ impl Object {
     }
 }
 #[derive(Clone, Debug)]
+#[rustfmt::skip]
 pub(crate) enum Cell {
     Object(Object),
     Array {
@@ -491,9 +495,6 @@ pub(crate) enum Cell {
         parent: Value,
         slots: Box<[Value]>,
     },
-    String(JsString),
-    BigInt(String),
-    Symbol(Option<String>),
-    Date(f64),
-    Error(String),
+    String(JsString), BigInt(String),
+    Symbol(Option<String>), Date(f64), Error(String),
 }

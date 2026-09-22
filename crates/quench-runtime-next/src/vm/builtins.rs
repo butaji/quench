@@ -2,7 +2,7 @@ use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::RealmTypeError, Native::Function, Native::FunctionReturnThis, Native::Object,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::RealmTypeError, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::Object,
     Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
@@ -21,7 +21,7 @@ const NATIVES: &[Native] = &[
     Native::ProxyRevoke,
     Native::JsonParse,
     Native::JsonStringify,
-    Native::Array,
+    Native::Array, Native::TypedArray,
     Native::ArrayIsArray,
     Native::ArrayPush,
     Native::ArrayPop,
@@ -168,7 +168,7 @@ const NATIVES: &[Native] = &[
     Native::Symbol, Native::SymbolToString, Native::SymbolValueOf,
     Native::SymbolFor,
     Native::SymbolKeyFor,
-    Native::StringCharCodeAt,
+    Native::StringCharCodeAt, Native::StringSlice,
     Native::StringCharAt,
     Native::StringSubstring,
     Native::StringSubstr,

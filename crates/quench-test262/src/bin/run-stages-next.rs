@@ -28,8 +28,9 @@ fn run() -> Result<(), String> {
         .transpose()
         .map_err(|_| "usage: run-stages-next [from] [to]".to_string())?
         .unwrap_or(from);
+    let filter = args.next();
     if args.next().is_some() || from > to {
-        return Err("usage: run-stages-next [from] [to]".into());
+        return Err("usage: run-stages-next [from] [to] [path-filter]".into());
     }
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
@@ -41,6 +42,12 @@ fn run() -> Result<(), String> {
         .filter(|stage| stage.id >= from && stage.id <= to)
     {
         let files = discover_js_files(&stage.root)?;
+        let files = filter.as_ref().map_or(files.clone(), |needle| {
+            files
+                .into_iter()
+                .filter(|path| path.to_string_lossy().contains(needle))
+                .collect()
+        });
         let mut cache = HarnessCache::new(root.join("harness"));
         let report = runner.run_files_with_cache(files, &mut cache)?;
         println!(

@@ -32,6 +32,10 @@ impl<H: Host> Vm<H> {
         name: &str,
     ) -> Result<(), JsError> {
         let constructor = self.native_value(native);
+        let typed_array = self.native_value(Native::TypedArray);
+        self.object_data_mut(constructor)
+            .expect("typed array constructor")
+            .proto = typed_array;
         let proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
@@ -47,6 +51,8 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Uint8 => unreachable!(),
         }
         self.set_named(program, constructor, "prototype", proto)?;
+        let name_value = self.heap.alloc(Cell::String(name.into()));
+        self.set_named(program, constructor, "name", name_value)?;
         let width = Value::number(kind.width() as f64);
         self.set_named(program, constructor, "BYTES_PER_ELEMENT", width)?;
         self.set_named(program, proto, "BYTES_PER_ELEMENT", width)?;

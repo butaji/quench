@@ -284,7 +284,7 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(2);
                 let this = self.read(f, i.b());
                 self.frames[f].pc = *pc;
-                let value = self.call_method_site(p, f, i.imm() as usize, this)?;
+                let value = self.call_method_site_safe(p, f, i.imm() as usize, this)?;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(1);
                     return Ok(StepResult::Return(value));
@@ -300,7 +300,7 @@ impl<H: Host> Vm<H> {
                     self.frames[f].this
                 };
                 self.frames[f].pc = *pc;
-                let value = self.call_method_site(p, f, i.imm() as usize, this)?;
+                let value = self.call_method_site_safe(p, f, i.imm() as usize, this)?;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(2);
                     return Ok(StepResult::Return(value));
@@ -322,7 +322,17 @@ impl<H: Host> Vm<H> {
             Op::Return => return Ok(StepResult::Return(self.read(f, i.a()))),
             Op::Throw => {
                 let value = self.read(f, i.a());
-                let message = self.to_string(p, value)?;
+                let message = if self.object_data(value).is_some() {
+                    let atom = self.intern_atom("message");
+                    match self.get_property(p, value, atom)? {
+                        value if matches!(self.heap.get(value), Some(Cell::String(_))) => {
+                            self.to_string(p, value)?
+                        }
+                        _ => self.to_string(p, value)?,
+                    }
+                } else {
+                    self.to_string(p, value)?
+                };
                 return Err(JsError::thrown(value, message));
             }
         }
