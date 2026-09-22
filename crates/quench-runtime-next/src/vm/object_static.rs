@@ -13,38 +13,27 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("Object.assign target is not an object".into()))?;
         for source in args.iter().copied().skip(1) {
             let source = self.box_object(source)?;
-            let source = self.proxy_target(source);
-            let data = self.object_data(source).expect("boxed source is object");
-            let values = self
-                .ordered_shape(data)
-                .into_iter()
-                .filter_map(|(atom, slot)| {
-                    if !self.is_enumerable(source, atom) {
-                        return None;
+            let enumerable_atom = self.intern_atom("enumerable");
+            for key in self.object_own_key_values(p, source)? {
+                let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
+                if descriptor.is_undefined() {
+                    continue;
+                }
+                let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
+                if !self.truthy(enumerable) {
+                    continue;
+                }
+                match self.heap.get(key).cloned() {
+                    Some(Cell::Symbol(_)) => {
+                        let value = self.get_index(p, source, key)?;
+                        self.set_index(p, target, key, value)?;
                     }
-                    self.heap
-                        .property_get(data, slot)
-                        .map(|value| (atom, value))
-                })
-                .collect::<Vec<_>>();
-            for (atom, value) in values {
-                self.set_property_with_program(p, target, atom, value)?;
-            }
-            for symbol in self
-                .symbol_property_order
-                .get(&source)
-                .cloned()
-                .unwrap_or_default()
-            {
-                let attributes = self
-                    .symbol_descriptors
-                    .get(&(source, symbol))
-                    .copied()
-                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-                if attributes.enumerable
-                    && let Some(value) = self.symbol_property(source, symbol)
-                {
-                    self.set_index(p, target, symbol, value)?;
+                    Some(Cell::String(name)) => {
+                        let atom = self.intern_atom(&name);
+                        let value = self.get_property(p, source, atom)?;
+                        self.set_property_with_program(p, target, atom, value)?;
+                    }
+                    _ => unreachable!("validated own property key"),
                 }
             }
         }
