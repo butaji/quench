@@ -225,11 +225,7 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(0);
                 let base = (i.imm() >> 16) as u16;
                 let n = i.imm() as u16;
-                let mut inline = [std::mem::MaybeUninit::<Value>::uninit(); 8];
-                debug_assert!(n <= 8, "wide calls need an out-of-line argument buffer");
-                for x in 0..n {
-                    inline[x as usize].write(self.read(f, base + x));
-                }
+                let arguments = CallArguments::from_values((0..n).map(|x| self.read(f, base + x)));
                 let this = self.read(f, i.c());
                 let this = if this.is_undefined() {
                     self.globals
@@ -237,11 +233,7 @@ impl<H: Host> Vm<H> {
                     this
                 };
                 let callee = self.read(f, i.b());
-                // SAFETY: the compiler caps calls at eight arguments and this
-                // loop initialized exactly the prefix exposed to the callee.
-                let args = unsafe {
-                    std::slice::from_raw_parts(inline.as_ptr().cast::<Value>(), n as usize)
-                };
+                let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
                 let value = self.call_value(p, callee, this, args)?;
                 if i.a() & RETURN_REGISTER != 0 {
@@ -254,14 +246,8 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(1);
                 let base = (i.imm() >> 16) as u16;
                 let n = i.imm() as u16;
-                let mut inline = [std::mem::MaybeUninit::<Value>::uninit(); 8];
-                for x in 0..n {
-                    inline[x as usize].write(self.read(f, base + x));
-                }
-                // SAFETY: the compiler caps calls at eight initialized arguments.
-                let args = unsafe {
-                    std::slice::from_raw_parts(inline.as_ptr().cast::<Value>(), n as usize)
-                };
+                let arguments = CallArguments::from_values((0..n).map(|x| self.read(f, base + x)));
+                let args = arguments.as_slice();
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, n as usize);
                 self.frames[f].pc = *pc;
@@ -302,18 +288,8 @@ impl<H: Host> Vm<H> {
             Op::Construct => {
                 self.profile.call_source(4);
                 let n = i.imm() as u16;
-                let mut inline = [std::mem::MaybeUninit::<Value>::uninit(); 8];
-                debug_assert!(
-                    n <= 8,
-                    "wide constructors need an out-of-line argument buffer"
-                );
-                for x in 0..n {
-                    inline[x as usize].write(self.read(f, i.c() + x));
-                }
-                // SAFETY: identical initialized-prefix invariant to `Call`.
-                let args = unsafe {
-                    std::slice::from_raw_parts(inline.as_ptr().cast::<Value>(), n as usize)
-                };
+                let arguments = CallArguments::from_values((0..n).map(|x| self.read(f, i.c() + x)));
+                let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
                 let v = self.construct_value(p, self.read(f, i.b()), args)?;
                 if i.a() & RETURN_REGISTER != 0 {

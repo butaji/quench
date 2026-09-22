@@ -102,6 +102,16 @@ fn for_of_assignment_patterns_reuse_destructuring_lowering() {
 }
 
 #[test]
+fn calls_preserve_argument_vectors_beyond_the_old_eight_value_cap() {
+    assert_eq!(
+        output(
+            "function ninth(a, b, c, d, e, f, g, h, i) { return i; } print(ninth(1, 2, 3, 4, 5, 6, 7, 8, 9));"
+        ),
+        ["9"],
+    );
+}
+
+#[test]
 fn object_is_uses_same_value_semantics() {
     assert_eq!(
         output(
