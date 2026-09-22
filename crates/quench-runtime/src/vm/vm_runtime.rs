@@ -358,7 +358,7 @@ pub(crate) extern "C" fn native_dispatch_bridge(raw: *mut std::ffi::c_void) -> u
     };
     match result {
         Ok(transition) => {
-            dispatch.outcome = Some(NativeBridgeOutcome::Transition(transition));
+            dispatch.outcome = Some(NativeBridgeOutcome::Transition(Box::new(transition)));
             NATIVE_DISPATCH_OK
         }
         Err(error) => {
@@ -446,7 +446,7 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
                     "composed_array_loop",
                     true,
                 );
-                region.outcome = Some(NativeBridgeOutcome::Transition(transition));
+                region.outcome = Some(NativeBridgeOutcome::Transition(Box::new(transition)));
                 return NATIVE_DISPATCH_OK;
             }
             Some(Err(error)) => {
@@ -471,7 +471,7 @@ pub(crate) extern "C" fn native_region_bridge(raw: *mut std::ffi::c_void) -> u64
 
     match execute_region_fallback(region) {
         Ok(transition) => {
-            region.outcome = Some(NativeBridgeOutcome::Transition(transition));
+            region.outcome = Some(NativeBridgeOutcome::Transition(Box::new(transition)));
             NATIVE_DISPATCH_OK
         }
         Err(error) => record_native_region_error(region, error),
@@ -9852,7 +9852,7 @@ mod compact_handler_tests {
         assert!(matches!(
             super::finish_native_outcome(
                 super::NATIVE_DISPATCH_SEMANTIC_ERROR,
-                Some(super::NativeBridgeOutcome::Transition(transition)),
+                Some(super::NativeBridgeOutcome::Transition(Box::new(transition))),
                 true,
                 "region",
                 0,

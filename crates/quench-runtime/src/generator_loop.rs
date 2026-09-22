@@ -256,7 +256,7 @@ fn finish_loop_body(
                 store_loop_value(generator, frame.dst, value)?;
                 Ok(Some(crate::completion::Completion::Normal))
             }
-            crate::completion::LoopTransition::Propagate(completion) => Ok(Some(completion)),
+            crate::completion::LoopTransition::Propagate(completion) => Ok(Some(*completion)),
         },
     }
 }
