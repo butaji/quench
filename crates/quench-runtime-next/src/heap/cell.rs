@@ -170,9 +170,9 @@ pub(crate) enum Native {
     RegExp,
     RegExpExec,
     RegExpTest,
-    String,
-    Boolean,
+    String, Boolean,
     Symbol, SymbolToString, SymbolValueOf,
+    BigInt, BigIntValueOf,
     SymbolFor,
     SymbolKeyFor,
     StringCharCodeAt,
@@ -245,8 +245,10 @@ impl Native {
     }
 
     pub(crate) fn is_host_control_native(self) -> bool {
-        matches!(self, Self::HostDone | Self::CreateRealm | Self::Boolean)
-            || self.is_function_native()
+        matches!(
+            self,
+            Self::HostDone | Self::CreateRealm | Self::Boolean | Self::BigInt
+        ) || self.is_function_native()
     }
 
     pub(crate) fn is_error_constructor(self) -> bool {

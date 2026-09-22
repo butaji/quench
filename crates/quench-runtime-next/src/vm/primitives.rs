@@ -30,6 +30,15 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
+            Native::BigIntValueOf => {
+                if matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
+                    return Ok(this);
+                }
+                let value_atom = self.intern_atom("\0rqj:bigint-value");
+                self.own_property(this, value_atom).ok_or_else(|| {
+                    JsError("BigInt.prototype.valueOf called on incompatible receiver".into())
+                })
+            }
             Native::StringToString | Native::StringValueOf => Ok(this),
             Native::StringCharCodeAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;

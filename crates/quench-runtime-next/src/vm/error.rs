@@ -71,6 +71,19 @@ impl JsError {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn box_bigint_object(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, self.native_value(Native::BigInt), prototype_atom)?;
+        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let value_atom = self.intern_atom("\0rqj:bigint-value");
+        self.set_property(object, value_atom, value)?;
+        Ok(object)
+    }
+
     pub(super) fn install_host_globals(
         &mut self,
         program: &ResidualProgram,
@@ -92,6 +105,17 @@ impl<H: Host> Vm<H> {
         self.set_named(program, boolean, "prototype", boolean_prototype)?;
         self.set_named(program, boolean_prototype, "constructor", boolean)?;
         self.global(program, "Boolean", boolean)?;
+        let bigint = self.native_value(Native::BigInt);
+        let bigint_prototype = self.object();
+        self.set_named(program, bigint, "prototype", bigint_prototype)?;
+        self.set_named(program, bigint_prototype, "constructor", bigint)?;
+        self.set_named(
+            program,
+            bigint_prototype,
+            "valueOf",
+            self.native_value(Native::BigIntValueOf),
+        )?;
+        self.global(program, "BigInt", bigint)?;
         for global in self.host.globals() {
             let native = match global.capability {
                 CapabilityId::Done => Native::HostDone,
@@ -176,6 +200,17 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 },
             )
+        } else if native == Native::BigInt {
+            let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+            if let Some(Cell::BigInt(_)) = self.heap.get(value) {
+                Ok(value)
+            } else {
+                let text = self.to_string(program, value)?;
+                if text.trim().parse::<i128>().is_err() {
+                    return Err(JsError("invalid BigInt value".into()));
+                }
+                Ok(self.heap.alloc(Cell::BigInt(text)))
+            }
         } else {
             self.call_function_dispatch(program, native, args)
         }
