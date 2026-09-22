@@ -6,52 +6,57 @@ use crate::native::Native;
 use crate::slot::Slot;
 use crate::unwind::{Failure, Trap};
 
-pub fn step(
-    vm: &Instance,
-    op: AtomicOp,
-    dst: u16,
-    addr: u16,
-    a: u16,
-    b: u16,
-    offset: u64,
-    mem: u32,
-    bytes: u8,
-    wide: bool,
-    regs: &mut [Slot],
-) -> Result<(), Failure> {
-    if matches!(op, AtomicOp::Fence) {
+#[derive(Clone, Copy, Debug)]
+pub struct AtomicRequest {
+    pub op: AtomicOp,
+    pub dst: u16,
+    pub addr: u16,
+    pub a: u16,
+    pub b: u16,
+    pub offset: u64,
+    pub mem: u32,
+    pub bytes: u8,
+    pub wide: bool,
+}
+
+pub fn step(vm: &Instance, request: AtomicRequest, regs: &mut [Slot]) -> Result<(), Failure> {
+    if matches!(request.op, AtomicOp::Fence) {
         return Ok(());
     }
-    let memory64 = vm.memory(mem).map(|m| m.borrow().memory64).unwrap_or(false);
-    let ea_base = instance::addr_u64(&regs[addr as usize], memory64).map_err(Failure::Trap)?;
+    let memory64 = vm
+        .memory(request.mem)
+        .map(|m| m.borrow().memory64)
+        .unwrap_or(false);
+    let ea_base =
+        instance::addr_u64(&regs[request.addr as usize], memory64).map_err(Failure::Trap)?;
     let ea = ea_base
-        .checked_add(offset)
+        .checked_add(request.offset)
         .ok_or(Failure::Trap(Trap::OutOfBoundsMemory))?;
-    let size = bytes as usize;
+    let size = request.bytes as usize;
     if size > 1 && ea % size as u64 != 0 {
         return Err(Failure::Trap(Trap::UnalignedAtomic));
     }
-    match op {
+    match request.op {
         AtomicOp::Load => {
-            let v = load(vm, mem, ea_base, offset, size)?;
-            write_int(regs, dst, v, wide);
+            let v = load(vm, request.mem, ea_base, request.offset, size)?;
+            write_int(regs, request.dst, v, request.wide);
         }
         AtomicOp::Store => {
-            let v = read_int(regs, a, wide);
-            store(vm, mem, ea_base, offset, size, v)?;
+            let v = read_int(regs, request.a, request.wide);
+            store(vm, request.mem, ea_base, request.offset, size, v)?;
         }
-        AtomicOp::Wait => wait(vm, mem, ea_base, offset, size, a, b, wide, regs, dst)?,
+        AtomicOp::Wait => wait(vm, &request, ea_base, size, regs)?,
         AtomicOp::Notify => {
-            load(vm, mem, ea_base, offset, size)?;
-            write_int(regs, dst, 0, false);
+            load(vm, request.mem, ea_base, request.offset, size)?;
+            write_int(regs, request.dst, 0, false);
         }
         AtomicOp::Fence => {}
         rmw => {
-            let old = load(vm, mem, ea_base, offset, size)?;
-            let arg = read_int(regs, a, wide);
+            let old = load(vm, request.mem, ea_base, request.offset, size)?;
+            let arg = read_int(regs, request.a, request.wide);
             let mask = mask(size);
             let next = if rmw == AtomicOp::Cmpxchg {
-                let neu = read_int(regs, b, wide);
+                let neu = read_int(regs, request.b, request.wide);
                 if (old & mask) == (arg & mask) {
                     neu
                 } else {
@@ -60,8 +65,8 @@ pub fn step(
             } else {
                 apply(rmw, old, arg, mask)
             };
-            store(vm, mem, ea_base, offset, size, next)?;
-            write_int(regs, dst, old & mask, wide);
+            store(vm, request.mem, ea_base, request.offset, size, next)?;
+            write_int(regs, request.dst, old & mask, request.wide);
         }
     }
     Ok(())
@@ -111,29 +116,27 @@ fn store(
 
 fn wait(
     vm: &Instance,
-    mem: u32,
+    request: &AtomicRequest,
     addr: u64,
-    offset: u64,
     size: usize,
-    expected: u16,
-    timeout: u16,
-    wide: bool,
     regs: &mut [Slot],
-    dst: u16,
 ) -> Result<(), Failure> {
-    let shared = vm.memory(mem).map(|m| m.borrow().shared).unwrap_or(false);
+    let shared = vm
+        .memory(request.mem)
+        .map(|m| m.borrow().shared)
+        .unwrap_or(false);
     if !shared {
         return Err(Failure::Trap(Trap::ExpectedShared));
     }
-    let got = load(vm, mem, addr, offset, size)? & mask(size);
-    let exp = read_int(regs, expected, wide) & mask(size);
+    let got = load(vm, request.mem, addr, request.offset, size)? & mask(size);
+    let exp = read_int(regs, request.a, request.wide) & mask(size);
     let code = if got != exp {
         1
     } else {
-        let _ = timeout;
+        let _ = request.b;
         2
     };
-    write_int(regs, dst, code, false);
+    write_int(regs, request.dst, code, false);
     Ok(())
 }
 
