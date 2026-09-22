@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
                 )
             }
             Native::ReflectOwnKeys => self.object_own_keys(p, target),
-            Native::ReflectGetPrototypeOf => self.object_get_prototype_of(target),
+            Native::ReflectGetPrototypeOf => self.object_get_prototype_of(p, target),
             Native::ReflectSetPrototypeOf => {
                 let proto = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let Some(object) = self.object_data(target) else {
@@ -97,8 +97,10 @@ impl<H: Host> Vm<H> {
                 Ok(if !object.is_extensible() && object.proto != proto {
                     Value::FALSE
                 } else {
-                    self.object_set_prototype_of(target, proto)?;
-                    Value::TRUE
+                    match self.object_set_prototype_of(p, target, proto) {
+                        Ok(_) => Value::TRUE,
+                        Err(_) => Value::FALSE,
+                    }
                 })
             }
             Native::ReflectConstruct => {

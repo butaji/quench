@@ -191,9 +191,10 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectAssign => self.object_assign(p, args),
             Native::ObjectGetPrototypeOf => {
-                self.object_get_prototype_of(args.first().copied().unwrap_or(Value::UNDEFINED))
+                self.object_get_prototype_of(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectSetPrototypeOf => self.object_set_prototype_of(
+                p,
                 args.first().copied().unwrap_or(Value::UNDEFINED),
                 args.get(1).copied().unwrap_or(Value::UNDEFINED),
             ),
