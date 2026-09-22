@@ -211,4 +211,18 @@ mod tests {
         runtime.execute(&decoded).unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["1", "55296"]);
     }
+
+    #[test]
+    fn oxc_surrogate_property_keys_use_exact_index_semantics() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                r#"var object = {"\uD800": 1}; print(Object.keys(object)[0].charCodeAt(0)); print(object["\uD800"]);"#,
+                "surrogate-key.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["55296", "1"]);
+    }
 }
