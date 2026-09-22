@@ -436,7 +436,6 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["self", "9"]);
     }
-
     #[test]
     fn promise_finally_runs_in_order_and_preserves_settlement() {
         let host = Capture::default();
@@ -480,5 +479,22 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["before", "1", "cleanup"]);
+    }
+
+    #[test]
+    fn promise_all_settled_preserves_indexed_outcomes() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "Promise.allSettled([Promise.resolve(1), Promise.reject(2)]).then(function(values) { print(values[0].status); print(values[0].value); print(values[1].status); print(values[1].reason); });",
+                "promise-all-settled.js",
+            ))
+            .unwrap();
+        assert_eq!(
+            view.0.borrow().as_slice(),
+            ["fulfilled", "1", "rejected", "2"]
+        );
     }
 }

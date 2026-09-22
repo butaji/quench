@@ -63,6 +63,7 @@ pub(super) struct FinallyContinuationJob {
 pub(super) enum AggregateMode {
     All,
     Race,
+    AllSettled,
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +178,12 @@ impl<H: Host> Vm<H> {
             "race",
             self.native_value(Native::PromiseRace),
         )?;
+        self.set_named(
+            program,
+            promise,
+            "allSettled",
+            self.native_value(Native::PromiseAllSettled),
+        )?;
         self.global(program, "Promise", promise)
     }
 
@@ -290,6 +297,7 @@ impl<H: Host> Vm<H> {
             }
             Native::PromiseAll => self.promise_aggregate(p, args, AggregateMode::All),
             Native::PromiseRace => self.promise_aggregate(p, args, AggregateMode::Race),
+            Native::PromiseAllSettled => self.promise_aggregate(p, args, AggregateMode::AllSettled),
             Native::PromiseReactionJob => {
                 self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
