@@ -63,6 +63,7 @@ impl FunctionCompiler<'_, '_> {
                         super_static: false,
                         rest_override: implicit_super,
                         implicit_super,
+                        strict: false,
                     },
                 )
             });
@@ -408,6 +409,11 @@ impl Compiler<'_> {
                 super_static: method.r#static,
                 rest_override: false,
                 implicit_super: false,
+                strict: method.value.body.as_ref().is_some_and(|body| {
+                    body.directives
+                        .iter()
+                        .any(|directive| directive.directive == "use strict")
+                }),
             },
         )
     }
@@ -432,6 +438,7 @@ impl Compiler<'_> {
                 super_static: true,
                 rest_override: false,
                 implicit_super: false,
+                strict: false,
             },
         )
     }

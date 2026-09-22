@@ -52,7 +52,6 @@ impl fmt::Display for Diagnostic {
     }
 }
 pub struct Engine;
-
 impl Engine {
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(source, name, SpecializationMode::Enabled)
@@ -131,6 +130,7 @@ struct FunctionOptions<'a> {
     super_static: bool,
     rest_override: bool,
     implicit_super: bool,
+    strict: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -204,6 +204,7 @@ impl<'a> Compiler<'a> {
                 super_static: false,
                 rest_override: false,
                 implicit_super: false,
+                strict: self.root_strict,
             },
         );
         if !self.errors.is_empty() {
@@ -346,7 +347,6 @@ impl<'a> Compiler<'a> {
             .collect();
         (metadata, arguments)
     }
-
     fn reject(&mut self, span: Span, message: impl Into<String>) {
         self.errors.push(Diagnostic {
             source: self.source.into(),
@@ -354,7 +354,6 @@ impl<'a> Compiler<'a> {
             span,
         });
     }
-
     fn compile_function(
         &mut self,
         name: Option<&str>,
@@ -375,7 +374,7 @@ impl<'a> Compiler<'a> {
             locals.push(self.atom("arguments"));
             Some((locals.len() - 1) as u16)
         };
-        let root_strict = self.root_strict;
+        let root_strict = self.root_strict || options.strict;
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -385,6 +384,7 @@ impl<'a> Compiler<'a> {
             options.async_function,
             options.generator,
         );
+        function.strict = root_strict;
         if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);
         }
@@ -455,6 +455,7 @@ impl<'a> Compiler<'a> {
             is_async: options.async_function,
             is_generator: options.generator,
             arguments_slot,
+            strict: root_strict,
             locals: function.locals.len() as u16,
             code: function.code,
             wide: function.wide,
@@ -494,6 +495,5 @@ impl<'a> Compiler<'a> {
         }
     }
 }
-
 #[cfg(test)]
 mod tests;

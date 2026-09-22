@@ -208,6 +208,13 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} unary operand is invalid"));
                     }
+                    Op::Delete
+                        if !register(instruction.a())
+                            || !register(instruction.b())
+                            || !register(instruction.c()) =>
+                    {
+                        return Err(format!("function {index} delete operand is invalid"));
+                    }
                     Op::Move if !register(instruction.a()) || !register(instruction.b()) => {
                         return Err(format!("function {index} move operand is invalid"));
                     }
@@ -375,6 +382,7 @@ mod tests {
             is_async: false,
             is_generator: false,
             arguments_slot: None,
+            strict: false,
             locals: 0,
             code,
             wide: vec![],

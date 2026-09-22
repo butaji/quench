@@ -62,6 +62,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) super_static: bool,
     pub(super) async_function: bool,
     pub(super) generator: bool,
+    pub(super) strict: bool,
     disposable_stack: Option<Atom>,
 }
 
@@ -103,6 +104,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             super_static,
             async_function,
             generator,
+            strict: false,
             disposable_stack: None,
         }
     }
@@ -206,6 +208,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         super_static: false,
                         rest_override: false,
                         implicit_super: false,
+                        strict: body
+                            .directives
+                            .iter()
+                            .any(|directive| directive.directive == "use strict"),
                     },
                 );
                 let dst = self.reg();

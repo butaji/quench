@@ -8,7 +8,7 @@ use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 mod activation;
@@ -291,6 +291,7 @@ pub struct Vm<H> {
     /// still the authoritative value store; this table only carries the
     /// environment edge needed for sloppy aliasing.
     argument_maps: FxHashMap<Value, Vec<u16>>,
+    argument_objects: FxHashSet<Value>,
     function_values: FxHashMap<(u32, Value), Value>,
     random_state: u64,
 }
@@ -438,6 +439,7 @@ impl<H: Host> Vm<H> {
         self.symbol_properties.clear();
         self.symbol_property_order.clear();
         self.argument_maps.clear();
+        self.argument_objects.clear();
         self.function_values.clear();
         self.finalization_registry_proto = Value::NULL;
         self.random_state = 0x4d59_5df4_d0f3_3173;

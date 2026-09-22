@@ -164,6 +164,11 @@ impl FunctionCompiler<'_, '_> {
                 defaults: Some(&value.params),
                 async_function: value.r#async,
                 generator: value.generator,
+                strict: value.body.as_ref().is_some_and(|body| {
+                    body.directives
+                        .iter()
+                        .any(|directive| directive.directive == "use strict")
+                }),
                 ..FunctionOptions::default()
             },
         );

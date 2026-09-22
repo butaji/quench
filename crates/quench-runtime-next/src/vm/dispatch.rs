@@ -240,6 +240,21 @@ impl<H: Host> Vm<H> {
                 let v = self.unary(p, i.imm(), self.read(f, i.b()))?;
                 self.write(f, i.a(), v);
             }
+            Op::Delete => {
+                let result =
+                    self.object_delete_property(p, &[self.read(f, i.b()), self.read(f, i.c())])?;
+                if !self.truthy(result) {
+                    let message = self
+                        .heap
+                        .alloc(Cell::String("Cannot delete property in strict mode".into()));
+                    let error = self.construct_error_native(p, Native::TypeError, &[message])?;
+                    return Err(JsError::thrown(
+                        error,
+                        "TypeError: Cannot delete property in strict mode".into(),
+                    ));
+                }
+                self.write(f, i.a(), result);
+            }
             Op::Jump => {
                 *pc = i.imm() as usize;
                 self.frames[f].pc = *pc;

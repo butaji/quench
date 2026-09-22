@@ -41,11 +41,19 @@ impl FunctionCompiler<'_, '_> {
                 let key = self.expression(&member.expression);
                 (target, key)
             }
+            Expression::Identifier(identifier) if identifier.name == "arguments" => {
+                return self.literal(Constant::Boolean(false));
+            }
             other => {
                 let _ = self.expression(other);
                 return self.literal(Constant::Boolean(true));
             }
         };
+        if self.strict {
+            let dst = self.reg();
+            self.emit(Op::Delete, dst, target, key, 0);
+            return dst;
+        }
         let reflect = self.load_name("Reflect");
         let delete_property = self.reg();
         let atom = self.owner.atom("deleteProperty");

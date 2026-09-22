@@ -66,7 +66,7 @@ impl RuntimeNextHost {
         let mut runtime = Runtime::new(std::mem::take(self));
         let result = (|| {
             let program = Engine::specialize_unspecialized(source, name)
-                .map_err(|errors| format!("next runtime diagnostics: {errors:?}"))?;
+                .map_err(|errors| format!("next runtime SyntaxError: {errors:?}"))?;
             runtime
                 .execute(&program)
                 .map_err(|error| format!("next runtime: {error:?}"))?;

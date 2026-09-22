@@ -397,9 +397,11 @@ impl<H: Host> Vm<H> {
                 .descriptors
                 .get(&(object, PropertyKey::string(atom)))
                 .copied()
-                && attributes.accessor
             {
-                return Some(attributes);
+                return attributes.accessor.then_some(attributes);
+            }
+            if self.own_property(object, atom).is_some() {
+                return None;
             }
             object = self.object_data(object)?.proto;
             if object.is_null() {

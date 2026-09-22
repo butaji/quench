@@ -25,6 +25,7 @@ impl Compiler<'_> {
             value.r#async,
             false,
         );
+        function.strict = matches!(&value.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict"));
         function.emit_parameter_bindings(&value.params);
         match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
@@ -76,6 +77,7 @@ impl Compiler<'_> {
             is_async: value.r#async,
             is_generator: false,
             arguments_slot: None,
+            strict: matches!(&value.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict")),
             locals: function.locals.len() as u16,
             code: function.code,
             wide: function.wide,

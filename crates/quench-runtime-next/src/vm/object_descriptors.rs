@@ -122,6 +122,8 @@ impl<H: Host> Vm<H> {
         let key = self.coerce_js_string(p, key_value)?;
         if key.host_string() == "length"
             && let Some(Cell::Array { elements, .. }) = self.heap.get(target)
+            && (!self.argument_objects.contains(&target)
+                || self.own_property(target, self.length_atom).is_some())
         {
             let length = self.heap.sparse_length(target).unwrap_or(elements.len());
             let descriptor = self.object();
@@ -129,7 +131,10 @@ impl<H: Host> Vm<H> {
                 ("value", Value::number(length as f64)),
                 ("writable", Value::TRUE),
                 ("enumerable", Value::FALSE),
-                ("configurable", Value::FALSE),
+                (
+                    "configurable",
+                    Self::integrity_bool(self.argument_objects.contains(&target)),
+                ),
             ] {
                 let atom = self.intern_atom(name);
                 self.set_property(descriptor, atom, value)?;
