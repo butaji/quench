@@ -582,9 +582,9 @@ pub(crate) fn calendar_fields_from_iso(
         icu_calendar::types::YearInfo::Era(value) => {
             let year = if calendar == "ethiopic" && value.year > 5000 {
                 value.year - 5500
-            } else if calendar.starts_with("islamic") && year < 622 {
-                1 - value.year
-            } else if calendar == "roc" && year < 1912 {
+            } else if (calendar.starts_with("islamic") && year < 622)
+                || (calendar == "roc" && year < 1912)
+            {
                 1 - value.year
             } else {
                 value.year

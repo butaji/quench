@@ -227,29 +227,20 @@ fn temporal_slots(
     let has_default_date = filtered.iter().any(|(name, _)| name == "year")
         && filtered.iter().any(|(name, _)| name == "month")
         && filtered.iter().any(|(name, _)| name == "day");
-    if !has_time
+    let default_time = !has_time
         && !has_date_style
         && !has_time_style
-        && has_default_date
-        && (fields.kind == TemporalKind::PlainDateTime
-            || (fields.kind == TemporalKind::Instant
-                && !filtered.iter().any(|(name, _)| {
-                    matches!(
-                        name.as_str(),
-                        "weekday" | "era" | "dayPeriod" | "timeZoneName"
-                    )
-                })))
-    {
-        filtered.extend([
-            ("hour".into(), Value::String("numeric".into())),
-            ("minute".into(), Value::String("numeric".into())),
-            ("second".into(), Value::String("numeric".into())),
-        ]);
-    } else if !has_time
-        && !has_date_style
-        && !has_time_style
-        && fields.kind == TemporalKind::PlainTime
-    {
+        && ((has_default_date
+            && (fields.kind == TemporalKind::PlainDateTime
+                || (fields.kind == TemporalKind::Instant
+                    && !filtered.iter().any(|(name, _)| {
+                        matches!(
+                            name.as_str(),
+                            "weekday" | "era" | "dayPeriod" | "timeZoneName"
+                        )
+                    }))))
+            || fields.kind == TemporalKind::PlainTime);
+    if default_time {
         filtered.extend([
             ("hour".into(), Value::String("numeric".into())),
             ("minute".into(), Value::String("numeric".into())),
@@ -709,9 +700,7 @@ fn parts_for_fields(
             date.push(typed_part("day", day_value.unwrap_or_default()));
         }
         if has_year {
-            if has_month && has_day {
-                date.push(literal_part("/"));
-            } else if has_month {
+            if has_month {
                 date.push(literal_part("/"));
             } else if has_day {
                 date.push(literal_part(" "));
