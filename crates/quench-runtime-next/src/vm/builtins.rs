@@ -165,7 +165,7 @@ const NATIVES: &[Native] = &[
     Native::RegExp,
     Native::RegExpExec,
     Native::RegExpTest,
-    Native::String, Native::Boolean,
+    Native::String, Native::Boolean, Native::BigInt, Native::BigIntValueOf,
     Native::Symbol, Native::SymbolToString, Native::SymbolValueOf,
     Native::SymbolFor,
     Native::SymbolKeyFor,
