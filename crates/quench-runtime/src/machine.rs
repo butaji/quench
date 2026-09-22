@@ -3248,7 +3248,7 @@ fn unary_numeric_leaf_spec(
 #[derive(Clone, Copy)]
 enum InstalledUnaryEntry {
     Unpublished,
-    IntegerLocal(usize),
+    IntegerLocal,
     IntegerShared(crate::stencil_arena::EntryToken<extern "C" fn(i32) -> i32>),
     NumberLocal(usize),
     NumberShared(crate::stencil_arena::EntryToken<extern "C" fn(f64) -> f64>),
@@ -3466,15 +3466,14 @@ impl NativeUnaryPlan {
             crate::stencil_select::RegionAbi::ScalarI32,
         )
         .ok_or(crate::stencil_arena::ArenaError::ProtectionFailed)?;
-        let (address, result) = {
+        let (_address, result) = {
             let arena = self.physical.storage.local_mut()?;
             let address =
                 arena.render_physical_view_or_get(&mut self.physical.state.cache, view, &values)?;
             arena.make_executable()?;
             (address, arena.i32_unary_entry(address)?(operand))
         };
-        self.physical
-            .publish(InstalledUnaryEntry::IntegerLocal(address));
+        self.physical.publish(InstalledUnaryEntry::IntegerLocal);
         self.note_entry();
         Ok(f64::from(result))
     }
@@ -6800,6 +6799,7 @@ pub(crate) struct BaselinePlan {
     /// All composed entries in one baseline view share a bounded slab owner.
     /// Scalar leaves retain their narrower per-plan arenas until they acquire
     /// an equally typed shared physical contract.
+    #[cfg(test)]
     shared_region_arena: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
 }
 
@@ -8759,14 +8759,15 @@ impl BaselinePlan {
 
     fn compile(code: CodeView<'_>, policy: crate::stencil_policy::ExecutionPolicy) -> Self {
         let entries = baseline_entries(code);
-        let (admission, shared_region_arena, control) = build_admissions(code, &entries, policy);
+        let (admission, _shared_region_arena, control) = build_admissions(code, &entries, policy);
         let osr_entries = baseline_osr_entries(&entries, &control);
         Self {
             entries,
             control,
             osr_entries,
             admission,
-            shared_region_arena,
+            #[cfg(test)]
+            shared_region_arena: _shared_region_arena,
         }
     }
 
