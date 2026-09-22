@@ -738,7 +738,7 @@ fn install_prototype_cache(cache: &std::cell::Cell<u64>, entry: PrototypeNamedCa
                 slot
             });
         set.entries[slot] = Some(entry);
-        cache.set(PROTOTYPE_CACHE_TAG | index as u64 + 1);
+        cache.set(PROTOTYPE_CACHE_TAG | (index as u64 + 1));
     });
 }
 

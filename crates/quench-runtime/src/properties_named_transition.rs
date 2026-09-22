@@ -127,7 +127,7 @@ fn install_named_write_transition(
         }
         entries[index] = Some(source);
     });
-    cache.set(WRITE_TRANSITION_TAG | index as u64 + 1);
+    cache.set(WRITE_TRANSITION_TAG | (index as u64 + 1));
     true
 }
 
