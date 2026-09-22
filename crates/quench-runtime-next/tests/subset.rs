@@ -1909,16 +1909,17 @@ fn try_finally_routes_return_values_through_the_finalizer() {
 fn try_finally_routes_loop_break_and_continue_completions() {
     let source = r#"
       var log = '';
+      var finalizers = 0;
       for (var i = 0; i < 3; i = i + 1) {
         try {
           if (i === 1) { break; }
           if (i === 0) { continue; }
           log = log + 'body';
-        } finally { log = log + i; }
+        } finally { log = log + i; finalizers = finalizers + 1; }
       }
-      print(log);
+      print(log); print(finalizers);
     "#;
-    assert_eq!(output(source), ["01"]);
+    assert_eq!(output(source), ["01", "2"]);
 }
 
 #[test]
