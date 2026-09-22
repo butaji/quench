@@ -41,7 +41,7 @@ pub const MAX_ARENA_BYTES: usize = 1 << 20;
 const MAX_GLOBAL_SHARED_SLAB_BYTES: usize = 16 * MAX_SHARED_SLAB_BYTES;
 static GLOBAL_EXECUTABLE_BUDGET: AtomicBudget = AtomicBudget::new(MAX_GLOBAL_SHARED_SLAB_BYTES);
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn global_shared_slab_bytes() -> usize {
     GLOBAL_EXECUTABLE_BUDGET.used()
 }

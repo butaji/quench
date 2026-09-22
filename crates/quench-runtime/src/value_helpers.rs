@@ -208,7 +208,7 @@ impl Value {
     }
 
     #[inline(always)]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn from_integer(value: i64) -> Self {
         Self::Number(value as f64)
     }

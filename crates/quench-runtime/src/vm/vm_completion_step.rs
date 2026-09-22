@@ -6,7 +6,7 @@ pub(crate) struct CompletionStep {
     pub(crate) suspended_pc: Option<usize>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn execute_completion_step_in_place(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -35,7 +35,7 @@ pub(crate) fn execute_code_completion_step_in_place(
     Ok(CompletionStep { completion, next: step.next, suspended_pc: step.suspended_pc })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn execute_completion_step_context(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,

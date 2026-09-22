@@ -12,6 +12,7 @@ pub(crate) fn visit_code_views(
     });
 }
 
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn cyclic_function_root() -> (
     crate::value::Value,
     std::rc::Weak<crate::value::FunctionValue>,

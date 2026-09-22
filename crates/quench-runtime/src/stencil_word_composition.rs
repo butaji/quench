@@ -98,7 +98,7 @@ impl NativeWordReturnPlan {
             .ok()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn native_entry_count(&self) -> u64 {
         self.entries
     }
@@ -359,7 +359,7 @@ impl NativeWordBranchPlan {
             .ok()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn native_entry_count(&self) -> u64 {
         self.entries
     }
@@ -436,12 +436,12 @@ impl NativeWordConstantBranchPlan {
             .ok()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn native_entry_count(&self) -> u64 {
         self.entries
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn identity(&self) -> RegionImageIdentity {
         self.image.identity()
     }

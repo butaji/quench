@@ -318,7 +318,7 @@ pub(crate) fn calendar_days_in_month_for_code(
     calendar_date_for_code(year, code, 1, calendar).map(|date| u32::from(date.days_in_month()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 pub(crate) fn calendar_month_code_for_date(
     year: i32,
     month: u32,
@@ -1316,7 +1316,7 @@ fn difference(
     ])
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn largest_unit_option(options: Option<&Value>) -> Result<String, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok("days".into());
@@ -1443,7 +1443,7 @@ fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, Vm
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn smallest_unit_option(options: Option<&Value>) -> Result<String, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok("auto".into());
@@ -1463,7 +1463,7 @@ fn smallest_unit_option(options: Option<&Value>) -> Result<String, VmError> {
     .into())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn rounding_increment_option(options: Option<&Value>) -> Result<f64, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(1.0);
@@ -1475,7 +1475,7 @@ fn rounding_increment_option(options: Option<&Value>) -> Result<f64, VmError> {
     Ok(crate::conversion::to_number(&value)?.trunc().max(1.0))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn rounding_mode_option(options: Option<&Value>) -> Result<String, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok("trunc".into());
@@ -1487,7 +1487,7 @@ fn rounding_mode_option(options: Option<&Value>) -> Result<String, VmError> {
     option_string(&value)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn has_rounding_option(options: Option<&Value>) -> Result<bool, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(false);
@@ -1862,7 +1862,7 @@ fn is_fixed_timezone(value: &str) -> bool {
         && value[4..6].parse::<u8>().is_ok()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn fixed_timezone_offset(value: &str) -> i128 {
     let bytes = value.as_bytes();
     if bytes.len() != 6 || !matches!(bytes[0], b'+' | b'-') || bytes[3] != b':' {
@@ -2846,7 +2846,7 @@ pub(crate) fn is_temporal_date_like(value: &Value) -> bool {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn number_or_field(object: &Value, name: &str, default: f64) -> Result<f64, VmError> {
     match crate::execute::get_property_result(object, name)? {
         Value::Undefined => Ok(default),
@@ -2865,7 +2865,7 @@ fn option_string(value: &Value) -> Result<String, VmError> {
     crate::conversion::to_string(value)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn month_code_number(value: &Value) -> Result<f64, VmError> {
     let code = month_code_text(value)?;
     month_code_number_text(&code, false)
@@ -2894,7 +2894,7 @@ fn invalid_receiver() -> VmError {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn validate_date_options(options: Option<&Value>, difference: bool) -> Result<(), VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(());

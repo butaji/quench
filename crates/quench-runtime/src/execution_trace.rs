@@ -163,7 +163,7 @@ struct StencilKey {
     kind: &'static str,
 }
 
-#[cfg(any(test, feature = "execution-trace"))]
+#[cfg(feature = "execution-trace")]
 const MAX_STENCIL_SITES: usize = 256;
 
 #[cfg(feature = "execution-trace")]

@@ -217,17 +217,17 @@ impl NativeLocalPropertyPlan {
         self.selection.returns
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn selection(&self) -> LocalPropertySelection {
         self.selection
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.property.native_entry_count()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn local_read_count(&self) -> u64 {
         self.local_read_count
     }
@@ -407,7 +407,7 @@ impl NativeLocalBinaryPlan {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         match &self.physical {
             LocalNumericPhysical::Folded => 0,
@@ -417,7 +417,7 @@ impl NativeLocalBinaryPlan {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
         match &self.physical {
             LocalNumericPhysical::AddChain(chain) => chain.last_native_view(),
@@ -425,7 +425,7 @@ impl NativeLocalBinaryPlan {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn last_linear_witness(
         &self,
     ) -> Option<crate::stencil_region_builder::NativeLinearWitness> {
@@ -435,7 +435,7 @@ impl NativeLocalBinaryPlan {
         chain.last_native_witness()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn local_read_count(&self) -> u64 {
         self.local_read_count
     }

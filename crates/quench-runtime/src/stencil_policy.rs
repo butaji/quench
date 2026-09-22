@@ -15,6 +15,7 @@ use std::cell::Cell;
 enum Architecture {
     X86_64,
     Aarch64,
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     Other,
 }
 
@@ -36,7 +37,7 @@ enum ArmMode {
 
 #[cfg(test)]
 impl ArmMode {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     fn from_environment() -> Self {
         match std::env::var("QUENCH_AARCH64_STENCIL_MODE").as_deref() {
             Ok("leaves") => Self::Leaves,
@@ -108,7 +109,7 @@ impl LocalFusionPolicy {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 const fn architecture() -> Architecture {
     #[cfg(target_arch = "x86_64")]
     {
@@ -203,14 +204,14 @@ impl ExecutionPolicy {
         policy
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn arm_composed_opt_in_for_test() -> Self {
         Self::from_architecture_and_mode(Architecture::Aarch64, ArmMode::Composed)
     }
 
     /// Exercise a helper-capable region through the normal baseline driver
     /// without enabling it in the production AArch64 policy.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn bridge_opt_in_for_test() -> Self {
         Self {
             native_leaves: false,
@@ -320,6 +321,7 @@ impl ExecutionPolicy {
                 // proven end to end.
                 optimizing_view: false,
             },
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             Architecture::Other => Self {
                 native_leaves: false,
                 local_fusions: LocalFusionPolicy::NONE,

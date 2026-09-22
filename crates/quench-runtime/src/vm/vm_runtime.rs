@@ -85,7 +85,7 @@ pub(crate) struct NativeRegionContext<'a> {
 }
 
 impl<'a> NativeRegionContext<'a> {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn new(
         code: crate::machine::CodeView<'a>,
         pc: usize,
@@ -103,7 +103,7 @@ impl<'a> NativeRegionContext<'a> {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn new_with_abi(
         code: crate::machine::CodeView<'a>,
         pc: usize,
@@ -212,7 +212,7 @@ const FRAME_ROOT_EFFECTS: &[crate::facts::OperationEffect] = &[
 // Keep the CPS fast path shallow enough that the large transition frame does
 // not accumulate on long-running ARM64 loops. The stack-safe segment takes
 // over at this boundary and preserves the same canonical transitions.
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 const DISPATCH_RECURSION_LIMIT: usize = 64;
 
 fn try_native_word_truthiness(
@@ -1961,7 +1961,7 @@ pub(crate) fn execute_composed_affine_i32_loop(
     Ok(Some(resume_region_transition(region.pc + 19)))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn run_ops(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -1970,7 +1970,7 @@ fn run_ops(
     completion_result(run_ops_completion(ops, registers, context)?)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn run_ops_completion(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -2033,7 +2033,7 @@ pub(crate) fn execute_baseline_code_from(
     Ok((step.completion, step.next))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn run_ops_completion_step(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,
@@ -5532,7 +5532,7 @@ struct DispatchState<'code, 'state> {
 /// successor after a handler returns.  This is the interpreter's CPS-shaped
 /// path; each normal transition immediately invokes the next callee.
 #[inline(always)]
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn dispatch_callee<'code, 'state>(
     state: &mut DispatchState<'code, 'state>,
     pc: usize,

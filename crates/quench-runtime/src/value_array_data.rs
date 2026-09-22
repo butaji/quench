@@ -421,7 +421,7 @@ impl ArrayData {
         self.arguments
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn has_argument_live(&self) -> bool {
         self.argument_live.is_some()
     }
@@ -807,7 +807,7 @@ impl ArrayData {
         self.length.set(self.length.get().max(length));
         self.ownership.element_kind.set(ArrayKind::Sparse);
     }
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn append_live(&self, values: &[Value]) {
         let Some(live) = &self.argument_live else {
             return;
@@ -819,7 +819,7 @@ impl ArrayData {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn append_physical(&mut self, values: &[Value]) {
         match &mut self.values {
             DenseElements::Numbers(numbers)
@@ -901,7 +901,7 @@ impl ArrayData {
     }
 
     #[inline]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn numeric_cells(&self) -> Option<std::cell::Ref<'_, [std::cell::Cell<f64>]>> {
         self.widen_mutable_numeric_kind();
         let DenseElements::Numbers(values) = &self.values else {
@@ -1055,7 +1055,7 @@ impl ArrayData {
         self.set_index(index, Value::Number(number));
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn fill_numeric_constant(&mut self, start: usize, end: usize, number: f64) {
         debug_assert_eq!(start, 0);
         self.values.resize_numeric(end);
@@ -1089,7 +1089,7 @@ impl ArrayData {
         self.bump_backing_generation();
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn fill_numeric_range(&mut self, start: usize, end: usize, first: f64) {
         if self.values.len() < end {
             self.values.resize_numeric(end);
@@ -1184,7 +1184,7 @@ impl ArrayData {
     }
 
     #[inline(always)]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn set_plain_existing_f64(&self, index: usize, number: f64) -> bool {
         let stored = self.is_plain_dense_access()
             && index < self.logical_len()
@@ -1201,7 +1201,7 @@ impl ArrayData {
     /// Mutate a preflighted ordinary own numeric element even when unrelated
     /// sparse properties keep the array's monotonic kind at `Sparse`.
     #[inline(always)]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn set_proven_existing_f64(&self, index: usize, number: f64) -> bool {
         let stored = self.has_plain_dense_index(index)
             && self.values.set_existing_number(index, number);

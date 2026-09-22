@@ -766,7 +766,7 @@ impl ObjectProperties {
     }
 
     #[cold]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> {
         self.names
             .iter()
@@ -1272,7 +1272,7 @@ impl ObjectData {
         &self.properties
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn hot_properties_mut_for_transaction(&mut self) -> &mut ObjectProperties {
         &mut self.properties
     }
@@ -2358,7 +2358,7 @@ impl BindingCell {
     }
 
     #[inline(always)]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn with_word<R>(
         &self,
         use_word: impl FnOnce(&crate::register_file::OwnedWord) -> R,
@@ -2367,7 +2367,7 @@ impl BindingCell {
     }
 
     #[inline(always)]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn load_number(&self) -> Option<f64> {
         self.0.borrow().number()
     }

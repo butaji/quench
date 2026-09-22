@@ -229,7 +229,7 @@ impl VmContext {
         self
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn consume_execution_budget(&self) -> bool {
         let Some(budget) = &self.execution_budget else { return true };
         let remaining = budget.get();

@@ -1862,12 +1862,12 @@ impl NativeBinaryPlan {
         let _ = key;
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
         self.last_native_view
     }
@@ -2491,12 +2491,12 @@ impl NativeBinaryPlan {
         Some(if value { true_pc } else { false_pc })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn has_compare_branch(&self) -> bool {
         self.compare_branch.is_some()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn compare_branch_span(&self) -> Option<usize> {
         self.compare_branch
             .as_ref()
@@ -2879,7 +2879,7 @@ impl NativeTruthinessPlan {
         Err(crate::stencil_arena::ArenaError::ProtectionFailed)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
     }
@@ -2946,7 +2946,7 @@ impl NativeNullishPlan {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
     }
@@ -3104,7 +3104,7 @@ impl NativeLoadConstPlan {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
     }
@@ -3313,7 +3313,7 @@ impl NativeUnaryPlan {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
     }
@@ -3557,12 +3557,12 @@ impl NativeAddChainPlan {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
         self.last_native_view
     }
@@ -3900,12 +3900,12 @@ impl NativeMovePlan {
         let _ = view;
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
         self.last_native_view
     }
@@ -4139,12 +4139,12 @@ impl NativePropertyPlan {
         self
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_entry_count(&self) -> u64 {
         self.native_entry_count
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn last_native_view(&self) -> Option<crate::stencil_select::PhysicalStencilView> {
         self.last_native_view
     }
@@ -5338,36 +5338,36 @@ impl NativeRegionPlan {
         self.retired_operations
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn last_native_view_for_test(
         &self,
     ) -> Option<crate::stencil_select::PhysicalStencilView> {
         self.last_native_view
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn key_for_test(&self) -> crate::stencil_fact::RegionKey {
         self.key
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn admitted_control_for_test(
         &self,
     ) -> Option<crate::stencil_cfg::RegionControlPlan> {
         self.admitted_control.clone()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn physical_entry_count_for_test(&self) -> u64 {
         self.physical_entry_count
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn physical_is_published_for_test(&self) -> bool {
         self.physical.installed().address().is_some()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn branch_entry_count_for_test(&self) -> u64 {
         self.branch_leaves
             .iter()
@@ -5376,7 +5376,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn jump_entry_count_for_test(&self) -> u64 {
         self.jump_leaves
             .iter()
@@ -5385,7 +5385,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn return_entry_count_for_test(&self) -> u64 {
         self.return_leaves
             .iter()
@@ -5394,7 +5394,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn constant_entry_count_for_test(&self) -> u64 {
         self.constant_leaves
             .iter()
@@ -5403,7 +5403,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn binary_entry_count_for_test(&self) -> u64 {
         self.binary_leaves
             .iter()
@@ -5412,7 +5412,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn move_entry_count_for_test(&self) -> u64 {
         self.move_leaves
             .iter()
@@ -5421,7 +5421,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn load_local_entry_count_for_test(&self) -> u64 {
         self.load_local_leaves
             .iter()
@@ -5430,7 +5430,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn store_local_entry_count_for_test(&self) -> u64 {
         self.store_local_leaves
             .iter()
@@ -5439,7 +5439,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn unary_entry_count_for_test(&self) -> u64 {
         self.unary_leaves
             .iter()
@@ -5448,7 +5448,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn truthiness_entry_count_for_test(&self) -> u64 {
         self.truthiness_leaves
             .iter()
@@ -5457,7 +5457,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn nullish_entry_count_for_test(&self) -> u64 {
         self.nullish_leaves
             .iter()
@@ -5466,7 +5466,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn update_entry_count_for_test(&self) -> u64 {
         self.update_leaves
             .iter()
@@ -5475,7 +5475,7 @@ impl NativeRegionPlan {
             .sum()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn new_for_test(key: crate::stencil_fact::RegionKey) -> Option<Self> {
         let arena = std::rc::Rc::new(std::cell::RefCell::new(
             crate::stencil_arena::SharedStencilSlab::new(4096).ok()?,
@@ -6674,7 +6674,7 @@ impl NativeRegionPlan {
                                 registers.write_number(usize::from(instruction.a), value);
                             }
                             self.last_native_execution = true;
-                            #[cfg(test)]
+                            #[cfg(all(test, feature = "legacy-native-tests"))]
                             {
                                 self.last_native_view = leaf.last_native_view();
                             }
@@ -6703,7 +6703,7 @@ impl NativeRegionPlan {
                         if let Ok(value) = leaf.execute_tagged(lhs, rhs) {
                             registers.write_boolean(usize::from(instruction.a), value);
                             self.last_native_execution = true;
-                            #[cfg(test)]
+                            #[cfg(all(test, feature = "legacy-native-tests"))]
                             {
                                 self.last_native_view = leaf.last_native_view();
                             }
@@ -6799,7 +6799,7 @@ pub(crate) struct BaselinePlan {
     /// All composed entries in one baseline view share a bounded slab owner.
     /// Scalar leaves retain their narrower per-plan arenas until they acquire
     /// an equally typed shared physical contract.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     shared_region_arena: Rc<RefCell<crate::stencil_arena::SharedStencilSlab>>,
 }
 
@@ -6900,7 +6900,7 @@ fn region_admission_control(
     .then_some(control)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn region_admission_matches(
     entries: &[BaselineEntry],
     cfg: &ControlFlowFacts,
@@ -6910,7 +6910,7 @@ fn region_admission_matches(
     region_admission_control(entries, cfg, start, record).is_some()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn region_outputs_cover_exit(
     entries: &[BaselineEntry],
     cfg: &ControlFlowFacts,
@@ -8457,7 +8457,7 @@ fn generic_region_context_abi(abi: crate::stencil_select::RegionAbi) -> bool {
     abi.accepts_generic_context()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-native-tests"))]
 fn generic_region_context_abi_for_test(abi: crate::stencil_select::RegionAbi) -> bool {
     generic_region_context_abi(abi)
 }
@@ -8726,13 +8726,13 @@ impl BaselinePlan {
         Self::compile(code, policy)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn native_storage_for_test(&self) -> (usize, usize, usize) {
         let arena = self.shared_region_arena.borrow();
         (arena.used(), arena.capacity(), arena.slab_count())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn shared_stencil_pool_for_test(&self) -> SharedStencilPool {
         Rc::clone(&self.shared_region_arena)
     }
@@ -8746,7 +8746,7 @@ impl BaselinePlan {
             control,
             osr_entries,
             admission,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "legacy-native-tests"))]
             shared_region_arena: _shared_region_arena,
         }
     }
@@ -8755,14 +8755,14 @@ impl BaselinePlan {
         self.entries.get(pc).copied()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn control_facts(&self) -> &ControlFlowFacts {
         &self.control
     }
 
     /// Expose CFG-derived loop state to baseline emitters without creating a
     /// second loop analysis or copying it into each admission record.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn induction_candidates(
         &self,
         start: usize,
@@ -9132,7 +9132,7 @@ impl BaselinePlan {
         self.entries.len()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn is_osr_entry(&self, pc: usize) -> bool {
         self.osr_entries.binary_search(&(pc as u32)).is_ok()
     }
@@ -10091,7 +10091,7 @@ impl FunctionCode {
     /// Retire one interpreter operation and compile at a hot back-edge. This
     /// is the OSR admission edge: it only installs a plan, while the next
     /// dispatch transfers to the same body with the current registers intact.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn retire_at(&self, pc: usize) -> TierTransition {
         let Some(instruction) = self.code().and_then(|code| code.instruction(pc)) else {
             return TierTransition::Cold;
@@ -10139,7 +10139,7 @@ impl FunctionCode {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn is_osr_entry(&self, pc: usize) -> bool {
         self.baseline_plan()
             .is_some_and(|plan| plan.is_osr_entry(pc))
@@ -10155,7 +10155,7 @@ impl FunctionCode {
         state.osr_transfers = state.osr_transfers.saturating_add(1);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn tier_counts(&self) -> (u32, u64) {
         let state = self.tier.borrow();
         (state.invocations, state.retired)
@@ -10180,14 +10180,14 @@ impl FunctionCode {
         self.code().map(CodeView::layout)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn required_register_count(&self) -> u16 {
         self.layout()
             .map(|layout| layout.frame_register_count)
             .unwrap_or(0)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn declared_frame_register_count(&self) -> Option<u16> {
         self.declared_frame_register_count
     }
@@ -10254,7 +10254,7 @@ impl FunctionCode {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn has_internal_store_link(&self) -> bool {
         matches!(self.store, CodeStoreLink::Deferred { .. })
     }
@@ -10643,7 +10643,7 @@ impl Machine {
     /// The register window is moved (rather than cloned) so a callee can use
     /// the machine's storage directly.  The immutable caller code is retained
     /// by the continuation for the dispatch loop to resume.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn suspend_call(
         &mut self,
         callee: Value,
@@ -10680,7 +10680,7 @@ impl Machine {
     /// this machine's immutable code store. Keep that check at the resume
     /// boundary so stale continuations cannot turn an integer into an
     /// instruction pointer.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) fn resume_call(
         &mut self,
         value: Value,

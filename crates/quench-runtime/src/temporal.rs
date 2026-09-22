@@ -5669,7 +5669,7 @@ mod stubs {
         Ok(Value::String(text))
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     fn plain_month_day_from(value: Option<&Value>) -> Result<Value, VmError> {
         let value =
             value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;

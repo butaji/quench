@@ -37,7 +37,7 @@ impl NumericSeries {
         self.operations.into_iter().take(usize::from(self.len))
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "legacy-native-tests"))]
     pub(crate) const fn len(self) -> u8 {
         self.len
     }
