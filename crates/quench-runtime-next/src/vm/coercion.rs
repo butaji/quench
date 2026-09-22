@@ -76,7 +76,19 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::Date(value)) => return Ok(*value),
             Some(Cell::String(value)) => {
-                return Ok(value.host_string().parse().unwrap_or(f64::NAN));
+                let text = value.host_string().trim();
+                let radix = if text.starts_with("0x") || text.starts_with("0X") {
+                    Some(16)
+                } else if text.starts_with("0o") || text.starts_with("0O") {
+                    Some(8)
+                } else if text.starts_with("0b") || text.starts_with("0B") {
+                    Some(2)
+                } else {
+                    None
+                };
+                return Ok(radix
+                    .and_then(|radix| u64::from_str_radix(&text[2..], radix).ok())
+                    .map_or_else(|| text.parse().unwrap_or(f64::NAN), |value| value as f64));
             }
             Some(Cell::BigInt(value)) => return Ok(value.parse().unwrap_or(f64::NAN)),
             _ => {}

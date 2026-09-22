@@ -236,6 +236,7 @@ mod tests {
             arguments_slot: None,
             strict: false,
             locals: 0,
+            local_atoms: vec![],
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),
                 Instr::new(Op::Jump, 0, 0, 0, 3),
