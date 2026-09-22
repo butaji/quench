@@ -135,7 +135,6 @@ fn reduce_dynamic_for(
     let mut body_slots = Vec::new();
     let body = reduce_body_fragment_with_slots(
         statement,
-        ops,
         facts,
         next_register,
         next_slot,
@@ -304,7 +303,6 @@ fn reduce_for_init(
 
 fn reduce_body_fragment_with_slots(
     statement: &ForStatement<'_>,
-    _parent_ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next_register: &mut u16,
     next_slot: &mut u16,
@@ -315,16 +313,16 @@ fn reduce_body_fragment_with_slots(
     let mut fragment = Vec::new();
     let barrier_len = facts.eval_var_barrier.len();
     extend_for_barrier(statement, facts);
-    let result = crate::loops::reduce_loop_body_slots(
-        &statement.body,
-        &mut fragment,
+    let result = crate::loops::reduce_loop_body_slots(crate::loops::LoopBodySlots {
+        statement: &statement.body,
+        ops: &mut fragment,
         facts,
         next_register,
         next_slot,
         locals,
-        dst,
+        completion: dst,
         body_slots,
-    );
+    });
     facts.eval_var_barrier.truncate(barrier_len);
     result.map(|_| fragment)
 }

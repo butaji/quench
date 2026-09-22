@@ -350,7 +350,7 @@ pub(crate) fn execute_for_of(
     } else {
         crate::collections::iterator::open(iterable)?
     };
-    iterate_loop_values(
+    iterate_loop_values(ForOfExecution {
         registers,
         label,
         slot,
@@ -360,7 +360,7 @@ pub(crate) fn execute_for_of(
         iterator,
         iteration_slots,
         dst,
-    )
+    })
 }
 
 /// Active `for-of` iterators are execution bookkeeping, never observable
@@ -550,17 +550,32 @@ fn unpack_for_of<'a>(
     ))
 }
 
-fn iterate_loop_values(
-    registers: &mut crate::register_file::RegisterFile,
-    label: &Option<String>,
+struct ForOfExecution<'a> {
+    registers: &'a mut crate::register_file::RegisterFile,
+    label: &'a Option<String>,
     slot: u16,
-    body: &crate::machine::FunctionCode,
+    body: &'a crate::machine::FunctionCode,
     per_iteration: bool,
     await_values: bool,
     iterator: crate::value::Value,
-    iteration_slots: &[u16],
+    iteration_slots: &'a [u16],
     dst: u16,
+}
+
+fn iterate_loop_values(
+    request: ForOfExecution<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let ForOfExecution {
+        registers,
+        label,
+        slot,
+        body,
+        per_iteration,
+        await_values,
+        iterator,
+        iteration_slots,
+        dst,
+    } = request;
     registers.resize_undefined(
         registers.len().max(
             usize::from(dst)
