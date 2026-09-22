@@ -615,13 +615,7 @@ fn compile_and_find<'a>(
     start: usize,
     sticky: bool,
 ) -> Result<Option<Match>, VmError> {
-    #[cfg(feature = "execution-trace")]
-    let compile_start = std::time::Instant::now();
     let regex = compiled_for(receiver, source, flags)?;
-    #[cfg(feature = "execution-trace")]
-    let compile_ns = compile_start.elapsed().as_nanos();
-    #[cfg(feature = "execution-trace")]
-    let match_start = std::time::Instant::now();
     let mut result = if flags.contains('u') || flags.contains('v') {
         find_match_utf16(&regex, text, start, sticky)
     } else {

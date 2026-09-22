@@ -296,7 +296,26 @@ pub(crate) enum DecodeSite {
     Other,
 }
 
-impl DecodeSite {}
+#[cfg(feature = "execution-trace")]
+impl DecodeSite {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::GetN => "get_n",
+            Self::SetN => "set_n",
+            Self::Load => "load",
+            Self::LoadChecked => "load_checked",
+            Self::Move => "move",
+            Self::Call => "call",
+            Self::LeafGetN => "leaf_get_n",
+            Self::LeafLoad => "leaf_load",
+            Self::LeafLoadChecked => "leaf_load_checked",
+            Self::LeafOther => "leaf_other",
+            Self::BindingBorrow => "binding_borrow",
+            Self::EnvLoad => "env_load",
+            Self::Other => "other",
+        }
+    }
+}
 
 #[cfg(feature = "execution-trace")]
 impl Counters {
