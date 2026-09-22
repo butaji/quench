@@ -67,7 +67,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn date_native(&mut self, native: Native, this: Value) -> Result<Value, JsError> {
-        let Some(Cell::Date(milliseconds)) = self.heap.get(this) else {
+        let Some(Cell::Date { milliseconds, .. }) = self.heap.get(this) else {
             return Err(JsError(
                 "Date method called on incompatible receiver".into(),
             ));
@@ -139,7 +139,14 @@ impl<H: Host> Vm<H> {
                 })
                 .unwrap_or(f64::NAN)
         };
-        Ok(self.heap.alloc(Cell::Date(milliseconds)))
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self
+            .own_property(self.native_value(Native::Date), prototype_atom)
+            .unwrap_or(self.object_proto);
+        Ok(self.heap.alloc(Cell::Date {
+            milliseconds,
+            object: Box::new(Self::empty_object(prototype)),
+        }))
     }
 }
 

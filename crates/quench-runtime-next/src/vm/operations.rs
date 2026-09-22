@@ -239,9 +239,18 @@ impl<H: Host> Vm<H> {
                 self.call_symbol_value_native(p, native, this)
             }
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
-            Native::Date => Ok(self.heap.alloc(Cell::Date(
-                HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
-            ))),
+            Native::Date => {
+                let milliseconds =
+                    HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
+                let prototype_atom = self.intern_atom("prototype");
+                let prototype = self
+                    .own_property(self.native_value(Native::Date), prototype_atom)
+                    .unwrap_or(self.object_proto);
+                Ok(self.heap.alloc(Cell::Date {
+                    milliseconds,
+                    object: Box::new(Self::empty_object(prototype)),
+                }))
+            }
             Native::Object
             | Native::Array
             | Native::Map
@@ -351,8 +360,7 @@ impl<H: Host> Vm<H> {
         }
         if op >= 8
             && (matches!(self.heap.get(left), Some(Cell::BigInt(_)))
-            || matches!(self.heap.get(right), Some(Cell::BigInt(_)))
-            )
+                || matches!(self.heap.get(right), Some(Cell::BigInt(_))))
         {
             return self.binary_bigint(p, op, left, right);
         }
@@ -377,16 +385,27 @@ impl<H: Host> Vm<H> {
             9 => crate::bigint::binary(left, right, |a, b| Ok(a - b)),
             10 => crate::bigint::binary(left, right, |a, b| Ok(a * b)),
             11 => crate::bigint::binary(left, right, |a, b| {
-                if b == 0.into() { Err(crate::bigint::Error::DivisionByZero) } else { Ok(a / b) }
+                if b == 0.into() {
+                    Err(crate::bigint::Error::DivisionByZero)
+                } else {
+                    Ok(a / b)
+                }
             }),
             12 => crate::bigint::binary(left, right, |a, b| {
-                if b == 0.into() { Err(crate::bigint::Error::DivisionByZero) } else { Ok(a % b) }
+                if b == 0.into() {
+                    Err(crate::bigint::Error::DivisionByZero)
+                } else {
+                    Ok(a % b)
+                }
             }),
             13 => crate::bigint::binary(left, right, |a, b| {
                 if b.sign() == num_bigint::Sign::Minus {
                     return Err(crate::bigint::Error::NegativeExponent);
                 }
-                let exponent = b.to_str_radix(10).parse::<u32>().map_err(|_| crate::bigint::Error::ExponentTooLarge)?;
+                let exponent = b
+                    .to_str_radix(10)
+                    .parse::<u32>()
+                    .map_err(|_| crate::bigint::Error::ExponentTooLarge)?;
                 Ok(a.pow(exponent))
             }),
             14 => crate::bigint::shift(left, right, true),

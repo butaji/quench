@@ -299,6 +299,14 @@ impl Heap {
         elements.values.insert(index, value);
         elements.length = elements.length.max(index.saturating_add(1));
     }
+    pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
+        let arrays = self
+            .sparse_arrays
+            .get_or_insert_with(|| Box::new(FxHashMap::default()));
+        let elements = arrays.entry(array.heap_index().unwrap()).or_default();
+        elements.values.retain(|index, _| *index < length);
+        elements.length = length;
+    }
     pub(crate) fn sparse_pop(&mut self, array: Value, dense_len: usize) -> Value {
         let index = array.heap_index().unwrap();
         let arrays = self.sparse_arrays.as_mut().unwrap();
@@ -442,11 +450,8 @@ impl Heap {
                 work.extend(slots.iter().copied());
                 work.extend(dynamic_bindings.iter().map(|(_, value)| *value));
             }
-            Cell::String(_)
-            | Cell::BigInt(_)
-            | Cell::Symbol(_)
-            | Cell::Date(_)
-            | Cell::Error(_) => {}
+            Cell::Date { object: value, .. } => object(value),
+            Cell::String(_) | Cell::BigInt(_) | Cell::Symbol(_) | Cell::Error(_) => {}
             _ => unreachable!("typed array backing handled above"),
         }
     }
@@ -471,14 +476,14 @@ impl Heap {
             Cell::String(_) => 10,
             Cell::BigInt(_) => 11,
             Cell::Symbol(_) => 12,
-            Cell::Date(_) => 13,
+            Cell::Date { .. } => 13,
             Cell::Error(_) => 14,
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         match cell {
-            Cell::Object(_) | Cell::Iterator { .. } | Cell::Proxy { .. } | Cell::Date(_) => 0,
+            Cell::Object(_) | Cell::Iterator { .. } | Cell::Proxy { .. } | Cell::Date { .. } => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::TypedArray { .. } => 0,

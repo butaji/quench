@@ -1,6 +1,36 @@
 use super::activation::ContinuationId;
 use super::*;
 
+fn native_length(kind: Native) -> Option<f64> {
+    Some(match kind {
+        Native::Object => 1.0,
+        Native::ObjectKeys
+        | Native::ObjectValues
+        | Native::ObjectEntries
+        | Native::ObjectGetOwnPropertyNames
+        | Native::ObjectGetOwnPropertySymbols
+        | Native::ObjectGetOwnPropertyDescriptors
+        | Native::ObjectFreeze
+        | Native::ObjectSeal
+        | Native::ObjectPreventExtensions
+        | Native::ObjectIsFrozen
+        | Native::ObjectIsSealed
+        | Native::ObjectIsExtensible
+        | Native::ObjectGetPrototypeOf => 1.0,
+        Native::ObjectHasOwn => 2.0,
+        Native::ObjectGetOwnPropertyDescriptor | Native::ObjectIs => 2.0,
+        Native::ObjectCreate => 2.0,
+        Native::ObjectDefineProperties | Native::ObjectAssign => 2.0,
+        Native::ObjectFromEntries => 1.0,
+        Native::ObjectDefineProperty => 3.0,
+        Native::ObjectSetPrototypeOf => 2.0,
+        Native::ObjectPrototypeHasOwnProperty
+        | Native::ObjectPrototypePropertyIsEnumerable
+        | Native::ObjectPrototypeIsPrototypeOf => 1.0,
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PromiseState {
     Pending,
@@ -135,11 +165,28 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn native_with_env(&mut self, kind: Native, env: Value) -> Value {
-        self.heap.alloc(Cell::Function {
+        let function = self.heap.alloc(Cell::Function {
             object: Box::new(Self::empty_object(self.function_proto)),
             kind: FunctionKind::Native(kind),
             env,
-        })
+        });
+        if let Some(length) = native_length(kind) {
+            let atom = self.intern_atom("length");
+            let _ = self.set_property(function, atom, Value::number(length));
+            self.set_property_attributes(
+                function,
+                property_key::PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        function
     }
 
     pub(super) fn install_promise(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
