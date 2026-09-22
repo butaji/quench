@@ -151,7 +151,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
-        self.global(program, "globalThis", self.globals)?;
+        self.global(program, "globalThis", self.realm.globals)?;
         let function = self.native_value(Native::Function);
         self.set_named(program, function, "prototype", self.function_proto)?;
         self.global(program, "Function", function)?;
@@ -312,7 +312,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::FunctionReturnThis => Ok(self.globals),
+            Native::FunctionReturnThis => Ok(self.realm.globals),
             Native::FunctionReturnClass => {
                 let base = self
                     .active_native_env()
@@ -328,7 +328,7 @@ impl<H: Host> Vm<H> {
                     })
                     .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
                 let atom = self.intern_js_atom(&name);
-                self.get_property(program, self.globals, atom)
+                self.get_property(program, self.realm.globals, atom)
             }
             _ => self.function_native(program, args),
         }

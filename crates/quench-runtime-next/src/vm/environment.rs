@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        Ok(self.globals)
+        Ok(self.realm.globals)
     }
 
     #[inline(always)]
@@ -102,8 +102,8 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let value = self.get_field_cached(p, self.globals, atom, cache)?;
-        if value.is_undefined() && self.own_property(self.globals, atom).is_none() {
+        let value = self.get_field_cached(p, self.realm.globals, atom, cache)?;
+        if value.is_undefined() && self.own_property(self.realm.globals, atom).is_none() {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
         Ok(value)
@@ -130,7 +130,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.get_field_cached(p, self.globals, atom, cache)
+        self.get_field_cached(p, self.realm.globals, atom, cache)
     }
 
     pub(super) fn store_name(
@@ -162,9 +162,9 @@ impl<H: Host> Vm<H> {
             .map_or(false, |function| {
                 function.strict && !function.local_atoms.contains(&atom)
             });
-        if strict_local && self.own_property(self.globals, atom).is_none() {
+        if strict_local && self.own_property(self.realm.globals, atom).is_none() {
             return Err(self.reference_error(p, format!("{} is not defined", name)));
         }
-        self.set_field_cached(p, self.globals, atom, value, cache)
+        self.set_field_cached(p, self.realm.globals, atom, value, cache)
     }
 }

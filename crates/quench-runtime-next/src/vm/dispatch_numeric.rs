@@ -141,7 +141,7 @@ impl<H: Host> Vm<H> {
         frame.this = if function.strict {
             this
         } else if this.is_null() || this.is_undefined() {
-            self.globals
+            self.realm.globals
         } else {
             self.box_object(this)?
         };
