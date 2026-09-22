@@ -49,6 +49,7 @@ mod object_static;
 mod object_symbols;
 #[cfg(test)]
 mod object_tests;
+mod property_key;
 use call_arguments::CallArguments;
 use numeric_site::NumericSite;
 mod operations;
@@ -235,10 +236,10 @@ pub struct Vm<H> {
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
-    descriptors: FxHashMap<(Value, Atom), PropertyAttributes>,
-    symbol_properties: FxHashMap<(Value, Value), Value>,
-    symbol_property_order: FxHashMap<Value, Vec<Value>>,
-    symbol_descriptors: FxHashMap<(Value, Value), PropertyAttributes>,
+    descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
+    symbol_properties: FxHashMap<(Value, property_key::PropertyKey), Value>,
+    symbol_property_order: FxHashMap<Value, Vec<property_key::PropertyKey>>,
+    symbol_descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {

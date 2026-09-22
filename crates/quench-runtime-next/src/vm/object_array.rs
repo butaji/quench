@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -20,9 +21,10 @@ impl<H: Host> Vm<H> {
                     .is_some()
             })
             .collect::<Vec<usize>>();
-        for (object, atom) in self.descriptors.keys() {
+        for (object, key) in self.descriptors.keys() {
             if *object == target
-                && let Some(index) = super::object_static::array_index(self.atom_name(*atom))
+                && let PropertyKey::String(atom) = *key
+                && let Some(index) = super::object_static::array_index(self.atom_name(atom))
                 && !indices.contains(&(index as usize))
             {
                 indices.push(index as usize);
@@ -38,7 +40,9 @@ impl<H: Host> Vm<H> {
         index: usize,
     ) -> Option<PropertyAttributes> {
         let atom = self.lookup_atom(&index.to_string())?;
-        self.descriptors.get(&(target, atom)).copied()
+        self.descriptors
+            .get(&(target, PropertyKey::string(atom)))
+            .copied()
     }
 
     pub(super) fn array_integrity_atoms(&mut self, target: Value) -> Vec<Atom> {
@@ -55,7 +59,7 @@ impl<H: Host> Vm<H> {
             };
             let attributes = self
                 .descriptors
-                .get(&(target, atom))
+                .get(&(target, PropertyKey::string(atom)))
                 .copied()
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             !attributes.configurable && (!freeze || !attributes.writable)
@@ -90,7 +94,7 @@ impl<H: Host> Vm<H> {
         }
         let current = self
             .descriptors
-            .get(&(target, atom))
+            .get(&(target, PropertyKey::string(atom)))
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let mut attributes = if is_new {
@@ -152,7 +156,7 @@ impl<H: Host> Vm<H> {
                 return Err(JsError("cannot define array accessor".into()));
             }
             self.descriptors.insert(
-                (target, atom),
+                (target, PropertyKey::string(atom)),
                 PropertyAttributes {
                     writable: false,
                     enumerable: attributes.enumerable,
@@ -188,7 +192,8 @@ impl<H: Host> Vm<H> {
         if !self.set_array_element(target, index, next) {
             return Err(JsError("cannot define array index".into()));
         }
-        self.descriptors.insert((target, atom), attributes);
+        self.descriptors
+            .insert((target, PropertyKey::string(atom)), attributes);
         let _ = p;
         Ok(target)
     }
@@ -203,13 +208,14 @@ impl<H: Host> Vm<H> {
             _ => false,
         } || self.heap.sparse_get(target, index).is_some();
         let atom = self.intern_atom(&index.to_string());
-        let has_descriptor = self.descriptors.contains_key(&(target, atom));
+        let key = PropertyKey::string(atom);
+        let has_descriptor = self.descriptors.contains_key(&(target, key));
         if !present && !has_descriptor {
             return Value::TRUE;
         }
         let attributes = self
             .descriptors
-            .get(&(target, atom))
+            .get(&(target, key))
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         if !attributes.configurable {
@@ -224,7 +230,7 @@ impl<H: Host> Vm<H> {
                 self.heap.sparse_set(target, index, Value::DELETED);
             }
         }
-        self.descriptors.remove(&(target, atom));
+        self.descriptors.remove(&(target, key));
         Value::TRUE
     }
 }
