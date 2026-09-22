@@ -574,7 +574,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
                 value: property.value.as_ref().map(ToString::to_string),
             }],
         }),
-        ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, lowering)),
+        ast::Term::CharacterClass(class) => Expr::Class(lower_class(class)),
         ast::Term::CapturingGroup(group) => {
             let index = lowering.next_capture;
             lowering.next_capture += 1;
@@ -679,7 +679,7 @@ fn modifier_mode(
     }
 }
 
-fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> ClassExpr {
+fn lower_class(class: &ast::CharacterClass<'_>) -> ClassExpr {
     let items = class
         .body
         .iter()
@@ -701,7 +701,7 @@ fn lower_class(class: &ast::CharacterClass<'_>, lowering: &mut Lowering) -> Clas
                 vec![ClassItem::Character(character.value)]
             }
             ast::CharacterClassContents::NestedCharacterClass(nested) => {
-                vec![ClassItem::Nested(lower_class(nested, lowering))]
+                vec![ClassItem::Nested(lower_class(nested))]
             }
             ast::CharacterClassContents::ClassStringDisjunction(strings) => {
                 vec![ClassItem::Nested(ClassExpr {
