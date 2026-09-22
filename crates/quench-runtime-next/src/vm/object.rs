@@ -268,9 +268,12 @@ impl<H: Host> Vm<H> {
         self.descriptors
             .entry((object, PropertyKey::string(atom)))
             .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
-        if invalidates_method {
-            self.invalidate_method_caches();
-        }
+        // A property write can replace a callable observed through any
+        // receiver/prototype cache. Until mutation epochs are part of the
+        // cache key, clear the derived method view at this single mutation
+        // boundary; correctness takes precedence over a stale fast path.
+        let _ = invalidates_method;
+        self.invalidate_method_caches();
         Ok(())
     }
     pub(super) fn set_field_cached(
@@ -317,9 +320,8 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .property_set_unchecked(object, cache.slot as usize, value);
             }
-            if invalidates_method {
-                self.invalidate_method_caches();
-            }
+            let _ = invalidates_method;
+            self.invalidate_method_caches();
             self.profile.field_cache_hit(0, 0);
             return Ok(());
         }
@@ -332,9 +334,8 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .property_set_unchecked(object, cache.slot as usize, value);
             }
-            if invalidates_method {
-                self.invalidate_method_caches();
-            }
+            let _ = invalidates_method;
+            self.invalidate_method_caches();
             self.profile.field_cache_hit(2, 0);
             return Ok(());
         }

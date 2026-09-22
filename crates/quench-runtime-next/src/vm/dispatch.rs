@@ -66,6 +66,10 @@ impl<H: Host> Vm<H> {
                 let v = self.load_name(p, i.imm(), i.c())?;
                 self.write(f, i.a(), v);
             }
+            Op::LoadNameTypeof => {
+                let v = self.load_name_typeof(p, i.imm(), i.c())?;
+                self.write(f, i.a(), v);
+            }
             Op::StoreName => self.store_name(p, i.imm(), self.read(f, i.a()), i.c())?,
             Op::LoadThis => self.write(f, i.a(), self.frames[f].this),
             Op::MakeClosure => {

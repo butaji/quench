@@ -87,7 +87,6 @@ impl<H: Host> Vm<H> {
         }
         self.set_named(program, weak_map, "prototype", self.weak_map_proto)?;
         self.global(program, "WeakMap", weak_map)?;
-
         let weak_set = self.native_value(Native::WeakSet);
         self.weak_set_proto = self.object();
         for (name, native) in [
@@ -104,7 +103,6 @@ impl<H: Host> Vm<H> {
         }
         self.set_named(program, weak_set, "prototype", self.weak_set_proto)?;
         self.global(program, "WeakSet", weak_set)?;
-
         let weak_ref = self.native_value(Native::WeakRef);
         self.weak_ref_proto = self.object();
         self.set_named(
@@ -116,7 +114,6 @@ impl<H: Host> Vm<H> {
         self.set_named(program, weak_ref, "prototype", self.weak_ref_proto)?;
         self.global(program, "WeakRef", weak_ref)
     }
-
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
         self.map_proto = self.object();
@@ -135,7 +132,6 @@ impl<H: Host> Vm<H> {
         }
         self.set_named(program, map, "prototype", self.map_proto)?;
         self.global(program, "Map", map)?;
-
         let set = self.native_value(Native::Set);
         self.set_proto = self.object();
         for (name, native) in [
@@ -153,6 +149,8 @@ impl<H: Host> Vm<H> {
         self.set_named(program, set, "prototype", self.set_proto)?;
         self.global(program, "Set", set)
     }
+    #[rustfmt::skip]
+    pub(super) fn install_collection_iterators(&mut self) -> Result<(), JsError> { let Some(iterator) = self.well_known_symbols.get("iterator").copied() else { return Ok(()) }; self.set_symbol_property(self.map_proto, iterator, self.native_value(Native::MapEntries))?; self.set_symbol_property(self.set_proto, iterator, self.native_value(Native::SetValues)) }
     pub(super) fn construct_collection_native(
         &mut self,
         native: Native,

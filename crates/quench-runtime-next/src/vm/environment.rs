@@ -65,6 +65,16 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.get_field_cached(p, self.globals, atom, cache)
     }
+
+    pub(super) fn load_name_typeof(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+        cache: u16,
+    ) -> Result<Value, JsError> {
+        self.get_field_cached(p, self.globals, atom, cache)
+    }
+
     pub(super) fn store_name(
         &mut self,
         p: &ResidualProgram,
