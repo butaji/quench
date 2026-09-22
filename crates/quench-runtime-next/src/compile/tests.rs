@@ -39,3 +39,20 @@ fn packed_domain_overflow_is_a_diagnostic() {
             .any(|error| error.message.contains("packed instruction domain"))
     );
 }
+
+#[test]
+fn constant_computed_property_uses_field_cache_site() {
+    let program = Engine::specialize(
+        "var object = { answer: 42 }; print(object['answer']);",
+        "computed.js",
+    )
+    .unwrap();
+    assert!(
+        program.functions[0]
+            .code
+            .iter()
+            .any(|instruction| instruction.op() == Op::GetField)
+    );
+    assert!(program.field_sites.is_empty());
+    assert!(program.cache_sites > 0);
+}

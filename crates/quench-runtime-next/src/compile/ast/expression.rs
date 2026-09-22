@@ -75,7 +75,6 @@ impl FunctionCompiler<'_, '_> {
         let _ = flags;
         destination
     }
-
     pub(super) fn load_atom(&mut self, atom: Atom) -> Register {
         let dst = self.reg();
         if let Some(slot) = self.local_slots.get(&atom).copied() {
@@ -121,7 +120,6 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::StoreName, value, 0, cache, atom);
         }
     }
-
     pub(super) fn function_expression(&mut self, value: &oxc_ast::ast::Function<'_>) -> Register {
         let params = Self::params(value, self.owner);
         let body = value
@@ -146,7 +144,6 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
     }
-
     pub(super) fn arrow_function_expression(
         &mut self,
         value: &oxc_ast::ast::ArrowFunctionExpression<'_>,
@@ -160,7 +157,6 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
     }
-
     pub(super) fn array_expression(&mut self, value: &ArrayExpression<'_>) -> Register {
         let dst = self.reg();
         let constants = value
@@ -196,7 +192,6 @@ impl FunctionCompiler<'_, '_> {
         }
         dst
     }
-
     pub(super) fn static_get(&mut self, object: &Expression<'_>, key: &str) -> Register {
         if let Expression::StaticMemberExpression(inner) = object
             && matches!(&inner.object, Expression::ThisExpression(_))
@@ -222,7 +217,6 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::GetField, dst, base.0, cache, atom);
         dst
     }
-
     pub(super) fn field_site(
         &mut self,
         base: FieldBase,
@@ -266,12 +260,26 @@ impl FunctionCompiler<'_, '_> {
         } else {
             self.expression(object)
         };
+        if let Expression::StringLiteral(value) = key {
+            let (dst, atom, cache) = (
+                self.reg(),
+                self.owner.atom(value.value.as_str()),
+                self.owner.cache_site(),
+            );
+            self.emit(
+                Op::GetField,
+                dst,
+                FieldBase::register(object).0,
+                cache,
+                atom,
+            );
+            return dst;
+        }
         let key = self.expression(key);
         let dst = self.reg();
         self.emit(Op::GetIndex, dst, object, key, 0);
         dst
     }
-
     pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
         let right = self.expression(&value.right);
         let simple = value.left.as_simple_assignment_target();
@@ -282,7 +290,6 @@ impl FunctionCompiler<'_, '_> {
         };
         self.assign_target(target, right, value.operator as u8)
     }
-
     pub(super) fn assign_target(
         &mut self,
         target: &SimpleAssignmentTarget<'_>,
@@ -323,7 +330,6 @@ impl FunctionCompiler<'_, '_> {
             }
         }
     }
-
     pub(super) fn compound_name(&mut self, atom: Atom, right: Register, op: u8) -> Register {
         if op == 0 {
             return right;
@@ -331,7 +337,6 @@ impl FunctionCompiler<'_, '_> {
         let left = self.load_atom(atom);
         self.apply_compound(left, right, op)
     }
-
     pub(super) fn compound_field(
         &mut self,
         object: Register,
@@ -353,7 +358,6 @@ impl FunctionCompiler<'_, '_> {
         );
         self.apply_compound(left, right, op)
     }
-
     pub(super) fn compound_index(
         &mut self,
         object: Register,
@@ -368,7 +372,6 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::GetIndex, left, object, key, 0);
         self.apply_compound(left, right, op)
     }
-
     pub(super) fn apply_compound(&mut self, left: Register, right: Register, op: u8) -> Register {
         self.emit_binary(
             u32::from(op + 7),
@@ -376,7 +379,6 @@ impl FunctionCompiler<'_, '_> {
             Operand::register(right),
         )
     }
-
     pub(super) fn update(&mut self, value: &UpdateExpression<'_>) -> Register {
         let (old, target) = match &value.argument {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => {
