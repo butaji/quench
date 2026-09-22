@@ -1,5 +1,6 @@
 use super::*;
 
+mod array_literal;
 mod call;
 mod destructure;
 mod expression;
