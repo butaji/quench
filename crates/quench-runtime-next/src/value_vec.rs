@@ -1,6 +1,9 @@
 use crate::Value;
 
-const EMPTY_START: u32 = u32::MAX;
+const START_MASK: u32 = 0x3fff_ffff;
+const NON_EXTENSIBLE: u32 = 1 << 30;
+const FROZEN: u32 = 1 << 31;
+const EMPTY_START: u32 = START_MASK;
 const MIN_CAPACITY: usize = 4;
 const BUCKETS: usize = 14;
 
@@ -25,6 +28,34 @@ impl ValueVec {
 
     pub(crate) fn set_auxiliary(&mut self, value: u32) {
         self.auxiliary = value;
+    }
+
+    pub(crate) fn is_extensible(self) -> bool {
+        self.start & NON_EXTENSIBLE == 0
+    }
+
+    pub(crate) fn set_extensible(&mut self, value: bool) {
+        if value {
+            self.start &= !NON_EXTENSIBLE;
+        } else {
+            self.start |= NON_EXTENSIBLE;
+        }
+    }
+
+    pub(crate) fn is_frozen(self) -> bool {
+        self.start & FROZEN != 0
+    }
+
+    pub(crate) fn set_frozen(&mut self, value: bool) {
+        if value {
+            self.start |= FROZEN;
+        } else {
+            self.start &= !FROZEN;
+        }
+    }
+
+    fn start(self) -> usize {
+        (self.start & START_MASK) as usize
     }
 }
 
@@ -73,7 +104,7 @@ impl ValueArena {
     }
 
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {
-        (index < self.len(vector)).then(|| self.values[vector.start as usize + index])
+        (index < self.len(vector)).then(|| self.values[vector.start() + index])
     }
 
     /// # Safety
@@ -82,12 +113,12 @@ impl ValueArena {
         debug_assert!(index < self.len(vector));
         // SAFETY: caller provides the initialized-range invariant; every
         // vector range was allocated from `values` and remains reserved.
-        unsafe { *self.values.get_unchecked(vector.start as usize + index) }
+        unsafe { *self.values.get_unchecked(vector.start() + index) }
     }
 
     pub(crate) fn set(&mut self, vector: ValueVec, index: usize, value: Value) {
         assert!(index < self.len(vector));
-        self.values[vector.start as usize + index] = value;
+        self.values[vector.start() + index] = value;
     }
 
     /// # Safety
@@ -96,7 +127,7 @@ impl ValueArena {
         debug_assert!(index < self.len(vector));
         // SAFETY: caller provides the same initialized-range invariant as get.
         unsafe {
-            *self.values.get_unchecked_mut(vector.start as usize + index) = value;
+            *self.values.get_unchecked_mut(vector.start() + index) = value;
         }
     }
 
@@ -105,7 +136,7 @@ impl ValueArena {
         if len == self.capacity(*vector) {
             self.grow(vector);
         }
-        self.values[vector.start as usize + len] = value;
+        self.values[vector.start() + len] = value;
     }
 
     pub(crate) fn pair(&mut self, auxiliary: u32, first: Value, second: Value) -> ValueVec {
@@ -123,13 +154,13 @@ impl ValueArena {
         if len == 0 {
             return &[];
         }
-        &self.values[vector.start as usize..vector.start as usize + len]
+        &self.values[vector.start()..vector.start() + len]
     }
 
     pub(crate) fn release(&mut self, vector: ValueVec) {
         let capacity = self.capacity(vector);
         if capacity != 0 {
-            self.free[Self::bucket(capacity)].push(vector.start);
+            self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
         }
     }
 
@@ -164,10 +195,10 @@ impl ValueArena {
         let start = self.allocate(next);
         if len != 0 {
             self.values
-                .copy_within(vector.start as usize..vector.start as usize + len, start);
+                .copy_within(vector.start()..vector.start() + len, start);
             self.release(*vector);
         }
-        vector.start = start as u32;
+        vector.start = start as u32 | (vector.start & !START_MASK);
     }
 
     #[cfg(any(test, feature = "profile-memory"))]

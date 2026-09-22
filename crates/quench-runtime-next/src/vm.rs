@@ -8,7 +8,7 @@ use crate::host::Host;
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -261,8 +261,6 @@ pub struct Vm<H> {
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
     descriptors: FxHashMap<(Value, Atom), PropertyAttributes>,
-    non_extensible: FxHashSet<Value>,
-    frozen: FxHashSet<Value>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -385,8 +383,6 @@ impl<H: Host> Vm<H> {
         self.megamorphic_methods.clear();
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
         self.descriptors.clear();
-        self.non_extensible.clear();
-        self.frozen.clear();
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.globals = self
             .heap

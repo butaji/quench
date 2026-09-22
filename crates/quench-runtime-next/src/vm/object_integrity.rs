@@ -20,7 +20,11 @@ impl<H: Host> Vm<H> {
                 "Object.setPrototypeOf target is not an object".into(),
             ));
         };
-        if self.non_extensible.contains(&target) && current_proto != proto {
+        if self
+            .object_data(target)
+            .is_some_and(|object| !object.is_extensible())
+            && current_proto != proto
+        {
             return Err(JsError(
                 "cannot change prototype of non-extensible object".into(),
             ));
@@ -41,7 +45,11 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         exists: bool,
     ) -> Result<(), JsError> {
-        if !exists && self.non_extensible.contains(&object) {
+        if !exists
+            && self
+                .object_data(object)
+                .is_some_and(|object| !object.is_extensible())
+        {
             return Err(JsError(
                 "cannot add property to non-extensible object".into(),
             ));
@@ -59,15 +67,15 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn object_prevent_extensions(&mut self, args: &[Value]) -> Result<Value, JsError> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if self.object_data(target).is_some() {
-            self.non_extensible.insert(target);
+        if let Some(object) = self.object_data_mut(target) {
+            object.set_extensible(false);
         }
         Ok(target)
     }
 
     pub(super) fn object_is_extensible(&self, args: &[Value]) -> bool {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-        self.object_data(target).is_some() && !self.non_extensible.contains(&target)
+        self.object_data(target).is_some_and(Object::is_extensible)
     }
 
     pub(super) fn object_set_integrity(
@@ -79,9 +87,11 @@ impl<H: Host> Vm<H> {
         if self.object_data(target).is_none() {
             return Ok(target);
         }
-        self.non_extensible.insert(target);
-        if freeze {
-            self.frozen.insert(target);
+        if let Some(object) = self.object_data_mut(target) {
+            object.set_extensible(false);
+            if freeze {
+                object.set_frozen(true);
+            }
         }
         let keys = self
             .object_data(target)
@@ -110,7 +120,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.object_data(target) else {
             return true;
         };
-        if !self.non_extensible.contains(&target) {
+        if data.is_extensible() || freeze && !data.is_frozen() {
             return false;
         }
         self.ordered_shape(data).into_iter().all(|(atom, _)| {

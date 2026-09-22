@@ -1,8 +1,8 @@
 use crate::value::Value;
 use crate::value_vec::ValueArena;
 use rustc_hash::FxHashMap;
-
 mod cell;
+mod cell_access;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod root;

@@ -59,10 +59,6 @@ impl<H: Host> Vm<H> {
         self.heap.collect(roots);
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
-        self.non_extensible
-            .retain(|object| self.heap.get(*object).is_some());
-        self.frozen
-            .retain(|object| self.heap.get(*object).is_some());
         self.retain_live_method_caches();
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();

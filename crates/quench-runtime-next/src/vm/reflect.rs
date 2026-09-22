@@ -26,18 +26,22 @@ impl<H: Host> Vm<H> {
                 if self.object_data(target).is_none() {
                     return Err(JsError("Reflect target is not an object".into()));
                 }
-                self.non_extensible.insert(target);
+                self.object_data_mut(target)
+                    .expect("object target validated")
+                    .set_extensible(false);
                 Ok(Value::TRUE)
             }
             Native::ReflectIsExtensible => {
                 if self.object_data(target).is_none() {
                     return Err(JsError("Reflect target is not an object".into()));
                 }
-                Ok(if !self.non_extensible.contains(&target) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                Ok(
+                    if self.object_data(target).is_some_and(Object::is_extensible) {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    },
+                )
             }
             Native::ReflectSet => {
                 let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
@@ -67,14 +71,12 @@ impl<H: Host> Vm<H> {
                 if !proto.is_null() && self.object_data(proto).is_none() {
                     return Err(JsError("Reflect prototype is not an object".into()));
                 }
-                Ok(
-                    if self.non_extensible.contains(&target) && object.proto != proto {
-                        Value::FALSE
-                    } else {
-                        self.object_set_prototype_of(target, proto)?;
-                        Value::TRUE
-                    },
-                )
+                Ok(if !object.is_extensible() && object.proto != proto {
+                    Value::FALSE
+                } else {
+                    self.object_set_prototype_of(target, proto)?;
+                    Value::TRUE
+                })
             }
             Native::ReflectConstruct => {
                 let argument_array = args.get(1).copied().unwrap_or(Value::UNDEFINED);
