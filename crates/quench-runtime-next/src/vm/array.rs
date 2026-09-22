@@ -15,18 +15,28 @@ pub(super) fn normalized_array_values(elements: &[Value]) -> Vec<Value> {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
+        let value = match self.heap.get(array) {
+            Some(Cell::Array { elements, .. }) => elements
+                .get(index)
+                .copied()
+                .filter(|value| !value.is_deleted())
+                .or_else(|| {
+                    self.heap
+                        .sparse_get(array, index)
+                        .filter(|value| !value.is_deleted())
+                }),
+            _ => None,
+        };
+        value.unwrap_or(Value::UNDEFINED)
+    }
+
     pub(super) fn array_reverse_native(&mut self, this: Value) -> Result<Value, JsError> {
         let values = match self.heap.get(this) {
             Some(Cell::Array { elements, .. }) => {
                 let length = self.heap.sparse_length(this).unwrap_or(elements.len());
                 (0..length)
-                    .map(|index| {
-                        elements
-                            .get(index)
-                            .copied()
-                            .or_else(|| self.heap.sparse_get(this, index))
-                            .unwrap_or(Value::UNDEFINED)
-                    })
+                    .map(|index| self.array_value_at(this, index))
                     .collect::<Vec<_>>()
             }
             _ => return Err(JsError("reverse receiver is not array".into())),
@@ -43,13 +53,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Array { elements, .. }) => {
                 let length = self.heap.sparse_length(this).unwrap_or(elements.len());
                 (0..length)
-                    .map(|index| {
-                        elements
-                            .get(index)
-                            .copied()
-                            .or_else(|| self.heap.sparse_get(this, index))
-                            .unwrap_or(Value::UNDEFINED)
-                    })
+                    .map(|index| self.array_value_at(this, index))
                     .collect::<Vec<_>>()
             }
             _ => return Err(JsError("shift receiver is not array".into())),
@@ -73,13 +77,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Array { elements, .. }) => {
                 let length = self.heap.sparse_length(this).unwrap_or(elements.len());
                 (0..length)
-                    .map(|index| {
-                        elements
-                            .get(index)
-                            .copied()
-                            .or_else(|| self.heap.sparse_get(this, index))
-                            .unwrap_or(Value::UNDEFINED)
-                    })
+                    .map(|index| self.array_value_at(this, index))
                     .collect::<Vec<_>>()
             }
             _ => return Err(JsError("unshift receiver is not array".into())),
@@ -104,13 +102,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Array { elements, .. }) => {
                 let length = self.heap.sparse_length(this).unwrap_or(elements.len());
                 (0..length)
-                    .map(|index| {
-                        elements
-                            .get(index)
-                            .copied()
-                            .or_else(|| self.heap.sparse_get(this, index))
-                            .unwrap_or(Value::UNDEFINED)
-                    })
+                    .map(|index| self.array_value_at(this, index))
                     .collect::<Vec<_>>()
             }
             _ => return Err(JsError("splice receiver is not array".into())),
@@ -226,13 +218,7 @@ impl<H: Host> Vm<H> {
         };
         let length = self.heap.sparse_length(value).unwrap_or(elements.len());
         let items = (0..length)
-            .map(|index| {
-                elements
-                    .get(index)
-                    .copied()
-                    .or_else(|| self.heap.sparse_get(value, index))
-                    .unwrap_or(Value::UNDEFINED)
-            })
+            .map(|index| self.array_value_at(value, index))
             .collect::<Vec<_>>();
         for item in items {
             if depth > 0 && matches!(self.heap.get(item), Some(Cell::Array { .. })) {
@@ -255,13 +241,7 @@ impl<H: Host> Vm<H> {
         let append = |value: Value, values: &mut Vec<Value>| {
             if let Some(Cell::Array { elements, .. }) = self.heap.get(value) {
                 let length = self.heap.sparse_length(value).unwrap_or(elements.len());
-                values.extend((0..length).map(|index| {
-                    elements
-                        .get(index)
-                        .copied()
-                        .or_else(|| self.heap.sparse_get(value, index))
-                        .unwrap_or(Value::UNDEFINED)
-                }));
+                values.extend((0..length).map(|index| self.array_value_at(value, index)));
             } else {
                 values.push(value);
             }
@@ -348,13 +328,7 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(length);
         let values = (start.min(end)..end)
-            .map(|index| {
-                elements
-                    .get(index)
-                    .copied()
-                    .or_else(|| self.heap.sparse_get(this, index))
-                    .unwrap_or(Value::UNDEFINED)
-            })
+            .map(|index| self.array_value_at(this, index))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -389,11 +363,7 @@ impl<H: Host> Vm<H> {
             from.max(0.0).trunc() as usize
         };
         for index in start..length {
-            let value = elements
-                .get(index)
-                .copied()
-                .or_else(|| self.heap.sparse_get(this, index))
-                .unwrap_or(Value::UNDEFINED);
+            let value = self.array_value_at(this, index);
             if self.same_value_zero(value, search) {
                 return Ok(Value::TRUE);
             }
@@ -421,13 +391,10 @@ impl<H: Host> Vm<H> {
             if index != 0 {
                 output.push_str(&separator);
             }
-            let Some(value) = elements
-                .get(index)
-                .copied()
-                .or_else(|| self.heap.sparse_get(this, index))
-            else {
+            let value = self.array_value_at(this, index);
+            if value.is_undefined() {
                 continue;
-            };
+            }
             if value.is_null() || value.is_undefined() {
                 continue;
             }

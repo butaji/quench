@@ -8,11 +8,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
+        let length = match self.heap.get(this) {
+            Some(Cell::Array { elements, .. }) => {
+                self.heap.sparse_length(this).unwrap_or(elements.len())
+            }
             _ => return Err(JsError("array group receiver is not array".into())),
         };
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -30,11 +29,7 @@ impl<H: Host> Vm<H> {
             Cell::Object(Self::empty_object(self.object_proto))
         });
         for index in 0..length {
-            let value = elements
-                .get(index)
-                .copied()
-                .or_else(|| self.heap.sparse_get(this, index))
-                .unwrap_or(Value::UNDEFINED);
+            let value = self.array_value_at(this, index);
             let key = self.call_value(
                 p,
                 callback,

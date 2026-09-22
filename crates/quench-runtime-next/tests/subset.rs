@@ -47,6 +47,29 @@ fn proxy_get_and_set_traps_share_target_and_receiver_contract() {
 }
 
 #[test]
+fn array_index_accessor_descriptors_share_index_authority() {
+    assert_eq!(
+        output(
+            "var calls = 0; var array = [1]; Object.defineProperty(array, '0', { get: function() { calls++; return 7; }, set: function(value) { calls += value; }, enumerable: true, configurable: true }); print(array[0]); print(Object.getOwnPropertyDescriptor(array, '0').get !== undefined); array[0] = 2; print(calls); print(Object.values(array)[0]); print(Object.keys(array).join(',')); var sparse = [1]; Object.defineProperty(sparse, '2', { get: function() { return 9; }, enumerable: true, configurable: true }); print(sparse.length); print(sparse[2]); print(Object.keys(sparse).join(',')); delete sparse[2]; print(Object.keys(sparse).join(',')); var wide = []; wide[1025] = 4; print(wide[1025]); delete wide[1025]; print(wide[1025]); print(Object.keys(wide).length);"
+        ),
+        [
+            "7",
+            "true",
+            "3",
+            "7",
+            "0",
+            "3",
+            "9",
+            "0,2",
+            "0",
+            "4",
+            "undefined",
+            "0"
+        ],
+    );
+}
+
+#[test]
 fn proxy_revocable_revoke_closes_the_shared_handler_state() {
     assert_eq!(
         output(

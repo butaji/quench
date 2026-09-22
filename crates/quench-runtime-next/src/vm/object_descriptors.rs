@@ -105,6 +105,28 @@ impl<H: Host> Vm<H> {
         }
         let key = self.to_string(p, key_value)?;
         if let Some(index) = super::object_static::array_index(&key).map(|index| index as usize) {
+            let atom = self.intern_atom(&key);
+            let attributes = self
+                .descriptors
+                .get(&(target, atom))
+                .copied()
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+            if attributes.accessor {
+                let descriptor = self.object();
+                for (name, value) in [
+                    ("get", attributes.getter.unwrap_or(Value::UNDEFINED)),
+                    ("set", attributes.setter.unwrap_or(Value::UNDEFINED)),
+                    ("enumerable", Self::integrity_bool(attributes.enumerable)),
+                    (
+                        "configurable",
+                        Self::integrity_bool(attributes.configurable),
+                    ),
+                ] {
+                    let atom = self.intern_atom(name);
+                    self.set_property(descriptor, atom, value)?;
+                }
+                return Ok(descriptor);
+            }
             let value = match self.heap.get(target) {
                 Some(Cell::Array { elements, .. }) => elements
                     .get(index)
@@ -112,14 +134,12 @@ impl<H: Host> Vm<H> {
                     .filter(|value| !value.is_deleted()),
                 _ => None,
             }
-            .or_else(|| self.heap.sparse_get(target, index));
+            .or_else(|| {
+                self.heap
+                    .sparse_get(target, index)
+                    .filter(|value| !value.is_deleted())
+            });
             if let Some(value) = value {
-                let atom = self.intern_atom(&key);
-                let attributes = self
-                    .descriptors
-                    .get(&(target, atom))
-                    .copied()
-                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 let descriptor = self.object();
                 for (name, value) in [
                     ("value", value),

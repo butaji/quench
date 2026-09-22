@@ -63,22 +63,9 @@ impl<H: Host> Vm<H> {
         }
         let key = self.to_string(p, key_value)?;
         if let Some(index) = super::object_static::array_index(&key).map(|index| index as usize)
-            && let Some(Cell::Array { elements, .. }) = self.heap.get(target)
-            && index < elements.len()
+            && matches!(self.heap.get(target), Some(Cell::Array { .. }))
         {
-            if self
-                .object_data(target)
-                .is_some_and(|object| object.is_frozen() || !object.is_extensible())
-            {
-                return Ok(Value::FALSE);
-            }
-            if elements[index].is_deleted() {
-                return Ok(Value::TRUE);
-            }
-            if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
-                Rc::make_mut(elements)[index] = Value::DELETED;
-            }
-            return Ok(Value::TRUE);
+            return Ok(self.delete_array_index(target, index));
         }
         let atom = self.intern_atom(&key);
         let Some(slot) = self.shapes[self.object_data(target).unwrap().shape() as usize]

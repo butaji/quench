@@ -26,13 +26,7 @@ impl<H: Host> Vm<H> {
         };
         let length = self.heap.sparse_length(this).unwrap_or(elements.len());
         Ok((0..length)
-            .map(|index| {
-                elements
-                    .get(index)
-                    .copied()
-                    .or_else(|| self.heap.sparse_get(this, index))
-                    .unwrap_or(Value::UNDEFINED)
-            })
+            .map(|index| self.array_value_at(this, index))
             .collect())
     }
 
