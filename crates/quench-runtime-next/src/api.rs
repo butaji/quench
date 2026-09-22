@@ -467,4 +467,18 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["1,2", "3"]);
     }
+
+    #[test]
+    fn promise_finally_waits_for_cleanup_promise() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var resolveCleanup; var cleanup = new Promise(function(resolve) { resolveCleanup = resolve; }); Promise.resolve(1).finally(function() { return cleanup; }).then(print); Promise.resolve(2).finally(function() { return Promise.reject('cleanup'); }).catch(print); print('before'); resolveCleanup(9);",
+                "promise-finally-adoption.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["before", "1", "cleanup"]);
+    }
 }

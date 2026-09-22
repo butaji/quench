@@ -213,7 +213,7 @@ const NATIVES: &[Native] = &[
     Native::PromiseCatch,
     Native::PromiseFinally, Native::PromiseAll, Native::PromiseRace,
     Native::PromiseReactionJob, Native::PromiseThenableJob,
-    Native::PromiseFinallyJob, Native::PromiseAggregateJob, ];
+    Native::PromiseFinallyJob, Native::PromiseFinallyContinuationJob, Native::PromiseAggregateJob, ];
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.install_prototypes();
