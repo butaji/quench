@@ -18,6 +18,100 @@ pub(super) fn block_early_error(program: &Program<'_>) -> Option<String> {
     validate_nested(&program.body)
 }
 
+pub(super) fn strict_binding_early_error(program: &Program<'_>) -> Option<String> {
+    let strict = program
+        .directives
+        .iter()
+        .any(|directive| directive.directive == "use strict");
+    validate_strict_statements(&program.body, strict)
+}
+
+fn validate_strict_statements(statements: &[Statement<'_>], inherited_strict: bool) -> Option<String> {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration) if inherited_strict => {
+                let mut names = Vec::new();
+                for item in &declaration.declarations {
+                    collect_pattern_names(&item.id, &mut names);
+                }
+                if names.iter().any(|name| strict_reserved(name)) {
+                    return Some("SyntaxError: strict-reserved binding identifier".into());
+                }
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(body) = &function.body {
+                    let strict = inherited_strict
+                        || body
+                            .directives
+                            .iter()
+                            .any(|directive| directive.directive == "use strict");
+                    if let Some(error) = validate_strict_statements(&body.statements, strict) {
+                        return Some(error);
+                    }
+                }
+            }
+            Statement::ExpressionStatement(statement) => {
+                if let Some(error) = validate_strict_expression(&statement.expression, inherited_strict) {
+                    return Some(error);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn validate_strict_expression(
+    expression: &oxc_ast::ast::Expression<'_>,
+    inherited_strict: bool,
+) -> Option<String> {
+    use oxc_ast::ast::Expression;
+    match expression {
+        Expression::FunctionExpression(function) => function.body.as_ref().and_then(|body| {
+            let strict = inherited_strict
+                || body
+                    .directives
+                    .iter()
+                    .any(|directive| directive.directive == "use strict");
+            validate_strict_statements(&body.statements, strict)
+        }),
+        Expression::ParenthesizedExpression(expression) => {
+            validate_strict_expression(&expression.expression, inherited_strict)
+        }
+        Expression::CallExpression(call) => {
+            if let Some(error) = validate_strict_expression(&call.callee, inherited_strict) {
+                return Some(error);
+            }
+            for argument in &call.arguments {
+                if let Some(expression) = argument.as_expression()
+                    && let Some(error) = validate_strict_expression(expression, inherited_strict)
+                {
+                    return Some(error);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn strict_reserved(name: &str) -> bool {
+    matches!(
+        name,
+        "implements"
+            | "interface"
+            | "let"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "static"
+            | "yield"
+            | "eval"
+            | "arguments"
+    )
+}
+
 fn validate_nested(statements: &[Statement<'_>]) -> Option<String> {
     for statement in statements {
         match statement {
@@ -232,6 +326,28 @@ pub(super) fn strict_arguments_early_error(source: &str) -> bool {
                 Some(b'=') | Some(b'+') | Some(b'-') | Some(b'*') | Some(b'/')
             ) || source[index.saturating_sub(7)..index].contains("delete")
             {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+pub(super) fn strict_eval_early_error(source: &str) -> bool {
+    let masked = mask_literals_and_comments(source);
+    let bytes = masked.as_bytes();
+    let mut index = 0;
+    while index + 4 <= bytes.len() {
+        if bytes[index..].starts_with(b"eval")
+            && (index == 0 || !bytes[index - 1].is_ascii_alphanumeric())
+            && (index + 4 == bytes.len() || !bytes[index + 4].is_ascii_alphanumeric())
+        {
+            let mut cursor = index + 4;
+            while matches!(bytes.get(cursor), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+                cursor += 1;
+            }
+            if matches!(bytes.get(cursor), Some(b'=' | b'+' | b'-' | b'*' | b'/')) {
                 return true;
             }
         }
