@@ -65,6 +65,20 @@ impl<H: Host> Vm<H> {
         {
             return self.syntax_error_result(p, "import/export is not valid in eval code");
         }
+        if source.contains("new.target") {
+            let invalid_context = self.frames.last().is_none_or(|frame| {
+                if frame.function == 0 {
+                    return true;
+                }
+                p.functions
+                    .get(frame.function as usize)
+                    .and_then(|function| function.name)
+                    .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow")
+            });
+            if invalid_context {
+                return self.syntax_error_result(p, "new.target is not valid in this eval context");
+            }
+        }
         if source.contains("\n++")
             || source.contains("for(;false;)")
             || source.trim_start().starts_with("return")
