@@ -37,6 +37,16 @@ fn residual_binary_round_trip_preserves_execution() {
 }
 
 #[test]
+fn proxy_get_and_set_traps_share_target_and_receiver_contract() {
+    assert_eq!(
+        output(
+            "var target = { value: 2 }; var proxy = new Proxy(target, { get: function(t, key, receiver) { return receiver === proxy ? t[key] : 0; }, set: function(t, key, value) { t[key] = value * 2; return true; } }); print(proxy.value); proxy.value = 4; print(target.value);"
+        ),
+        ["2", "8"],
+    );
+}
+
+#[test]
 fn closures_prototypes_arrays_and_integer_ops() {
     let source = r#"
       var K = 40;

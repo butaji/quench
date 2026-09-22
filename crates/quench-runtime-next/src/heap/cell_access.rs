@@ -21,6 +21,7 @@ impl Cell {
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
             | Self::Iterator { object, .. } => Some(object),
+            Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
         }
@@ -39,6 +40,7 @@ impl Cell {
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
             | Self::Iterator { object, .. } => Some(object),
+            Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
         }

@@ -15,6 +15,7 @@ const NATIVES: &[Native] = &[
     Native::ReflectGetPrototypeOf,
     Native::ReflectSetPrototypeOf,
     Native::ReflectConstruct,
+    Native::Proxy,
     Native::JsonParse,
     Native::JsonStringify,
     Native::Array,

@@ -22,6 +22,7 @@ impl<H: Host> Vm<H> {
             "keys",
             self.native_value(Native::ObjectKeys),
         )?;
+        self.global(program, "Proxy", self.native_value(Native::Proxy))?;
         self.install_object_extra(program, object)?;
         for (name, native) in [
             ("create", Native::ObjectCreate),

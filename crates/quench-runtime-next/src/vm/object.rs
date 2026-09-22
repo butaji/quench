@@ -99,6 +99,9 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
+            return self.get_property(p, object, atom);
+        }
         if !self.specialized {
             return self.get_property(p, object, atom);
         }
@@ -260,6 +263,12 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> Result<(), JsError> {
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(object).cloned()
+        {
+            return self.proxy_set(p, target, handler, object, atom, value);
+        }
         if !self.specialized {
             return self.set_property_with_program(p, object, atom, value);
         }
@@ -343,6 +352,12 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(object).cloned()
+        {
+            return self.proxy_set(p, target, handler, object, atom, value);
+        }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
                 self.call_value(p, setter, object, &[value])?;

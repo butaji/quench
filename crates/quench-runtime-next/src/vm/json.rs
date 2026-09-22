@@ -154,7 +154,10 @@ impl<H: Host> Vm<H> {
                 .map(serde_json::Value::String)
                 .or(Some(serde_json::Value::Null))),
             Some(Cell::Error(value)) => Ok(Some(serde_json::Value::String(value))),
-            Some(Cell::Environment { .. }) | Some(Cell::Iterator { .. }) | None => Ok(None),
+            Some(Cell::Environment { .. })
+            | Some(Cell::Iterator { .. })
+            | Some(Cell::Proxy { .. })
+            | None => Ok(None),
         }
     }
 }
