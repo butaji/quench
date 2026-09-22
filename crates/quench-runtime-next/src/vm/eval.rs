@@ -108,8 +108,8 @@ impl<H: Host> Vm<H> {
             {
                 let super_atom = self.intern_atom("\0rqj:super");
                 let home = self
-                    .load_eval_frame_local(p, super_atom)
-                    .or_else(|| self.load_eval_capture_atom(p, super_atom));
+                    .load_eval_capture_atom(p, super_atom)
+                    .or_else(|| self.load_eval_frame_local(p, super_atom));
                 if let Some(home) = home {
                     let prototype = self.object_data(home).map_or(Value::NULL, |object| object.proto);
                     let property_atom = self.intern_atom(property);
@@ -824,6 +824,7 @@ impl<H: Host> Vm<H> {
             for (slot, candidate) in function.local_atoms.iter().enumerate() {
                 let candidate_name = self.atom_name(*candidate);
                 if candidate_name != name
+                    && !name.starts_with('\0')
                     && !(candidate_name.starts_with(&name)
                         && candidate_name[name.len()..].chars().all(|character| character == '_'))
                 {
