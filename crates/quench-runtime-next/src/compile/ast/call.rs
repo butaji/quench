@@ -277,6 +277,22 @@ impl FunctionCompiler<'_, '_> {
             let (method, receiver, first, second) = match argument {
                 Argument::SpreadElement(spread) => {
                     let value = self.expression(&spread.argument);
+                    let array = self.load_name("Array");
+                    let from = self.reg();
+                    let from_atom = self.owner.atom("from");
+                    let from_cache = self.owner.cache_site();
+                    self.emit(
+                        Op::GetField,
+                        from,
+                        FieldBase::register(array).0,
+                        from_cache,
+                        from_atom,
+                    );
+                    let base = self.next_reg;
+                    let value_arg = self.reg();
+                    self.emit(Op::Move, value_arg, value, 0, 0);
+                    let expanded = self.reg();
+                    self.emit(Op::Call, expanded, from, array, (u32::from(base) << 16) | 1);
                     let apply = self.reg();
                     let apply_atom = self.owner.atom("apply");
                     let apply_cache = self.owner.cache_site();
@@ -287,7 +303,7 @@ impl FunctionCompiler<'_, '_> {
                         apply_cache,
                         apply_atom,
                     );
-                    (apply, push, arguments, Some(value))
+                    (apply, push, arguments, Some(expanded))
                 }
                 argument => (
                     push,
