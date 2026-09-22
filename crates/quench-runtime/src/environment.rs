@@ -216,20 +216,6 @@ impl SlotStore {
         }
     }
 
-    fn load_into_fixed<const N: usize>(
-        &self,
-        registers: &mut crate::register_file::FixedWordFile<N>,
-        dst: usize,
-        index: usize,
-    ) -> bool {
-        self.ensure(index);
-        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
-            return cell.with_word(|word| registers.write_owned(dst, word).is_some());
-        }
-        crate::execution_trace::event(crate::execution_trace::Event::LocalWordRead);
-        registers.copy_from(dst, self.values(), index).is_some()
-    }
-
     fn store(&self, index: usize, value: Value) {
         self.ensure(index);
         if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
@@ -991,24 +977,6 @@ impl Environment {
             .unwrap_or(false)
     }
 
-    /// Resolve a move-only loop site's physical word operands once. The
-    /// returned plan is valid while this Environment remains installed and no
-    /// non-Move instruction can resize the involved stores.
-    pub(crate) fn plan_immediate_move(
-        &self,
-        source: u16,
-        target: u16,
-    ) -> Option<crate::register_file::ImmediateCopyPlan> {
-        let slots = self.slots_ref();
-        let source = slots
-            .with_binding(usize::from(source), SlotStore::immediate_word_ptr)
-            .flatten()?;
-        let target = slots
-            .with_binding(usize::from(target), SlotStore::immediate_word_ptr)
-            .flatten()?;
-        Some(crate::register_file::ImmediateCopyPlan::new(source, target))
-    }
-
     /// Resolve a proven non-cell lexical slot for a read-only tagged-word
     /// stencil. Cell-backed, deleted, or missing bindings stay on the
     /// canonical loader because their indirection/throw semantics are part of
@@ -1160,20 +1128,6 @@ impl Environment {
         self.slots_ref()
             .with_binding(index, SlotStore::is_direct_slot)
             .unwrap_or(index >= self.len())
-    }
-
-    pub(crate) fn load_into_fixed<const N: usize>(
-        &self,
-        registers: &mut crate::register_file::FixedWordFile<N>,
-        dst: usize,
-        slot: u16,
-    ) -> bool {
-        let slots = self.slots_ref();
-        slots
-            .with_binding(usize::from(slot), |store, index| {
-                store.load_into_fixed(registers, dst, index)
-            })
-            .unwrap_or(false)
     }
 
     pub(crate) fn set(&self, slot: u16, value: Value) {
