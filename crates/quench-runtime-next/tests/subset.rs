@@ -1571,6 +1571,21 @@ fn array_literals_expand_custom_iterables() {
 }
 
 #[test]
+fn array_from_closes_custom_iterator_on_abrupt_completion() {
+    let source = r#"
+      var iterable = {};
+      iterable[Symbol.iterator] = function() {
+        return {
+          next: function() { throw 'next failed'; },
+          return: function() { print('closed'); return {}; }
+        };
+      };
+      try { Array.from(iterable); } catch (error) { print(error); }
+    "#;
+    assert_eq!(output(source), ["closed", "next failed"]);
+}
+
+#[test]
 fn computed_object_keys_use_indexed_property_semantics() {
     let source = r#"
       var key = 'answer';
