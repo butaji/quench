@@ -103,3 +103,4 @@ impl<H: Host> Vm<H> {
 }
 
 include!("disposal.rs");
+include!("relational.rs");

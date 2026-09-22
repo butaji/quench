@@ -412,10 +412,13 @@ impl<H: Host> Vm<H> {
             5 => self.to_number(p, left)? <= self.to_number(p, right)?,
             6 => self.to_number(p, left)? > self.to_number(p, right)?,
             7 => self.to_number(p, left)? >= self.to_number(p, right)?,
+            20 => self.has_property(p, left, right)?,
+            21 => self.instanceof(p, left, right)?,
             _ => return Ok(Value::number(self.numeric(p, op, left, right)?)),
         };
         Ok(if answer { Value::TRUE } else { Value::FALSE })
     }
+
     #[inline(always)]
     pub(super) fn binary_truthy(
         &mut self,

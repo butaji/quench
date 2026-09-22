@@ -19,14 +19,22 @@ impl FunctionCompiler<'_, '_> {
             return;
         };
         let stack = self.load_atom(atom);
-        let method_atom = self.owner.atom("dispose");
+        let method_atom = self.owner.atom(if self.async_function {
+            "disposeAsync"
+        } else {
+            "dispose"
+        });
         let cache = self.owner.cache_site();
         let site = self.owner.method_sites.len() as u32;
         self.owner
             .method_sites
             .push((method_atom, cache, Vec::new(), None));
-        let ignored = self.reg();
-        self.emit(Op::CallMethod, ignored, stack, 0, site);
+        let result = self.reg();
+        self.emit(Op::CallMethod, result, stack, 0, site);
+        if self.async_function {
+            let awaited = self.reg();
+            self.emit(Op::Await, awaited, result, 0, 0);
+        }
     }
 
     pub(super) fn call_disposable_method(
