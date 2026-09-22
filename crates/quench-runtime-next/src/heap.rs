@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 mod access;
 mod cell;
 mod cell_access;
+mod external;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod root;
@@ -22,6 +23,7 @@ pub(crate) struct Heap {
     marks: Vec<u64>,
     free: Vec<u32>,
     generations: Vec<u32>,
+    external_bytes: usize,
     allocations: usize,
     threshold: usize,
     total_allocations: u64,
@@ -80,6 +82,7 @@ impl Heap {
         }
         self.allocations += 1;
         self.total_allocations += 1;
+        self.external_bytes += cell.external_bytes();
         if let Some(index) = self.free.pop() {
             if let Some(arrays) = &mut self.sparse_arrays {
                 arrays.remove(&index);
@@ -130,6 +133,7 @@ impl Heap {
         self.marks.clear();
         self.free.clear();
         self.generations.clear();
+        self.external_bytes = 0;
         self.allocations = 0;
         self.threshold = 384;
         self.total_allocations = 0;
@@ -190,6 +194,7 @@ impl Heap {
             if Self::marked(&self.marks, index) {
                 live += 1;
             } else if let Some(cell) = slot.cell.take() {
+                self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
                 #[cfg(feature = "profile-memory")]
                 self.memory_profile.freed(index, &cell);
                 if let Some(object) = cell.object() {
@@ -263,13 +268,14 @@ impl Heap {
         marks[index / 64] |= 1 << (index % 64);
     }
     #[allow(dead_code)]
-    pub fn stats(&self) -> (u64, u64, usize, usize, usize) {
+    pub fn stats(&self) -> (u64, u64, usize, usize, usize, usize) {
         (
             self.total_allocations,
             self.collections,
             self.peak_live,
             self.peak_survivors,
             self.max_threshold,
+            self.external_bytes,
         )
     }
     #[cfg(feature = "profile-aggregate")]
