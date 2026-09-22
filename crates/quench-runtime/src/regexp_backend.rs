@@ -919,68 +919,58 @@ fn repeat_options(
         return repeat_simple_options(body, input, state, flags, min, max, greedy);
     }
     let limit = max.unwrap_or(input.len().saturating_add(1));
-    fn visit(
-        body: &Expr,
-        input: &[Unit],
-        state: State,
+    struct Visit<'a> {
+        body: &'a Expr,
+        input: &'a [Unit],
         flags: Flags,
-        count: usize,
         min: usize,
         limit: usize,
         greedy: bool,
-        output: &mut Vec<State>,
-    ) {
+    }
+    fn visit(context: &Visit<'_>, state: State, count: usize, output: &mut Vec<State>) {
         if output.len() == MAX_BACKTRACK_STATES {
             return;
         }
-        if !greedy && count >= min {
+        if !context.greedy && count >= context.min {
             output.push(state.clone());
             if output.len() == MAX_BACKTRACK_STATES {
                 return;
             }
         }
-        if count < limit {
+        if count < context.limit {
             let mut iteration_state = state.clone();
-            if !flags.reverse {
-                for index in capture_indices(body) {
+            if !context.flags.reverse {
+                for index in capture_indices(context.body) {
                     if let Some(capture) = iteration_state.captures.get_mut(index) {
                         *capture = None;
                     }
                 }
             }
-            for next in match_options(body, input, iteration_state, flags) {
-                if next.position != state.position || count < min {
-                    visit(
-                        body,
-                        input,
-                        next,
-                        flags,
-                        count + 1,
-                        min,
-                        limit,
-                        greedy,
-                        output,
-                    );
+            for next in match_options(context.body, context.input, iteration_state, context.flags) {
+                if next.position != state.position || count < context.min {
+                    visit(context, next, count + 1, output);
                     if output.len() == MAX_BACKTRACK_STATES {
                         return;
                     }
                 }
             }
         }
-        if greedy && count >= min && output.len() < MAX_BACKTRACK_STATES {
+        if context.greedy && count >= context.min && output.len() < MAX_BACKTRACK_STATES {
             output.push(state);
         }
     }
     let mut output = Vec::new();
     visit(
-        body,
-        input,
+        &Visit {
+            body,
+            input,
+            flags,
+            min,
+            limit,
+            greedy,
+        },
         state,
-        flags,
         0,
-        min,
-        limit,
-        greedy,
         &mut output,
     );
     output
@@ -1278,60 +1268,50 @@ fn reverse_repeat_options(
     greedy: bool,
 ) -> Vec<State> {
     let limit = max.unwrap_or(input.len().saturating_add(1));
-    fn visit(
-        body: &Expr,
-        input: &[Unit],
-        state: State,
+    struct Visit<'a> {
+        body: &'a Expr,
+        input: &'a [Unit],
         flags: Flags,
-        count: usize,
         min: usize,
         limit: usize,
         greedy: bool,
-        output: &mut Vec<State>,
-    ) {
+    }
+    fn visit(context: &Visit<'_>, state: State, count: usize, output: &mut Vec<State>) {
         if output.len() == MAX_BACKTRACK_STATES {
             return;
         }
-        if !greedy && count >= min {
+        if !context.greedy && count >= context.min {
             output.push(state.clone());
             if output.len() == MAX_BACKTRACK_STATES {
                 return;
             }
         }
-        if count < limit {
-            for next in reverse_options(body, input, state.clone(), flags) {
-                if next.position != state.position || count < min {
-                    visit(
-                        body,
-                        input,
-                        next,
-                        flags,
-                        count + 1,
-                        min,
-                        limit,
-                        greedy,
-                        output,
-                    );
+        if count < context.limit {
+            for next in reverse_options(context.body, context.input, state.clone(), context.flags) {
+                if next.position != state.position || count < context.min {
+                    visit(context, next, count + 1, output);
                     if output.len() == MAX_BACKTRACK_STATES {
                         return;
                     }
                 }
             }
         }
-        if greedy && count >= min && output.len() < MAX_BACKTRACK_STATES {
+        if context.greedy && count >= context.min && output.len() < MAX_BACKTRACK_STATES {
             output.push(state);
         }
     }
     let mut output = Vec::new();
     visit(
-        body,
-        input,
+        &Visit {
+            body,
+            input,
+            flags,
+            min,
+            limit,
+            greedy,
+        },
         state,
-        flags,
         0,
-        min,
-        limit,
-        greedy,
         &mut output,
     );
     output
