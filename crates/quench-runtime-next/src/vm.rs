@@ -29,6 +29,7 @@ mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
 mod environment;
+mod field_cache;
 mod gc;
 mod index;
 mod iterators;
@@ -39,6 +40,8 @@ mod object;
 mod object_builtins;
 mod object_integrity;
 mod object_static;
+#[cfg(test)]
+mod object_tests;
 mod operations;
 mod primitives;
 #[cfg(feature = "profile-aggregate")]
@@ -135,11 +138,17 @@ enum NumericArguments<'a> {
 #[derive(Clone, Copy)]
 struct FieldCache {
     receiver: u32,
+    owner: Value,
+    owner_shape: u32,
     slot: u16,
+    depth: u16,
 }
 const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: u32::MAX,
+    owner: Value::NULL,
+    owner_shape: u32::MAX,
     slot: 0,
+    depth: 0,
 };
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;

@@ -20,7 +20,7 @@ impl FieldCacheSet {
         }
     }
     #[inline(always)]
-    fn get(&self, shape: u32) -> Option<FieldCache> {
+    pub(super) fn get(&self, shape: u32) -> Option<FieldCache> {
         if let Some(entries) = &self.overflow {
             return entries.get(&shape).copied();
         }
@@ -118,21 +118,27 @@ impl<H: Host> Vm<H> {
         // SAFETY: cache-site ids are emitted only by the compiler and execute
         // against the exactly-sized cache vector initialized for this program.
         let cache = unsafe { *self.field_caches.get_unchecked(site as usize) };
-        if cache.receiver == receiver_shape {
-            // SAFETY: the immutable receiver shape and slot were recorded
-            // together for an own property on the cache miss path.
+        if cache.receiver == receiver_shape
+            && let Some(owner) = self.field_cache_owner(object, cache)
+            && let Some(owner_data) = self.object_data(owner)
+        {
+            // SAFETY: receiver shape, owner identity, owner shape, and slot
+            // were recorded together on the cache miss path.
             let value = unsafe {
                 self.heap
-                    .property_get_unchecked(receiver, cache.slot as usize)
+                    .property_get_unchecked(owner_data, cache.slot as usize)
             };
             self.profile.field_cache_hit(0, 0);
             return Ok(value);
         }
-        if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape) {
+        if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape)
+            && let Some(owner) = self.field_cache_owner(object, cache)
+            && let Some(owner_data) = self.object_data(owner)
+        {
             // SAFETY: the table is keyed by the immutable receiver shape.
             let value = unsafe {
                 self.heap
-                    .property_get_unchecked(receiver, cache.slot as usize)
+                    .property_get_unchecked(owner_data, cache.slot as usize)
             };
             self.profile.field_cache_hit(2, 0);
             return Ok(value);
@@ -164,7 +170,7 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         let mut owner = object;
-        let mut depth = 0u8;
+        let mut depth = 0u16;
         loop {
             let Some(current) = self.object_data(owner) else {
                 return Ok(Value::UNDEFINED);
@@ -174,7 +180,7 @@ impl<H: Host> Vm<H> {
                 .position(|key| *key == atom)
             {
                 let value = self.heap.property_get(current, slot).unwrap();
-                if depth == 0 && slot <= u16::MAX as usize {
+                if slot <= u16::MAX as usize {
                     let receiver = self
                         .object_data(object)
                         .map(Object::shape)
@@ -183,7 +189,10 @@ impl<H: Host> Vm<H> {
                         site,
                         FieldCache {
                             receiver,
+                            owner,
+                            owner_shape: current.shape(),
                             slot: slot as u16,
+                            depth,
                         },
                     );
                 }
@@ -362,7 +371,7 @@ impl<H: Host> Vm<H> {
             .map(Object::shape)
             .unwrap_or(u32::MAX);
         let cache = self.field_caches[site as usize];
-        if shape != u32::MAX && cache.receiver == shape {
+        if shape != u32::MAX && cache.receiver == shape && cache.depth == 0 {
             let invalidates_method = self.callable_write(object, cache.slot as usize, value);
             // SAFETY: a matching immutable shape proves the cached slot layout.
             unsafe {
@@ -403,7 +412,10 @@ impl<H: Host> Vm<H> {
                 site,
                 FieldCache {
                     receiver: data_shape,
+                    owner: object,
+                    owner_shape: data_shape,
                     slot: slot as u16,
+                    depth: 0,
                 },
             );
         }
@@ -416,7 +428,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|object| self.heap.property_get(object, slot))
                 .is_some_and(|old| self.is_function(old))
     }
-    fn record_field_cache(&mut self, site: u16, cache: FieldCache) {
+    pub(super) fn record_field_cache(&mut self, site: u16, cache: FieldCache) {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site as usize) };
         if table_index != NO_MEGAMORPHIC_FIELD {
@@ -471,30 +483,5 @@ impl<H: Host> Vm<H> {
             .register_property_shape(next, self.shapes[next as usize].len());
         self.transitions.insert((shape, atom), next);
         next
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    struct SilentHost;
-    impl Host for SilentHost {
-        fn write_line(&mut self, _: &str) {}
-        fn clock_millis(&mut self) -> f64 {
-            0.0
-        }
-    }
-
-    #[test]
-    fn third_receiver_promotes_field_site_to_megamorphic() {
-        let mut vm = Vm::new(SilentHost);
-        vm.field_caches.push(EMPTY_CACHE);
-        vm.megamorphic_field_indices.push(NO_MEGAMORPHIC_FIELD);
-        for receiver in 1..=4 {
-            vm.record_field_cache(0, FieldCache { receiver, slot: 0 });
-        }
-        let table = &vm.megamorphic_fields[0];
-        assert_eq!(table.len(), 4);
-        assert!(table.get(1).is_some() && table.get(4).is_some());
-        assert_eq!(vm.megamorphic_field_indices, [0]);
     }
 }
