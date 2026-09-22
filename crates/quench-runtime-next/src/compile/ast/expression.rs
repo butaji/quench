@@ -97,6 +97,7 @@ impl FunctionCompiler<'_, '_> {
         destination
     }
     pub(super) fn load_atom(&mut self, atom: Atom) -> Register {
+        let atom = self.resolve_lexical(atom);
         let dst = self.reg();
         if let Some(slot) = self.local_slots.get(&atom).copied() {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
@@ -121,6 +122,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
+        let atom = self.resolve_lexical(atom);
         if let Some(slot) = self.local_slots.get(&atom).copied() {
             self.emit(Op::StoreLocal, value, 0, 0, u32::from(slot));
             if self.function_id == 0 {
@@ -152,8 +154,7 @@ impl FunctionCompiler<'_, '_> {
             .as_ref()
             .map_or(&[][..], |body| body.statements.as_slice());
         let name = value.id.as_ref().map(|id| id.name.as_str());
-        let mut scopes = vec![Rc::clone(&self.local_slots)];
-        scopes.extend(self.scopes.iter().cloned());
+        let scopes = self.capture_scopes();
         let function = self.owner.compile_function(
             name,
             &params,
@@ -180,8 +181,7 @@ impl FunctionCompiler<'_, '_> {
         &mut self,
         value: &oxc_ast::ast::ArrowFunctionExpression<'_>,
     ) -> Register {
-        let mut scopes = vec![Rc::clone(&self.local_slots)];
-        scopes.extend(self.scopes.iter().cloned());
+        let scopes = self.capture_scopes();
         let function = self
             .owner
             .compile_arrow_function(value, &scopes, Some(self.function_id));
@@ -453,6 +453,7 @@ impl FunctionCompiler<'_, '_> {
     }
     fn local_operand(&mut self, name: &str) -> Option<Operand> {
         let atom = self.owner.atom(name);
+        let atom = self.resolve_lexical(atom);
         self.local_slots.get(&atom).copied().map(Operand::local)
     }
 

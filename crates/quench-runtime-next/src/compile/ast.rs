@@ -63,6 +63,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) async_function: bool,
     pub(super) generator: bool,
     pub(super) strict: bool,
+    lexical_scopes: Vec<FxHashMap<Atom, Atom>>,
     disposable_stack: Option<Atom>,
 }
 
@@ -105,6 +106,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             async_function,
             generator,
             strict: false,
+            lexical_scopes: Vec::new(),
             disposable_stack: None,
         }
     }
@@ -192,7 +194,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let Some(name) = &function.id else { continue };
                 let params = Self::params(function, self.owner);
                 let Some(body) = &function.body else { continue };
-                let mut scopes = vec![Rc::clone(&self.local_slots)];
+                let mut scopes = self.capture_scopes();
                 scopes.extend(self.scopes.iter().cloned());
                 let id = self.owner.compile_function(
                     Some(name.name.as_str()),
@@ -372,5 +374,95 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn release_temporaries(&mut self) {
         self.next_reg = 0;
+    }
+
+    fn resolve_lexical(&self, atom: Atom) -> Atom {
+        self.lexical_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(&atom).copied())
+            .unwrap_or(atom)
+    }
+
+    pub(super) fn push_lexical_scope(&mut self, body: &[Statement<'_>]) {
+        let mut scope = FxHashMap::default();
+        for statement in body {
+            if let Statement::VariableDeclaration(declaration) = statement
+                && matches!(
+                    declaration.kind,
+                    VariableDeclarationKind::Let | VariableDeclarationKind::Const
+                )
+            {
+                for item in &declaration.declarations {
+                    self.map_pattern_lexicals(&item.id, &mut scope);
+                }
+            }
+        }
+        self.lexical_scopes.push(scope);
+    }
+
+    pub(super) fn scoped_statements(&mut self, body: &[Statement<'_>]) {
+        self.push_lexical_scope(body);
+        self.statements(body);
+        self.lexical_scopes.pop();
+    }
+
+    pub(super) fn capture_scopes(&self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
+        let mut scope = (*self.local_slots).clone();
+        for lexical in &self.lexical_scopes {
+            for (source, target) in lexical {
+                if let Some(slot) = self.local_slots.get(target).copied() {
+                    scope.insert(*source, slot);
+                }
+            }
+        }
+        let mut scopes = vec![Rc::new(scope)];
+        scopes.extend(self.scopes.iter().cloned());
+        scopes
+    }
+
+    pub(super) fn push_catch_binding(&mut self, handler: &CatchClause<'_>, binding: Option<Atom>) {
+        let mut scope = FxHashMap::default();
+        if let (Some(BindingPattern::BindingIdentifier(identifier)), Some(binding)) = (
+            handler.param.as_ref().map(|parameter| &parameter.pattern),
+            binding,
+        ) {
+            scope.insert(self.owner.atom(identifier.name.as_str()), binding);
+        }
+        self.lexical_scopes.push(scope);
+    }
+
+    fn map_pattern_lexicals(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        scope: &mut FxHashMap<Atom, Atom>,
+    ) {
+        match pattern {
+            BindingPattern::BindingIdentifier(identifier) => {
+                let atom = self.owner.atom(identifier.name.as_str());
+                scope
+                    .entry(atom)
+                    .or_insert_with(|| self.hidden_local(identifier.name.as_str()));
+            }
+            BindingPattern::ObjectPattern(pattern) => {
+                for property in &pattern.properties {
+                    self.map_pattern_lexicals(&property.value, scope);
+                }
+                if let Some(rest) = &pattern.rest {
+                    self.map_pattern_lexicals(&rest.argument, scope);
+                }
+            }
+            BindingPattern::ArrayPattern(pattern) => {
+                for element in pattern.elements.iter().flatten() {
+                    self.map_pattern_lexicals(element, scope);
+                }
+                if let Some(rest) = &pattern.rest {
+                    self.map_pattern_lexicals(&rest.argument, scope);
+                }
+            }
+            BindingPattern::AssignmentPattern(pattern) => {
+                self.map_pattern_lexicals(&pattern.left, scope)
+            }
+        }
     }
 }
