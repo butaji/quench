@@ -67,6 +67,16 @@ fn symbol_keys_remain_identity_values_across_property_reflection() {
 }
 
 #[test]
+fn well_known_symbols_are_realm_stable_values() {
+    assert_eq!(
+        output(
+            "print(Symbol.iterator === Symbol.iterator); print(typeof Symbol.iterator); print(Symbol.asyncIterator === Symbol.asyncIterator); print(Symbol.toStringTag === Symbol.toStringTag);"
+        ),
+        ["true", "symbol", "true", "true"],
+    );
+}
+
+#[test]
 fn closures_prototypes_arrays_and_integer_ops() {
     let source = r#"
       var K = 40;

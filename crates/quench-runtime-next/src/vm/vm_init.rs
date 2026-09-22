@@ -46,6 +46,7 @@ impl<H: Host> Vm<H> {
             dynamic_atoms: vec![],
             dynamic_strings: None,
             symbol_registry: FxHashMap::default(),
+            well_known_symbols: FxHashMap::default(),
             string_concats: None,
             field_caches: vec![],
             megamorphic_field_indices: vec![],

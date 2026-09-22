@@ -217,6 +217,7 @@ pub struct Vm<H> {
     dynamic_atoms: Vec<Rc<str>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     symbol_registry: FxHashMap<String, Value>,
+    well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
     megamorphic_field_indices: Vec<u32>,
@@ -333,6 +334,7 @@ impl<H: Host> Vm<H> {
         self.dynamic_atoms.clear();
         self.dynamic_strings = None;
         self.symbol_registry.clear();
+        self.well_known_symbols.clear();
         self.string_concats = None;
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {

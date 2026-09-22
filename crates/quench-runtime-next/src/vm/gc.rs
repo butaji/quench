@@ -40,6 +40,7 @@ impl<H: Host> Vm<H> {
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(self.symbol_registry.values().copied())
+                .chain(self.well_known_symbols.values().copied())
                 .chain(
                     self.symbol_properties
                         .iter()

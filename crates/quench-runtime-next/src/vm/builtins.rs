@@ -235,6 +235,28 @@ impl<H: Host> Vm<H> {
             "keyFor",
             self.native_value(Native::SymbolKeyFor),
         )?;
+        for name in [
+            "asyncDispose",
+            "asyncIterator",
+            "dispose",
+            "hasInstance",
+            "isConcatSpreadable",
+            "iterator",
+            "match",
+            "matchAll",
+            "metadata",
+            "replace",
+            "search",
+            "species",
+            "split",
+            "toPrimitive",
+            "toStringTag",
+            "unscopables",
+        ] {
+            let value = self.heap.alloc(Cell::Symbol(None));
+            self.well_known_symbols.insert(name.into(), value);
+            self.set_named(program, symbol, name, value)?;
+        }
         self.global(program, "Symbol", symbol)?;
         let string = self.native_value(Native::String);
         self.set_named(
