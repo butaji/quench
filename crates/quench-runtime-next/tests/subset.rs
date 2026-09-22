@@ -203,6 +203,21 @@ fn proxy_descriptor_map_uses_own_keys_and_descriptor_traps() {
 }
 
 #[test]
+fn object_assign_observes_proxy_keys_descriptors_and_getters() {
+    let source = r#"
+      var source = { actual: 1 }; var symbol = Symbol('s');
+      var proxy = new Proxy(source, {
+        ownKeys: function() { return ['virtual', symbol]; },
+        getOwnPropertyDescriptor: function(t, key) { return { enumerable: true, configurable: true }; },
+        get: function(t, key) { return key === symbol ? 8 : 7; }
+      });
+      var result = Object.assign({}, proxy);
+      print(result.virtual); print(result[symbol]); print(Object.keys(result).join(','));
+    "#;
+    assert_eq!(output(source), ["7", "8", "virtual"]);
+}
+
+#[test]
 fn callable_and_constructable_proxies_share_apply_and_construct_traps() {
     let source = r#"
       function target(value) { return value + 1; }
