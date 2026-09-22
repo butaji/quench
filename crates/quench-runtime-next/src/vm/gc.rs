@@ -137,6 +137,15 @@ impl<H: Host> Vm<H> {
                         .filter_map(|entry| entry.continuation.as_ref())
                         .flat_map(Continuation::roots),
                 )
+                .chain(self.generators.iter().flat_map(|(generator, record)| {
+                    std::iter::once(*generator).chain(
+                        record
+                            .continuation
+                            .as_ref()
+                            .into_iter()
+                            .flat_map(Continuation::roots),
+                    )
+                }))
                 .chain(self.symbol_registry.values().copied())
                 .chain(self.well_known_symbols.values().copied())
                 .chain(
@@ -224,6 +233,8 @@ impl<H: Host> Vm<H> {
         self.promise
             .async_resume_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
+        self.generators
+            .retain(|generator, _| self.heap.get(*generator).is_some());
         self.retain_live_method_caches();
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();

@@ -122,6 +122,15 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
+        self.iterator_next_with_args(p, this, &[])
+    }
+
+    pub(super) fn iterator_next_with_args(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let (source, kind, index) = match self.heap.get(this) {
             Some(Cell::Iterator {
                 source,
@@ -142,6 +151,9 @@ impl<H: Host> Vm<H> {
                 return Ok(result);
             }
         };
+        if kind == IteratorKind::Generator {
+            return self.generator_next(p, this, args);
+        }
         let selected = match kind {
             IteratorKind::Array
             | IteratorKind::ArrayKeys
@@ -261,7 +273,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
+    pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
         let result = self.object();
         let value_atom = self
             .lookup_atom("value")

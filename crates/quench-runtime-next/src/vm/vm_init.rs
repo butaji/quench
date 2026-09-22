@@ -37,6 +37,7 @@ impl<H: Host> Vm<H> {
             jobs: vec![],
             suspended: vec![],
             suspended_free: vec![],
+            generators: FxHashMap::default(),
             promise: Default::default(),
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
