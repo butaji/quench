@@ -539,6 +539,8 @@ fn own_function(
     Some(unsafe { Rc::from_raw(pointer) })
 }
 
+pub(crate) use crate::stencil_numeric_integer_selection::select_integer_loop;
+
 #[cfg(test)]
 mod tests {
     use super::{IntegerLoopSelection, IntegerRecurrence, NativeIntegerLoopPlan};
@@ -576,5 +578,3 @@ mod tests {
         );
     }
 }
-
-pub(crate) use crate::stencil_numeric_integer_selection::select_integer_loop;

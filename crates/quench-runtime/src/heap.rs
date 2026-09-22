@@ -1039,8 +1039,8 @@ mod tests {
         // Allocation, reclamation, and accounting all happen through the
         // unique mutable arena owner; no shared/atomic side counter exists.
         assert_eq!(arena.stats().live_objects, 1);
-        assert_eq!(arena.get(reference).is_some(), true);
-        assert_eq!(arena.reclaim(reference).is_some(), true);
+        assert!(arena.get(reference).is_some());
+        assert!(arena.reclaim(reference).is_some());
         assert_eq!(drops.get(), 1);
         assert_eq!(arena.stats().live_objects, 0);
         assert!(arena.get(reference).is_none());

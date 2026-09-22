@@ -683,7 +683,7 @@ mod tests {
         let mut site = QuickeningSite::<4>::new(Opcode::GetProperty);
         for shape in 1..=3 {
             assert!(matches!(
-                site.observe(ShapeId(shape), PropertyId(1), shape as u32),
+                site.observe(ShapeId(shape), PropertyId(1), shape),
                 QuickeningDecision::InstallGuard { .. }
             ));
         }

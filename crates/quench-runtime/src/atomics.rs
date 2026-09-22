@@ -1003,7 +1003,7 @@ mod tests {
     #[test]
     fn atomics_reject_non_shared_views() {
         let view = view(false);
-        assert!(load_store(Builtin::AtomicsLoad, &[view.clone()]).is_err());
+        assert!(load_store(Builtin::AtomicsLoad, std::slice::from_ref(&view)).is_err());
         assert!(notify(&[view, Value::Number(0.0)]).is_err());
     }
 

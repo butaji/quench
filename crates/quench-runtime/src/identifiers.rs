@@ -114,6 +114,12 @@ fn interned_name(facts: &mut ProgramDb, name: &str) -> String {
         .to_owned()
 }
 
+fn allocate_register(next_register: &mut u16) -> u16 {
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    register
+}
+
 #[cfg(test)]
 mod tests {
     use crate::facts::ProgramDb;
@@ -136,7 +142,7 @@ mod tests {
     #[test]
     fn interner_handles_boundary_spellings_without_aliasing() {
         let mut table = crate::facts::IdentifierInterner::default();
-        let names = vec!["".to_string(), "𝛼".to_string(), "a".repeat(1024)];
+        let names = ["".to_string(), "𝛼".to_string(), "a".repeat(1024)];
         let ids: Vec<_> = names.iter().map(|name| table.intern(name)).collect();
 
         assert_eq!(ids, vec![0, 1, 2]);
@@ -183,10 +189,4 @@ mod tests {
         dynamic.eval_var_scope_start = 4;
         assert!(!proven_initialized_local("value", 3, &dynamic, &locals));
     }
-}
-
-fn allocate_register(next_register: &mut u16) -> u16 {
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
-    register
 }
