@@ -131,7 +131,9 @@ impl<H: Host> Vm<H> {
             .ordered_shape(data)
             .into_iter()
             .filter(|(atom, slot)| {
-                self.heap.property_get(data, *slot).is_some() && self.is_enumerable(object, *atom)
+                self.heap.property_get(data, *slot).is_some()
+                    && !self.atom_name(*atom).starts_with('\0')
+                    && self.is_enumerable(object, *atom)
             })
             .map(|(atom, _)| atom)
             .collect::<Vec<_>>();

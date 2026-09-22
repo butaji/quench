@@ -297,17 +297,7 @@ impl<H: Host> Vm<H> {
         if value.is_null() || value.is_undefined() {
             return Err(JsError("cannot convert nullish value to object".into()));
         }
-        let object = self.object();
-        if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
-            for (index, unit) in text.units().iter().copied().enumerate() {
-                let key = self.intern_atom(&index.to_string());
-                let value = self
-                    .heap
-                    .alloc(Cell::String(super::wtf16::JsString::from_units(&[unit])));
-                self.set_property(object, key, value)?;
-            }
-        }
-        Ok(object)
+        self.box_primitive_object(value)
     }
 
     pub(super) fn object_define_property(
