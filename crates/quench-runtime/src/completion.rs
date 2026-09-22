@@ -244,6 +244,7 @@ impl CallContinuation {
     /// Validate the compact caller address against the immutable code store
     /// before a tier or helper transition resumes it.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn has_valid_caller_address(&self, store: &crate::machine::CodeStore) -> bool {
         store
             .range_len(self.caller_code)
