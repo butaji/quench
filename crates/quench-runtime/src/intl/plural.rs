@@ -136,10 +136,10 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlPluralRulesSelectRange => {
             if arguments
                 .first()
-                .map_or(true, |value| matches!(value, Value::Undefined))
+                .is_none_or(|value| matches!(value, Value::Undefined))
                 || arguments
                     .get(1)
-                    .map_or(true, |value| matches!(value, Value::Undefined))
+                    .is_none_or(|value| matches!(value, Value::Undefined))
             {
                 return Err(runtime_error(
                     "TypeError: selectRange argument is undefined",

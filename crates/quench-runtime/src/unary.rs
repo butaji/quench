@@ -48,7 +48,7 @@ pub(crate) fn reduce_delete(
             )?,
         ),
         Expression::StaticMemberExpression(member) => {
-            reduce_static_delete_member(&member, ops, facts, next_register, locals)?
+            reduce_static_delete_member(member, ops, facts, next_register, locals)?
         }
         _ => return None,
     };

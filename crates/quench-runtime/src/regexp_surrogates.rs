@@ -20,7 +20,7 @@ fn split_surrogate_classes(pattern: &str) -> String {
         let (ch_offset, ch) = pattern[index..]
             .char_indices()
             .next()
-            .map_or((bytes.len() - index, '\0'), |(off, c)| (off, c));
+            .unwrap_or((bytes.len() - index, '\0'));
         if ch == '\\' {
             // Copy the escape as two ASCII bytes (handles \u, \x, \\, \/,
             // \d, etc. regardless of length). At this point we know the

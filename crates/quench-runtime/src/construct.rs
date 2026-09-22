@@ -85,8 +85,7 @@ pub(crate) fn construct_value(
     target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let result = construct_with_new_target(target, target, arguments);
-    result
+    construct_with_new_target(target, target, arguments)
 }
 pub(crate) fn construct_value_with_new_target(
     target: &Value,

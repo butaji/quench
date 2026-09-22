@@ -7,7 +7,7 @@ fn suspended_try_op(op: &crate::ops::Op, generator: &GeneratorData) -> bool {
         // operation), so do not reject it based on the slot value.
         crate::ops::Op::YieldStar { iterator, .. } => {
             has_repeat_iterator(generator)
-                || crate::execute::read_register(&registers(generator), *iterator)
+                || crate::execute::read_register(registers(generator), *iterator)
                     .is_ok_and(|value| !matches!(value, Value::Undefined))
         }
         _ => false,

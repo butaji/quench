@@ -12,7 +12,7 @@ pub(crate) fn get(value: &Value, name: &PrivateName) -> Result<Value, VmError> {
         .find(|(id, _)| id == name)
         .map(|(_, slot)| slot.clone());
     let Some(slot) = slot else {
-        return Err(private_brand_error_for(&name));
+        return Err(private_brand_error_for(name));
     };
     match slot {
         PrivateSlot::Data(value) => Ok(value),
@@ -20,7 +20,7 @@ pub(crate) fn get(value: &Value, name: &PrivateName) -> Result<Value, VmError> {
         PrivateSlot::Accessor { get: Some(get), .. } => {
             crate::functions::execute_target(&get, value, &[])
         }
-        PrivateSlot::Accessor { get: None, .. } => Err(private_brand_error_for(&name)),
+        PrivateSlot::Accessor { get: None, .. } => Err(private_brand_error_for(name)),
     }
 }
 

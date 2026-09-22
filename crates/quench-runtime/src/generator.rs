@@ -400,11 +400,11 @@ fn push_delegate_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
     else {
         return Ok(());
     };
-    let Ok(iterator) = crate::execute::read_register(&registers(generator), *iterator) else {
+    let Ok(iterator) = crate::execute::read_register(registers(generator), *iterator) else {
         return Ok(());
     };
     try_push_frame(
-        &mut generator.machine.borrow_mut(),
+        generator.machine.borrow_mut(),
         crate::machine::Frame::Delegate {
             phase: 0,
             iterator,
@@ -445,7 +445,7 @@ fn install_suspension_frames(
             body_resume,
             yield_dst,
         } => try_push_frame(
-            &mut generator.machine.borrow_mut(),
+            generator.machine.borrow_mut(),
             crate::machine::Frame::Branch {
                 phase: crate::machine::BranchPhase::Body,
                 branch_resume: body_resume,
@@ -463,7 +463,7 @@ fn install_suspension_frames(
             yield_dst,
             catch_slot,
         } => try_push_frame(
-            &mut generator.machine.borrow_mut(),
+            generator.machine.borrow_mut(),
             crate::machine::Frame::Try {
                 phase,
                 body,
@@ -485,7 +485,7 @@ fn install_suspension_frames(
             repeat,
             slot,
         } => try_push_frame(
-            &mut generator.machine.borrow_mut(),
+            generator.machine.borrow_mut(),
             crate::machine::Frame::Iterator {
                 phase: crate::machine::IteratorPhase::Body,
                 iterator,
@@ -500,9 +500,9 @@ fn install_suspension_frames(
             },
         ),
         crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. } => {
-            let iterator = crate::execute::read_register(&registers(generator), iterator)?;
+            let iterator = crate::execute::read_register(registers(generator), iterator)?;
             try_push_frame(
-                &mut generator.machine.borrow_mut(),
+                generator.machine.borrow_mut(),
                 crate::machine::Frame::Delegate {
                     phase: 0,
                     iterator,
@@ -611,7 +611,7 @@ fn push_loop_suspension_frame_at(
         return Ok(());
     };
     try_push_frame(
-        &mut generator.machine.borrow_mut(),
+        generator.machine.borrow_mut(),
         crate::machine::Frame::Loop {
             label,
             body,
@@ -690,7 +690,7 @@ fn push_dispose_frame(generator: &GeneratorData, state: &GeneratorState) -> Resu
     };
     let resume = parent_resume_range(generator, state);
     try_push_frame(
-        &mut generator.machine.borrow_mut(),
+        generator.machine.borrow_mut(),
         crate::machine::Frame::Dispose {
             body_resume,
             resume,
@@ -746,7 +746,7 @@ fn install_dispose_frame_input(generator: &GeneratorData, input: &Value) -> bool
     let Some(crate::machine::Frame::Dispose { yield_dst, .. }) = frame else {
         return false;
     };
-    crate::execute::write_value(&mut registers_mut(generator), yield_dst, input.clone());
+    crate::execute::write_value(registers_mut(generator), yield_dst, input.clone());
     true
 }
 
@@ -780,9 +780,9 @@ fn resume_suspended_contexts(
         let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
         let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
         let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
-        let input = crate::execute::read_register(&registers(generator), spec.await_dst)?;
+        let input = crate::execute::read_register(registers(generator), spec.await_dst)?;
         let (next, pending) =
-            crate::loops::resume_async_for_of(&mut registers_mut(generator), &spec, input)?;
+            crate::loops::resume_async_for_of(registers_mut(generator), &spec, input)?;
         state.async_for_of = pending;
         if matches!(next, crate::completion::Completion::Normal) {
             return Ok(None);

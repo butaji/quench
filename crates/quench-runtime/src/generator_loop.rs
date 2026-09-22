@@ -115,7 +115,7 @@ fn resume_loop_frame(
                 .and_then(resume_destination)
                 .unwrap_or(frame.yield_dst);
             try_push_frame(
-                &mut generator.machine.borrow_mut(),
+                generator.machine.borrow_mut(),
                 crate::machine::Frame::Await {
                     phase: 0,
                     resume: generator.function.code.range,
@@ -403,7 +403,7 @@ fn store_loop_value(
     value: Option<Value>,
 ) -> Result<(), VmError> {
     if let Some(value) = value {
-        crate::execute::write_value(&mut registers_mut(generator), dst, value);
+        crate::execute::write_value(registers_mut(generator), dst, value);
     }
     Ok(())
 }
@@ -442,6 +442,6 @@ fn install_loop_frame_input(generator: &GeneratorData, input: &Value) -> bool {
     let Some(frame) = loop_frame_resume(generator) else {
         return false;
     };
-    crate::execute::write_value(&mut registers_mut(generator), frame.yield_dst, input.clone());
+    crate::execute::write_value(registers_mut(generator), frame.yield_dst, input.clone());
     true
 }

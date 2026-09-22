@@ -106,7 +106,7 @@ impl ModuleMetadata {
                 if import
                     .specifiers
                     .as_ref()
-                    .map_or(true, |specifiers| specifiers.is_empty())
+                    .is_none_or(|specifiers| specifiers.is_empty())
                 {
                     self.imports.push(ImportBinding {
                         source: source.clone(),

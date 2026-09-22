@@ -1175,11 +1175,10 @@ impl ArrayData {
             // the array was materialized from a mixed/value representation
             // would clone the whole ArrayData on every indexed assignment.
             && self.values.set_existing_numeric_value(index, number);
-        if stored {
-            if self.update_element_kind(number_kind(number)) {
+        if stored
+            && self.update_element_kind(number_kind(number)) {
                 self.bump_backing_generation();
             }
-        }
         stored
     }
 
@@ -1251,11 +1250,10 @@ impl ArrayData {
                 _ => false,
             }
         };
-        if stored {
-            if array.update_element_kind(number_kind(number)) {
+        if stored
+            && array.update_element_kind(number_kind(number)) {
                 array.bump_backing_generation();
             }
-        }
         stored
     }
 
@@ -1804,7 +1802,7 @@ fn number_kind(number: f64) -> ArrayKind {
 }
 
 fn keep_index(key: &str, length: usize) -> bool {
-    crate::arrays::array_index(key).map_or(true, |index| (index as usize) < length)
+    crate::arrays::array_index(key).is_none_or(|index| (index as usize) < length)
 }
 
 fn set_live_index(live: &mut ArgumentLive, index: usize, value: Value) {

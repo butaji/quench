@@ -664,18 +664,17 @@ fn validate_residual_window(
                     "region successor leaves its declared boundary".into(),
                 ));
             }
-            crate::ir::ControlOperands::Loop { .. } => {
+            crate::ir::ControlOperands::Loop { .. }
                 // The generated Bridge row for a structured loop only
                 // removes its dispatch trampoline; the canonical loop
                 // gateway still owns all continuation state.
-                if region.abi != crate::stencil_select::RegionAbi::Bridge
-                    || region.operations.len() != 1
-                {
+                if (region.abi != crate::stencil_select::RegionAbi::Bridge
+                    || region.operations.len() != 1)
+                => {
                     return Err(crate::machine::NativeDispatchError::Physical(
                         "structured loop requires ordinary execution".into(),
                     ));
                 }
-            }
             _ => {}
         }
     }
@@ -802,7 +801,7 @@ fn valid_f64_span(data: *const f64, len: usize) -> bool {
         return false;
     };
     !data.is_null()
-        && (data as usize) % std::mem::align_of::<f64>() == 0
+        && (data as usize).is_multiple_of(std::mem::align_of::<f64>())
         && (data as usize).checked_add(bytes).is_some()
 }
 
@@ -837,7 +836,7 @@ impl NativeArrayGetIncContext {
     #[inline]
     fn is_valid(&self) -> bool {
         !self.element.is_null()
-            && (self.element as usize) % std::mem::align_of::<f64>() == 0
+            && (self.element as usize).is_multiple_of(std::mem::align_of::<f64>())
             && self.next_index == self.index
     }
 }
@@ -845,14 +844,14 @@ impl NativeArrayGetIncContext {
 impl NativeArrayElementStoreContext {
     #[inline]
     fn is_valid(&self) -> bool {
-        !self.element.is_null() && (self.element as usize) % std::mem::align_of::<f64>() == 0
+        !self.element.is_null() && (self.element as usize).is_multiple_of(std::mem::align_of::<f64>())
     }
 }
 
 impl NativeArrayElementContext {
     #[inline]
     fn is_valid(&self) -> bool {
-        !self.element.is_null() && (self.element as usize) % std::mem::align_of::<f64>() == 0
+        !self.element.is_null() && (self.element as usize).is_multiple_of(std::mem::align_of::<f64>())
     }
 }
 

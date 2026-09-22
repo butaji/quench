@@ -131,7 +131,7 @@ fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
     }
     let deleted = properties
         .iter()
-        .any(|(name, _)| name == &crate::builtins::deleted_key(key));
+        .any(|(name, _)| name == crate::builtins::deleted_key(key));
     properties
         .iter()
         .any(|(name, _)| name == key && !super::is_descriptor_key(name))

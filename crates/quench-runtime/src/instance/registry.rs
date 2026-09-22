@@ -37,7 +37,7 @@ pub fn get(id: u32) -> Option<Rc<Inner>> {
 }
 
 thread_local! {
-    static PINNED: RefCell<Vec<Rc<Inner>>> = RefCell::new(Vec::new());
+    static PINNED: RefCell<Vec<Rc<Inner>>> = const { RefCell::new(Vec::new()) };
     static HEAP: Rc<RefCell<crate::gc::GcHeap>> =
         Rc::new(RefCell::new(crate::gc::GcHeap::default()));
 }

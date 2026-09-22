@@ -31,11 +31,10 @@ pub(crate) fn array_copy_within(
         return copy_within_object(current, target, start, count);
     }
 
-    if values.is_packed_ordinary() {
-        if values.copy_dense_within_shared(start, target, count) {
+    if values.is_packed_ordinary()
+        && values.copy_dense_within_shared(start, target, count) {
             return Ok(current);
         }
-    }
 
     let mut updated = values.as_ref().clone();
     if target < start {

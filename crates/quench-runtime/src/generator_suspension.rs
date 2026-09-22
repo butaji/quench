@@ -25,7 +25,7 @@ fn suspended_context(
         return Some(SuspendedContext::Yield);
     }
     if let Some(Op::YieldStar { iterator, .. }) = generator.function.code.code()?.cold_at(machine_pc(generator)) {
-        if crate::execute::read_register(&registers(generator), *iterator)
+        if crate::execute::read_register(registers(generator), *iterator)
             .is_ok_and(|value| !matches!(value, Value::Undefined))
         {
             return Some(SuspendedContext::YieldStar);

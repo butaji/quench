@@ -34,58 +34,54 @@ fn execute_builtin_match(
 ) -> BuiltinResult {
     use crate::ops::Builtin::*;
     match builtin {
-        Array => return Some(crate::builtins::array(arguments)),
-        ArrayIsArray => return Some(crate::builtins::is_array(arguments.first())),
-        ArrayFrom => return Some(from(receiver, arguments)),
-        ArrayFromAsync => return Some(from_async(receiver, arguments)),
-        ArrayOf => {
-            return Some(of(receiver, arguments));
-        }
-        ArrayMap => return Some(crate::builtins::array_map(receiver, arguments)),
-        ArrayFilter => return Some(crate::builtins::array_filter(receiver, arguments)),
-        ArraySome => return Some(some(receiver, arguments)),
-        ArrayEvery => return Some(every(receiver, arguments)),
-        TypedArrayEvery => return Some(typed_array_every(receiver, arguments)),
-        TypedArraySome => return Some(typed_array_some(receiver, arguments)),
-        TypedArrayMap => return Some(typed_array_map(receiver, arguments)),
-        TypedArrayFilter => return Some(typed_array_filter(receiver, arguments)),
-        TypedArraySlice => {
-            return Some(receiver.map_or_else(
-                || {
-                    Err(crate::value::error::throw_type_error(
-                        "TypedArray method called on incompatible receiver",
-                    ))
-                },
-                |value| typed_array_slice(value, arguments),
-            ));
-        }
-        ArrayFind => return Some(find(receiver, arguments)),
-        TypedArrayFind => return Some(typed_array_find(receiver, arguments)),
-        TypedArrayFindIndex => return Some(typed_array_find_index(receiver, arguments)),
-        ArrayIncludes => return Some(includes(receiver, arguments)),
-        TypedArrayIncludes => return Some(typed_array_includes(receiver, arguments)),
-        ArrayIndexOf => return Some(index_of(receiver, arguments)),
-        TypedArrayIndexOf => return Some(typed_array_index_of(receiver, arguments)),
-        ArrayLastIndexOf => return Some(last_index_of(receiver, arguments)),
-        TypedArrayLastIndexOf => return Some(typed_array_last_index_of(receiver, arguments)),
-        ArraySlice => return Some(slice(receiver, arguments)),
-        ArrayConcat => return Some(concat(receiver, arguments)),
-        ArrayFlat => return Some(flat(receiver, arguments)),
-        ArrayFlatMap => return Some(flat_map(receiver, arguments)),
-        ArrayAt => return Some(at(receiver, arguments)),
-        TypedArrayAt => return Some(typed_array_at(receiver, arguments)),
-        ArraySort => return Some(sort(receiver, arguments)),
-        ArrayToReversed => return Some(to_reversed(receiver)),
-        TypedArrayToReversed => return Some(typed_array_to_reversed(receiver)),
-        ArraySplice => return Some(splice(receiver, arguments)),
-        ArrayReduce => return Some(reduce_values(receiver, arguments, false, false)),
-        ArrayReduceRight => return Some(reduce_values(receiver, arguments, true, false)),
-        TypedArrayReduce => return Some(typed_array_reduce(receiver, arguments, false)),
-        TypedArrayReduceRight => return Some(typed_array_reduce(receiver, arguments, true)),
-        ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
-        TypedArrayForEach => return Some(typed_array_for_each(receiver, arguments)),
-        ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
-        TypedArrayToLocaleString => return Some(typed_array_to_locale_string(receiver, arguments)),
+        Array => Some(crate::builtins::array(arguments)),
+        ArrayIsArray => Some(crate::builtins::is_array(arguments.first())),
+        ArrayFrom => Some(from(receiver, arguments)),
+        ArrayFromAsync => Some(from_async(receiver, arguments)),
+        ArrayOf => Some(of(receiver, arguments)),
+        ArrayMap => Some(crate::builtins::array_map(receiver, arguments)),
+        ArrayFilter => Some(crate::builtins::array_filter(receiver, arguments)),
+        ArraySome => Some(some(receiver, arguments)),
+        ArrayEvery => Some(every(receiver, arguments)),
+        TypedArrayEvery => Some(typed_array_every(receiver, arguments)),
+        TypedArraySome => Some(typed_array_some(receiver, arguments)),
+        TypedArrayMap => Some(typed_array_map(receiver, arguments)),
+        TypedArrayFilter => Some(typed_array_filter(receiver, arguments)),
+        TypedArraySlice => Some(receiver.map_or_else(
+            || {
+                Err(crate::value::error::throw_type_error(
+                    "TypedArray method called on incompatible receiver",
+                ))
+            },
+            |value| typed_array_slice(value, arguments),
+        )),
+        ArrayFind => Some(find(receiver, arguments)),
+        TypedArrayFind => Some(typed_array_find(receiver, arguments)),
+        TypedArrayFindIndex => Some(typed_array_find_index(receiver, arguments)),
+        ArrayIncludes => Some(includes(receiver, arguments)),
+        TypedArrayIncludes => Some(typed_array_includes(receiver, arguments)),
+        ArrayIndexOf => Some(index_of(receiver, arguments)),
+        TypedArrayIndexOf => Some(typed_array_index_of(receiver, arguments)),
+        ArrayLastIndexOf => Some(last_index_of(receiver, arguments)),
+        TypedArrayLastIndexOf => Some(typed_array_last_index_of(receiver, arguments)),
+        ArraySlice => Some(slice(receiver, arguments)),
+        ArrayConcat => Some(concat(receiver, arguments)),
+        ArrayFlat => Some(flat(receiver, arguments)),
+        ArrayFlatMap => Some(flat_map(receiver, arguments)),
+        ArrayAt => Some(at(receiver, arguments)),
+        TypedArrayAt => Some(typed_array_at(receiver, arguments)),
+        ArraySort => Some(sort(receiver, arguments)),
+        ArrayToReversed => Some(to_reversed(receiver)),
+        TypedArrayToReversed => Some(typed_array_to_reversed(receiver)),
+        ArraySplice => Some(splice(receiver, arguments)),
+        ArrayReduce => Some(reduce_values(receiver, arguments, false, false)),
+        ArrayReduceRight => Some(reduce_values(receiver, arguments, true, false)),
+        TypedArrayReduce => Some(typed_array_reduce(receiver, arguments, false)),
+        TypedArrayReduceRight => Some(typed_array_reduce(receiver, arguments, true)),
+        ArrayForEach => Some(crate::builtins::array_for_each(receiver, arguments)),
+        TypedArrayForEach => Some(typed_array_for_each(receiver, arguments)),
+        ArrayToLocaleString => Some(array_to_locale_string(receiver, arguments)),
+        TypedArrayToLocaleString => Some(typed_array_to_locale_string(receiver, arguments)),
         _ => None,
     }
 }
@@ -432,9 +428,7 @@ fn map_argument_error(
     if builtin != crate::ops::Builtin::ArrayMap {
         return None;
     }
-    if receiver.map_or(true, |value| {
-        matches!(value, Value::Null | Value::Undefined)
-    }) {
+    if receiver.is_none_or(|value| matches!(value, Value::Null | Value::Undefined)) {
         return Some(Err(crate::value::error::throw_type_error(
             "Array.prototype.map called on null or undefined",
         )));
@@ -1073,7 +1067,7 @@ pub(crate) fn at(
     let length = crate::builtins::map_length(&receiver)?;
     let number = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
     if number.is_nan() {
-        return Ok(crate::execute::get_property_result(&receiver, "0")?);
+        return crate::execute::get_property_result(&receiver, "0");
     }
     let index = number.trunc();
     let length = length as f64;
@@ -1081,10 +1075,7 @@ pub(crate) fn at(
     if position < 0.0 || position >= length {
         return Ok(Value::Undefined);
     }
-    Ok(crate::execute::get_property_result(
-        &receiver,
-        &(position as usize).to_string(),
-    )?)
+    crate::execute::get_property_result(&receiver, &(position as usize).to_string())
 }
 pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let this = receiver.cloned().unwrap_or(Value::Undefined);

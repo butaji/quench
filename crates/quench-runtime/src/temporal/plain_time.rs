@@ -349,7 +349,8 @@ pub(crate) fn round_time(value: i128, quantum: i128, mode: &str) -> i128 {
     let lower = quotient * quantum;
     let upper = lower + quantum;
     let away = if value < 0 { lower } else { upper };
-    let rounded = match mode {
+
+    match mode {
         "ceil" => upper,
         "floor" => lower,
         "expand" => upper,
@@ -378,8 +379,7 @@ pub(crate) fn round_time(value: i128, quantum: i128, mode: &str) -> i128 {
             }
         }
         _ => lower,
-    };
-    rounded
+    }
 }
 
 pub(crate) fn format_time(
@@ -598,7 +598,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_range_error("Invalid annotation"));
     }
     let mut time = text.split('[').next().unwrap_or(text);
-    if let Some((_, suffix)) = time.rsplit_once(|character| character == 'T' || character == 't') {
+    if let Some((_, suffix)) = time.rsplit_once(['T', 't']) {
         time = suffix;
     }
     if let Some((_, suffix)) = time.rsplit_once(' ') {

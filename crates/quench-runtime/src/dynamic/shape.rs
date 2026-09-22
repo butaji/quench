@@ -132,7 +132,7 @@ impl ShapeTable {
         let mut props = source.props.to_vec();
         props.push(Prop { atom, flags });
         let target = self.intern(Shape::with_props(
-            source.proto.clone(),
+            source.proto,
             props.into_boxed_slice(),
             source.extensible,
         ));

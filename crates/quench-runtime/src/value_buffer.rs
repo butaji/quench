@@ -108,7 +108,7 @@ impl ArrayBufferData {
     }
 
     pub fn resize(&self, byte_length: usize) -> Result<(), ResizeError> {
-        let exceeds_maximum = self.max_byte_length.map_or(true, |max| byte_length > max);
+        let exceeds_maximum = self.max_byte_length.is_none_or(|max| byte_length > max);
         if *self.detached.borrow() || self.immutable || exceeds_maximum {
             return Err(ResizeError);
         }

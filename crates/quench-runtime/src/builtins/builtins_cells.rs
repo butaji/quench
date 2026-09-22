@@ -19,7 +19,7 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
     };
     if !has_binding_cell_property(&properties, key) {
         let mut values = properties.properties.clone();
-        values.retain(|(name, _)| name != &crate::builtins::deleted_key(key));
+        values.retain(|(name, _)| name != crate::builtins::deleted_key(key));
         if let Some(slot) = values.position_rev(key) {
             values.store_slot(slot, Value::BindingCell(Rc::clone(&cell)));
         } else {
@@ -70,7 +70,7 @@ fn deleted_binding_cell(
     properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == &crate::builtins::deleted_key(key)).then_some(value))
+        .find_map(|(name, value)| (name == crate::builtins::deleted_key(key)).then_some(value))
         .and_then(|value| binding_cell(&value))
 }
 

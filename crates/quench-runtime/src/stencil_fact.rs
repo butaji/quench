@@ -336,7 +336,7 @@ impl BoxingFact {
     pub fn from_tag(tag: Tag) -> Option<Self> {
         Self::all()
             .into_iter()
-            .find(|fact| fact.tags.iter().any(|candidate| *candidate == tag))
+            .find(|fact| fact.tags.contains(&tag))
     }
 }
 

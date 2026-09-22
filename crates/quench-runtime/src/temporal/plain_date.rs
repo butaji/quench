@@ -33,10 +33,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
-        if matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
-            if !is_iso_calendar_value(calendar)? {
-                return Err(crate::value::error::throw_range_error("Invalid calendar"));
-            }
+        if matches!(calendar, Value::String(_) | Value::StringUnits(_))
+            && !is_iso_calendar_value(calendar)?
+        {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
     let calendar_hint = arguments.get(3).and_then(|value| match value {
@@ -149,7 +149,7 @@ pub(crate) fn construct_from_iso(arguments: &[Value]) -> Result<Value, VmError> 
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     };
     let visible_year = if calendar == "japanese" {
-        f64::from(year)
+        year
     } else {
         f64::from(fields.year)
     };
@@ -909,24 +909,23 @@ fn add(
     let Value::Object(date) = receiver.ok_or_else(invalid_receiver)? else {
         return Err(invalid_receiver());
     };
-    if !has_date_fields(&date) {
+    if !has_date_fields(date) {
         return Err(invalid_receiver());
     }
-    let calendar = calendar_name(&date);
+    let calendar = calendar_name(date);
     let Value::Object(duration) = crate::temporal::duration::from(duration)? else {
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
     let overflow = overflow_option(options)?;
     if calendar != "iso8601" && calendar != "gregory" {
-        return add_with_calendar(&date, &duration, &calendar, direction, &overflow);
+        return add_with_calendar(date, &duration, &calendar, direction, &overflow);
     }
-    let years =
-        number_field(field(&date, "year")) + number_property(&duration, "years") * direction;
-    let months = number_field(field(&date, "month")) - 1.0
-        + number_property(&duration, "months") * direction;
+    let years = number_field(field(date, "year")) + number_property(&duration, "years") * direction;
+    let months =
+        number_field(field(date, "month")) - 1.0 + number_property(&duration, "months") * direction;
     let year = years + (months / 12.0).floor();
     let month = months.rem_euclid(12.0) + 1.0;
-    let original_day = number_field(field(&date, "day"));
+    let original_day = number_field(field(date, "day"));
     let max_day = days_in_month(year, month);
     if overflow == "reject" && original_day > max_day {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
@@ -1024,15 +1023,13 @@ fn calendar_difference_exact(
         left_code,
         right_code,
     )?;
-    Some(
-        crate::temporal::duration::construct(&[
-            Value::Number(years as f64),
-            Value::Number(months as f64),
-            Value::Number(weeks as f64),
-            Value::Number(days as f64),
-        ])
-        .ok()?,
-    )
+    crate::temporal::duration::construct(&[
+        Value::Number(years as f64),
+        Value::Number(months as f64),
+        Value::Number(weeks as f64),
+        Value::Number(days as f64),
+    ])
+    .ok()
 }
 
 fn difference(

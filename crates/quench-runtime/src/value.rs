@@ -1223,12 +1223,12 @@ impl ObjectData {
             .properties
             .iter()
             .rev()
-            .find_map(|(name, value)| (name == &deleted).then_some(value))
+            .find_map(|(name, value)| (name == deleted).then_some(value))
             .and_then(|value| match value {
                 Value::BindingCell(cell) => Some(cell),
                 _ => None,
             });
-        self.properties.retain(|(name, _)| name != &deleted);
+        self.properties.retain(|(name, _)| name != deleted);
         let value = if let Some(cell) = cell {
             cell.store(value);
             Value::BindingCell(cell)

@@ -440,10 +440,7 @@ fn validate_for_of_bound_names(
         ]);
     }
     let declared = var_declared_names_in(std::slice::from_ref(&statement.body));
-    if bound
-        .into_iter()
-        .any(|name| declared.iter().any(|other| name == *other))
-    {
+    if bound.into_iter().any(|name| declared.contains(&name)) {
         return Err(vec![
             "SyntaxError: using declaration conflicts with loop body".to_string(),
         ]);

@@ -520,7 +520,7 @@ impl ControlFlowFacts {
         let Some(end) = start.checked_add(operations.len()) else {
             return None;
         };
-        (operations.len() > 0
+        (!operations.is_empty()
             && end <= entries.len()
             && operations.iter().enumerate().all(|(offset, opcode)| {
                 entry_matches_region(
@@ -549,7 +549,7 @@ impl ControlFlowFacts {
         let Some(end) = start.checked_add(operations.len()) else {
             return None;
         };
-        (operations.len() > 0
+        (!operations.is_empty()
             && end <= entries.len()
             && operations.iter().enumerate().all(|(offset, opcode)| {
                 entry_matches_region_with_terminal_exits(

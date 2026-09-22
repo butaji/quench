@@ -176,7 +176,7 @@ fn decode_hex(input: &str, limit: usize) -> Decoded {
         read: 0,
         failed: false,
     };
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         decoded.failed = true;
         return decoded;
     }

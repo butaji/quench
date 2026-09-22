@@ -66,20 +66,18 @@ fn run_generator_code_steps(
         }
         let transition = match run_instruction(code, next, instruction, registers, context) {
             Ok(transition) => transition,
-            Err(error) => match crate::completion::Completion::from_vm_error(error) {
-                Ok(completion) => {
-                    let target = if matches!(&completion, crate::completion::Completion::Normal) {
-                        crate::vm::DispatchTarget::Callee(next + 1)
-                    } else {
-                        crate::vm::DispatchTarget::Exit
-                    };
-                    crate::vm::DispatchTransition {
-                        next_pc: next + 1,
-                        completion: Some(completion),
-                        target,
-                    }
+            Err(error) => {
+                let completion = crate::completion::Completion::from_vm_error(error)?;
+                let target = if matches!(&completion, crate::completion::Completion::Normal) {
+                    crate::vm::DispatchTarget::Callee(next + 1)
+                } else {
+                    crate::vm::DispatchTarget::Exit
+                };
+                crate::vm::DispatchTransition {
+                    next_pc: next + 1,
+                    completion: Some(completion),
+                    target,
                 }
-                Err(error) => return Err(error),
             },
         };
         // The handler supplies the continuation target.  `next_pc` remains

@@ -111,9 +111,11 @@ impl<A: AdmissionEntry> AdmissionBuilder<A> {
             .flatten();
         let exhausted = charge.is_none();
         Self {
-            spans: (!exhausted)
-                .then(|| vec![AdmissionSpan::default(); instruction_count])
-                .unwrap_or_default(),
+            spans: if !exhausted {
+                vec![AdmissionSpan::default(); instruction_count]
+            } else {
+                Default::default()
+            },
             entries: Vec::new(),
             retained_bytes,
             charge,

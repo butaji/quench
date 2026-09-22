@@ -493,7 +493,7 @@ fn own_i32(object: &crate::value::ObjectData, key: &str) -> Option<i32> {
         return None;
     };
     (value.is_finite() && value >= i32::MIN as f64 && value <= i32::MAX as f64)
-        .then(|| value as i32)
+        .then_some(value as i32)
         .filter(|integer| f64::from(*integer) == value)
 }
 

@@ -62,7 +62,7 @@ fn install_delegate_frame_input(generator: &GeneratorData, input: &Value) -> boo
     let Some(crate::machine::Frame::Delegate { destination, .. }) = frame else {
         return false;
     };
-    crate::execute::write_value(&mut registers_mut(generator), destination, input.clone());
+    crate::execute::write_value(registers_mut(generator), destination, input.clone());
     true
 }
 
@@ -79,7 +79,7 @@ fn resume_delegate_frame(
     else {
         return Ok(None);
     };
-    let input = crate::execute::read_register(&registers(generator), destination)?;
+    let input = crate::execute::read_register(registers(generator), destination)?;
     let result = match delegate(&iterator, input, resume.clone()) {
         Ok(result) => result,
         Err(crate::execute::VmError::Thrown(value)) => {
@@ -94,14 +94,14 @@ fn resume_delegate_frame(
     match result {
         crate::collections::iterator::DelegationResult::Ongoing { value, passthrough } => {
             let output = if passthrough { value } else { iterator_result(value, false) };
-            crate::execute::write_value(&mut registers_mut(generator), destination, output);
+            crate::execute::write_value(registers_mut(generator), destination, output);
             Ok(Some(crate::completion::Completion::Yield(Value::Undefined)))
         }
         crate::collections::iterator::DelegationResult::Done(value) => {
-            crate::execute::write_value(&mut registers_mut(generator), destination, value);
+            crate::execute::write_value(registers_mut(generator), destination, value);
             generator.machine.borrow_mut().pop_frame();
             if matches!(resume, crate::completion::Completion::Return(_)) {
-                let value = crate::execute::read_register(&registers(generator), destination)?;
+                let value = crate::execute::read_register(registers(generator), destination)?;
                 Ok(Some(crate::completion::Completion::Return(value)))
             } else {
                 Ok(Some(crate::completion::Completion::Normal))

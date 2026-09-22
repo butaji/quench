@@ -114,10 +114,8 @@ fn reduce_block_statements(
 pub(crate) fn patch_abrupt_value(ops: &mut [Op], start: usize, value: Option<u16>) {
     for op in ops.iter_mut().skip(start) {
         match op {
-            Op::Break { value: slot, .. } | Op::Continue { value: slot, .. } => {
-                if slot.is_none() {
-                    *slot = value;
-                }
+            Op::Break { value: slot, .. } | Op::Continue { value: slot, .. } if slot.is_none() => {
+                *slot = value;
             }
             _ => {}
         }
