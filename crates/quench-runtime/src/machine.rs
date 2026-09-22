@@ -8255,16 +8255,6 @@ fn select_graph_add_const(
     crate::stencil_plan::select_source_add_const(producer, operation, bits, live_after)
 }
 
-fn region_admission(
-    entries: &[BaselineEntry],
-    cfg: &ControlFlowFacts,
-    pc: usize,
-    policy: crate::stencil_policy::ExecutionPolicy,
-    arena: &SharedStencilPool,
-) -> Option<NativeAdmission> {
-    region_admission_inner(None, entries, cfg, pc, policy, arena)
-}
-
 fn region_admission_with_code(
     code: CodeView<'_>,
     entries: &[BaselineEntry],
@@ -8308,16 +8298,6 @@ fn region_admission_inner(
 /// dispatch stencil contributes only the audited helper boundary, while the
 /// region executor consumes any available generated leaves and falls back per
 /// operation without replaying committed effects.
-fn generic_cfg_region_admission(
-    entries: &[BaselineEntry],
-    cfg: &ControlFlowFacts,
-    pc: usize,
-    policy: crate::stencil_policy::ExecutionPolicy,
-    arena: &SharedStencilPool,
-) -> Option<NativeAdmission> {
-    generic_cfg_region_admission_inner(None, entries, cfg, pc, policy, arena)
-}
-
 fn generic_cfg_region_admission_inner(
     code: Option<CodeView<'_>>,
     entries: &[BaselineEntry],
@@ -8775,12 +8755,14 @@ impl BaselinePlan {
         self.entries.get(pc).copied()
     }
 
+    #[cfg(test)]
     pub(crate) fn control_facts(&self) -> &ControlFlowFacts {
         &self.control
     }
 
     /// Expose CFG-derived loop state to baseline emitters without creating a
     /// second loop analysis or copying it into each admission record.
+    #[cfg(test)]
     pub(crate) fn induction_candidates(
         &self,
         start: usize,
@@ -9150,6 +9132,7 @@ impl BaselinePlan {
         self.entries.len()
     }
 
+    #[cfg(test)]
     pub(crate) fn is_osr_entry(&self, pc: usize) -> bool {
         self.osr_entries.binary_search(&(pc as u32)).is_ok()
     }
@@ -10108,6 +10091,7 @@ impl FunctionCode {
     /// Retire one interpreter operation and compile at a hot back-edge. This
     /// is the OSR admission edge: it only installs a plan, while the next
     /// dispatch transfers to the same body with the current registers intact.
+    #[cfg(test)]
     pub(crate) fn retire_at(&self, pc: usize) -> TierTransition {
         let Some(instruction) = self.code().and_then(|code| code.instruction(pc)) else {
             return TierTransition::Cold;
@@ -10155,6 +10139,7 @@ impl FunctionCode {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn is_osr_entry(&self, pc: usize) -> bool {
         self.baseline_plan()
             .is_some_and(|plan| plan.is_osr_entry(pc))
@@ -10195,6 +10180,7 @@ impl FunctionCode {
         self.code().map(CodeView::layout)
     }
 
+    #[cfg(test)]
     pub(crate) fn required_register_count(&self) -> u16 {
         self.layout()
             .map(|layout| layout.frame_register_count)
@@ -10305,51 +10291,6 @@ pub(crate) fn ops_contain_short_circuit(ops: &[Op]) -> bool {
     ops.iter().any(|op| match op {
         Op::Conditional { .. } | Op::Branch { .. } => true,
         Op::Loop { test, .. } => test.source_ops().is_some_and(ops_contain_short_circuit),
-        _ => false,
-    })
-}
-
-pub(crate) fn ops_contain_call(ops: &[Op]) -> bool {
-    ops.iter().any(|op| match op {
-        Op::Call { .. } | Op::CallMethod { .. } | Op::Construct { .. } => true,
-        Op::Conditional {
-            consequent,
-            alternate,
-            ..
-        }
-        | Op::Branch {
-            then_ops: consequent,
-            else_ops: alternate,
-            ..
-        } => {
-            consequent.source_ops().is_some_and(ops_contain_call)
-                || alternate.source_ops().is_some_and(ops_contain_call)
-        }
-        Op::Loop {
-            init,
-            test,
-            body,
-            update,
-            ..
-        } => [init, test, body, update]
-            .into_iter()
-            .any(|part| part.source_ops().is_some_and(ops_contain_call)),
-        Op::Try {
-            body,
-            handler,
-            finalizer,
-            ..
-        } => {
-            body.source_ops().is_some_and(ops_contain_call)
-                || handler
-                    .as_ref()
-                    .and_then(FunctionCode::source_ops)
-                    .is_some_and(ops_contain_call)
-                || finalizer
-                    .as_ref()
-                    .and_then(FunctionCode::source_ops)
-                    .is_some_and(ops_contain_call)
-        }
         _ => false,
     })
 }
