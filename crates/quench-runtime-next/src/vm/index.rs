@@ -110,8 +110,8 @@ impl<H: Host> Vm<H> {
         if key.as_number().is_none_or(|x| x < 0.0 || x.fract() != 0.0) {
             self.profile.index_get(7);
         }
-        let key = self.to_string(p, key)?;
-        let atom = self.intern_atom(&key);
+        let key = self.coerce_js_string(p, key)?;
+        let atom = self.intern_js_atom(&key);
         self.get_property(p, object, atom)
     }
 
@@ -215,8 +215,8 @@ impl<H: Host> Vm<H> {
         if key.as_number().is_none_or(|x| x < 0.0 || x.fract() != 0.0) {
             self.profile.index_set(7);
         }
-        let key = self.to_string(p, key)?;
-        let atom = self.intern_atom(&key);
+        let key = self.coerce_js_string(p, key)?;
+        let atom = self.intern_js_atom(&key);
         self.set_property_with_program(p, object, atom, value)
     }
 

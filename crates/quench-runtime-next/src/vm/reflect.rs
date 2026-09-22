@@ -14,8 +14,8 @@ impl<H: Host> Vm<H> {
                 if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
                     return self.get_index(p, target, key_value);
                 }
-                let key = self.to_string(p, key_value)?;
-                let atom = self.intern_atom(&key);
+                let key = self.coerce_js_string(p, key_value)?;
+                let atom = self.intern_js_atom(&key);
                 self.get_property(p, target, atom)
             }
             Native::ReflectGetOwnPropertyDescriptor => {
@@ -56,8 +56,8 @@ impl<H: Host> Vm<H> {
                         },
                     );
                 }
-                let key = self.to_string(p, key_value)?;
-                let atom = self.intern_atom(&key);
+                let key = self.coerce_js_string(p, key_value)?;
+                let atom = self.intern_js_atom(&key);
                 Ok(
                     if self
                         .set_property_with_program(

@@ -155,10 +155,10 @@ impl<H: Host> Vm<H> {
                     else {
                         return Err(JsError("Object.fromEntries entry is not an array".into()));
                     };
-                    let key =
-                        self.to_string(p, pair.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    let key = self
+                        .coerce_js_string(p, pair.first().copied().unwrap_or(Value::UNDEFINED))?;
                     let value = pair.get(1).copied().unwrap_or(Value::UNDEFINED);
-                    let atom = self.intern_atom(&key);
+                    let atom = self.intern_js_atom(&key);
                     self.set_property(object, atom, value)?;
                 }
                 Ok(object)
@@ -310,8 +310,8 @@ impl<H: Host> Vm<H> {
                 let key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
                     key_value
                 } else {
-                    let text = self.to_string(p, key_value)?;
-                    self.heap.alloc(Cell::String(text.into()))
+                    let text = self.coerce_js_string(p, key_value)?;
+                    self.heap.alloc(Cell::String(text))
                 };
                 let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
                 if self.object_data(descriptor).is_none() {
@@ -338,13 +338,13 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
             return self.define_symbol_property(target, key_value, descriptor);
         }
-        let key = self.to_string(p, key_value)?;
-        if let Some(index) = array_index(&key).map(|index| index as usize)
+        let key = self.coerce_js_string(p, key_value)?;
+        if let Some(index) = array_index(key.host_string()).map(|index| index as usize)
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))
         {
             return self.define_array_property(p, target, index, descriptor);
         }
-        let atom = self.intern_atom(&key);
+        let atom = self.intern_js_atom(&key);
         let existing = self.own_property(target, atom);
         let current = self
             .descriptors
