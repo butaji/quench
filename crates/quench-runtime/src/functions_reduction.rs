@@ -391,16 +391,29 @@ fn finalize_function_body(
     }
 }
 
-fn emit_function_op(
-    ops: &mut Vec<Op>,
-    next_register: &mut u16,
+struct FunctionSpec {
     body: Vec<Op>,
     frame_register_count: u16,
     params: u16,
     captures: u16,
     metadata: FunctionMetadata,
     source: Option<String>,
-) -> u16 {
+}
+
+struct FunctionEmission {
+    spec: FunctionSpec,
+    declared_name: Option<String>,
+}
+
+fn emit_function_op(ops: &mut Vec<Op>, next_register: &mut u16, spec: FunctionSpec) -> u16 {
+    let FunctionSpec {
+        body,
+        frame_register_count,
+        params,
+        captures,
+        metadata,
+        source,
+    } = spec;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::MakeFunctionWithKind {
@@ -486,21 +499,25 @@ pub(crate) fn reduce_expression_kind_source(
     Some(emit_function_expression(
         ops,
         next_register,
-        reduced.body,
-        reduced.frame_register_count,
-        parameter_count,
-        reduced.captures,
-        FunctionMetadata {
-            kind: emitted_kind,
-            length: crate::function_parameters::expected_argument_count(&function.params),
-            strictness,
-            is_async: function.r#async,
-            mapped_arguments: crate::function_parameters::is_simple(&function.params),
-            direct_constructor: direct_constructor_fact(function, locals),
-            composed_constructor: composed_constructor_fact(function, locals),
+        FunctionEmission {
+            spec: FunctionSpec {
+                body: reduced.body,
+                frame_register_count: reduced.frame_register_count,
+                params: parameter_count,
+                captures: reduced.captures,
+                metadata: FunctionMetadata {
+                    kind: emitted_kind,
+                    length: crate::function_parameters::expected_argument_count(&function.params),
+                    strictness,
+                    is_async: function.r#async,
+                    mapped_arguments: crate::function_parameters::is_simple(&function.params),
+                    direct_constructor: direct_constructor_fact(function, locals),
+                    composed_constructor: composed_constructor_fact(function, locals),
+                },
+                source,
+            },
+            declared_name: function.id.as_ref().map(|id| id.name.to_string()),
         },
-        function.id.as_ref().map(|id| id.name.as_str()),
-        source,
     ))
 }
 
@@ -523,25 +540,27 @@ pub(crate) fn reduce_arrow(
     Some(emit_function_op(
         ops,
         next_register,
-        reduced.body,
-        reduced.frame_register_count,
-        crate::function_parameters::bindings(&function.params)
-            .map(|(_, count)| count)
-            .ok()?,
-        reduced.captures,
-        FunctionMetadata {
-            kind: FunctionKind::Arrow,
-            length: crate::function_parameters::expected_argument_count(&function.params),
-            strictness,
-            is_async: function.r#async,
-            mapped_arguments: false,
-            direct_constructor: std::rc::Rc::default(),
-            composed_constructor: std::rc::Rc::default(),
+        FunctionSpec {
+            body: reduced.body,
+            frame_register_count: reduced.frame_register_count,
+            params: crate::function_parameters::bindings(&function.params)
+                .map(|(_, count)| count)
+                .ok()?,
+            captures: reduced.captures,
+            metadata: FunctionMetadata {
+                kind: FunctionKind::Arrow,
+                length: crate::function_parameters::expected_argument_count(&function.params),
+                strictness,
+                is_async: function.r#async,
+                mapped_arguments: false,
+                direct_constructor: std::rc::Rc::default(),
+                composed_constructor: std::rc::Rc::default(),
+            },
+            source: facts
+                .reduction_source
+                .get(function.span.start as usize..function.span.end as usize)
+                .map(str::to_string),
         },
-        facts
-            .reduction_source
-            .get(function.span.start as usize..function.span.end as usize)
-            .map(str::to_string),
     ))
 }
 
