@@ -83,6 +83,20 @@ impl<H: Host> Vm<H> {
             return self.syntax_error_result(p, "super call is not valid in eval code");
         }
         if source.contains("super.") || source.contains("super[") {
+            let expression = source.trim().trim_end_matches(';').trim();
+            if let Some(property) = expression.strip_prefix("super.")
+                && property.chars().all(|character| character == '_' || character == '$' || character.is_ascii_alphanumeric())
+            {
+                let super_atom = self.intern_atom("\0rqj:super");
+                let home = self
+                    .load_eval_frame_local(p, super_atom)
+                    .or_else(|| self.load_eval_capture_atom(p, super_atom));
+                if let Some(home) = home {
+                    let prototype = self.object_data(home).map_or(Value::NULL, |object| object.proto);
+                    let property_atom = self.intern_atom(property);
+                    return self.get_property(p, prototype, property_atom);
+                }
+            }
             return self.syntax_error_result(p, "super property is not valid in eval code");
         }
         if source.trim_start().starts_with("switch (")
@@ -115,7 +129,7 @@ impl<H: Host> Vm<H> {
                         .split_once('=')
                         .map_or(declaration.trim(), |(name, _)| name.trim());
                     let atom = self.intern_atom(name);
-                    if p.functions.first().is_some_and(|function| function.local_atoms.contains(&atom))
+                    if self.current_frame_has_lexical_conflict(p, atom)
                         && self.own_property(globals, atom).is_none()
                     {
                         return self.syntax_error_result(p, "var declaration conflicts with global lexical binding");
@@ -123,24 +137,21 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        if !self.direct_eval
-            && !source_strict
-            && statements.iter().any(|statement| {
+        if !self.direct_eval && !source_strict {
+            let globals = self.realm.globals;
+            if statements.iter().any(|statement| {
                 statement.trim().strip_prefix("var ").is_some_and(|declarations| {
                     split_commas(declarations).into_iter().any(|declaration| {
                         let name = declaration
-                            .split_once('=')
-                            .map_or(declaration.trim(), |(name, _)| name.trim());
+                            .split_once('=').map_or(declaration.trim(), |(name, _)| name.trim());
                         let atom = self.intern_atom(name);
-                        p.functions
-                            .first()
-                            .is_some_and(|function| function.local_atoms.contains(&atom))
-                            && self.own_property(self.realm.globals, atom).is_none()
+                        self.current_frame_declares_global_lexical(p, atom)
+                            && self.own_property(globals, atom).is_none()
                     })
                 })
-            })
-        {
-            return self.syntax_error_result(p, "var declaration conflicts with global lexical binding");
+            }) {
+                return self.syntax_error_result(p, "var declaration conflicts with global lexical binding");
+            }
         }
         if !self.direct_eval || self.frames.last().is_some_and(|frame| frame.function == 0) {
             let globals = self.realm.globals;
@@ -156,9 +167,7 @@ impl<H: Host> Vm<H> {
                             .map_or(declaration.trim(), |(name, _)| name.trim());
                         self.check_global_eval_declaration(p, globals, name, false)?;
                         let lexical_atom = self.intern_atom(name);
-                        let lexical_conflict = p.functions
-                            .first()
-                            .is_some_and(|function| function.local_atoms.contains(&lexical_atom))
+                        let lexical_conflict = self.current_frame_has_lexical_conflict(p, lexical_atom)
                             && self.own_property(globals, lexical_atom).is_none();
                         if lexical_conflict && !source_strict {
                             return self.syntax_error_result(p, "var declaration conflicts with global lexical binding");
@@ -594,7 +603,7 @@ impl<H: Host> Vm<H> {
             if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
                 return Ok(value);
             }
-            if let Some(value) = self.load_frame_local(p, atom) {
+            if let Some(value) = self.load_eval_frame_local(p, atom) {
                 return Ok(value);
             }
             return self.load_name(p, atom, 0);
@@ -780,19 +789,9 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn sync_dynamic_bindings(&mut self) {
-        let Some(frame) = self.frames.last() else { return; };
-        if !frame.captured {
-            return;
-        }
-        let env = frame.env;
-        let bindings = frame.dynamic_bindings.clone();
-        if let Some(Cell::Environment { dynamic_bindings, .. }) = self.heap.get_mut(env) {
-            *dynamic_bindings = bindings;
-        }
-    }
-
-    fn load_frame_local(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
+    pub(super) fn load_eval_frame_local(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
+        let name = self.atom_name(atom).to_owned();
+        let mut best: Option<(String, Value)> = None;
         for index in (0..self.frames.len()).rev() {
             let frame = &self.frames[index];
             if index != self.frames.len().saturating_sub(1)
@@ -803,24 +802,107 @@ impl<H: Host> Vm<H> {
             let Some(function) = p.functions.get(frame.function as usize) else {
                 continue;
             };
-            let Some(slot) = function
-                .local_atoms
-                .iter()
-                .position(|candidate| *candidate == atom)
-            else {
-                continue;
-            };
-            if frame.captured {
-                if let Some(Cell::Environment { slots, .. }) = self.heap.get(frame.env) {
-                    if let Some(value) = slots.get(slot) {
-                        return Some(*value);
-                    }
+            for (slot, candidate) in function.local_atoms.iter().enumerate() {
+                let candidate_name = self.atom_name(*candidate);
+                if candidate_name != name
+                    && !(candidate_name.starts_with(&name)
+                        && candidate_name[name.len()..].chars().all(|character| character == '_'))
+                {
+                    continue;
                 }
-            } else if let Some(value) = frame.locals.get(slot) {
-                return Some(*value);
+                if best
+                    .as_ref()
+                    .is_some_and(|(best_name, _)| best_name.len() >= candidate_name.len())
+                {
+                    continue;
+                }
+                let value = if frame.captured {
+                    self.heap
+                        .get(frame.env)
+                        .and_then(|cell| match cell {
+                            Cell::Environment { slots, .. } => slots.get(slot).copied(),
+                            _ => None,
+                        })
+                } else {
+                    frame.locals.get(slot).copied()
+                }?;
+                best = Some((candidate_name.to_owned(), value));
             }
         }
-        None
+        best.map(|(_, value)| value)
+    }
+
+    fn load_eval_capture_atom(&self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
+        let frame_index = self.frames.len().checked_sub(1)?;
+        let frame = self.frames.get(frame_index)?;
+        let function = p.functions.get(frame.function as usize)?;
+        let parent = function.parent?;
+        let parent_function = p.functions.get(parent as usize)?;
+        let slot = parent_function
+            .local_atoms
+            .iter()
+            .position(|candidate| *candidate == atom)?;
+        let env = self.capture_env(frame_index, 0)?;
+        match self.heap.get(env)? {
+            Cell::Environment { slots, .. } => slots.get(slot).copied(),
+            _ => None,
+        }
+    }
+
+    fn current_frame_has_lexical_alias(&self, p: &ResidualProgram, atom: Atom) -> bool {
+        let name = self.atom_name(atom);
+        let Some(frame) = self.frames.last() else {
+            return false;
+        };
+        let Some(function) = p.functions.get(frame.function as usize) else {
+            return false;
+        };
+        function.local_atoms.iter().any(|candidate| {
+            let candidate_name = self.atom_name(*candidate);
+            candidate_name.starts_with(name)
+                && candidate_name[name.len()..]
+                    .chars()
+                    .all(|character| character == '_')
+                && candidate_name.len() > name.len()
+        })
+    }
+
+    fn current_frame_has_lexical_conflict(&self, p: &ResidualProgram, atom: Atom) -> bool {
+        if self.current_frame_has_lexical_alias(p, atom) {
+            return true;
+        }
+        let Some(frame) = self.frames.last() else {
+            return false;
+        };
+        if frame.function != 0 {
+            return false;
+        }
+        p.functions
+            .get(frame.function as usize)
+            .is_some_and(|function| function.local_atoms.contains(&atom))
+    }
+
+    fn current_frame_declares_global_lexical(&self, p: &ResidualProgram, atom: Atom) -> bool {
+        let Some(frame) = self.frames.last() else {
+            return false;
+        };
+        frame.function == 0
+            && !self.current_frame_has_lexical_alias(p, atom)
+            && p.functions
+                .get(frame.function as usize)
+                .is_some_and(|function| function.local_atoms.contains(&atom))
+    }
+
+    fn sync_dynamic_bindings(&mut self) {
+        let Some(frame) = self.frames.last() else { return; };
+        if !frame.captured {
+            return;
+        }
+        let env = frame.env;
+        let bindings = frame.dynamic_bindings.clone();
+        if let Some(Cell::Environment { dynamic_bindings, .. }) = self.heap.get_mut(env) {
+            *dynamic_bindings = bindings;
+        }
     }
 
     fn store_frame_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) -> bool {
