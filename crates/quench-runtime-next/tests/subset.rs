@@ -146,12 +146,16 @@ fn delete_property_uses_one_named_symbol_and_proxy_authority() {
       print(Reflect.deleteProperty(target, 'fixed'));
       var proxy = new Proxy({ value: 9 }, { deleteProperty: function(t, property) { print(property); return true; } });
       print(delete proxy.value); print(proxy.value);
+      var array = [1, 2]; print(delete array[0]); print(array[0] === undefined); print(array.length);
+      print(Object.keys(array).join(','));
+      print(JSON.stringify(array)); print(Array.from(array)[0] === undefined);
+      array[0] = 3; print(array[0]); print(Object.keys(array).join(','));
     "#;
     assert_eq!(
         output(source),
         [
             "true", "false", "8", "answer", "true", "0", "true", "true", "false", "value", "true",
-            "9"
+            "9", "true", "true", "2", "1", "[null,2]", "true", "3", "0,1"
         ]
     );
 }
