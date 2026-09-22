@@ -2,6 +2,20 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn descriptor_field(
+        &mut self,
+        p: &ResidualProgram,
+        descriptor: Value,
+        name: &str,
+    ) -> Result<Option<Value>, JsError> {
+        let atom = self.intern_atom(name);
+        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        if !self.has_property(p, descriptor, key)? {
+            return Ok(None);
+        }
+        Ok(Some(self.get_property(p, descriptor, atom)?))
+    }
+
     pub(super) fn object_assign(
         &mut self,
         p: &ResidualProgram,
@@ -310,7 +324,7 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get(source).cloned()
         {
             if handler.is_null() {
-                return Err(JsError("cannot access a revoked proxy".into()));
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }
             let trap_atom = self.intern_atom("defineProperty");
             let trap = self.get_property(p, handler, trap_atom)?;
@@ -324,11 +338,13 @@ impl<H: Host> Vm<H> {
                 };
                 let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
                 if self.object_data(descriptor).is_none() {
-                    return Err(JsError("property descriptor is not an object".into()));
+                    return Err(self.type_error(p, "property descriptor is not an object".into()));
                 }
                 let result = self.call_value(p, trap, handler, &[target, key, descriptor])?;
                 if !self.truthy(result) {
-                    return Err(JsError("proxy defineProperty trap returned false".into()));
+                    return Err(
+                        self.type_error(p, "proxy defineProperty trap returned false".into())
+                    );
                 }
                 self.validate_proxy_define_property(p, target, key, descriptor)?;
                 return Ok(source);
@@ -338,16 +354,21 @@ impl<H: Host> Vm<H> {
         let target = self
             .object_data(target)
             .map(|_| target)
-            .ok_or_else(|| JsError("defineProperty target is not an object".into()))?;
+            .ok_or_else(|| self.type_error(p, "defineProperty target is not an object".into()))?;
         let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         if self.object_data(descriptor).is_none() {
-            return Err(JsError("property descriptor is not an object".into()));
+            return Err(self.type_error(p, "property descriptor is not an object".into()));
         }
         if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
             return self.define_symbol_property(target, key_value, descriptor);
         }
         let key = self.coerce_js_string(p, key_value)?;
+        if key.host_string() == "length"
+            && matches!(self.heap.get(target), Some(Cell::Array { .. }))
+        {
+            return self.define_array_length(p, target, descriptor);
+        }
         if let Some(index) = array_index(key.host_string()).map(|index| index as usize)
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))
         {
@@ -376,8 +397,7 @@ impl<H: Host> Vm<H> {
             ("enumerable", &mut attributes.enumerable),
             ("configurable", &mut attributes.configurable),
         ] {
-            let atom = self.intern_atom(name);
-            if let Some(value) = self.own_property(descriptor, atom) {
+            if let Some(value) = self.descriptor_field(p, descriptor, name)? {
                 *slot = self.truthy(value);
             }
         }
@@ -387,20 +407,17 @@ impl<H: Host> Vm<H> {
                 || attributes.enumerable != current.enumerable
                 || attributes.writable && !current.writable)
         {
-            return Err(JsError("cannot redefine non-configurable property".into()));
+            return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
         }
-        let value_atom = self.intern_atom("value");
-        let descriptor_value = self.own_property(descriptor, value_atom);
-        let get_atom = self.intern_atom("get");
-        let set_atom = self.intern_atom("set");
-        let descriptor_getter = self.own_property(descriptor, get_atom);
-        let descriptor_setter = self.own_property(descriptor, set_atom);
-        let writable_atom = self.intern_atom("writable");
-        let descriptor_writable = self.own_property(descriptor, writable_atom);
+        let descriptor_value = self.descriptor_field(p, descriptor, "value")?;
+        let descriptor_getter = self.descriptor_field(p, descriptor, "get")?;
+        let descriptor_setter = self.descriptor_field(p, descriptor, "set")?;
+        let descriptor_writable = self.descriptor_field(p, descriptor, "writable")?;
         let descriptor_accessor = descriptor_getter.is_some() || descriptor_setter.is_some();
         let descriptor_data = descriptor_value.is_some() || descriptor_writable.is_some();
         if descriptor_accessor && descriptor_data {
-            return Err(JsError(
+            return Err(self.type_error(
+                p,
                 "property descriptor mixes data and accessor fields".into(),
             ));
         }
@@ -409,9 +426,7 @@ impl<H: Host> Vm<H> {
             && descriptor_accessor != current.accessor
             && (descriptor_accessor || descriptor_data)
         {
-            return Err(JsError(
-                "cannot change non-configurable property kind".into(),
-            ));
+            return Err(self.type_error(p, "cannot change non-configurable property kind".into()));
         }
         let accessor = descriptor_accessor;
         if accessor {
@@ -423,13 +438,33 @@ impl<H: Host> Vm<H> {
                 .map(|value| (!value.is_undefined()).then_some(value))
                 .or_else(|| current.accessor.then_some(current.setter))
                 .flatten();
+            if !is_new
+                && current.accessor
+                && !current.configurable
+                && ((descriptor_getter.is_some()
+                    && !descriptor_getter.is_some_and(|value| {
+                        (value.is_undefined() && current.getter.is_none())
+                            || current
+                                .getter
+                                .is_some_and(|old| self.same_value(old, value))
+                    }))
+                    || (descriptor_setter.is_some()
+                        && !descriptor_setter.is_some_and(|value| {
+                            (value.is_undefined() && current.setter.is_none())
+                                || current
+                                    .setter
+                                    .is_some_and(|old| self.same_value(old, value))
+                        })))
+            {
+                return Err(self.type_error(p, "cannot change non-configurable accessor".into()));
+            }
             if getter.is_some_and(|value| !self.is_function(value))
                 || setter.is_some_and(|value| !self.is_function(value))
             {
-                return Err(JsError("property accessor is not callable".into()));
+                return Err(self.type_error(p, "property accessor is not callable".into()));
             }
             if !is_new && !current.configurable && !current.accessor {
-                return Err(JsError("cannot redefine non-configurable property".into()));
+                return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
             }
             if is_new {
                 self.set_property(target, atom, Value::UNDEFINED)?;
@@ -451,11 +486,9 @@ impl<H: Host> Vm<H> {
         if !is_new
             && !current.configurable
             && !current.writable
-            && self
-                .own_property(descriptor, value_atom)
-                .is_some_and(|next| !self.same_value(existing.unwrap(), next))
+            && descriptor_value.is_some_and(|next| !self.same_value(existing.unwrap(), next))
         {
-            return Err(JsError("cannot write non-writable property".into()));
+            return Err(self.type_error(p, "cannot write non-writable property".into()));
         }
         let value = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
         if descriptor_data {
@@ -464,7 +497,7 @@ impl<H: Host> Vm<H> {
             attributes.setter = None;
         }
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
-            if current.accessor && descriptor_data {
+            if (current.accessor || !current.writable && current.configurable) && descriptor_data {
                 self.remove_property_attributes(target, PropertyKey::string(atom));
             }
             self.set_property(target, atom, value)?;

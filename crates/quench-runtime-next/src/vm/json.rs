@@ -441,7 +441,10 @@ impl<H: Host> Vm<H> {
                 ancestors.pop();
                 result
             }
-            Some(Cell::Date(value)) => Ok(self
+            Some(Cell::Date {
+                milliseconds: value,
+                ..
+            }) => Ok(self
                 .date_to_json_string(value)
                 .map(|value| JsonValue::String(value.into()))
                 .or(Some(JsonValue::Null))),

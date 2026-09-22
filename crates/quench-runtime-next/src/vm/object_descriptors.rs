@@ -125,20 +125,31 @@ impl<H: Host> Vm<H> {
             && (!self
                 .object_data(target)
                 .is_some_and(Object::is_arguments_object)
-                || self.own_property(target, self.length_atom).is_some())
+                || self
+                    .descriptors
+                    .contains_key(&(target, PropertyKey::string(self.length_atom))))
         {
             let length = self.heap.sparse_length(target).unwrap_or(elements.len());
+            let length_attributes = self
+                .descriptors
+                .get(&(target, PropertyKey::string(self.length_atom)))
+                .copied()
+                .unwrap_or(PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                });
             let descriptor = self.object();
             for (name, value) in [
                 ("value", Value::number(length as f64)),
-                ("writable", Value::TRUE),
+                ("writable", Self::integrity_bool(length_attributes.writable)),
                 ("enumerable", Value::FALSE),
                 (
                     "configurable",
-                    Self::integrity_bool(
-                        self.object_data(target)
-                            .is_some_and(Object::is_arguments_object),
-                    ),
+                    Self::integrity_bool(length_attributes.configurable),
                 ),
             ] {
                 let atom = self.intern_atom(name);
