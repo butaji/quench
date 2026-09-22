@@ -8,6 +8,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if Self::is_finalization_native(native) {
+            return self.call_finalization_registry_native(native, this, args);
+        }
         if Self::is_collection_native(native) {
             return self.call_collection_native(p, native, this, args);
         }
@@ -227,6 +230,7 @@ impl<H: Host> Vm<H> {
             | Native::WeakMap
             | Native::WeakSet
             | Native::WeakRef
+            | Native::FinalizationRegistry
             | Native::RegExp => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }

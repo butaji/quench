@@ -64,6 +64,7 @@ impl<H: Host> Vm<H> {
             target: Some(target),
         }))
     }
+
     pub(super) fn install_weak_collections(
         &mut self,
         program: &ResidualProgram,
@@ -114,6 +115,7 @@ impl<H: Host> Vm<H> {
         self.set_named(program, weak_ref, "prototype", self.weak_ref_proto)?;
         self.global(program, "WeakRef", weak_ref)
     }
+
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
         self.map_proto = self.object();
@@ -471,7 +473,7 @@ impl<H: Host> Vm<H> {
                 (Some(Cell::String(left)), Some(Cell::String(right))) if left == right)
     }
 
-    fn weak_key(&self, value: Value) -> Result<Value, JsError> {
+    pub(super) fn weak_key(&self, value: Value) -> Result<Value, JsError> {
         if self.object_data(value).is_some() {
             Ok(value)
         } else {

@@ -415,7 +415,8 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Set { .. })
             | Some(Cell::WeakMap { .. })
             | Some(Cell::WeakSet { .. })
-            | Some(Cell::WeakRef { .. }) => Ok(Some(JsonValue::Object(Vec::new()))),
+            | Some(Cell::WeakRef { .. })
+            | Some(Cell::FinalizationRegistry { .. }) => Ok(Some(JsonValue::Object(Vec::new()))),
             Some(Cell::Object(object)) => {
                 if ancestors.contains(&value) {
                     return Err(JsError(

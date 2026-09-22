@@ -26,6 +26,7 @@ impl<H: Host> Vm<H> {
             weak_map_proto: Value::NULL,
             weak_set_proto: Value::NULL,
             weak_ref_proto: Value::NULL,
+            finalization_registry_proto: Value::NULL,
             iterator_proto: Value::NULL,
             regexp_proto: Value::NULL,
             constants: vec![],
@@ -33,6 +34,7 @@ impl<H: Host> Vm<H> {
             natives: vec![],
             frames: vec![],
             frame_pool: vec![],
+            finalization_jobs: vec![],
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]

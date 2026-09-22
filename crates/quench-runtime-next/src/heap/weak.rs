@@ -51,7 +51,8 @@ impl Heap {
         }
     }
 
-    pub(super) fn prune_weak_entries(&mut self) {
+    pub(super) fn prune_weak_entries(&mut self) -> Vec<(Value, Value)> {
+        let mut finalization_jobs = Vec::new();
         let generations = &self.generations;
         let marks = &self.marks;
         for slot in self.slots.iter_mut() {
@@ -77,8 +78,22 @@ impl Heap {
                         *target = None;
                     }
                 }
+                Cell::FinalizationRegistry {
+                    callback, entries, ..
+                } => {
+                    entries.retain(|entry| {
+                        let live = generations.get(entry.target.slot as usize).copied()
+                            == Some(entry.target.generation)
+                            && Self::marked(marks, entry.target.slot as usize);
+                        if !live {
+                            finalization_jobs.push((*callback, entry.held));
+                        }
+                        live
+                    });
+                }
                 _ => {}
             }
         }
+        finalization_jobs
     }
 }

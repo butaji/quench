@@ -165,7 +165,7 @@ impl Heap {
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.roots.remove(root)
     }
-    pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) {
+    pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
         let mark_started = std::time::Instant::now();
@@ -177,7 +177,7 @@ impl Heap {
         }
         self.mark_work(&mut work);
         self.mark_ephemerons(&mut work);
-        self.prune_weak_entries();
+        let finalization_jobs = self.prune_weak_entries();
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.mark_nanos += mark_started.elapsed().as_nanos() as u64;
@@ -222,6 +222,7 @@ impl Heap {
         self.threshold = headroom.max(384);
         self.peak_survivors = self.peak_survivors.max(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
+        finalization_jobs
     }
     pub(super) fn mark_work(&mut self, work: &mut Vec<Value>) {
         while let Some(value) = work.pop() {
@@ -266,17 +267,6 @@ impl Heap {
     #[inline(always)]
     fn mark(marks: &mut [u64], index: usize) {
         marks[index / 64] |= 1 << (index % 64);
-    }
-    #[allow(dead_code)]
-    pub fn stats(&self) -> (u64, u64, usize, usize, usize, usize) {
-        (
-            self.total_allocations,
-            self.collections,
-            self.peak_live,
-            self.peak_survivors,
-            self.max_threshold,
-            self.external_bytes,
-        )
     }
     #[cfg(feature = "profile-aggregate")]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
@@ -401,6 +391,15 @@ impl Heap {
                 object(value);
             }
             Cell::WeakRef { object: value, .. } => object(value),
+            Cell::FinalizationRegistry {
+                object: value,
+                callback,
+                entries,
+            } => {
+                object(value);
+                work.push(*callback);
+                work.extend(entries.iter().map(|entry| entry.held));
+            }
             Cell::Iterator {
                 object: value,
                 source,
@@ -450,6 +449,7 @@ impl Heap {
             Cell::WeakMap { .. } => 5,
             Cell::WeakSet { .. } => 6,
             Cell::WeakRef { .. } => 7,
+            Cell::FinalizationRegistry { .. } => 7,
             Cell::Function { .. } => 8,
             Cell::Environment { .. } => 9,
             Cell::String(_) => 10,
@@ -472,6 +472,7 @@ impl Heap {
             Cell::WeakMap { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakRef { .. } => 0,
+            Cell::FinalizationRegistry { .. } => 0,
             Cell::Function { .. } => size_of::<Object>(),
             Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
             Cell::String(value) => value.capacity(),
