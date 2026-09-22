@@ -8,7 +8,7 @@ use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 mod activation; mod activation_lifecycle;
@@ -300,11 +300,6 @@ pub struct Vm<H> {
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     symbol_properties: FxHashMap<(Value, property_key::PropertyKey), Value>,
     symbol_property_order: FxHashMap<Value, Vec<property_key::PropertyKey>>,
-    /// Arguments-object index -> formal-parameter slot mappings. The array is
-    /// still the authoritative value store; this table only carries the
-    /// environment edge needed for sloppy aliasing.
-    argument_maps: FxHashMap<Value, Vec<u16>>,
-    argument_objects: FxHashSet<Value>,
     // Closure identity cache is indexed by function id; each function keeps
     // the small set of captured environments it has materialized.
     function_values: Vec<Vec<(Value, Value)>>,
@@ -453,8 +448,6 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.symbol_properties.clear();
         self.symbol_property_order.clear();
-        self.argument_maps.clear();
-        self.argument_objects.clear();
         self.function_values.clear();
         self.function_values.resize_with(program.functions.len(), Vec::new);
         self.finalization_registry_proto = Value::NULL;
