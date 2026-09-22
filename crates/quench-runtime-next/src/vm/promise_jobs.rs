@@ -1,7 +1,131 @@
-use super::promise::{FinallyJob, FinallyReaction, PromiseJob, PromiseReaction, PromiseState};
+use super::promise::{
+    AggregateJob, AggregateMode, AggregateRecord, FinallyJob, FinallyReaction, PromiseJob,
+    PromiseReaction, PromiseState,
+};
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn promise_aggregate(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        mode: AggregateMode,
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let Some(Cell::Array { elements, .. }) = self.heap.get(source) else {
+            return Err(JsError("Promise combinator input is not an array".into()));
+        };
+        let length = self.heap.sparse_length(source).unwrap_or(elements.len());
+        let output = self.promise_object();
+        self.promise.aggregates.insert(
+            output,
+            AggregateRecord {
+                mode,
+                output,
+                remaining: length,
+                values: vec![Value::UNDEFINED; length],
+            },
+        );
+        for index in 0..length {
+            let value = self.array_value_at(source, index);
+            let input = self.promise_for_value(p, value)?;
+            let fulfilled = self.native_with_env(Native::PromiseAggregateJob, Value::NULL);
+            let rejected = self.native_with_env(Native::PromiseAggregateJob, Value::NULL);
+            self.promise.aggregate_jobs.insert(
+                fulfilled,
+                AggregateJob {
+                    aggregate: output,
+                    index,
+                    rejected: false,
+                },
+            );
+            self.promise.aggregate_jobs.insert(
+                rejected,
+                AggregateJob {
+                    aggregate: output,
+                    index,
+                    rejected: true,
+                },
+            );
+            let next = self.promise_object();
+            let reaction = PromiseReaction {
+                on_fulfilled: fulfilled,
+                on_rejected: rejected,
+                next,
+            };
+            let record = self
+                .promise
+                .records
+                .get(&input)
+                .cloned()
+                .ok_or_else(|| JsError("invalid Promise input".into()))?;
+            if record.state == PromiseState::Pending {
+                self.promise
+                    .records
+                    .get_mut(&input)
+                    .expect("Promise record exists")
+                    .reactions
+                    .push(reaction);
+            } else {
+                self.enqueue_promise_reaction(p, reaction, record.state, record.result);
+            }
+        }
+        if length == 0 && mode == AggregateMode::All {
+            let values = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: std::rc::Rc::new(vec![]),
+            });
+            self.promise_settle(p, output, PromiseState::Fulfilled, values)?;
+        }
+        Ok(output)
+    }
+
+    pub(super) fn promise_aggregate_job(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let job = *self
+            .promise
+            .active_native
+            .last()
+            .ok_or_else(|| JsError("Promise aggregate job without callback".into()))?;
+        let aggregate_job = self
+            .promise
+            .aggregate_jobs
+            .remove(&job)
+            .ok_or_else(|| JsError("stale Promise aggregate job".into()))?;
+        let Some(record) = self.promise.aggregates.get_mut(&aggregate_job.aggregate) else {
+            return Ok(Value::UNDEFINED);
+        };
+        if record.mode == AggregateMode::Race {
+            let state = if aggregate_job.rejected {
+                PromiseState::Rejected
+            } else {
+                PromiseState::Fulfilled
+            };
+            let output = record.output;
+            self.promise_settle(p, output, state, value)?;
+            return Ok(Value::UNDEFINED);
+        }
+        if aggregate_job.rejected {
+            let output = record.output;
+            self.promise_settle(p, output, PromiseState::Rejected, value)?;
+            return Ok(Value::UNDEFINED);
+        }
+        record.values[aggregate_job.index] = value;
+        record.remaining = record.remaining.saturating_sub(1);
+        if record.remaining == 0 {
+            let output = record.output;
+            let values = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: std::rc::Rc::new(record.values.clone()),
+            });
+            self.promise_settle(p, output, PromiseState::Fulfilled, values)?;
+        }
+        Ok(Value::UNDEFINED)
+    }
+
     pub(super) fn enqueue_promise_reaction(
         &mut self,
         _p: &ResidualProgram,

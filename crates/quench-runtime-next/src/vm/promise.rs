@@ -51,12 +51,35 @@ pub(super) struct FinallyJob {
     pub(super) value: Value,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AggregateMode {
+    All,
+    Race,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct AggregateRecord {
+    pub(super) mode: AggregateMode,
+    pub(super) output: Value,
+    pub(super) remaining: usize,
+    pub(super) values: Vec<Value>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct AggregateJob {
+    pub(super) aggregate: Value,
+    pub(super) index: usize,
+    pub(super) rejected: bool,
+}
+
 pub(super) struct PromiseRuntime {
     pub(super) proto: Value,
     pub(super) records: FxHashMap<Value, PromiseRecord>,
     pub(super) jobs: FxHashMap<Value, PromiseJob>,
     pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
     pub(super) finally_jobs: FxHashMap<Value, FinallyJob>,
+    pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
+    pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) active_native: Vec<Value>,
 }
 
@@ -68,6 +91,8 @@ impl Default for PromiseRuntime {
             jobs: FxHashMap::default(),
             thenable_jobs: FxHashMap::default(),
             finally_jobs: FxHashMap::default(),
+            aggregates: FxHashMap::default(),
+            aggregate_jobs: FxHashMap::default(),
             active_native: vec![],
         }
     }
@@ -129,6 +154,18 @@ impl<H: Host> Vm<H> {
             promise,
             "reject",
             self.native_value(Native::PromiseReject),
+        )?;
+        self.set_named(
+            program,
+            promise,
+            "all",
+            self.native_value(Native::PromiseAll),
+        )?;
+        self.set_named(
+            program,
+            promise,
+            "race",
+            self.native_value(Native::PromiseRace),
         )?;
         self.global(program, "Promise", promise)
     }
@@ -241,11 +278,16 @@ impl<H: Host> Vm<H> {
             Native::PromiseFinally => {
                 self.promise_finally(p, this, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
+            Native::PromiseAll => self.promise_aggregate(p, args, AggregateMode::All),
+            Native::PromiseRace => self.promise_aggregate(p, args, AggregateMode::Race),
             Native::PromiseReactionJob => {
                 self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::PromiseThenableJob => self.promise_thenable_job(p),
             Native::PromiseFinallyJob => self.promise_finally_job(p),
+            Native::PromiseAggregateJob => {
+                self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
             _ => unreachable!(),
         }
     }
@@ -315,6 +357,19 @@ impl<H: Host> Vm<H> {
         );
         self.enqueue_job(job, vec![]);
         Ok(())
+    }
+
+    pub(super) fn promise_for_value(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        if self.promise.records.contains_key(&value) {
+            return Ok(value);
+        }
+        let promise = self.promise_object();
+        self.promise_resolve_value(p, promise, value)?;
+        Ok(promise)
     }
 
     fn promise_then(
