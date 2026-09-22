@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
         Ok(descriptor)
     }
 
-    fn descriptor_flag(&mut self, descriptor: Value, name: &str) -> bool {
+    pub(super) fn descriptor_flag(&mut self, descriptor: Value, name: &str) -> bool {
         let atom = self.intern_atom(name);
         self.own_property(descriptor, atom)
             .is_some_and(|value| self.truthy(value))
