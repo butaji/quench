@@ -405,4 +405,18 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["true", "7", "2"]);
     }
+
+    #[test]
+    fn promise_resolution_assimilates_thenables_and_rejects_self_resolution() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "Promise.resolve({ then: function(resolve) { resolve(9); } }).then(print); var resolve; var promise = new Promise(function(r) { resolve = r; }); resolve(promise); promise.catch(function() { print('self'); });",
+                "promise-resolution.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["self", "9"]);
+    }
 }
