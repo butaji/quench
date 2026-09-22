@@ -30,6 +30,18 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    pub(super) fn install_iterator_self(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        let Some(iterator) = self.well_known_symbols.get("iterator").copied() else {
+            return Ok(());
+        };
+        self.set_index(
+            p,
+            self.iterator_proto,
+            iterator,
+            self.native_value(Native::IteratorSelf),
+        )
+    }
+
     pub(super) fn collection_iterator(
         &mut self,
         source: Value,

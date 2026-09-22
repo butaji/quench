@@ -69,7 +69,7 @@ impl<H: Host> Vm<H> {
                 return self.proxy_get_symbol(p, target, handler, object, key);
             }
             return Ok(self
-                .symbol_property(object, key)
+                .inherited_symbol_property(object, key)
                 .unwrap_or(Value::UNDEFINED));
         }
         if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {
