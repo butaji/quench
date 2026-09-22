@@ -206,7 +206,11 @@ impl<H: Host> Vm<H> {
             .and_then(|a| self.own_property(callee, a))
             .unwrap_or(Value::NULL);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(proto)));
-        let result = self.call_value(p, callee, object, args)?;
+        let previous_target = self.construct_target;
+        self.construct_target = Some(callee);
+        let result = self.call_value(p, callee, object, args);
+        self.construct_target = previous_target;
+        let result = result?;
         Ok(if result.is_heap() { result } else { object })
     }
 

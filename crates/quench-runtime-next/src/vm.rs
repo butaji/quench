@@ -309,6 +309,7 @@ pub struct Vm<H> {
     function_values: Vec<Vec<(Value, Value)>>,
     direct_eval: bool,
     parameter_eval: bool,
+    construct_target: Option<Value>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -421,6 +422,7 @@ impl<H: Host> Vm<H> {
         self.suspended_free.clear();
         self.direct_eval = false;
         self.parameter_eval = false;
+        self.construct_target = None;
         self.promise = Default::default();
         self.numeric_sites.clear();
         self.shapes.truncate(1);

@@ -152,6 +152,7 @@ fn materialize_calls(functions: &mut [Function], bindings: &[BindingTime<StaticV
                 origins.fill(None);
             }
             if instruction.op() == Op::Call
+                && instruction.imm() & 0x8000_0000 == 0
                 && let Some((target, callee_origin)) = known[instruction.b() as usize]
             {
                 dead.push(callee_origin);

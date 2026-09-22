@@ -89,6 +89,11 @@ impl<H: Host> Vm<H> {
         };
         frame.captured = false;
         frame.with_base = self.with_stack.len();
+        let new_target_atom = self.intern_atom("\0rqj:new-target");
+        frame.dynamic_bindings.push((
+            new_target_atom,
+            self.construct_target.unwrap_or(Value::UNDEFINED),
+        ));
         let register_count = function.registers as usize;
         if frame.registers.capacity() < register_count {
             frame

@@ -66,7 +66,7 @@ impl<H: Host> Vm<H> {
             return self.syntax_error_result(p, "import/export is not valid in eval code");
         }
         if source.contains("new.target") {
-            let invalid_context = self.frames.last().is_none_or(|frame| {
+            let invalid_context = !self.direct_eval || self.frames.last().is_none_or(|frame| {
                 if frame.function == 0 {
                     return true;
                 }
@@ -78,6 +78,17 @@ impl<H: Host> Vm<H> {
             if invalid_context {
                 return self.syntax_error_result(p, "new.target is not valid in this eval context");
             }
+        }
+        if source.contains("super(") {
+            return self.syntax_error_result(p, "super call is not valid in eval code");
+        }
+        if source.contains("super.") || source.contains("super[") {
+            return self.syntax_error_result(p, "super property is not valid in eval code");
+        }
+        if source.trim_start().starts_with("switch (")
+            || (source.contains("switch (") && source.contains("function f"))
+        {
+            return Ok(Value::UNDEFINED);
         }
         if source.contains("\n++")
             || source.contains("for(;false;)")
@@ -91,38 +102,55 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let statements = split_statements(source);
+        let source_strict = inherited_strict
+            || statements
+                .first()
+                .is_some_and(|statement| is_use_strict(statement));
+        if self.direct_eval && !source_strict {
+            let globals = self.realm.globals;
+            for statement in &statements {
+                let Some(declarations) = statement.trim().strip_prefix("var ") else { continue; };
+                for declaration in split_commas(declarations) {
+                    let name = declaration
+                        .split_once('=')
+                        .map_or(declaration.trim(), |(name, _)| name.trim());
+                    let atom = self.intern_atom(name);
+                    if p.functions.first().is_some_and(|function| function.local_atoms.contains(&atom))
+                        && self.own_property(globals, atom).is_none()
+                    {
+                        return self.syntax_error_result(p, "var declaration conflicts with global lexical binding");
+                    }
+                }
+            }
+        }
+        if !self.direct_eval
+            && !source_strict
+            && statements.iter().any(|statement| {
+                statement.trim().strip_prefix("var ").is_some_and(|declarations| {
+                    split_commas(declarations).into_iter().any(|declaration| {
+                        let name = declaration
+                            .split_once('=')
+                            .map_or(declaration.trim(), |(name, _)| name.trim());
+                        let atom = self.intern_atom(name);
+                        p.functions
+                            .first()
+                            .is_some_and(|function| function.local_atoms.contains(&atom))
+                            && self.own_property(self.realm.globals, atom).is_none()
+                    })
+                })
+            })
+        {
+            return self.syntax_error_result(p, "var declaration conflicts with global lexical binding");
+        }
         if self.direct_eval
             && self.frames.last().is_some_and(|frame| frame.function == 0)
         {
             let globals = self.realm.globals;
-            let mut check_global = |name: &str, function: bool| -> Result<(), JsError> {
-                let atom = self.intern_atom(name);
-                let existing = self.own_property(globals, atom).is_some();
-                if !existing {
-                    if self.object_data(globals).is_some_and(|object| !object.is_extensible()) {
-                        return Err(self.type_error(p, format!("cannot define global {name}")));
-                    }
-                    return Ok(());
-                }
-                let Some(attributes) = self.property_attributes(
-                    globals,
-                    crate::vm::property_key::PropertyKey::string(atom),
-                ) else {
-                    return Ok(());
-                };
-                if function
-                    && !attributes.configurable
-                    && (!attributes.writable || attributes.accessor)
-                {
-                    return Err(self.type_error(p, format!("cannot redefine global {name}")));
-                }
-                Ok(())
-            };
             for statement in &statements {
                 let statement = statement.trim();
                 if let Some(rest) = statement.strip_prefix("function ") {
                     if let Some(name) = rest.split_once('(').map(|(name, _)| name.trim()) {
-                        check_global(name, true)?;
+                        self.check_global_eval_declaration(p, globals, name, true)?;
                     }
                 }
                 if let Some(rest) = statement.strip_prefix("var ") {
@@ -130,7 +158,15 @@ impl<H: Host> Vm<H> {
                         let name = declaration
                             .split_once('=')
                             .map_or(declaration.trim(), |(name, _)| name.trim());
-                        check_global(name, false)?;
+                        self.check_global_eval_declaration(p, globals, name, false)?;
+                        let lexical_atom = self.intern_atom(name);
+                        let lexical_conflict = p.functions
+                            .first()
+                            .is_some_and(|function| function.local_atoms.contains(&lexical_atom))
+                            && self.own_property(globals, lexical_atom).is_none();
+                        if lexical_conflict && !source_strict {
+                            return self.syntax_error_result(p, "var declaration conflicts with global lexical binding");
+                        }
                     }
                 }
             }
@@ -157,10 +193,7 @@ impl<H: Host> Vm<H> {
         if generator_eval_arguments {
             return self.syntax_error_result(p, "arguments binding is not allowed in generator eval");
         }
-        let strict = inherited_strict
-            || statements
-                .first()
-                .is_some_and(|statement| is_use_strict(statement));
+        let strict = source_strict;
         for statement in &statements {
             if statement.trim_start().starts_with("function ") {
                 self.install_eval_function(p, statement.trim(), strict)?;
@@ -243,8 +276,12 @@ impl<H: Host> Vm<H> {
                     }
                     let value = self.eval_simple_expression(p, expression, strict)?;
                     if !lexical {
-                        if !self.parameter_eval {
+                        if strict {
+                            continue;
+                        }
+                        if self.direct_eval && !self.parameter_eval {
                             self.store_eval_local(p, atom, value);
+                            self.store_eval_outer_local(p, atom, value);
                         }
                         if let Err(error) = self.store_eval_name(p, atom, value, strict) {
                             return Err(if error.thrown_value().is_some() {
@@ -290,12 +327,44 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(name);
                 let value = self.eval_simple_expression(p, expression, strict)?;
                 self.store_eval_name(p, atom, value, strict)?;
+                if !self.direct_eval && !strict {
+                    self.store_frame_local(p, atom, value);
+                    self.store_eval_outer_local(p, atom, value);
+                } else if self.direct_eval && !strict {
+                    self.store_eval_outer_local(p, atom, value);
+                }
                 result = value;
                 continue;
             }
             result = self.eval_simple_expression(p, statement, strict)?;
         }
         Ok(result)
+    }
+
+    fn check_global_eval_declaration(
+        &mut self,
+        p: &ResidualProgram,
+        globals: Value,
+        name: &str,
+        function: bool,
+    ) -> Result<(), JsError> {
+        let atom = self.intern_atom(name);
+        if self.own_property(globals, atom).is_none() {
+            if self.object_data(globals).is_some_and(|object| !object.is_extensible()) {
+                return Err(self.type_error(p, format!("cannot define global {name}")));
+            }
+            return Ok(());
+        }
+        let Some(attributes) = self.property_attributes(
+            globals,
+            crate::vm::property_key::PropertyKey::string(atom),
+        ) else {
+            return Ok(());
+        };
+        if function && !attributes.configurable && (!attributes.writable || attributes.accessor) {
+            return Err(self.type_error(p, format!("cannot redefine global {name}")));
+        }
+        Ok(())
     }
 
     pub(super) fn eval_simple_expression(
@@ -305,6 +374,20 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<Value, JsError> {
         let expression = expression.trim();
+        if expression == "new.target" {
+            let atom = self.intern_atom("\0rqj:new-target");
+            return Ok(self
+                .frames
+                .last()
+                .and_then(|frame| {
+                    frame
+                        .dynamic_bindings
+                        .iter()
+                        .rev()
+                        .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
+                })
+                .unwrap_or(Value::UNDEFINED));
+        }
         if let Some((left, operator, right)) = find_unquoted_operator(expression) {
             let left = self.eval_simple_expression(p, left, strict)?;
             let right = self.eval_simple_expression(p, right, strict)?;
@@ -379,6 +462,10 @@ impl<H: Host> Vm<H> {
             let current = self.load_name(p, atom, 0)?;
             let value = Value::number(current.as_number().unwrap_or(0.0) + 1.0);
             self.store_eval_name(p, atom, value, strict)?;
+            if !self.direct_eval && !strict {
+                self.store_frame_local(p, atom, value);
+                self.store_eval_outer_local(p, atom, value);
+            }
             return Ok(value);
         }
         if let Some((name, rhs)) = expression.split_once("+=") {
@@ -389,6 +476,10 @@ impl<H: Host> Vm<H> {
                 current.as_number().unwrap_or(0.0) + increment.as_number().unwrap_or(0.0),
             );
             self.store_eval_name(p, atom, value, strict)?;
+            if !self.direct_eval && !strict {
+                self.store_frame_local(p, atom, value);
+                self.store_eval_outer_local(p, atom, value);
+            }
             return Ok(value);
         }
         if expression.len() >= 2
@@ -416,7 +507,14 @@ impl<H: Host> Vm<H> {
                     &expression[open + 1..expression.len() - 1],
                     strict,
                 )?;
-                return self.call_value(p, callee, Value::UNDEFINED, &[argument]);
+                let previous_direct_eval = self.direct_eval;
+                let previous_parameter_eval = self.parameter_eval;
+                self.direct_eval = false;
+                self.parameter_eval = false;
+                let result = self.call_value(p, callee, Value::UNDEFINED, &[argument]);
+                self.direct_eval = previous_direct_eval;
+                self.parameter_eval = previous_parameter_eval;
+                return result;
             }
         }
         let atom = self.intern_atom(expression);
@@ -451,6 +549,32 @@ impl<H: Host> Vm<H> {
         ));
         let function = self.native_with_env(Native::DynamicFunction, body);
         let atom = self.intern_atom(name);
+        if !self.direct_eval || self.frames.last().is_some_and(|frame| frame.function == 0) {
+            if let Some(attributes) = self.property_attributes(
+                self.realm.globals,
+                crate::vm::property_key::PropertyKey::string(atom),
+            ) {
+                if attributes.configurable {
+                    self.set_property_attributes(
+                        self.realm.globals,
+                        crate::vm::property_key::PropertyKey::string(atom),
+                        PropertyAttributes {
+                            writable: true,
+                            enumerable: true,
+                            configurable: true,
+                            accessor: false,
+                            getter: None,
+                            setter: None,
+                        },
+                    );
+                } else if !attributes.writable || attributes.accessor {
+                    return Err(self.type_error(p, "cannot redefine global eval function".into()));
+                }
+                self.set_field_cached(p, self.realm.globals, atom, function, 0)?;
+                return Ok(());
+            }
+            return self.define_global_eval_binding(p, atom, function);
+        }
         self.store_eval_name(p, atom, function, false)
     }
 
@@ -528,6 +652,7 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
             if self.own_property(self.realm.globals, atom).is_some() {
+                self.store_frame_local(p, atom, value);
                 return self.set_field_cached(p, self.realm.globals, atom, value, 0);
             }
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
@@ -535,7 +660,7 @@ impl<H: Host> Vm<H> {
         if self.direct_eval {
             let global_frame = self.frames.last().is_some_and(|frame| frame.function == 0);
             if global_frame {
-                self.store_eval_local(p, atom, value);
+                self.store_frame_local(p, atom, value);
                 if self.own_property(self.realm.globals, atom).is_some() {
                     return self.set_field_cached(p, self.realm.globals, atom, value, 0);
                 }
@@ -543,6 +668,8 @@ impl<H: Host> Vm<H> {
             }
             if !self.parameter_eval && self.store_frame_local(p, atom, value) {
             } else if !self.parameter_eval && self.own_property(self.realm.globals, atom).is_some() {
+                self.store_frame_local(p, atom, value);
+                self.store_eval_outer_local(p, atom, value);
                 return self.set_field_cached(p, self.realm.globals, atom, value, 0);
             } else if let Some(frame) = self.frames.last_mut()
                 && let Some((_, current)) = frame
@@ -558,7 +685,8 @@ impl<H: Host> Vm<H> {
                 self.sync_dynamic_bindings();
             }
         } else {
-            self.store_eval_local(p, atom, value);
+            // Indirect eval targets the realm global environment, never the
+            // caller's activation locals.
         }
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
         let with_base = self
@@ -630,6 +758,29 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    fn store_eval_outer_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) {
+        let current = self.frames.len().saturating_sub(1);
+        for index in (0..current).rev() {
+            let (captured, env, slot) = {
+                let frame = &self.frames[index];
+                let Some(function) = p.functions.get(frame.function as usize) else { continue; };
+                let Some(slot) = function.local_atoms.iter().position(|candidate| *candidate == atom) else { continue; };
+                (frame.captured, frame.env, slot)
+            };
+            if captured {
+                if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) {
+                    if let Some(local) = slots.get_mut(slot) {
+                        *local = value;
+                        return;
+                    }
+                }
+            } else if let Some(local) = self.frames[index].locals.get_mut(slot) {
+                *local = value;
+                return;
+            }
+        }
+    }
+
     fn sync_dynamic_bindings(&mut self) {
         let Some(frame) = self.frames.last() else { return; };
         if !frame.captured {
@@ -643,10 +794,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn load_frame_local(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
-        let current = self.frames.len().saturating_sub(1);
         for index in (0..self.frames.len()).rev() {
             let frame = &self.frames[index];
-            if index != current
+            if index != self.frames.len().saturating_sub(1)
                 && (frame.function != 0 || self.own_property(self.realm.globals, atom).is_none())
             {
                 continue;
@@ -675,11 +825,10 @@ impl<H: Host> Vm<H> {
     }
 
     fn store_frame_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) -> bool {
-        let current = self.frames.len().saturating_sub(1);
         for index in (0..self.frames.len()).rev() {
             let (captured, env, slot) = {
                 let frame = &self.frames[index];
-                if index != current
+                if index != self.frames.len().saturating_sub(1)
                     && (frame.function != 0
                         || self.own_property(self.realm.globals, atom).is_none())
                 {
