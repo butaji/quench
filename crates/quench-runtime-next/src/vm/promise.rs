@@ -334,7 +334,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn active_native_env(&self) -> Option<Value> {
+    pub(super) fn active_native_env(&self) -> Option<Value> {
         let callee = self.promise.active_native.last().copied()?;
         match self.heap.get(callee) {
             Some(Cell::Function { env, .. }) if !env.is_null() => Some(*env),

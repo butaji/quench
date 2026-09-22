@@ -155,6 +155,7 @@ impl FunctionCompiler<'_, '_> {
             FunctionOptions {
                 defaults: Some(&value.params),
                 async_function: value.r#async,
+                generator: value.generator,
                 ..FunctionOptions::default()
             },
         );

@@ -1,5 +1,4 @@
-use super::*;
-impl<H: Host> Vm<H> {
+use super::*; impl<H: Host> Vm<H> {
     pub(super) fn call_native(
         &mut self,
         p: &ResidualProgram,
@@ -197,6 +196,8 @@ impl<H: Host> Vm<H> {
                 };
                 self.call_value(p, this, receiver, &arguments)
             }
+            Native::FunctionBind => self.bind_function(this, args),
+            Native::FunctionBoundCall => self.call_bound_function(p, args),
             Native::Number
             | Native::NumberIsNaN
             | Native::NumberIsFinite
@@ -243,8 +244,7 @@ impl<H: Host> Vm<H> {
             _ => self.call_primitive_native(p, native, this, args),
         }
     }
-    #[inline]
-    pub(super) fn binary(
+    #[inline] pub(super) fn binary(
         &mut self,
         p: &ResidualProgram,
         op: u32,

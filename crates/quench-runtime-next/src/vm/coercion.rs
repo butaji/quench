@@ -116,6 +116,7 @@ impl<H: Host> Vm<H> {
             });
         }
         match self.heap.get(value) {
+            Some(Cell::Function { .. }) => return Ok("function () { [native code] }".into()),
             Some(Cell::String(value)) => return Ok(value.to_string()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.clone()),

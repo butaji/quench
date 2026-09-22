@@ -35,7 +35,7 @@ mod dynamic_strings;
 mod environment;
 mod error;
 mod field_cache;
-mod finalization;
+mod finalization; mod function;
 mod gc;
 mod generator;
 mod index;
