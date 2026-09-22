@@ -87,6 +87,14 @@ impl<H: Host> Vm<H> {
         JsError::thrown(object, text)
     }
 
+    pub(super) fn range_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
+        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let object = self
+            .construct_error_native(program, Native::RangeError, &[message])
+            .unwrap_or(Value::UNDEFINED);
+        JsError::thrown(object, text)
+    }
+
     pub(super) fn thrown_value_for(&mut self, program: &ResidualProgram, error: JsError) -> Value {
         if let Some(value) = error.thrown_value() {
             return value;

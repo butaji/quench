@@ -106,9 +106,11 @@ impl<H: Host> Vm<H> {
             return self.to_number(program, primitive);
         }
         match self.heap.get(value) {
-            Some(Cell::Date(value)) => return Ok(*value),
+            Some(Cell::Date { milliseconds, .. }) => return Ok(*milliseconds),
             Some(Cell::Symbol(_)) => {
-                return Err(self.type_error(program, "cannot convert a Symbol value to a number".into()));
+                return Err(
+                    self.type_error(program, "cannot convert a Symbol value to a number".into())
+                );
             }
             Some(Cell::String(value)) => {
                 let text = value.host_string().trim();
@@ -168,7 +170,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Symbol(description)) => {
                 return Ok(format!("Symbol({})", description.as_deref().unwrap_or("")));
             }
-            Some(Cell::Date(value)) => return Ok(value.to_string()),
+            Some(Cell::Date { milliseconds, .. }) => return Ok(milliseconds.to_string()),
             _ => {}
         }
         if let Some(atom) = self.lookup_atom("toString") {
@@ -203,20 +205,18 @@ impl<H: Host> Vm<H> {
             let method = self.get_index(program, value, symbol)?;
             if !method.is_undefined() && !method.is_null() {
                 if !self.is_function(method) {
-                    return Err(self.type_error(
-                        program,
-                        "Symbol.toPrimitive is not callable".into(),
-                    ));
+                    return Err(
+                        self.type_error(program, "Symbol.toPrimitive is not callable".into())
+                    );
                 }
                 let hint = self.heap.alloc(Cell::String(hint.into()));
                 let result = self.call_value(program, method, value, &[hint])?;
                 if self.object_data(result).is_none() {
                     return Ok(result);
                 }
-                return Err(self.type_error(
-                    program,
-                    "Cannot convert object to primitive value".into(),
-                ));
+                return Err(
+                    self.type_error(program, "Cannot convert object to primitive value".into())
+                );
             }
         }
         let names = if hint == "string" {
@@ -262,7 +262,9 @@ impl<H: Host> Vm<H> {
             || v.is_undefined()
             || v.is_deleted()
             || v == Value::FALSE
-            || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan()))
+            || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan())
+            || matches!(self.heap.get(v), Some(Cell::String(text)) if text.units().is_empty())
+            || matches!(self.heap.get(v), Some(Cell::BigInt(value)) if value == "0"))
     }
 }
 

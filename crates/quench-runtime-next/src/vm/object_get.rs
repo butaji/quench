@@ -230,7 +230,13 @@ impl<H: Host> Vm<H> {
                         _ => Value::UNDEFINED,
                     });
                 }
-                Some(Cell::Date(_)) => return Ok(self.date_property_native(atom)),
+                Some(Cell::Date { object: x, .. }) => {
+                    let native = self.date_property_native(atom);
+                    if !native.is_undefined() {
+                        return Ok(native);
+                    }
+                    object = x.proto;
+                }
                 Some(Cell::Object(x)) | Some(Cell::Array { object: x, .. }) => object = x.proto,
                 Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
                     object = x.proto

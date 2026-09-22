@@ -249,7 +249,14 @@ impl Native {
     pub(crate) fn is_function_native(self) -> bool {
         matches!(
             self,
-            Self::Function | Self::FunctionReturnThis | Self::FunctionReturnName | Self::FunctionReturnClass | Self::DynamicFunction | Self::AsyncFunction | Self::GeneratorFunction | Self::AsyncGeneratorFunction
+            Self::Function
+                | Self::FunctionReturnThis
+                | Self::FunctionReturnName
+                | Self::FunctionReturnClass
+                | Self::DynamicFunction
+                | Self::AsyncFunction
+                | Self::GeneratorFunction
+                | Self::AsyncGeneratorFunction
         )
     }
 
@@ -510,5 +517,7 @@ pub(crate) enum Cell {
         dynamic_bindings: Vec<(Atom, Value)>,
     },
     String(JsString), BigInt(String),
-    Symbol(Option<String>), Date(f64), Error(String),
+    Symbol(Option<String>),
+    Date { milliseconds: f64, object: Box<Object> },
+    Error(String),
 }

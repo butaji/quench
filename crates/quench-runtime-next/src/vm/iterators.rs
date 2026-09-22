@@ -396,7 +396,7 @@ impl<H: Host> Vm<H> {
                     | Cell::Iterator { .. }
                     | Cell::Proxy { .. }
                     | Cell::Function { .. }
-                    | Cell::Date(_)
+                    | Cell::Date { .. }
                     | Cell::Error(_)
             )
         )

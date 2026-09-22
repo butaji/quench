@@ -22,6 +22,7 @@ impl Cell {
             | Self::WeakRef { object, .. }
             | Self::FinalizationRegistry { object, .. }
             | Self::Iterator { object, .. } => Some(object),
+            Self::Date { object, .. } => Some(object),
             Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,
@@ -42,6 +43,7 @@ impl Cell {
             | Self::WeakRef { object, .. }
             | Self::FinalizationRegistry { object, .. }
             | Self::Iterator { object, .. } => Some(object),
+            Self::Date { object, .. } => Some(object),
             Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             _ => None,

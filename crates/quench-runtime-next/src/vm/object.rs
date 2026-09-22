@@ -433,6 +433,13 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
+        if atom == self.length_atom && matches!(self.heap.get(object), Some(Cell::Array { .. })) {
+            let descriptor = self.object();
+            let value_atom = self.intern_atom("value");
+            self.set_property(descriptor, value_atom, value)?;
+            self.define_array_length(p, object, descriptor)?;
+            return Ok(());
+        }
         if let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(object).cloned()

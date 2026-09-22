@@ -137,7 +137,9 @@ impl<H: Host> Vm<H> {
                             2
                         },
                 );
-                return Ok(dense.or(sparse).unwrap_or(Value::UNDEFINED));
+                if let Some(value) = dense.or(sparse) {
+                    return Ok(value);
+                }
             }
             #[cfg(feature = "profile-aggregate")]
             self.profile.index_get(6);
@@ -270,6 +272,13 @@ impl<H: Host> Vm<H> {
         if let Some(index) = super::object_static::array_index(key.host_string())
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
         {
+            if self
+                .array_descriptor(object, index as usize)
+                .is_some_and(|attributes| attributes.accessor)
+            {
+                let atom = self.intern_js_atom(&key);
+                return self.set_property_with_program(p, object, atom, value);
+            }
             if self
                 .array_descriptor(object, index as usize)
                 .is_some_and(|attributes| !attributes.writable)
