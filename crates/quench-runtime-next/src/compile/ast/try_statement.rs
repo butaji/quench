@@ -34,8 +34,17 @@ impl FunctionCompiler<'_, '_> {
 
     fn try_finally_statement(&mut self, item: &TryStatement<'_>, finalizer: &BlockStatement<'_>) {
         let error_atom = self.hidden_local("\0rqj:finally-error");
+        let return_atom = self.hidden_local("\0rqj:finally-return");
+        self.finally_contexts.push(FinallyContext {
+            return_atom,
+            return_edges: vec![],
+        });
         let start = self.code.len() as u32;
         self.statements(&item.block.body);
+        let context = self
+            .finally_contexts
+            .pop()
+            .expect("try body finally context");
         let end = self.code.len() as u32;
         self.statements(&finalizer.body);
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
@@ -43,8 +52,13 @@ impl FunctionCompiler<'_, '_> {
         self.statements(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
+        let return_target = self.code.len() as u32;
+        self.statements(&finalizer.body);
+        let return_value = self.load_atom(return_atom);
+        self.emit(Op::Return, return_value, 0, 0, 0);
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
+        self.patch_edges(&context.return_edges, return_target);
         self.handlers.push(crate::bytecode::Handler {
             start,
             end,
@@ -61,6 +75,11 @@ impl FunctionCompiler<'_, '_> {
     ) {
         let (catch_slot, binding) = self.catch_slot(handler);
         let error_atom = self.hidden_local("\0rqj:finally-error");
+        let return_atom = self.hidden_local("\0rqj:finally-return");
+        self.finally_contexts.push(FinallyContext {
+            return_atom,
+            return_edges: vec![],
+        });
         let start = self.code.len() as u32;
         self.statements(&item.block.body);
         let end = self.code.len() as u32;
@@ -75,6 +94,10 @@ impl FunctionCompiler<'_, '_> {
         self.bind_catch_parameter(handler, binding);
         let catch_start = self.code.len() as u32;
         self.statements(&handler.body.body);
+        let context = self
+            .finally_contexts
+            .pop()
+            .expect("try body finally context");
         let catch_end = self.code.len() as u32;
         let catch_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let finalizer_target = self.code.len() as u32;
@@ -84,10 +107,15 @@ impl FunctionCompiler<'_, '_> {
         self.statements(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
+        let return_target = self.code.len() as u32;
+        self.statements(&finalizer.body);
+        let return_value = self.load_atom(return_atom);
+        self.emit(Op::Return, return_value, 0, 0, 0);
         let end_target = self.code.len() as u32;
         self.patch_to(body_exit, finalizer_target);
         self.patch_to(catch_exit, finalizer_target);
         self.patch_to(normal_exit, end_target);
+        self.patch_edges(&context.return_edges, return_target);
         self.handlers.push(crate::bytecode::Handler {
             start: catch_start,
             end: catch_end,
