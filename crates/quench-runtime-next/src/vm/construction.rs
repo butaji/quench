@@ -29,6 +29,9 @@ impl<H: Host> Vm<H> {
         callee: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
+            return self.proxy_construct(p, callee, args);
+        }
         let kind = match self.heap.get(callee) {
             Some(Cell::Function { kind, .. }) => *kind,
             _ => return Err(JsError("not a constructor".into())),

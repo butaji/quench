@@ -391,6 +391,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
+            return self.proxy_call(p, callee, this, args);
+        }
         match self.call_target(callee)? {
             CallTarget::Native(native) => {
                 self.profile.call_target(0, args.len());
