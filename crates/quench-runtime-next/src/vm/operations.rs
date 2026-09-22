@@ -11,6 +11,9 @@ impl<H: Host> Vm<H> {
         if Self::is_finalization_native(native) {
             return self.call_finalization_registry_native(native, this, args);
         }
+        if Self::is_disposal_native(native) {
+            return self.call_disposal_native(p, native, this, args);
+        }
         if Self::is_collection_native(native) {
             return self.call_collection_native(p, native, this, args);
         }
@@ -234,6 +237,7 @@ impl<H: Host> Vm<H> {
             | Native::WeakSet
             | Native::WeakRef
             | Native::FinalizationRegistry
+            | Native::DisposableStack
             | Native::RegExp => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }

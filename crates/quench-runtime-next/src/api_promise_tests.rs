@@ -268,3 +268,20 @@ fn generator_return_and_throw_are_state_transitions() {
         ["1", "x", "true", "9", "true", "2", "8"]
     );
 }
+
+#[test]
+fn disposable_stack_disposes_entries_in_lifo_order() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "var stack = new DisposableStack(); var resource = { [Symbol.dispose]: function() { print('resource'); } }; print(stack.use(resource) === resource); stack.adopt(2, function(value) { print(value + 1); }); stack.defer(function() { print('deferred'); }); stack.dispose(); stack.dispose(); try { stack.use(resource); } catch (error) { print('disposed'); }",
+            "disposable-stack.js",
+        ))
+        .unwrap();
+    assert_eq!(
+        view.0.borrow().as_slice(),
+        ["true", "deferred", "3", "resource", "disposed"]
+    );
+}

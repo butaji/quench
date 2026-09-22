@@ -107,6 +107,7 @@ impl<H: Host> Vm<H> {
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),
             Native::FinalizationRegistry => self.construct_finalization_registry_native(args),
+            Native::DisposableStack => self.construct_disposable_stack_native(p),
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args),
             Native::Date => {
