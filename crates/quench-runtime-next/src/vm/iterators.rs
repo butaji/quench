@@ -37,7 +37,20 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    pub(super) fn get_iterator(&mut self, source: Value) -> Result<Value, JsError> {
+    pub(super) fn get_iterator(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
+            let method = self.get_index(p, source, symbol)?;
+            if !method.is_undefined() && !method.is_null() {
+                if !self.is_function(method) {
+                    return Err(JsError("iterator method is not callable".into()));
+                }
+                return self.call_value(p, method, source, &[]);
+            }
+        }
         let kind = match self.heap.get(source) {
             Some(Cell::Array { .. }) | Some(Cell::TypedArray { .. }) => IteratorKind::Array,
             Some(Cell::String(_)) => IteratorKind::String,
@@ -81,7 +94,11 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    pub(super) fn iterator_next(&mut self, this: Value) -> Result<Value, JsError> {
+    pub(super) fn iterator_next(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
         let (source, kind, index) = match self.heap.get(this) {
             Some(Cell::Iterator {
                 source,
@@ -89,7 +106,14 @@ impl<H: Host> Vm<H> {
                 index,
                 ..
             }) => (*source, *kind, *index),
-            _ => return Err(JsError("iterator next receiver is not an iterator".into())),
+            _ => {
+                let atom = self.intern_atom("next");
+                let method = self.get_property(p, this, atom)?;
+                if !self.is_function(method) {
+                    return Err(JsError("iterator next method is not callable".into()));
+                }
+                return self.call_value(p, method, this, &[]);
+            }
         };
         let selected = match kind {
             IteratorKind::Array
