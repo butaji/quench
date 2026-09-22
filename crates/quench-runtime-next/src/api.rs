@@ -391,4 +391,18 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["2", "false", "false"]);
     }
+
+    #[test]
+    fn promises_use_the_vm_job_queue_for_reactions_and_chains() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var original = Promise.resolve(1); print(Promise.resolve(original) === original); original.then(function(value) { return value + 1; }).then(function(value) { print(value); }); Promise.reject(7).catch(function(value) { print(value); });",
+                "promise-jobs.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["true", "7", "2"]);
+    }
 }

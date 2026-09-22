@@ -20,6 +20,9 @@ impl<H: Host> Vm<H> {
         if native.is_atomics_native() {
             return self.atomics_native(p, native, args);
         }
+        if native.is_promise_native() {
+            return self.call_promise_native(p, native, this, args);
+        }
         if native.is_object_static() {
             return self.call_object_native(p, native, args);
         }

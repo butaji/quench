@@ -206,6 +206,12 @@ const NATIVES: &[Native] = &[
     Native::NumberParseFloat,
     Native::NumberFixed,
     Native::NumberPrecision,
+    Native::Promise,
+    Native::PromiseResolve,
+    Native::PromiseReject,
+    Native::PromiseThen,
+    Native::PromiseCatch,
+    Native::PromiseReactionJob,
 ];
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -298,7 +304,8 @@ impl<H: Host> Vm<H> {
         )?;
         self.install_json(program)?;
         self.install_reflect(program)?;
-        self.install_math(program)
+        self.install_math(program)?;
+        self.install_promise(program)
     }
     fn install_prototypes(&mut self) {
         self.object_proto = self
@@ -406,11 +413,7 @@ impl<H: Host> Vm<H> {
         }
     }
     fn native(&mut self, kind: Native) -> Value {
-        self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.function_proto)),
-            kind: FunctionKind::Native(kind),
-            env: Value::NULL,
-        })
+        self.native_with_env(kind, Value::NULL)
     }
     pub(super) fn native_value(&self, kind: Native) -> Value {
         self.natives

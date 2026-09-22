@@ -57,9 +57,11 @@ mod property_key;
 use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use numeric_site::NumericSite;
+use promise::PromiseRuntime;
 mod operations;
 mod primitives;
 mod profile_edges;
+mod promise;
 mod proxy;
 mod reflect;
 mod regexp;
@@ -91,13 +93,11 @@ struct Frame {
     captured: bool,
     registers: Vec<Value>,
 }
-
 struct PendingJob {
     callback: Value,
     this: Value,
     args: Vec<Value>,
 }
-
 enum NumericArguments<'a> {
     Values(&'a [Value]),
     Registers {
@@ -227,6 +227,7 @@ pub struct Vm<H> {
     jobs: Vec<PendingJob>,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
+    promise: PromiseRuntime,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Vec<Atom>>,
@@ -266,11 +267,9 @@ impl<H: Host> Vm<H> {
     pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
         self.heap.update_root(root, value)
     }
-
     pub fn root_value(&self, root: RootId) -> Option<Value> {
         self.heap.root_value(root)
     }
-
     pub(crate) fn enqueue_job(&mut self, callback: Value, args: Vec<Value>) {
         self.jobs.push(PendingJob {
             callback,
@@ -364,6 +363,7 @@ impl<H: Host> Vm<H> {
         self.jobs.clear();
         self.suspended.clear();
         self.suspended_free.clear();
+        self.promise = Default::default();
         self.numeric_sites.clear();
         self.shapes.truncate(1);
         self.shape_slots.truncate(1);
@@ -441,7 +441,7 @@ impl<H: Host> Vm<H> {
                 if native == Native::ProxyRevoke {
                     return self.proxy_revoke(callee);
                 }
-                self.call_native(p, native, this, args)
+                self.call_native_guarded(p, native, this, args, callee)
             }
             CallTarget::User(id, env) => {
                 self.profile.call_target(1, args.len());

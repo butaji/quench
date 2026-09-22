@@ -37,6 +37,7 @@ impl<H: Host> Vm<H> {
             jobs: vec![],
             suspended: vec![],
             suspended_free: vec![],
+            promise: Default::default(),
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]

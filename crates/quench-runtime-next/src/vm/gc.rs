@@ -56,10 +56,22 @@ impl<H: Host> Vm<H> {
                     self.weak_set_proto,
                     self.weak_ref_proto,
                     self.finalization_registry_proto,
+                    self.promise.proto,
                     self.iterator_proto,
                     self.regexp_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
+                .chain(self.promise.active_native.iter().copied())
+                .chain(self.promise.records.iter().flat_map(|(promise, record)| {
+                    std::iter::once(*promise)
+                        .chain(std::iter::once(record.result))
+                        .chain(record.reactions.iter().flat_map(|reaction| {
+                            [reaction.on_fulfilled, reaction.on_rejected, reaction.next]
+                        }))
+                }))
+                .chain(self.promise.jobs.iter().flat_map(|(job, reaction)| {
+                    [*job, reaction.handler, reaction.next, reaction.value]
+                }))
                 .chain(self.jobs.iter().flat_map(|job| {
                     std::iter::once(job.callback)
                         .chain(std::iter::once(job.this))
@@ -138,6 +150,12 @@ impl<H: Host> Vm<H> {
                 key.symbol_value()
                     .is_some_and(|key| self.heap.get(key).is_some())
             });
+            self.promise
+                .records
+                .retain(|promise, _| self.heap.get(*promise).is_some());
+            self.promise
+                .jobs
+                .retain(|job, _| self.heap.get(*job).is_some());
             !keys.is_empty()
         });
         self.symbol_descriptors.retain(|(object, key), attributes| {
