@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -154,6 +155,22 @@ fn method_cache_live(heap: &crate::heap::Heap, entry: MethodCache) -> bool {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn call_method_site_safe(
+        &mut self,
+        p: &ResidualProgram,
+        _frame: usize,
+        site: usize,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let metadata = p.method_sites[site];
+        let start = metadata.argument_start as usize;
+        let args = &p.method_arguments[start..start + metadata.argument_count as usize];
+        let callee = self.get_property(p, this, metadata.atom)?;
+        let arguments =
+            CallArguments::from_values(args.iter().map(|register| self.read(_frame, *register)));
+        self.call_value(p, callee, this, arguments.as_slice())
+    }
+
     #[inline(always)]
     pub(super) fn call_method_site(
         &mut self,
@@ -233,15 +250,7 @@ impl<H: Host> Vm<H> {
                     kind: FunctionKind::Native(native),
                     ..
                 }) => CallTarget::Native(*native),
-                _ => {
-                    if std::env::var_os("RQJ_CALL_DIAGNOSTICS").is_some() {
-                        eprintln!(
-                            "rqj: non-callable method={} receiver={this:?} shape={shape} value={callee:?}",
-                            &p.atoms[metadata.atom as usize]
-                        );
-                    }
-                    return Err(JsError("value is not callable".into()));
-                }
+                _ => return Err(self.type_error(p, "value is not callable".into())),
             };
             if self.specialized {
                 #[cfg(feature = "profile-aggregate")]

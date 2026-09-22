@@ -171,7 +171,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn compile_regexp(source: &str, flags: &str) -> Result<regex::Regex, JsError> {
-        let mut builder = RegexBuilder::new(source);
+        let normalized = normalize_js_pattern(source);
+        let mut builder = RegexBuilder::new(&normalized);
         let mut seen = 0u8;
         for flag in flags.chars() {
             let bit = match flag {
@@ -200,4 +201,45 @@ impl<H: Host> Vm<H> {
             .build()
             .map_err(|error| JsError(format!("invalid regular expression: {error}").into()))
     }
+}
+
+fn normalize_js_pattern(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut output = String::with_capacity(source.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '\\'
+            && index + 3 < chars.len()
+            && chars[index + 1] == 'x'
+            && chars[index + 2].is_ascii_hexdigit()
+            && chars[index + 3].is_ascii_hexdigit()
+        {
+            output.push_str("\\u{");
+            output.push(chars[index + 2]);
+            output.push(chars[index + 3]);
+            output.push('}');
+            index += 4;
+        } else if chars[index] == '\\'
+            && index + 5 < chars.len()
+            && chars[index + 1] == 'u'
+            && chars[index + 2..index + 6]
+                .iter()
+                .all(char::is_ascii_hexdigit)
+        {
+            let value = chars[index + 2..index + 6].iter().collect::<String>();
+            let scalar = u32::from_str_radix(&value, 16).unwrap_or(0);
+            if (0xD800..=0xDFFF).contains(&scalar) {
+                output.push_str("\\u{FFFD}");
+            } else {
+                output.push_str("\\u{");
+                output.push_str(&value);
+                output.push('}');
+            }
+            index += 6;
+        } else {
+            output.push(chars[index]);
+            index += 1;
+        }
+    }
+    output
 }

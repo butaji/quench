@@ -1,24 +1,31 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
+        match self.heap.get(callee) {
+            Some(Cell::Function {
+                kind: FunctionKind::User(id),
+                env,
+                ..
+            }) => Ok(CallTarget::User(*id, *env)),
+            Some(Cell::Function {
+                kind: FunctionKind::NumericUser(id),
+                env,
+                ..
+            }) => Ok(CallTarget::NumericUser(*id, *env)),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(native),
+                ..
+            }) => Ok(CallTarget::Native(*native)),
+            other => self.non_callable_target(callee, other),
+        }
+    }
+
     pub(super) fn non_callable_target(
         &self,
-        callee: Value,
-        cell: Option<&Cell>,
+        _callee: Value,
+        _cell: Option<&Cell>,
     ) -> Result<CallTarget, JsError> {
-        if std::env::var_os("RQJ_CALL_DIAGNOSTICS").is_some() {
-            let location = self
-                .frames
-                .last()
-                .map(|frame| (frame.function, frame.pc.saturating_sub(1)));
-            eprintln!("rqj: non-callable location={location:?} value={callee:?} cell={cell:?}");
-            if let Some(frame) = self.frames.last() {
-                eprintln!(
-                    "rqj: locals={:?} registers={:?}",
-                    frame.locals, frame.registers
-                );
-            }
-        }
         Err(JsError("value is not callable".into()))
     }
 
@@ -97,6 +104,23 @@ impl<H: Host> Vm<H> {
                     |unit| super::wtf16::JsString::from_units(std::slice::from_ref(unit)),
                 );
                 Ok(self.heap.alloc(Cell::String(value)))
+            }
+            Native::StringSlice => {
+                let units = self.string_units(this)?;
+                let length = units.len() as i64;
+                let normalize = |value: i64| {
+                    if value < 0 {
+                        (length + value).max(0)
+                    } else {
+                        value.min(length)
+                    }
+                };
+                let start = normalize(self.argument_integer(p, args, 0, 0)?);
+                let end = normalize(self.argument_integer(p, args, 1, length)?);
+                if start >= end {
+                    return self.string_from_units(&[]);
+                }
+                self.string_from_units(&units[start as usize..end as usize])
             }
             Native::StringSubstring => {
                 if let Some(length) = self.ascii_string_len(this) {

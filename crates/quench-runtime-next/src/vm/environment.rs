@@ -63,7 +63,11 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         cache: u16,
     ) -> Result<Value, JsError> {
-        self.get_field_cached(p, self.globals, atom, cache)
+        let value = self.get_field_cached(p, self.globals, atom, cache)?;
+        if value.is_undefined() && self.own_property(self.globals, atom).is_none() {
+            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
+        }
+        Ok(value)
     }
 
     pub(super) fn load_name_typeof(
