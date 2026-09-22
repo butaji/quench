@@ -57,6 +57,7 @@ impl FunctionCompiler<'_, '_> {
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: None,
+                        async_function: false,
                         instance_fields: Some(&instance_fields),
                         super_static: false,
                         rest_override: implicit_super,
@@ -394,6 +395,7 @@ impl Compiler<'_> {
             parent,
             FunctionOptions {
                 defaults: Some(&method.value.params),
+                async_function: method.value.r#async,
                 instance_fields,
                 super_static: method.r#static,
                 rest_override: false,
@@ -416,6 +418,7 @@ impl Compiler<'_> {
             parent,
             FunctionOptions {
                 defaults: None,
+                async_function: false,
                 instance_fields: None,
                 super_static: true,
                 rest_override: false,
