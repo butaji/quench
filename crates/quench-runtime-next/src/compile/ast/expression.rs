@@ -225,7 +225,12 @@ impl FunctionCompiler<'_, '_> {
         } else {
             self.expression(object)
         };
-        if let Expression::StringLiteral(value) = key {
+        if let Expression::StringLiteral(value) = key
+            && !matches!(
+                super::super::string::constant(value),
+                Constant::StringUnits(_)
+            )
+        {
             let (dst, atom, cache) = (
                 self.reg(),
                 self.owner.atom(value.value.as_str()),
