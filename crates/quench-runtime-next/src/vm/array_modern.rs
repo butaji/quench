@@ -69,9 +69,9 @@ impl<H: Host> Vm<H> {
         }
         let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         let mut values = Vec::new();
-        if let Ok(iterator) = self.get_iterator(source) {
+        if let Ok(iterator) = self.get_iterator(p, source) {
             loop {
-                let step = self.iterator_next(iterator)?;
+                let step = self.iterator_next(p, iterator)?;
                 let done = self.get_property(p, step, done_atom)?;
                 if self.truthy(done) {
                     break;
