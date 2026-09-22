@@ -149,7 +149,7 @@ impl FunctionCompiler<'_, '_> {
                 };
                 Some(self.expression(key))
             } else {
-                None
+                Self::unit_key(self, &method.key)
             };
             let name_text = if computed_key.is_none() {
                 let Some(name) = class_method_name(&method.key) else {
@@ -199,7 +199,7 @@ impl FunctionCompiler<'_, '_> {
                         };
                         Some(self.expression(key))
                     } else {
-                        None
+                        Self::unit_key(self, &field.key)
                     };
                     let name = if computed_key.is_none() {
                         let Some(name) = class_method_name(&field.key) else {
@@ -335,7 +335,7 @@ impl FunctionCompiler<'_, '_> {
                 };
                 Some(self.expression(key))
             } else {
-                None
+                self.unit_key(&field.key)
             };
             let name = if computed_key.is_none() {
                 let Some(name) = class_method_name(&field.key) else {
@@ -357,6 +357,16 @@ impl FunctionCompiler<'_, '_> {
                 let cache = self.owner.cache_site();
                 self.emit(Op::SetField, value, this, cache, name.unwrap());
             }
+        }
+    }
+
+    fn unit_key(&mut self, key: &PropertyKey<'_>) -> Option<Register> {
+        let PropertyKey::StringLiteral(value) = key else {
+            return None;
+        };
+        match super::string::constant(value) {
+            Constant::StringUnits(units) => Some(self.literal(Constant::StringUnits(units))),
+            _ => None,
         }
     }
 }
@@ -418,7 +428,11 @@ impl Compiler<'_> {
 fn class_method_name<'a>(key: &'a PropertyKey<'a>) -> Option<&'a str> {
     match key {
         PropertyKey::StaticIdentifier(id) => Some(id.name.as_str()),
-        PropertyKey::StringLiteral(value) => Some(value.value.as_str()),
+        PropertyKey::StringLiteral(value)
+            if !matches!(super::string::constant(value), Constant::StringUnits(_)) =>
+        {
+            Some(value.value.as_str())
+        }
         _ => None,
     }
 }
