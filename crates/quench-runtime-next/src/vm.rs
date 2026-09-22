@@ -39,6 +39,7 @@ mod method_cache;
 mod number;
 mod numeric_site;
 mod object;
+mod object_array;
 mod object_builtins;
 mod object_descriptors;
 mod object_get;

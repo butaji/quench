@@ -341,7 +341,7 @@ impl<H: Host> Vm<H> {
                 object.set_frozen(true);
             }
         }
-        let keys = self
+        let mut keys = self
             .object_data(target)
             .map(|data| {
                 self.ordered_shape(data)
@@ -351,6 +351,7 @@ impl<H: Host> Vm<H> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        keys.extend(self.array_integrity_atoms(target));
         for atom in keys {
             let attributes = self
                 .descriptors
@@ -399,6 +400,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 !attributes.configurable && (!freeze || !attributes.writable)
             });
+        let arrays_ok = self.array_is_integrity_level(target, freeze);
         let symbols_ok = self
             .symbol_property_order
             .get(&target)
@@ -412,7 +414,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 !attributes.configurable && (!freeze || !attributes.writable)
             });
-        named_ok && symbols_ok
+        named_ok && arrays_ok && symbols_ok
     }
 
     pub(super) fn validate_proxy_define_property(

@@ -150,14 +150,31 @@ fn delete_property_uses_one_named_symbol_and_proxy_authority() {
       print(Object.keys(array).join(','));
       print(JSON.stringify(array)); print(Array.from(array)[0] === undefined);
       array[0] = 3; print(array[0]); print(Object.keys(array).join(','));
+      print(Object.getOwnPropertyDescriptor(array, '0').value);
+      Object.defineProperty(array, '1', { value: 5, writable: false, enumerable: false, configurable: false });
+      print(array[1]); print(Object.keys(array).join(','));
+      try { Object.defineProperty(array, '1', { value: 6 }); } catch (error) { print('readonly'); }
     "#;
     assert_eq!(
         output(source),
         [
             "true", "false", "8", "answer", "true", "0", "true", "true", "false", "value", "true",
-            "9", "true", "true", "2", "1", "[null,2]", "true", "3", "0,1"
+            "9", "true", "true", "2", "1", "[null,2]", "true", "3", "0,1", "3", "5", "0",
+            "readonly"
         ]
     );
+}
+
+#[test]
+fn array_index_descriptors_follow_seal_and_freeze_integrity() {
+    let source = r#"
+      var array = [4]; Object.freeze(array);
+      print(Object.isFrozen(array));
+      var descriptor = Object.getOwnPropertyDescriptor(array, '0');
+      print(descriptor.writable); print(descriptor.configurable);
+      print(delete array[0]); print(array[0]);
+    "#;
+    assert_eq!(output(source), ["true", "false", "false", "false", "4"]);
 }
 
 #[test]
