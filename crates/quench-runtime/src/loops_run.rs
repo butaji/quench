@@ -34,68 +34,73 @@ pub(crate) fn execute(
     let update_code = update
         .code()
         .ok_or(crate::execute::VmError::MissingReturn)?;
-    run_loop(
+    run_loop(LoopRequest {
         label,
-        init_code,
-        test_code,
-        body_code,
-        update_code,
-        (init, test, body, update),
-        (post_test, dst, per_iteration),
+        init: init_code,
+        test: test_code,
+        body: body_code,
+        update: update_code,
+        owners: (init, test, body, update),
+        post_test,
+        dst,
+        per_iteration,
         registers,
-    )
+    })
 }
 
-fn run_loop(
-    label: &Option<String>,
-    init: crate::machine::CodeView<'_>,
-    test: crate::machine::CodeView<'_>,
-    body: crate::machine::CodeView<'_>,
-    update: crate::machine::CodeView<'_>,
-    owners: (
-        &crate::machine::FunctionCode,
-        &crate::machine::FunctionCode,
-        &crate::machine::FunctionCode,
-        &crate::machine::FunctionCode,
-    ),
-    config: (bool, u16, &[u16]),
-    registers: &mut crate::register_file::RegisterFile,
-) -> Result<crate::completion::Completion, crate::execute::VmError> {
+struct LoopRequest<'a> {
+    label: &'a Option<String>,
+    init: crate::machine::CodeView<'a>,
+    test: crate::machine::CodeView<'a>,
+    body: crate::machine::CodeView<'a>,
+    update: crate::machine::CodeView<'a>,
+        owners: (
+        &'a crate::machine::FunctionCode,
+        &'a crate::machine::FunctionCode,
+        &'a crate::machine::FunctionCode,
+        &'a crate::machine::FunctionCode,
+        ),
+    post_test: bool,
+    dst: u16,
+    per_iteration: &'a [u16],
+    registers: &'a mut crate::register_file::RegisterFile,
+}
+
+fn run_loop(request: LoopRequest<'_>) -> Result<crate::completion::Completion, crate::execute::VmError> {
     stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
-        run_loop_inner(label, init, test, body, update, owners, config, registers)
+        run_loop_inner(request)
     })
 }
 
 fn run_loop_inner(
-    label: &Option<String>,
-    init: crate::machine::CodeView<'_>,
-    test: crate::machine::CodeView<'_>,
-    body: crate::machine::CodeView<'_>,
-    update: crate::machine::CodeView<'_>,
-    owners: (
-        &crate::machine::FunctionCode,
-        &crate::machine::FunctionCode,
-        &crate::machine::FunctionCode,
-        &crate::machine::FunctionCode,
-    ),
-    config: (bool, u16, &[u16]),
-    registers: &mut crate::register_file::RegisterFile,
+    request: LoopRequest<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    if label.is_none() && !config.0 {
+    let LoopRequest {
+        label,
+        init,
+        test,
+        body,
+        update,
+        owners,
+        post_test,
+        dst,
+        per_iteration,
+        registers,
+    } = request;
+    if label.is_none() && !post_test {
         if let Some(result) = crate::stencil_boolean_reduction::execute_structured(
-            init, test, body, update, config.1, config.2, registers,
+            init, test, body, update, dst, per_iteration, registers,
         ) {
             return result;
         }
         if let Some(result) = crate::stencil_ordered_neighbor::execute_structured(
-            init, test, body, update, config.1, config.2, registers,
+            init, test, body, update, dst, per_iteration, registers,
         ) {
             return result;
         }
     }
     crate::execution_trace::event(crate::execution_trace::Event::LoopEntry);
     let loop_shape = crate::execution_trace::loop_shape(body);
-    let (post_test, dst, per_iteration) = config;
     let (init_owner, test_owner, body_owner, update_owner) = owners;
     let shape = LoopExecution {
         label,
