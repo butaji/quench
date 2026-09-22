@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -85,7 +86,7 @@ impl<H: Host> Vm<H> {
             };
             let attributes = self
                 .symbol_descriptors
-                .get(&(target, key_value))
+                .get(&(target, PropertyKey::symbol(key_value)))
                 .copied()
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             let descriptor = self.object();
@@ -108,7 +109,7 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_atom(&key);
             let attributes = self
                 .descriptors
-                .get(&(target, atom))
+                .get(&(target, PropertyKey::string(atom)))
                 .copied()
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             if attributes.accessor {
@@ -162,7 +163,7 @@ impl<H: Host> Vm<H> {
         };
         let attributes = self
             .descriptors
-            .get(&(target, atom))
+            .get(&(target, PropertyKey::string(atom)))
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let descriptor = self.object();

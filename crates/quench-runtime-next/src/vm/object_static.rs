@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -263,7 +264,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         self.descriptors
-            .get(&(object, atom))
+            .get(&(object, PropertyKey::string(atom)))
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
             .enumerable
@@ -347,7 +348,7 @@ impl<H: Host> Vm<H> {
         let existing = self.own_property(target, atom);
         let current = self
             .descriptors
-            .get(&(target, atom))
+            .get(&(target, PropertyKey::string(atom)))
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let is_new = existing.is_none();
@@ -409,7 +410,7 @@ impl<H: Host> Vm<H> {
                 self.set_property(target, atom, Value::UNDEFINED)?;
             }
             self.descriptors.insert(
-                (target, atom),
+                (target, PropertyKey::string(atom)),
                 PropertyAttributes {
                     writable: false,
                     enumerable: attributes.enumerable,
@@ -434,7 +435,8 @@ impl<H: Host> Vm<H> {
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
             self.set_property(target, atom, value)?;
         }
-        self.descriptors.insert((target, atom), attributes);
+        self.descriptors
+            .insert((target, PropertyKey::string(atom)), attributes);
         Ok(target)
     }
 }

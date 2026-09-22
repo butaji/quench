@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -131,7 +132,10 @@ impl<H: Host> Vm<H> {
             {
                 return self.proxy_get(p, target, handler, receiver, atom);
             }
-            if let Some(attributes) = self.descriptors.get(&(object, atom)).copied()
+            if let Some(attributes) = self
+                .descriptors
+                .get(&(object, PropertyKey::string(atom)))
+                .copied()
                 && attributes.accessor
             {
                 return match attributes.getter {
