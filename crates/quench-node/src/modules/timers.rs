@@ -390,7 +390,6 @@ pub fn method_to_primitive(receiver: Option<&Value>) -> Value {
 #[derive(Clone, Copy)]
 pub(crate) enum HandlerKind {
     UncaughtException,
-    Warning,
 }
 
 /// Snapshot the handler list, dropping fired `once` handlers.
@@ -398,7 +397,6 @@ pub(crate) fn take_once_handlers(state: &Rc<RefCell<HostState>>, kind: HandlerKi
     let mut guard = state.borrow_mut();
     let list = match kind {
         HandlerKind::UncaughtException => &mut guard.process.uncaught_exception_handlers,
-        HandlerKind::Warning => &mut guard.process.warning_handlers,
     };
     let handlers: Vec<Value> = list.iter().map(|(handler, _)| handler.clone()).collect();
     list.retain(|(_, once)| !once);

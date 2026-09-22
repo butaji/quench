@@ -61,8 +61,6 @@ pub(crate) const TOS_PROP: &str = "\0quench:net:tos";
 pub(crate) const HANDLE_CLOSED_PROP: &str = "\0quench:net:handle-closed";
 pub(crate) const HANDLE_NO_DELAY_PROP: &str = "\0quench:net:handle-no-delay";
 const ASYNC_ITER_TARGET_PROP: &str = "\0quench:net:async-iter-target";
-const SOCKET_ADDRESS_MARKER: &str = "\0quench:socket-address:marker";
-const SOCKET_ADDRESS_CONSTRUCTOR_MARKER: &str = "\0quench:socket-address:constructor";
 const SOCKET_ADDRESS_CONSTRUCTOR_GLOBAL_PROP: &str = "\0quench:net:socket-address-constructor";
 const READ_CHUNK: usize = 16 * 1024;
 

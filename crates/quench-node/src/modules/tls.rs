@@ -46,14 +46,6 @@ fn invalid_value(message: String) -> VmError {
     coded_error(Builtin::TypeError, "ERR_INVALID_ARG_VALUE", message)
 }
 
-fn unsupported(operation: &str) -> VmError {
-    coded_error(
-        Builtin::Error,
-        "ERR_TLS_NOT_SUPPORTED",
-        format!("{operation} is not supported by quench-node"),
-    )
-}
-
 fn option(options: &Value, name: &str) -> Value {
     execute::get_property(options, name)
 }

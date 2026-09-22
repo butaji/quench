@@ -269,16 +269,6 @@ fn frozen_null_object(properties: Vec<(String, Value)>) -> Value {
     quench_runtime::execute::prevent_extensions(&value).unwrap_or(value)
 }
 
-fn placeholder_constructor(parent: Option<&Value>) -> Value {
-    let prototype = host_api::object(Vec::new());
-    let constructor =
-        host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
-    let constructor = quench_runtime::execute::set_property(constructor, "prototype", prototype);
-    parent
-        .and_then(|parent| quench_runtime::execute::set_prototype_of(&constructor, parent).ok())
-        .unwrap_or(constructor)
-}
-
 fn global_constructor_or_capability(
     global: &Value,
     name: &str,

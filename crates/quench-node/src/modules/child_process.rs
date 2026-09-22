@@ -1153,21 +1153,6 @@ fn spawn_error_result_with_command(
     ])
 }
 
-/// A Node-style coded `Error` object for a spawn failure.
-fn coded_error(code: &str, message: &str) -> Value {
-    coded_error_with_syscall(code, message, "spawn")
-}
-
-fn coded_error_with_syscall(code: &str, message: &str, syscall: &str) -> Value {
-    host_api::object(vec![
-        ("name".to_string(), Value::String("Error".to_string())),
-        ("message".to_string(), Value::String(message.to_string())),
-        ("code".to_string(), Value::String(code.to_string())),
-        ("errno".to_string(), Value::Number(-2.0)),
-        ("syscall".to_string(), Value::String(syscall.to_string())),
-    ])
-}
-
 fn coded_error_with_errno(code: &str, errno: f64) -> Value {
     host_api::object(vec![
         ("name".into(), Value::String("Error".into())),
@@ -1203,67 +1188,6 @@ fn code_name(raw: i32) -> &'static str {
 #[cfg(not(unix))]
 fn code_name(_raw: i32) -> &'static str {
     "EIO"
-}
-
-fn max_buffer(options: Option<&Value>) -> Option<usize> {
-    match options.map(|value| execute::get_property(value, "maxBuffer")) {
-        Some(Value::Number(value)) if value.is_finite() && value >= 0.0 => Some(value as usize),
-        Some(Value::Number(value)) if value.is_infinite() => None,
-        Some(Value::Undefined) | None => Some(1024 * 1024),
-        _ => None,
-    }
-}
-
-fn script_output(source: &str, call: &str) -> Vec<u8> {
-    let Some((_, marker)) = source.split_once(call) else {
-        return Vec::new();
-    };
-    let Some(argument) = parenthesized_argument(marker) else {
-        return Vec::new();
-    };
-    let output = if let Some((literal, repeat)) = argument.split_once(".repeat(") {
-        let expression = repeat.trim_end_matches(')');
-        let count = if let Some((product, subtract)) = expression.split_once('-') {
-            let product = product
-                .split('*')
-                .map(|part| part.trim().parse::<usize>().ok())
-                .try_fold(1usize, |total, value| {
-                    value.map(|value| total.saturating_mul(value))
-                })
-                .unwrap_or(0);
-            product.saturating_sub(subtract.trim().parse::<usize>().unwrap_or(0))
-        } else {
-            expression
-                .split('*')
-                .map(|part| part.trim().parse::<usize>().ok())
-                .try_fold(1usize, |total, value| {
-                    value.map(|value| total.saturating_mul(value))
-                })
-                .unwrap_or(0)
-        };
-        literal.trim().trim_matches(['\'', '"']).repeat(count)
-    } else {
-        argument.trim().trim_matches(['\'', '"']).to_string()
-    };
-    format!("{output}\n").into_bytes()
-}
-
-fn parenthesized_argument(marker: &str) -> Option<&str> {
-    let value = marker.strip_prefix('(')?;
-    let mut depth = 1usize;
-    for (index, character) in value.char_indices() {
-        match character {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return value.get(..index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 fn value_to_string(value: &Value) -> String {

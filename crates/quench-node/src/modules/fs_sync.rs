@@ -1099,21 +1099,6 @@ pub fn lchown_sync(
     Ok(Value::Undefined)
 }
 
-pub(crate) fn validate_time(value: Option<&Value>, name: &str) -> Result<(), VmError> {
-    if matches!(
-        value,
-        Some(Value::Number(_)) | Some(Value::Object(_)) | Some(Value::ObjectAlias(_))
-    ) {
-        return Ok(());
-    }
-    Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-        "The \"{name}\" argument must be a number or Date.{}",
-        value
-            .map(crate::modules::util::invalid_arg_received)
-            .unwrap_or_default()
-    )))
-}
-
 pub(crate) fn unix_timestamp(value: Option<&Value>, name: &str) -> Result<f64, VmError> {
     let value = value.unwrap_or(&Value::Undefined);
     let seconds = match value {
