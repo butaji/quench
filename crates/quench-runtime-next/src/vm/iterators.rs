@@ -212,22 +212,16 @@ impl<H: Host> Vm<H> {
                 _ => None,
             };
         }
-        let (elements, length) = match self.heap.get(source) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(source).unwrap_or(elements.len()),
-            ),
+        let length = match self.heap.get(source) {
+            Some(Cell::Array { elements, .. }) => {
+                self.heap.sparse_length(source).unwrap_or(elements.len())
+            }
             _ => return None,
         };
         if index >= length {
             return None;
         }
-        let value = elements
-            .get(index)
-            .copied()
-            .filter(|value| !value.is_deleted())
-            .or_else(|| self.heap.sparse_get(source, index))
-            .unwrap_or(Value::UNDEFINED);
+        let value = self.array_value_at(source, index);
         match kind {
             IteratorKind::ArrayKeys => Some((Value::number(index as f64), None)),
             IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),

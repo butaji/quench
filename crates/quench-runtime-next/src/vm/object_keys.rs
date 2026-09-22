@@ -2,23 +2,11 @@ use super::*;
 
 impl<H: Host> Vm<H> {
     fn array_name_keys(&mut self, object: Value) -> Option<Vec<Value>> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
+        if !matches!(self.heap.get(object), Some(Cell::Array { .. })) {
             return None;
-        };
-        let elements = Rc::clone(elements);
-        let length = self.heap.sparse_length(object).unwrap_or(elements.len());
-        let indices = (0..length)
-            .filter(|index| {
-                elements
-                    .get(*index)
-                    .copied()
-                    .filter(|value| !value.is_deleted())
-                    .or_else(|| self.heap.sparse_get(object, *index))
-                    .is_some()
-            })
-            .collect::<Vec<_>>();
+        }
         Some(
-            indices
+            self.array_present_indices(object)
                 .into_iter()
                 .map(|index| self.heap.alloc(Cell::String(index.to_string())))
                 .collect(),
