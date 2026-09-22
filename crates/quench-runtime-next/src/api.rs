@@ -267,4 +267,18 @@ mod tests {
         runtime.execute(&program).unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["function", "true"]);
     }
+
+    #[test]
+    fn finalization_registry_drains_collected_targets_after_their_root_is_cleared() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var registry = new FinalizationRegistry(function(held) { print(held); }); var target = {}; registry.register(target, 7); target = undefined; for (var i = 0; i < 10000; i = i + 1) { var temporary = {}; } print(\"done\");",
+                "finalization-drain.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["done", "7"]);
+    }
 }
