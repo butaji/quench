@@ -233,6 +233,8 @@ impl FunctionCompiler<'_, '_> {
             _ => {
                 if let Some(target) = left.as_simple_assignment_target() {
                     self.assign_target(target, value, 0);
+                } else if let Some(target) = left.as_assignment_target() {
+                    self.assign_pattern(target, value);
                 } else {
                     self.owner
                         .reject(left.span(), "for-of assignment target unsupported");

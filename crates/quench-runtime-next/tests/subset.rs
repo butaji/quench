@@ -92,6 +92,16 @@ fn destructuring_assignments_share_binding_pattern_semantics() {
 }
 
 #[test]
+fn for_of_assignment_patterns_reuse_destructuring_lowering() {
+    assert_eq!(
+        output(
+            "var first = 0; var second = 0; for ([first, second] of [[3, 4]]) {} print(first); print(second);"
+        ),
+        ["3", "4"],
+    );
+}
+
+#[test]
 fn object_is_uses_same_value_semantics() {
     assert_eq!(
         output(
