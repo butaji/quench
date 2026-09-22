@@ -6,7 +6,7 @@ use std::rc::Rc;
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
-    Print, HostDone,
+    Print, HostDone, Function, FunctionReturnThis,
     Object,
     ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen,
@@ -239,6 +239,14 @@ impl TypedArrayKind {
     }
 }
 impl Native {
+    pub(crate) fn is_function_native(self) -> bool {
+        matches!(self, Self::Function | Self::FunctionReturnThis)
+    }
+
+    pub(crate) fn is_host_control_native(self) -> bool {
+        self == Self::HostDone || self.is_function_native()
+    }
+
     pub(crate) fn is_error_constructor(self) -> bool {
         matches!(
             self,

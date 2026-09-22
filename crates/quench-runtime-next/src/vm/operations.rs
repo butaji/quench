@@ -36,7 +36,7 @@ impl<H: Host> Vm<H> {
         }
         match native {
             Native::ProxyRevocable => self.proxy_revocable(p, args),
-            Native::HostDone => self.call_host_done(p, args),
+            native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, v)?;

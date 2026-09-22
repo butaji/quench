@@ -76,6 +76,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
         self.global(program, "globalThis", self.globals)?;
+        self.global(program, "Function", self.native_value(Native::Function))?;
         for global in self.host.globals() {
             let native = match global.capability {
                 CapabilityId::Done => Native::HostDone,
@@ -99,6 +100,45 @@ impl<H: Host> Vm<H> {
             .transpose()?;
         HostContext::new(&mut self.host).invoke(CapabilityId::Done, text.as_deref());
         Ok(Value::UNDEFINED)
+    }
+
+    pub(super) fn function_native(
+        &mut self,
+        program: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let source = args.last().copied().unwrap_or(Value::UNDEFINED);
+        let source = self.to_string(program, source)?;
+        if source.trim() != "return this;" {
+            return Err(JsError("dynamic Function source is unsupported".into()));
+        }
+        Ok(self.native_with_env(Native::FunctionReturnThis, Value::NULL))
+    }
+
+    pub(super) fn call_function_dispatch(
+        &mut self,
+        program: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if native == Native::FunctionReturnThis {
+            Ok(self.globals)
+        } else {
+            self.function_native(program, args)
+        }
+    }
+
+    pub(super) fn call_host(
+        &mut self,
+        program: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if native == Native::HostDone {
+            self.call_host_done(program, args)
+        } else {
+            self.call_function_dispatch(program, native, args)
+        }
     }
 
     pub(super) fn install_errors(&mut self, program: &ResidualProgram) -> Result<(), JsError> {

@@ -182,6 +182,11 @@ impl<H: Host> Vm<H> {
                     return Ok(Value::number(entries.len() as f64));
                 }
                 Some(Cell::String(v)) => {
+                    if let Ok(index) = self.atom_name(atom).parse::<usize>()
+                        && let Some(unit) = v.units().get(index).copied()
+                    {
+                        return Ok(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))));
+                    }
                     return Ok(if atom == self.length_atom {
                         Value::number(v.units().len() as f64)
                     } else if atom == self.primitive_atoms[0] {
