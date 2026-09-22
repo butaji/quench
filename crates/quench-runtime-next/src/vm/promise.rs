@@ -51,6 +51,14 @@ pub(super) struct FinallyJob {
     pub(super) value: Value,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FinallyContinuationJob {
+    pub(super) next: Value,
+    pub(super) original_rejected: bool,
+    pub(super) cleanup_rejected: bool,
+    pub(super) value: Value,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AggregateMode {
     All,
@@ -78,6 +86,7 @@ pub(super) struct PromiseRuntime {
     pub(super) jobs: FxHashMap<Value, PromiseJob>,
     pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
     pub(super) finally_jobs: FxHashMap<Value, FinallyJob>,
+    pub(super) finally_continuation_jobs: FxHashMap<Value, FinallyContinuationJob>,
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) active_native: Vec<Value>,
@@ -91,6 +100,7 @@ impl Default for PromiseRuntime {
             jobs: FxHashMap::default(),
             thenable_jobs: FxHashMap::default(),
             finally_jobs: FxHashMap::default(),
+            finally_continuation_jobs: FxHashMap::default(),
             aggregates: FxHashMap::default(),
             aggregate_jobs: FxHashMap::default(),
             active_native: vec![],
@@ -285,6 +295,10 @@ impl<H: Host> Vm<H> {
             }
             Native::PromiseThenableJob => self.promise_thenable_job(p),
             Native::PromiseFinallyJob => self.promise_finally_job(p),
+            Native::PromiseFinallyContinuationJob => self.promise_finally_continuation_job(
+                p,
+                args.first().copied().unwrap_or(Value::UNDEFINED),
+            ),
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }

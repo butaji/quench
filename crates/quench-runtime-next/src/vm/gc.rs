@@ -100,6 +100,11 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
+                    self.promise.finally_continuation_jobs.iter().flat_map(
+                        |(job, continuation)| [*job, continuation.next, continuation.value],
+                    ),
+                )
+                .chain(
                     self.promise
                         .aggregates
                         .iter()
@@ -206,6 +211,9 @@ impl<H: Host> Vm<H> {
             .retain(|job, _| self.heap.get(*job).is_some());
         self.promise
             .finally_jobs
+            .retain(|job, _| self.heap.get(*job).is_some());
+        self.promise
+            .finally_continuation_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
         self.promise
             .aggregates

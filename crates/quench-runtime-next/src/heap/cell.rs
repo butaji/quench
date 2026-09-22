@@ -198,6 +198,7 @@ pub(crate) enum Native {
     PromiseReactionJob,
     PromiseThenableJob,
     PromiseFinallyJob,
+    PromiseFinallyContinuationJob,
     PromiseAggregateJob,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -303,6 +304,7 @@ impl Native {
                 | Self::PromiseReactionJob
                 | Self::PromiseThenableJob
                 | Self::PromiseFinallyJob
+                | Self::PromiseFinallyContinuationJob
                 | Self::PromiseAggregateJob
         )
     }
