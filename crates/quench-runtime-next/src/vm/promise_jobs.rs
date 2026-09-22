@@ -1,10 +1,59 @@
 use super::promise::{
-    AggregateJob, AggregateMode, AggregateRecord, FinallyJob, FinallyReaction, PromiseJob,
-    PromiseReaction, PromiseState,
+    AggregateJob, AggregateMode, AggregateRecord, FinallyContinuationJob, FinallyJob,
+    FinallyReaction, PromiseJob, PromiseReaction, PromiseState,
 };
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn enqueue_finally_continuation(
+        &mut self,
+        p: &ResidualProgram,
+        next: Value,
+        rejected: bool,
+        value: Value,
+        cleanup: Value,
+    ) {
+        let fulfilled = self.native_with_env(Native::PromiseFinallyContinuationJob, Value::NULL);
+        let rejected_cleanup =
+            self.native_with_env(Native::PromiseFinallyContinuationJob, Value::NULL);
+        self.promise.finally_continuation_jobs.insert(
+            fulfilled,
+            FinallyContinuationJob {
+                next,
+                original_rejected: rejected,
+                cleanup_rejected: false,
+                value,
+            },
+        );
+        self.promise.finally_continuation_jobs.insert(
+            rejected_cleanup,
+            FinallyContinuationJob {
+                next,
+                original_rejected: rejected,
+                cleanup_rejected: true,
+                value,
+            },
+        );
+        let reaction = PromiseReaction {
+            on_fulfilled: fulfilled,
+            on_rejected: rejected_cleanup,
+            next: self.promise_object(),
+        };
+        let Some(record) = self.promise.records.get(&cleanup).cloned() else {
+            return;
+        };
+        if record.state == PromiseState::Pending {
+            self.promise
+                .records
+                .get_mut(&cleanup)
+                .expect("cleanup Promise record exists")
+                .reactions
+                .push(reaction);
+        } else {
+            self.enqueue_promise_reaction(p, reaction, record.state, record.result);
+        }
+    }
+
     pub(super) fn promise_aggregate(
         &mut self,
         p: &ResidualProgram,
@@ -246,11 +295,15 @@ impl<H: Host> Vm<H> {
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise finally job".into()))?;
         match self.call_value(p, reaction.handler, Value::UNDEFINED, &[]) {
-            Ok(_) if reaction.rejected => {
-                self.promise_settle(p, reaction.next, PromiseState::Rejected, reaction.value)?;
-            }
-            Ok(_) => {
-                self.promise_resolve_value(p, reaction.next, reaction.value)?;
+            Ok(cleanup) => {
+                let cleanup = self.promise_for_value(p, cleanup)?;
+                self.enqueue_finally_continuation(
+                    p,
+                    reaction.next,
+                    reaction.rejected,
+                    reaction.value,
+                    cleanup,
+                );
             }
             Err(error) => {
                 let reason = error
@@ -258,6 +311,36 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
                 self.promise_settle(p, reaction.next, PromiseState::Rejected, reason)?;
             }
+        }
+        Ok(Value::UNDEFINED)
+    }
+
+    pub(super) fn promise_finally_continuation_job(
+        &mut self,
+        p: &ResidualProgram,
+        cleanup_value: Value,
+    ) -> Result<Value, JsError> {
+        let job = *self
+            .promise
+            .active_native
+            .last()
+            .ok_or_else(|| JsError("Promise finally continuation without callback".into()))?;
+        let continuation = self
+            .promise
+            .finally_continuation_jobs
+            .remove(&job)
+            .ok_or_else(|| JsError("stale Promise finally continuation".into()))?;
+        if continuation.cleanup_rejected {
+            self.promise_settle(p, continuation.next, PromiseState::Rejected, cleanup_value)?;
+        } else if continuation.original_rejected {
+            self.promise_settle(
+                p,
+                continuation.next,
+                PromiseState::Rejected,
+                continuation.value,
+            )?;
+        } else {
+            self.promise_resolve_value(p, continuation.next, continuation.value)?;
         }
         Ok(Value::UNDEFINED)
     }
