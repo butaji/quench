@@ -29,10 +29,18 @@ pub(super) struct PromiseJob {
     pub(super) value: Value,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ThenableJob {
+    pub(super) then: Value,
+    pub(super) thenable: Value,
+    pub(super) promise: Value,
+}
+
 pub(super) struct PromiseRuntime {
     pub(super) proto: Value,
     pub(super) records: FxHashMap<Value, PromiseRecord>,
     pub(super) jobs: FxHashMap<Value, PromiseJob>,
+    pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
     pub(super) active_native: Vec<Value>,
 }
 
@@ -42,6 +50,7 @@ impl Default for PromiseRuntime {
             proto: Value::NULL,
             records: FxHashMap::default(),
             jobs: FxHashMap::default(),
+            thenable_jobs: FxHashMap::default(),
             active_native: vec![],
         }
     }
@@ -152,10 +161,9 @@ impl<H: Host> Vm<H> {
             )),
             Native::PromiseResolve => {
                 if let Some(promise) = self.active_native_env() {
-                    self.promise_settle(
+                    self.promise_resolve_value(
                         p,
                         promise,
-                        PromiseState::Fulfilled,
                         args.first().copied().unwrap_or(Value::UNDEFINED),
                     )?;
                     Ok(Value::UNDEFINED)
@@ -166,10 +174,9 @@ impl<H: Host> Vm<H> {
                         return Ok(value);
                     }
                     let promise = self.promise_object();
-                    self.promise_settle(
+                    self.promise_resolve_value(
                         p,
                         promise,
-                        PromiseState::Fulfilled,
                         args.first().copied().unwrap_or(Value::UNDEFINED),
                     )?;
                     Ok(promise)
@@ -210,6 +217,7 @@ impl<H: Host> Vm<H> {
             Native::PromiseReactionJob => {
                 self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
+            Native::PromiseThenableJob => self.promise_thenable_job(p),
             _ => unreachable!(),
         }
     }
@@ -220,6 +228,65 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function { env, .. }) if !env.is_null() => Some(*env),
             _ => None,
         }
+    }
+
+    fn promise_resolve_value(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        value: Value,
+    ) -> Result<(), JsError> {
+        if promise == value {
+            let error = self
+                .heap
+                .alloc(Cell::Error("Promise cannot resolve to itself".into()));
+            return self.promise_settle(p, promise, PromiseState::Rejected, error);
+        }
+        if let Some(record) = self.promise.records.get(&value).cloned() {
+            let reaction = PromiseReaction {
+                on_fulfilled: Value::UNDEFINED,
+                on_rejected: Value::UNDEFINED,
+                next: promise,
+            };
+            if record.state == PromiseState::Pending {
+                self.promise
+                    .records
+                    .get_mut(&value)
+                    .unwrap()
+                    .reactions
+                    .push(reaction);
+            } else {
+                self.enqueue_promise_reaction(p, reaction, record.state, record.result);
+            }
+            return Ok(());
+        }
+        if self.object_data(value).is_none() {
+            return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
+        }
+        let then_atom = self.intern_atom("then");
+        let then = match self.get_property(p, value, then_atom) {
+            Ok(then) => then,
+            Err(error) => {
+                let reason = error
+                    .thrown_value()
+                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                return self.promise_settle(p, promise, PromiseState::Rejected, reason);
+            }
+        };
+        if !self.is_function(then) {
+            return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
+        }
+        let job = self.native_with_env(Native::PromiseThenableJob, Value::NULL);
+        self.promise.thenable_jobs.insert(
+            job,
+            ThenableJob {
+                then,
+                thenable: value,
+                promise,
+            },
+        );
+        self.enqueue_job(job, vec![]);
+        Ok(())
     }
 
     fn promise_then(
@@ -338,7 +405,7 @@ impl<H: Host> Vm<H> {
                 .map(|_| Value::UNDEFINED);
         }
         match self.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
-            Ok(result) => self.promise_settle(p, reaction.next, PromiseState::Fulfilled, result),
+            Ok(result) => self.promise_resolve_value(p, reaction.next, result),
             Err(error) => self.promise_settle(
                 p,
                 reaction.next,
@@ -347,5 +414,28 @@ impl<H: Host> Vm<H> {
             ),
         }
         .map(|_| Value::UNDEFINED)
+    }
+
+    fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
+        let job = *self
+            .promise
+            .active_native
+            .last()
+            .ok_or_else(|| JsError("Promise thenable job without callback".into()))?;
+        let thenable = self
+            .promise
+            .thenable_jobs
+            .remove(&job)
+            .ok_or_else(|| JsError("stale Promise thenable job".into()))?;
+        let resolve = self.native_with_env(Native::PromiseResolve, thenable.promise);
+        let reject = self.native_with_env(Native::PromiseReject, thenable.promise);
+        if let Err(error) = self.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
+        {
+            let reason = error
+                .thrown_value()
+                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+            self.promise_settle(p, thenable.promise, PromiseState::Rejected, reason)?;
+        }
+        Ok(Value::UNDEFINED)
     }
 }
