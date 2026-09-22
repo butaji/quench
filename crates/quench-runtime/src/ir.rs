@@ -1376,7 +1376,7 @@ impl Instruction {
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoweredInstruction {
     Fast(Instruction),
-    Slow(crate::ops::Op),
+    Slow(Box<crate::ops::Op>),
 }
 
 /// The physical boundary selected for one canonical operation instance.
@@ -1426,7 +1426,7 @@ pub fn cold_marker_payload(op: &crate::ops::Op) -> (Register, u8) {
 pub fn lower(op: &crate::ops::Op) -> LoweredInstruction {
     lower_compact(op)
         .map(LoweredInstruction::Fast)
-        .unwrap_or_else(|| LoweredInstruction::Slow(op.clone()))
+        .unwrap_or_else(|| LoweredInstruction::Slow(Box::new(op.clone())))
 }
 
 /// Lossless lowering for the fixed-width subset of the canonical Op IR.
@@ -2991,8 +2991,8 @@ mod tests {
             value: Constant::Number(3.0),
         };
         let slow = lower(&source);
-        assert_eq!(slow, LoweredInstruction::Slow(source.clone()));
-        assert!(matches!(slow, LoweredInstruction::Slow(op) if op == source));
+        assert_eq!(slow, LoweredInstruction::Slow(Box::new(source.clone())));
+        assert!(matches!(slow, LoweredInstruction::Slow(op) if *op == source));
     }
 
     #[test]

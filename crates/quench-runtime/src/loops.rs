@@ -504,7 +504,7 @@ fn iterate_loop_keys(
                 return Ok(crate::completion::Completion::Normal);
             }
             crate::completion::LoopTransition::Propagate(completion) => {
-                return attach_loop_completion(registers, dst, completion);
+                return attach_loop_completion(registers, dst, *completion);
             }
         }
     }
@@ -616,9 +616,9 @@ fn iterate_loop_values(
             crate::completion::LoopTransition::Propagate(completion) => {
                 if completion.is_suspension() {
                     remember_for_of(iterator);
-                    return wrap_for_of_suspension(completion, &pending, body_resume);
+                    return wrap_for_of_suspension(*completion, &pending, body_resume);
                 }
-                let completion = attach_loop_completion(registers, dst, completion)?;
+                let completion = attach_loop_completion(registers, dst, *completion)?;
                 return crate::collections::iterator::close(iterator, completion);
             }
         }
@@ -701,9 +701,9 @@ pub(crate) fn resume_async_for_of(
             crate::completion::LoopTransition::Propagate(completion) => {
                 if completion.is_suspension() {
                     remember_for_of(spec.iterator.clone());
-                    return Ok((completion, None));
+                    return Ok((*completion, None));
                 }
-                let completion = attach_loop_completion(registers, spec.dst, completion)?;
+                let completion = attach_loop_completion(registers, spec.dst, *completion)?;
                 return crate::collections::iterator::close(spec.iterator.clone(), completion)
                     .map(|completion| (completion, None));
             }

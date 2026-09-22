@@ -10701,11 +10701,11 @@ impl Machine {
     pub(crate) fn try_push_call_frame(
         &mut self,
         frame: crate::completion::CallContinuation,
-    ) -> Result<(), crate::completion::CallContinuation> {
+    ) -> Result<(), Box<crate::completion::CallContinuation>> {
         if self.call_frames.len() == self.call_frames.capacity()
             && self.call_frames.try_reserve(1).is_err()
         {
-            return Err(frame);
+            return Err(Box::new(frame));
         }
         self.call_frames.push(frame);
         Ok(())

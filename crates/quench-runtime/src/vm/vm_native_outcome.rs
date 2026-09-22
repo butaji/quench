@@ -2,7 +2,7 @@
 // representation; it never selects independently stored transition/error data.
 
 enum NativeBridgeOutcome {
-    Transition(DispatchTransition),
+    Transition(Box<DispatchTransition>),
     Throw { pc: usize, error: VmError },
     InternalFailure { pc: usize, message: String },
 }
@@ -16,7 +16,7 @@ fn finish_native_outcome(
 ) -> Result<DispatchTransition, crate::machine::NativeDispatchError> {
     let status = NativeStatus::from(status);
     match (status, outcome) {
-        (NativeStatus::Ok, Some(NativeBridgeOutcome::Transition(result))) => Ok(result),
+        (NativeStatus::Ok, Some(NativeBridgeOutcome::Transition(result))) => Ok(*result),
         (NativeStatus::SemanticError, Some(NativeBridgeOutcome::Throw { pc, error })) => {
             Err(crate::machine::NativeDispatchError::SemanticAt { pc, error })
         }

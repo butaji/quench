@@ -152,7 +152,7 @@ fn run_loop_inner(
             }
             crate::completion::LoopTransition::Propagate(completion) => {
                 let completion =
-                    wrap_body_suspension(completion, body, body_next, suspension_slot, &shape)?;
+                    wrap_body_suspension(*completion, body, body_next, suspension_slot, &shape)?;
                 return update_empty_from(registers, dst, completion);
             }
         }
