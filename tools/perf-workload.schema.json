@@ -5,7 +5,15 @@
   "description": "One source-owned final measurement snapshot. Missing and null fields are invalid.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["iterations", "checksum", "allocations", "copies", "bytes", "peak_rss", "wall_ms"],
+  "required": [
+    "iterations",
+    "checksum",
+    "allocations",
+    "copies",
+    "bytes",
+    "peak_rss",
+    "wall_ms"
+  ],
   "properties": {
     "iterations": { "type": "integer", "minimum": 0 },
     "checksum": { "type": "integer", "minimum": 0 },

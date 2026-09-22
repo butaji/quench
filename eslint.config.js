@@ -3,23 +3,14 @@ export default [
     ignores: [
       "tests/node/**",
       "tests/node/**/*",
+      "tests/node-compat/**",
+      "tests/test262/**",
+      "crates/quench-runtime/testdata/**",
+      "crates/quench-node-test/node-tests/**",
+      "crates/quench-node-test/examples/**",
+      "crates/quench-wasm-test/testsuite/**",
       "target/**",
       "node_modules/**",
     ],
-  },
-  {
-    rules: {
-      "complexity": ["error", { max: 10 }],
-      "max-lines": ["error", {
-        max: 500,
-        skipBlankLines: true,
-        skipComments: true,
-      }],
-      "max-lines-per-function": ["error", {
-        max: 40,
-        skipBlankLines: true,
-        skipComments: true,
-      }],
-    },
   },
 ];

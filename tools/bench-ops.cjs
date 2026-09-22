@@ -1,49 +1,77 @@
 #!/usr/bin/env node
-'use strict';
+"use strict";
 
-const fs = require('node:fs');
-const os = require('node:os');
-const { spawnSync } = require('node:child_process');
-const vm = require('node:vm');
-const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads');
+const fs = require("node:fs");
+const os = require("node:os");
+const { spawnSync } = require("node:child_process");
+const vm = require("node:vm");
+const { Worker, isMainThread, parentPort, workerData } = require(
+  "node:worker_threads",
+);
 
 if (!isMainThread) {
   const { sab, index, startIndex, iters } = workerData;
   const view = new Int32Array(sab);
-  parentPort.postMessage('ready');
+  parentPort.postMessage("ready");
   Atomics.wait(view, startIndex, 0);
   for (let i = 0; i < iters; i++) Atomics.add(view, index, 1);
-  parentPort.postMessage('done');
+  parentPort.postMessage("done");
   return;
 }
 
 const ITERATIONS = positiveInt(process.env.BENCH_ITERATIONS, 1_000_000);
-const CACHE_ITERS = Math.min(250_000, positiveInt(process.env.CACHE_ITERS, 80_000));
+const CACHE_ITERS = Math.min(
+  250_000,
+  positiveInt(process.env.CACHE_ITERS, 80_000),
+);
 const MAX_WALL_MS = positiveInt(process.env.MAX_WALL_MS, 30_000);
 const MAX_TOTAL_MS = positiveInt(process.env.MAX_TOTAL_MS, 55_000);
 // Optional regression gate. Keep it disabled by default because timings are
 // machine-specific; CI or a local pinned machine can provide a budget.
 const MAX_PER_OP_NS = positiveInt(process.env.MAX_PER_OP_NS, 0);
-const budgetEnabled = process.env.MAX_PER_OP_NS !== undefined && MAX_PER_OP_NS > 0;
+const budgetEnabled = process.env.MAX_PER_OP_NS !== undefined &&
+  MAX_PER_OP_NS > 0;
 const budgetFailures = [];
 // Keep repeats deliberately small so the harness remains a bounded probe.
 const REPEATS = Math.min(5, positiveInt(process.env.BENCH_REPEATS, 3));
 const CACHE_REPEATS = Math.min(REPEATS, 2);
 const workloads = [
-  ['arithmetic', `let x = 0; for (let i = 0; i < ITERATIONS; i++) x = (x + i) * 1.000001; x;`],
-  ['property-read-write', `const o = { value: 0 }; for (let i = 0; i < ITERATIONS; i++) o.value = o.value + 1; o.value;`],
-  ['dense-array-read-write', `const a = new Array(1024).fill(0); for (let i = 0; i < ITERATIONS; i++) { const j = i & 1023; a[j] = a[j] + 1; } a[0];`],
-  ['function-call', `function f(x) { return (x + 1) | 0; } let x = 0; for (let i = 0; i < ITERATIONS; i++) x = f(x); x;`],
-  ['regex-match', `const re = /^[a-z]+-[0-9]+$/; let matches = 0; for (let i = 0; i < ITERATIONS; i++) if (re.test('item-12345')) matches++; matches;`],
+  [
+    "arithmetic",
+    `let x = 0; for (let i = 0; i < ITERATIONS; i++) x = (x + i) * 1.000001; x;`,
+  ],
+  [
+    "property-read-write",
+    `const o = { value: 0 }; for (let i = 0; i < ITERATIONS; i++) o.value = o.value + 1; o.value;`,
+  ],
+  [
+    "dense-array-read-write",
+    `const a = new Array(1024).fill(0); for (let i = 0; i < ITERATIONS; i++) { const j = i & 1023; a[j] = a[j] + 1; } a[0];`,
+  ],
+  [
+    "function-call",
+    `function f(x) { return (x + 1) | 0; } let x = 0; for (let i = 0; i < ITERATIONS; i++) x = f(x); x;`,
+  ],
+  [
+    "regex-match",
+    `const re = /^[a-z]+-[0-9]+$/; let matches = 0; for (let i = 0; i < ITERATIONS; i++) if (re.test('item-12345')) matches++; matches;`,
+  ],
 ];
 
 function positiveInt(value, fallback) {
   const n = Number(value);
   return Number.isSafeInteger(n) && n > 0 ? n : fallback;
 }
-function now() { return process.hrtime.bigint(); }
-function memory() { const m = process.memoryUsage(); return { rss: m.rss, heapUsed: m.heapUsed }; }
-function collect() { if (typeof global.gc === 'function') global.gc(); }
+function now() {
+  return process.hrtime.bigint();
+}
+function memory() {
+  const m = process.memoryUsage();
+  return { rss: m.rss, heapUsed: m.heapUsed };
+}
+function collect() {
+  if (typeof global.gc === "function") global.gc();
+}
 function percentile(values, p) {
   const sorted = values.slice().sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   return sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)];
@@ -52,16 +80,27 @@ function result(name, samples, iterations) {
   const walls = samples.map((sample) => sample.wallNs);
   const median = percentile(walls, 0.5);
   const p95 = percentile(walls, 0.95);
-  const representative = samples.find((sample) => sample.wallNs === median) || samples[0];
-  const rss = Math.round(samples.reduce((sum, sample) => sum + sample.rssDelta, 0) / samples.length);
-  const heapDelta = Math.round(samples.reduce((sum, sample) => sum + sample.heapDelta, 0) / samples.length);
+  const representative = samples.find((sample) => sample.wallNs === median) ||
+    samples[0];
+  const rss = Math.round(
+    samples.reduce((sum, sample) => sum + sample.rssDelta, 0) / samples.length,
+  );
+  const heapDelta = Math.round(
+    samples.reduce((sum, sample) => sum + sample.heapDelta, 0) / samples.length,
+  );
   const iters = BigInt(iterations);
   return {
-    workload: name, iterations, wall_ns: median.toString(),
-    per_op_ns: (median / iters).toString(), rss_delta_bytes: rss,
-    allocs_proxy: Math.round(heapDelta / 64), timed_out: samples.some((sample) => sample.timedOut),
-    repeat_count: samples.length, wall_ns_median: median.toString(),
-    wall_ns_p95: p95.toString(), per_op_ns_median: (median / iters).toString(),
+    workload: name,
+    iterations,
+    wall_ns: median.toString(),
+    per_op_ns: (median / iters).toString(),
+    rss_delta_bytes: rss,
+    allocs_proxy: Math.round(heapDelta / 64),
+    timed_out: samples.some((sample) => sample.timedOut),
+    repeat_count: samples.length,
+    wall_ns_median: median.toString(),
+    wall_ns_p95: p95.toString(),
+    per_op_ns_median: (median / iters).toString(),
     per_op_ns_p95: (p95 / iters).toString(),
     timed_out_repeats: samples.filter((sample) => sample.timedOut).length,
     representative_rss_delta_bytes: representative.rssDelta,
@@ -69,7 +108,10 @@ function result(name, samples, iterations) {
 }
 
 function sysctlNumber(name) {
-  const ran = spawnSync('sysctl', ['-n', name], { encoding: 'utf8', timeout: 1000 });
+  const ran = spawnSync("sysctl", ["-n", name], {
+    encoding: "utf8",
+    timeout: 1000,
+  });
   if (ran.status !== 0) return null;
   const n = Number(String(ran.stdout).trim());
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -77,7 +119,7 @@ function sysctlNumber(name) {
 
 function readNumber(path) {
   try {
-    const n = Number(fs.readFileSync(path, 'utf8').trim());
+    const n = Number(fs.readFileSync(path, "utf8").trim());
     return Number.isFinite(n) && n > 0 ? n : null;
   } catch {
     return null;
@@ -85,34 +127,52 @@ function readNumber(path) {
 }
 
 function measureCacheLine() {
-  if (process.platform === 'darwin') {
-    const bytes = sysctlNumber('hw.cachelinesize');
-    if (bytes) return { bytes, source: 'sysctl hw.cachelinesize' };
+  if (process.platform === "darwin") {
+    const bytes = sysctlNumber("hw.cachelinesize");
+    if (bytes) return { bytes, source: "sysctl hw.cachelinesize" };
   }
-  const linux = readNumber('/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size');
-  if (linux) return { bytes: linux, source: '/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size' };
-  return { bytes: 64, source: 'assumed-64-not-measured' };
+  const linux = readNumber(
+    "/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size",
+  );
+  if (linux) {
+    return {
+      bytes: linux,
+      source: "/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size",
+    };
+  }
+  return { bytes: 64, source: "assumed-64-not-measured" };
 }
 
 function measurePageBytes() {
-  if (process.platform === 'darwin') {
-    const bytes = sysctlNumber('hw.pagesize');
-    if (bytes) return { bytes, source: 'sysctl hw.pagesize' };
+  if (process.platform === "darwin") {
+    const bytes = sysctlNumber("hw.pagesize");
+    if (bytes) return { bytes, source: "sysctl hw.pagesize" };
   }
-  const ran = spawnSync('getconf', ['PAGE_SIZE'], { encoding: 'utf8', timeout: 1000 });
+  const ran = spawnSync("getconf", ["PAGE_SIZE"], {
+    encoding: "utf8",
+    timeout: 1000,
+  });
   if (ran.status === 0) {
     const n = Number(String(ran.stdout).trim());
-    if (Number.isFinite(n) && n > 0) return { bytes: n, source: 'getconf PAGE_SIZE' };
+    if (Number.isFinite(n) && n > 0) {
+      return { bytes: n, source: "getconf PAGE_SIZE" };
+    }
   }
-  return { bytes: 4096, source: 'assumed-4096-not-measured' };
+  return { bytes: 4096, source: "assumed-4096-not-measured" };
 }
 
 function machineRecord() {
   const line = measureCacheLine();
   const page = measurePageBytes();
-  const l1d = process.platform === 'darwin' ? sysctlNumber('hw.l1dcachesize') : null;
-  const l1i = process.platform === 'darwin' ? sysctlNumber('hw.l1icachesize') : null;
-  const l2 = process.platform === 'darwin' ? sysctlNumber('hw.l2cachesize') : null;
+  const l1d = process.platform === "darwin"
+    ? sysctlNumber("hw.l1dcachesize")
+    : null;
+  const l1i = process.platform === "darwin"
+    ? sysctlNumber("hw.l1icachesize")
+    : null;
+  const l2 = process.platform === "darwin"
+    ? sysctlNumber("hw.l2cachesize")
+    : null;
   const stride = Math.max(64, line.bytes);
   return {
     arch: os.arch(),
@@ -126,9 +186,9 @@ function machineRecord() {
     l2_bytes: l2,
     portable_header_budget_bytes: 64,
     false_share_stride_bytes: stride,
-    prefetch_policy: 'forbidden-until-profiled',
-    layout_measured_at: '2026-08-22',
-    layout_target: 'aarch64-apple-darwin rustc 1.97.1',
+    prefetch_policy: "forbidden-until-profiled",
+    layout_measured_at: "2026-08-22",
+    layout_target: "aarch64-apple-darwin rustc 1.97.1",
     layouts: {
       Value: { size: 32, align: 8, variants: 34 },
       TaggedValue: { size: 8, align: 8 },
@@ -144,11 +204,15 @@ function machineRecord() {
       Frame: { size: 80, align: 8 },
       Completion: { size: 88, align: 8 },
       PackedCompletion: { size: 12, align: 4 },
-      HeapRef: { size: 4, align: 4, note: 'identity::HeapRef' },
-      TaggedHeapRef: { size: 8, align: 4, note: 'tagged_value::HeapRef' },
+      HeapRef: { size: 4, align: 4, note: "identity::HeapRef" },
+      TaggedHeapRef: { size: 8, align: 4, note: "tagged_value::HeapRef" },
       ShapeCache4: { size: 72, align: 8 },
-      ShapeCache4Cell: { size: 80, align: 8, note: 'RefCell<ShapeCache<4>>' },
-      Activation_derived: { size: 104, align: 8, note: 'field-sum; not size_of' },
+      ShapeCache4Cell: { size: 80, align: 8, note: "RefCell<ShapeCache<4>>" },
+      Activation_derived: {
+        size: 104,
+        align: 8,
+        note: "field-sum; not size_of",
+      },
     },
     occupancy: {
       portable_line_bytes: 64,
@@ -158,14 +222,14 @@ function machineRecord() {
       object_headers_per_line: Number((64 / 192).toFixed(4)),
     },
     decisions: {
-      object_header: 'aos-compact-header-plus-value-slots',
-      shape_ic: 'side-table-or-monomorphic-inline',
-      numeric_arrays: 'soa-packed-kind',
-      ops: 'soa-opcode-stream',
-      registers_frames: 'aos-whole-record',
-      isolate_counters: 'padded-soa',
-      prefetch: 'forbidden-until-profiled',
-      atomics: 'guest-sab-only',
+      object_header: "aos-compact-header-plus-value-slots",
+      shape_ic: "side-table-or-monomorphic-inline",
+      numeric_arrays: "soa-packed-kind",
+      ops: "soa-opcode-stream",
+      registers_frames: "aos-whole-record",
+      isolate_counters: "padded-soa",
+      prefetch: "forbidden-until-profiled",
+      atomics: "guest-sab-only",
     },
   };
 }
@@ -183,7 +247,7 @@ function sampleNative(fn, iterations, started) {
   try {
     fn(iterations);
   } catch (error) {
-    timedOut = Boolean(error && error.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT');
+    timedOut = Boolean(error && error.code === "ERR_SCRIPT_EXECUTION_TIMEOUT");
     if (!timedOut) throw error;
   }
   const wallNs = now() - begin;
@@ -214,7 +278,10 @@ function prepareSoa() {
   const n = 4096;
   const xs = new Float64Array(n);
   const ys = new Float64Array(n);
-  for (let i = 0; i < n; i++) { xs[i] = i; ys[i] = 1; }
+  for (let i = 0; i < n; i++) {
+    xs[i] = i;
+    ys[i] = 1;
+  }
   return { xs, ys };
 }
 function soaScan(data, iterations) {
@@ -388,25 +455,29 @@ function headerColdTail(data, iterations) {
   const words = data.words;
   const mask = data.mask;
   let sum = 0;
-  for (let i = 0; i < iterations; i++) sum += rows[(i & mask) * words + words - 1];
+  for (let i = 0; i < iterations; i++) {
+    sum += rows[(i & mask) * words + words - 1];
+  }
   return sum;
 }
 
 function spawnCounter(sab, index, startIndex, iters) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(__filename, { workerData: { sab, index, startIndex, iters } });
+    const worker = new Worker(__filename, {
+      workerData: { sab, index, startIndex, iters },
+    });
     let ready = false;
-    worker.on('message', (message) => {
-      if (message === 'ready') {
+    worker.on("message", (message) => {
+      if (message === "ready") {
         ready = true;
         resolve({ worker, ready: true });
-      } else if (message === 'done') {
+      } else if (message === "done") {
         worker.done = true;
         if (worker.notifyDone) worker.notifyDone();
       }
     });
-    worker.once('error', reject);
-    worker.once('exit', (code) => {
+    worker.once("error", reject);
+    worker.once("exit", (code) => {
       if (code !== 0 && !ready) reject(new Error(`worker exit ${code}`));
     });
   });
@@ -427,22 +498,35 @@ async function falseShare(strideInts, iterations, started) {
         spawnCounter(sab, left, startIndex, iterations),
         spawnCounter(sab, right, startIndex, iterations),
       ]),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('false-share startup timeout')), deadline)),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("false-share startup timeout")),
+          deadline,
+        )
+      ),
     ]);
-    const finished = Promise.all(workers.map(({ worker }) => new Promise((resolve) => {
-      if (worker.done) return resolve();
-      worker.notifyDone = resolve;
-    })));
+    const finished = Promise.all(
+      workers.map(({ worker }) =>
+        new Promise((resolve) => {
+          if (worker.done) return resolve();
+          worker.notifyDone = resolve;
+        })
+      ),
+    );
     const begin = now();
     Atomics.store(view, startIndex, 1);
     Atomics.notify(view, startIndex, 2);
     await Promise.race([
       finished,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('false-share timeout')), deadline)),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("false-share timeout")), deadline)
+      ),
     ]);
     return { wallNs: now() - begin, timedOut: false };
   } finally {
-    if (workers) await Promise.all(workers.map(({ worker }) => worker.terminate()));
+    if (workers) {
+      await Promise.all(workers.map(({ worker }) => worker.terminate()));
+    }
   }
 }
 
@@ -450,7 +534,9 @@ function runTimed(name, prepare, scan, iterations, repeats, started) {
   const payload = prepare();
   const samples = [];
   while (samples.length < repeats && Date.now() - started < MAX_TOTAL_MS) {
-    samples.push(sampleNative(() => scan(payload, iterations), iterations, started));
+    samples.push(
+      sampleNative(() => scan(payload, iterations), iterations, started),
+    );
   }
   return samples.length ? result(name, samples, iterations) : null;
 }
@@ -468,7 +554,9 @@ async function main() {
   const started = Date.now();
   const output = [];
   for (const [name, source] of workloads) {
-    const script = new vm.Script(`(function(){ const ITERATIONS = ${ITERATIONS}; ${source}\n})()`);
+    const script = new vm.Script(
+      `(function(){ const ITERATIONS = ${ITERATIONS}; ${source}\n})()`,
+    );
     const samples = [];
     while (samples.length < REPEATS && Date.now() - started < MAX_TOTAL_MS) {
       const remaining = MAX_TOTAL_MS - (Date.now() - started);
@@ -480,13 +568,20 @@ async function main() {
       try {
         script.runInNewContext(Object.create(null), { timeout: budgetMs });
       } catch (error) {
-        timedOut = error && (error.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT' || /timed out/i.test(String(error.message)));
+        timedOut = error &&
+          (error.code === "ERR_SCRIPT_EXECUTION_TIMEOUT" ||
+            /timed out/i.test(String(error.message)));
         if (!timedOut) throw error;
       }
       const wallNs = now() - begin;
       collect();
       const after = memory();
-      samples.push({ wallNs, rssDelta: after.rss - before.rss, heapDelta: Math.max(0, after.heapUsed - before.heapUsed), timedOut });
+      samples.push({
+        wallNs,
+        rssDelta: after.rss - before.rss,
+        heapDelta: Math.max(0, after.heapUsed - before.heapUsed),
+        timedOut,
+      });
     }
     if (samples.length) {
       const row = result(name, samples, ITERATIONS);
@@ -504,22 +599,29 @@ async function main() {
 
   const cache = [];
   const cacheWorkloads = [
-    ['aos-record-scan', prepareAos, aosScan],
-    ['soa-field-scan', prepareSoa, soaScan],
-    ['aos-whole-record', prepareWholeAos, wholeAosScan],
-    ['soa-whole-record', prepareWholeSoa, wholeSoaScan],
-    ['aos-value32-scan', prepareValue32, value32Scan],
-    ['soa-f64-scan', preparePackedF64, packedF64Scan],
-    ['header-hot-prefix', prepareHeader192, headerHotPrefix],
-    ['header-cold-tail', prepareHeader192, headerColdTail],
-    ['sequential-f64', prepareSequential, sequentialF64],
-    ['random-f64', prepareRandom, randomF64],
-    ['pointer-chase', preparePointer, pointerChase],
-    ['index-chase', prepareIndex, indexChase],
+    ["aos-record-scan", prepareAos, aosScan],
+    ["soa-field-scan", prepareSoa, soaScan],
+    ["aos-whole-record", prepareWholeAos, wholeAosScan],
+    ["soa-whole-record", prepareWholeSoa, wholeSoaScan],
+    ["aos-value32-scan", prepareValue32, value32Scan],
+    ["soa-f64-scan", preparePackedF64, packedF64Scan],
+    ["header-hot-prefix", prepareHeader192, headerHotPrefix],
+    ["header-cold-tail", prepareHeader192, headerColdTail],
+    ["sequential-f64", prepareSequential, sequentialF64],
+    ["random-f64", prepareRandom, randomF64],
+    ["pointer-chase", preparePointer, pointerChase],
+    ["index-chase", prepareIndex, indexChase],
   ];
   for (const [name, prepare, scan] of cacheWorkloads) {
     if (Date.now() - started >= MAX_TOTAL_MS) break;
-    const row = runTimed(name, prepare, scan, CACHE_ITERS, CACHE_REPEATS, started);
+    const row = runTimed(
+      name,
+      prepare,
+      scan,
+      CACHE_ITERS,
+      CACHE_REPEATS,
+      started,
+    );
     if (row) cache.push(row);
   }
 
@@ -527,28 +629,33 @@ async function main() {
   const shareIters = Math.min(40_000, CACHE_ITERS);
   if (Date.now() - started < MAX_TOTAL_MS) {
     cache.push({
-      workload: 'false-share-skipped',
+      workload: "false-share-skipped",
       iterations: shareIters,
-      reason: 'disabled: worker startup cannot be safely bounded without a platform-specific process watchdog',
+      reason:
+        "disabled: worker startup cannot be safely bounded without a platform-specific process watchdog",
     });
   }
 
-  console.log(JSON.stringify({
-    harness: 'bench-ops',
-    generated_at: new Date().toISOString(),
-    machine,
-    budget: {
-      enabled: budgetEnabled,
-      // Cache probes are diagnostic only: their p95 is machine-specific and
-      // therefore has no stable default budget.
-      scope: 'workloads',
-      max_per_op_ns: budgetEnabled ? MAX_PER_OP_NS : null,
-      failures: budgetFailures,
-      passed: budgetFailures.length === 0,
+  console.log(JSON.stringify(
+    {
+      harness: "bench-ops",
+      generated_at: new Date().toISOString(),
+      machine,
+      budget: {
+        enabled: budgetEnabled,
+        // Cache probes are diagnostic only: their p95 is machine-specific and
+        // therefore has no stable default budget.
+        scope: "workloads",
+        max_per_op_ns: budgetEnabled ? MAX_PER_OP_NS : null,
+        failures: budgetFailures,
+        passed: budgetFailures.length === 0,
+      },
+      results: output,
+      cache_probes: cache,
     },
-    results: output,
-    cache_probes: cache,
-  }, null, 2));
+    null,
+    2,
+  ));
   if (budgetEnabled && budgetFailures.length) process.exitCode = 1;
 }
 
