@@ -43,7 +43,6 @@ impl<H: Host> Vm<H> {
             with_stack: vec![],
             suspended: vec![],
             suspended_free: vec![],
-            generators: FxHashMap::default(),
             promise: Default::default(),
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
