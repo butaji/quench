@@ -191,9 +191,9 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let text = match native {
-                    Native::StringTrim => receiver.trim(),
-                    Native::StringTrimStart => receiver.trim_start(),
-                    Native::StringTrimEnd => receiver.trim_end(),
+                    Native::StringTrim => receiver.host_string().trim(),
+                    Native::StringTrimStart => receiver.host_string().trim_start(),
+                    Native::StringTrimEnd => receiver.host_string().trim_end(),
                     _ => unreachable!(),
                 };
                 Ok(self.heap.alloc(Cell::String(text.into())))
@@ -394,7 +394,9 @@ impl<H: Host> Vm<H> {
 
     fn ascii_string_len(&self, value: Value) -> Option<usize> {
         match self.heap.get(value) {
-            Some(Cell::String(text)) if text.is_ascii() => Some(text.len()),
+            Some(Cell::String(text)) if text.units().iter().all(|unit| *unit < 0x80) => {
+                Some(text.units().len())
+            }
             _ => None,
         }
     }
@@ -408,7 +410,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::String(text)) = self.heap.get(value) else {
             return Err(JsError("string method receiver is not a string".into()));
         };
-        let result = text[start..end].to_owned();
+        let result = text.host_string()[start..end].to_owned();
         Ok(self.heap.alloc(Cell::String(result.into())))
     }
 
