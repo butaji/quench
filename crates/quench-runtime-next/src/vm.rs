@@ -378,6 +378,7 @@ impl<H: Host> Vm<H> {
             let value = match constant {
                 Constant::Number(v) => Value::number(*v),
                 Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
+                Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
                 Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
                 Constant::Boolean(true) => Value::TRUE,
                 Constant::Boolean(false) => Value::FALSE,

@@ -193,4 +193,22 @@ mod tests {
         runtime.execute(&decoded).unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["4097"]);
     }
+
+    #[test]
+    fn oxc_lone_surrogate_escapes_retain_utf16_units() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        let program = Engine::compile(ExecutionRequest::script(
+            r#"print("\uD800".length); print("\uD800".charCodeAt(0));"#,
+            "surrogate.js",
+        ))
+        .unwrap();
+        let path = std::env::temp_dir().join(format!("rqj-surrogate-{}", std::process::id()));
+        program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        runtime.execute(&decoded).unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["1", "55296"]);
+    }
 }

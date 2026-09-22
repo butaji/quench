@@ -26,6 +26,7 @@ mod numeric;
 mod register_profile;
 mod rewrite;
 mod sequence;
+mod string;
 mod template;
 use ast::FunctionCompiler;
 
@@ -143,6 +144,7 @@ struct FunctionOptions<'a> {
 enum ConstantKey {
     Number(u64),
     String(String),
+    StringUnits(Vec<u16>),
     BigInt(String),
     Boolean(bool),
     Null,
@@ -154,6 +156,7 @@ impl From<&Constant> for ConstantKey {
         match value {
             Constant::Number(value) => Self::Number(value.to_bits()),
             Constant::String(value) => Self::String(value.clone()),
+            Constant::StringUnits(value) => Self::StringUnits(value.clone()),
             Constant::BigInt(value) => Self::BigInt(value.clone()),
             Constant::Boolean(value) => Self::Boolean(*value),
             Constant::Null => Self::Null,

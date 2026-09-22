@@ -8,7 +8,7 @@ pub(super) fn write_program(
     path: &std::path::Path,
 ) -> Result<(), String> {
     let mut out = BinaryWriter::new();
-    out.bytes.extend_from_slice(b"RQJ\0\x08");
+    out.bytes.extend_from_slice(b"RQJ\0\x09");
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
     out.u8(u8::from(program.specialized));
     out.strings(&program.atoms);
@@ -22,6 +22,10 @@ pub(super) fn write_program(
             Constant::String(value) => {
                 out.u8(1);
                 out.string(value);
+            }
+            Constant::StringUnits(value) => {
+                out.u8(7);
+                out.u16s(value);
             }
             Constant::BigInt(value) => {
                 out.u8(6);
@@ -110,7 +114,7 @@ pub(super) fn write_program(
 pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let mut input = BinaryReader::new(&bytes);
-    input.magic(b"RQJ\0\x08")?;
+    input.magic(b"RQJ\0\x09")?;
     let abi = input.u64()?;
     if abi != super::ResidualProgram::RUNTIME_ABI_FINGERPRINT {
         return Err("residual runtime ABI mismatch".into());
@@ -124,6 +128,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let constants = input.list(|input| match input.u8()? {
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
         1 => Ok(Constant::String(input.string()?)),
+        7 => Ok(Constant::StringUnits(input.u16s()?)),
         6 => Ok(Constant::BigInt(input.string()?)),
         2 => Ok(Constant::Boolean(true)),
         3 => Ok(Constant::Boolean(false)),
