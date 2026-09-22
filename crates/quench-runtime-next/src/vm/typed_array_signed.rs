@@ -1,66 +1,6 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn install_int8_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.install_signed_array(
-            program,
-            TypedArrayKind::Int8,
-            Native::Int8Array,
-            "Int8Array",
-        )
-    }
-
-    pub(super) fn install_int16_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.install_signed_array(
-            program,
-            TypedArrayKind::Int16,
-            Native::Int16Array,
-            "Int16Array",
-        )
-    }
-
-    pub(super) fn install_int32_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.install_signed_array(
-            program,
-            TypedArrayKind::Int32,
-            Native::Int32Array,
-            "Int32Array",
-        )
-    }
-
-    fn install_signed_array(
-        &mut self,
-        program: &ResidualProgram,
-        kind: TypedArrayKind,
-        native: Native,
-        name: &str,
-    ) -> Result<(), JsError> {
-        let constructor = self.native_value(native);
-        let proto = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
-        match kind {
-            TypedArrayKind::Int8 => self.int8_array_proto = proto,
-            TypedArrayKind::Int16 => self.int16_array_proto = proto,
-            TypedArrayKind::Int32 => self.int32_array_proto = proto,
-            _ => unreachable!(),
-        }
-        self.set_named(program, constructor, "prototype", proto)?;
-        self.set_named(
-            program,
-            constructor,
-            "BYTES_PER_ELEMENT",
-            Value::number(kind.width() as f64),
-        )?;
-        self.set_named(
-            program,
-            proto,
-            "BYTES_PER_ELEMENT",
-            Value::number(kind.width() as f64),
-        )?;
-        self.global(program, name, constructor)
-    }
-
     pub(super) fn construct_int8_array_native(
         &mut self,
         p: &ResidualProgram,

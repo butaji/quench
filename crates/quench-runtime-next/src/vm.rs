@@ -57,6 +57,7 @@ mod type_predicates;
 mod typed_array;
 mod typed_array_access;
 mod typed_array_float;
+mod typed_array_install;
 mod typed_array_signed;
 mod typed_array_uint16;
 mod vm_init;
