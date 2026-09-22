@@ -110,6 +110,7 @@ impl<H: Host> Vm<H> {
             ("normalize", Native::StringNormalize),
             ("indexOf", Native::StringIndexOf),
             ("lastIndexOf", Native::StringLastIndexOf),
+            ("slice", Native::StringSlice),
             ("toString", Native::StringToString),
             ("valueOf", Native::StringValueOf),
         ]
