@@ -61,24 +61,35 @@ fn weak_ref_target_is_cleared_after_collection() {
         proto: Value::NULL,
         properties: ValueVec::new(),
     }));
+    let target_handle = heap.weak_handle(target).unwrap();
     let reference = heap.alloc(Cell::WeakRef {
         object: Object {
             proto: Value::NULL,
             properties: ValueVec::new(),
         },
-        target,
+        target: Some(target_handle),
     });
     let reference_root = heap.root(reference);
     heap.collect([]);
     assert!(heap.get(target).is_none());
     assert!(matches!(
         heap.get(reference),
-        Some(Cell::WeakRef {
-            target: Value::UNDEFINED,
-            ..
-        })
+        Some(Cell::WeakRef { target: None, .. })
     ));
     assert!(heap.release_root(reference_root));
+}
+
+#[test]
+fn stale_weak_handles_cannot_resolve_reused_slots() {
+    let mut heap = Heap::new();
+    let first = heap.alloc(Cell::String("first".into()));
+    let stale = heap.weak_handle(first).unwrap();
+    heap.collect([]);
+    let replacement = heap.alloc(Cell::String("replacement".into()));
+    assert_eq!(first.heap_index(), replacement.heap_index());
+    assert!(heap.weak_value(stale).is_none());
+    let current = heap.weak_handle(replacement).unwrap();
+    assert_eq!(heap.weak_value(current), Some(replacement));
 }
 
 #[test]
