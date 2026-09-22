@@ -57,10 +57,10 @@ impl FunctionCompiler<'_, '_> {
         self.statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
-        let end_target = self.code.len() as u32;
-        self.patch_to(normal_exit, end_target);
         self.patch_edges(&context.return_edges, return_target);
         self.emit_abrupt_paths(finalizer, &context);
+        let end_target = self.code.len() as u32;
+        self.patch_to(normal_exit, end_target);
         self.handlers.push(crate::bytecode::Handler {
             start,
             end,
@@ -114,12 +114,12 @@ impl FunctionCompiler<'_, '_> {
         self.statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
-        let end_target = self.code.len() as u32;
         self.patch_to(body_exit, finalizer_target);
         self.patch_to(catch_exit, finalizer_target);
-        self.patch_to(normal_exit, end_target);
         self.patch_edges(&context.return_edges, return_target);
         self.emit_abrupt_paths(finalizer, &context);
+        let end_target = self.code.len() as u32;
+        self.patch_to(normal_exit, end_target);
         self.handlers.push(crate::bytecode::Handler {
             start: catch_start,
             end: catch_end,
