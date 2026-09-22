@@ -20,10 +20,14 @@ impl<H: Host> Vm<H> {
         if native.is_object_static() {
             return self.call_object_native(p, native, args);
         }
+        if native == Native::ProxyRevoke {
+            return self.proxy_revoke_receiver(this);
+        }
         if native.is_data_view_native() {
             return self.data_view_native(p, native, this, args);
         }
         match native {
+            Native::ProxyRevocable => self.proxy_revocable(p, args),
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, v)?;

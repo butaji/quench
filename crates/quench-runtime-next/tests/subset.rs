@@ -47,6 +47,16 @@ fn proxy_get_and_set_traps_share_target_and_receiver_contract() {
 }
 
 #[test]
+fn proxy_revocable_revoke_closes_the_shared_handler_state() {
+    assert_eq!(
+        output(
+            "var record = Proxy.revocable({ value: 7 }, {}); print(record.proxy.value); record.revoke(); try { record.proxy.value; } catch (error) { print('revoked'); }"
+        ),
+        ["7", "revoked"],
+    );
+}
+
+#[test]
 fn closures_prototypes_arrays_and_integer_ops() {
     let source = r#"
       var K = 40;

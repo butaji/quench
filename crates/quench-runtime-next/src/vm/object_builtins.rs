@@ -23,6 +23,13 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::ObjectKeys),
         )?;
         self.global(program, "Proxy", self.native_value(Native::Proxy))?;
+        let proxy = self.native_value(Native::Proxy);
+        self.set_named(
+            program,
+            proxy,
+            "revocable",
+            self.native_value(Native::ProxyRevocable),
+        )?;
         self.install_object_extra(program, object)?;
         for (name, native) in [
             ("create", Native::ObjectCreate),

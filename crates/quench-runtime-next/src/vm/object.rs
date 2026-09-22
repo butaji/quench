@@ -1,12 +1,5 @@
 use super::*;
 impl<H: Host> Vm<H> {
-    pub(super) fn proxy_target(&self, mut value: Value) -> Value {
-        while let Some(Cell::Proxy { target, .. }) = self.heap.get(value) {
-            value = *target;
-        }
-        value
-    }
-
     #[inline(always)]
     pub(super) fn resolve_field_base(&self, frame: usize, base: FieldBase) -> Value {
         match base.register_index() {

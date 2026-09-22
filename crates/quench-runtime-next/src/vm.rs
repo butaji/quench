@@ -9,7 +9,6 @@ use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
 use rustc_hash::FxHashMap;
-use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 mod array;
@@ -30,6 +29,7 @@ mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
 mod environment;
+mod error;
 mod field_cache;
 mod gc;
 mod index;
@@ -51,6 +51,7 @@ use numeric_site::NumericSite;
 mod operations;
 mod primitives;
 mod profile_edges;
+mod proxy;
 mod reflect;
 mod regexp;
 mod string;
@@ -67,63 +68,7 @@ mod typed_array_install;
 mod typed_array_signed;
 mod typed_array_uint16;
 mod vm_init;
-#[derive(Debug)]
-pub struct JsError(ErrorMessage);
-#[derive(Debug)]
-struct ErrorMessage {
-    payload: Box<ErrorPayload>,
-}
-#[derive(Debug)]
-struct ErrorPayload {
-    text: String,
-    thrown: Option<Value>,
-}
-impl From<&str> for ErrorMessage {
-    fn from(value: &str) -> Self {
-        Self {
-            payload: Box::new(ErrorPayload {
-                text: value.into(),
-                thrown: None,
-            }),
-        }
-    }
-}
-impl From<String> for ErrorMessage {
-    fn from(value: String) -> Self {
-        Self {
-            payload: Box::new(ErrorPayload {
-                text: value,
-                thrown: None,
-            }),
-        }
-    }
-}
-impl fmt::Display for JsError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0.payload.text)
-    }
-}
-impl JsError {
-    pub(crate) fn thrown(value: Value, message: String) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                text: message,
-                thrown: Some(value),
-            }),
-        })
-    }
-    pub(crate) fn thrown_value(&self) -> Option<Value> {
-        self.0.payload.thrown
-    }
-    pub(crate) fn validation(message: String) -> Self {
-        Self(ErrorMessage::from(format!(
-            "invalid residual program: {message}"
-        )))
-    }
-    fn into_message(self) -> String {
-        self.0.payload.text.clone()
-    }
-}
+pub use error::JsError;
 #[cfg(test)]
 mod tests;
 struct Frame {
@@ -439,6 +384,9 @@ impl<H: Host> Vm<H> {
         match self.call_target(callee)? {
             CallTarget::Native(native) => {
                 self.profile.call_target(0, args.len());
+                if native == Native::ProxyRevoke {
+                    return self.proxy_revoke(callee);
+                }
                 self.call_native(p, native, this, args)
             }
             CallTarget::User(id, env) => {
@@ -488,8 +436,7 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(feature = "profile-aggregate")]
         self.profile.dynamic_string(false);
-        // A hash collision only evicts this weak canonical entry. The content
-        // check above prevents it from ever changing JavaScript semantics.
+        // A hash collision only evicts this weak canonical entry; content checks prevent semantic changes.
         let value = self.heap.alloc(Cell::String(text));
         self.dynamic_strings
             .get_or_insert_with(|| Box::new(FxHashMap::default()))

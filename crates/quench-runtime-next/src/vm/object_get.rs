@@ -7,9 +7,7 @@ impl<H: Host> Vm<H> {
         handler: Value,
         name: &str,
     ) -> Result<Value, JsError> {
-        let atom = self
-            .lookup_atom(name)
-            .ok_or_else(|| JsError("proxy trap atom is unavailable".into()))?;
+        let atom = self.intern_atom(name);
         self.get_property(p, handler, atom)
     }
 
@@ -21,6 +19,9 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         atom: Atom,
     ) -> Result<Value, JsError> {
+        if handler.is_null() {
+            return Err(JsError("cannot access a revoked proxy".into()));
+        }
         let trap = self.proxy_trap(p, handler, "get")?;
         if self.is_function(trap) {
             let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
@@ -38,7 +39,18 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
+        if handler.is_null() {
+            return Err(JsError("cannot access a revoked proxy".into()));
+        }
         let trap = self.proxy_trap(p, handler, "set")?;
+
+        if let Some(Cell::Proxy {
+            handler: current, ..
+        }) = self.heap.get(receiver)
+            && *current != handler
+        {
+            return Err(JsError("cannot access a revoked proxy".into()));
+        }
         if self.is_function(trap) {
             let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
             let result = self.call_value(p, trap, handler, &[target, key, value, receiver])?;
