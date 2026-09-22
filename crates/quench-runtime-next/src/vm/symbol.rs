@@ -1,6 +1,37 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn call_symbol_constructor(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let description = match args.first().copied() {
+            None | Some(Value::UNDEFINED) => None,
+            Some(value) => Some(self.to_string(p, value)?),
+        };
+        Ok(self.heap.alloc(Cell::Symbol(description)))
+    }
+
+    pub(super) fn call_symbol_value_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        if !matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
+            return Err(JsError("Symbol method receiver is not a symbol".into()));
+        }
+        match native {
+            Native::SymbolToString => {
+                let text = self.to_string(p, this)?;
+                Ok(self.heap.alloc(Cell::String(text)))
+            }
+            Native::SymbolValueOf => Ok(this),
+            _ => Err(JsError("invalid Symbol method".into())),
+        }
+    }
+
     pub(super) fn call_symbol_native(
         &mut self,
         p: &ResidualProgram,

@@ -159,7 +159,7 @@ pub(crate) enum Native {
     RegExpExec,
     RegExpTest,
     String,
-    Symbol,
+    Symbol, SymbolToString, SymbolValueOf,
     SymbolFor,
     SymbolKeyFor,
     StringCharCodeAt,
