@@ -223,3 +223,17 @@ fn async_for_of_uses_the_shared_await_continuation() {
         .unwrap();
     assert_eq!(view.0.borrow().as_slice(), ["6"]);
 }
+
+#[test]
+fn async_for_of_prefers_async_iterator_and_wraps_sync_iterators() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "var source = { index: 0, next: function() { var index = this.index; this.index = index + 1; return Promise.resolve({ value: index + 4, done: index > 1 }); }, [Symbol.asyncIterator]: function() { return this; } }; async function sum() { var result = 0; for await (var value of source) { result = result + value; } for await (var item of [1, 2]) { result = result + item; } return result; } sum().then(print);",
+            "async-iterator.js",
+        ))
+        .unwrap();
+    assert_eq!(view.0.borrow().as_slice(), ["12"]);
+}
