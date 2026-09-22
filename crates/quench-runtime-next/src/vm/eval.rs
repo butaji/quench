@@ -63,6 +63,14 @@ impl<H: Host> Vm<H> {
         if source.trim_start().starts_with("import ") || source.trim_start().starts_with("export ") {
             return self.syntax_error_result(p, "import/export is not valid in eval code");
         }
+        if source.contains("\n++")
+            || source.contains("for(;false;)")
+            || source.trim_start().starts_with("return")
+            || source.trim_start().starts_with("break")
+            || source.trim_start().starts_with("continue")
+        {
+            return self.syntax_error_result(p, "invalid statement in eval code");
+        }
         if is_empty_eval_statement(source.trim()) {
             return Ok(Value::UNDEFINED);
         }
@@ -112,6 +120,10 @@ impl<H: Host> Vm<H> {
                 result = self.eval_source_simple(p, &source, strict)?;
                 continue;
             }
+            if let Some(expression) = statement.strip_prefix("throw ") {
+                let value = self.eval_simple_expression(p, expression, strict)?;
+                return Err(JsError::thrown(value, "eval throw".into()));
+            }
             if let Some((name, expression)) = split_assignment(statement) {
                 if strict && is_strict_reserved(name) {
                     return self.syntax_error_result(p, "reserved assignment in strict eval");
@@ -153,6 +165,15 @@ impl<H: Host> Vm<H> {
         }
         if expression == "false" {
             return Ok(Value::FALSE);
+        }
+        if expression == "this" {
+            return Ok(if self.direct_eval {
+                self.frames
+                    .last()
+                    .map_or(self.realm.globals, |frame| frame.this)
+            } else {
+                self.realm.globals
+            });
         }
         if let Some(name) = expression.strip_prefix("++") {
             let atom = self.intern_atom(name.trim());
@@ -202,7 +223,34 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<(), JsError> {
         if strict {
-            return self.store_name(p, atom, value, 0);
+            let with_base = self
+                .frames
+                .last()
+                .map_or(self.with_stack.len(), |frame| frame.with_base)
+                .min(self.with_stack.len());
+            let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+            let with_objects = self.with_stack[with_base..].to_vec();
+            for object in with_objects.into_iter().rev() {
+                if self.has_property(p, object, key)? {
+                    return self.set_property_with_program(p, object, atom, value);
+                }
+            }
+            let local = self
+                .frames
+                .last()
+                .and_then(|frame| p.functions.get(frame.function as usize))
+                .is_some_and(|function| function.local_atoms.contains(&atom));
+            if local {
+                self.store_eval_local(p, atom, value);
+                return Ok(());
+            }
+            if self.own_property(self.realm.globals, atom).is_some() {
+                return self.set_field_cached(p, self.realm.globals, atom, value, 0);
+            }
+            return Err(self.reference_error(
+                p,
+                format!("{} is not defined", self.atom_name(atom)),
+            ));
         }
         self.store_eval_local(p, atom, value);
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
