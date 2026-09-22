@@ -74,6 +74,7 @@ mod typed_array_uint16;
 mod vm_init;
 pub(crate) mod wtf16;
 pub use error::JsError;
+use wtf16::JsString;
 #[cfg(test)]
 mod tests;
 struct Frame {
@@ -435,7 +436,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn intern_dynamic_string(&mut self, text: String) -> Value {
+    pub(super) fn intern_dynamic_value(&mut self, text: JsString) -> Value {
         let mut hasher = rustc_hash::FxHasher::default();
         text.hash(&mut hasher);
         let hash = hasher.finish();
@@ -444,7 +445,7 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .and_then(|strings| strings.get(&hash))
             .copied()
-            && matches!(self.heap.get(value), Some(Cell::String(candidate)) if candidate.host_string() == text)
+            && matches!(self.heap.get(value), Some(Cell::String(candidate)) if candidate == &text)
         {
             #[cfg(feature = "profile-aggregate")]
             self.profile.dynamic_string(true);
@@ -453,7 +454,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.profile.dynamic_string(false);
         // A hash collision only evicts this weak canonical entry; content checks prevent semantic changes.
-        let value = self.heap.alloc(Cell::String(text.into()));
+        let value = self.heap.alloc(Cell::String(text));
         self.dynamic_strings
             .get_or_insert_with(|| Box::new(FxHashMap::default()))
             .insert(hash, value);
