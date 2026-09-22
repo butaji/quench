@@ -408,7 +408,7 @@ impl<H: Host> Vm<H> {
                             continue;
                         };
                         if let Some(value) = self.to_json(value, false, ancestors)? {
-                            output.push((self.atom_name(atom).into(), value));
+                            output.push((self.atom_value(atom), value));
                         }
                     }
                     Ok(Some(JsonValue::Object(output)))
