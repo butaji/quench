@@ -35,6 +35,7 @@ impl<H: Host> Vm<H> {
             frames: vec![],
             frame_pool: vec![],
             jobs: vec![],
+            suspended: vec![],
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]
