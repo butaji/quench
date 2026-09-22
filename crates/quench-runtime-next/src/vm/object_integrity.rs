@@ -1,7 +1,30 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn object_get_prototype_of(&self, value: Value) -> Result<Value, JsError> {
+    pub(super) fn object_get_prototype_of(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(value).cloned()
+        {
+            if handler.is_null() {
+                return Err(JsError("cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("getPrototypeOf");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let result = self.call_value(p, trap, handler, &[target])?;
+                if !result.is_null() && self.object_data(result).is_none() {
+                    return Err(JsError(
+                        "proxy getPrototypeOf trap must return an object or null".into(),
+                    ));
+                }
+                return Ok(result);
+            }
+        }
         let value = self.proxy_target(value);
         self.object_data(value)
             .map(|object| object.proto)
@@ -10,9 +33,29 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn object_set_prototype_of(
         &mut self,
+        p: &ResidualProgram,
         target: Value,
         proto: Value,
     ) -> Result<Value, JsError> {
+        if let Some(Cell::Proxy {
+            target: underlying,
+            handler,
+            ..
+        }) = self.heap.get(target).cloned()
+        {
+            if handler.is_null() {
+                return Err(JsError("cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("setPrototypeOf");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let result = self.call_value(p, trap, handler, &[underlying, proto])?;
+                if !self.truthy(result) {
+                    return Err(JsError("proxy setPrototypeOf trap returned false".into()));
+                }
+                return Ok(target);
+            }
+        }
         let target = self.proxy_target(target);
         if !proto.is_null() && self.object_data(proto).is_none() {
             return Err(JsError("Object prototype is not an object".into()));

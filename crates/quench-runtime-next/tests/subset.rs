@@ -120,6 +120,24 @@ fn proxy_define_property_trap_receives_descriptor_and_controls_result() {
 }
 
 #[test]
+fn proxy_prototype_traps_control_reflective_operations() {
+    let source = r#"
+      var parent = { answer: 42 }; var target = {};
+      var proxy = new Proxy(target, {
+        getPrototypeOf: function(t) { print('get'); return parent; },
+        setPrototypeOf: function(t, value) { print(value === parent); return value === parent; }
+      });
+      print(Object.getPrototypeOf(proxy) === parent);
+      print(Reflect.setPrototypeOf(proxy, parent));
+      print(Reflect.setPrototypeOf(proxy, null));
+    "#;
+    assert_eq!(
+        output(source),
+        ["get", "true", "true", "true", "false", "false"]
+    );
+}
+
+#[test]
 fn well_known_symbols_are_realm_stable_values() {
     assert_eq!(
         output(
