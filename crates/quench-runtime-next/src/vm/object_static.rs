@@ -284,9 +284,7 @@ impl<H: Host> Vm<H> {
         if self.heap.property_get(data, slot).is_none() {
             return false;
         }
-        self.descriptors
-            .get(&(object, PropertyKey::string(atom)))
-            .copied()
+        self.property_attributes(object, PropertyKey::string(atom))
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
             .enumerable
     }
@@ -358,9 +356,7 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_js_atom(&key);
         let existing = self.own_property(target, atom);
         let current = self
-            .descriptors
-            .get(&(target, PropertyKey::string(atom)))
-            .copied()
+            .property_attributes(target, PropertyKey::string(atom))
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let is_new = existing.is_none();
         let mut attributes = if is_new {
@@ -438,8 +434,9 @@ impl<H: Host> Vm<H> {
             if is_new {
                 self.set_property(target, atom, Value::UNDEFINED)?;
             }
-            self.descriptors.insert(
-                (target, PropertyKey::string(atom)),
+            self.set_property_attributes(
+                target,
+                PropertyKey::string(atom),
                 PropertyAttributes {
                     writable: false,
                     enumerable: attributes.enumerable,
@@ -468,13 +465,11 @@ impl<H: Host> Vm<H> {
         }
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
             if current.accessor && descriptor_data {
-                self.descriptors
-                    .remove(&(target, PropertyKey::string(atom)));
+                self.remove_property_attributes(target, PropertyKey::string(atom));
             }
             self.set_property(target, atom, value)?;
         }
-        self.descriptors
-            .insert((target, PropertyKey::string(atom)), attributes);
+        self.set_property_attributes(target, PropertyKey::string(atom), attributes);
         Ok(target)
     }
 }

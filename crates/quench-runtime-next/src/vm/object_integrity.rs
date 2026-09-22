@@ -77,17 +77,14 @@ impl<H: Host> Vm<H> {
             return Ok(Value::TRUE);
         };
         if !self
-            .descriptors
-            .get(&(target, PropertyKey::string(atom)))
-            .copied()
+            .property_attributes(target, PropertyKey::string(atom))
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
             .configurable
         {
             return Ok(Value::FALSE);
         }
         self.heap.property_set(target, slot, Value::DELETED);
-        self.descriptors
-            .remove(&(target, PropertyKey::string(atom)));
+        self.remove_property_attributes(target, PropertyKey::string(atom));
         self.invalidate_method_caches();
         Ok(Value::TRUE)
     }
@@ -220,8 +217,7 @@ impl<H: Host> Vm<H> {
         }
         if exists
             && self
-                .descriptors
-                .get(&(object, PropertyKey::string(atom)))
+                .property_attributes(object, PropertyKey::string(atom))
                 .is_some_and(|attributes| !attributes.writable)
         {
             return Err(JsError("cannot write non-writable property".into()));
@@ -354,14 +350,14 @@ impl<H: Host> Vm<H> {
             .unwrap_or_default();
         keys.extend(self.array_integrity_atoms(target));
         for atom in keys {
-            let attributes = self
-                .descriptors
-                .entry((target, PropertyKey::string(atom)))
-                .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
+            let mut attributes = self
+                .property_attributes(target, PropertyKey::string(atom))
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             attributes.configurable = false;
             if freeze {
                 attributes.writable = false;
             }
+            self.set_property_attributes(target, PropertyKey::string(atom), attributes);
         }
         let symbols = self
             .symbol_property_order
@@ -395,9 +391,7 @@ impl<H: Host> Vm<H> {
             .filter(|(_, slot)| self.heap.property_get(data, *slot).is_some())
             .all(|(atom, _)| {
                 let attributes = self
-                    .descriptors
-                    .get(&(target, PropertyKey::string(atom)))
-                    .copied()
+                    .property_attributes(target, PropertyKey::string(atom))
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 !attributes.configurable && (!freeze || !attributes.writable)
             });
