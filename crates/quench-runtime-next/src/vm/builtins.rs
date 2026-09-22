@@ -211,7 +211,7 @@ const NATIVES: &[Native] = &[
     Native::PromiseReject,
     Native::PromiseThen,
     Native::PromiseCatch,
-    Native::PromiseFinally, Native::PromiseAll, Native::PromiseRace,
+    Native::PromiseFinally, Native::PromiseAll, Native::PromiseRace, Native::PromiseAllSettled,
     Native::PromiseReactionJob, Native::PromiseThenableJob,
     Native::PromiseFinallyJob, Native::PromiseFinallyContinuationJob, Native::PromiseAggregateJob, ];
 impl<H: Host> Vm<H> {
