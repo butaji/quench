@@ -643,7 +643,19 @@ fn step(vm: &Instance, frame: &mut Frame, inst: &Inst) -> Result<Step, Failure> 
             wide,
         } => {
             crate::wasm_atomic::step(
-                vm, *op, *dst, *addr, *a, *b, *offset, *mem, *bytes, *wide, regs,
+                vm,
+                crate::wasm_atomic::AtomicRequest {
+                    op: *op,
+                    dst: *dst,
+                    addr: *addr,
+                    a: *a,
+                    b: *b,
+                    offset: *offset,
+                    mem: *mem,
+                    bytes: *bytes,
+                    wide: *wide,
+                },
+                regs,
             )?;
             Ok(Step::Next)
         }
