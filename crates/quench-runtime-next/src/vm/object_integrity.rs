@@ -258,6 +258,21 @@ impl<H: Host> Vm<H> {
                 attributes.writable = false;
             }
         }
+        let symbols = self
+            .symbol_property_order
+            .get(&target)
+            .cloned()
+            .unwrap_or_default();
+        for symbol in symbols {
+            let attributes = self
+                .symbol_descriptors
+                .entry((target, symbol))
+                .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
+            attributes.configurable = false;
+            if freeze {
+                attributes.writable = false;
+            }
+        }
         Ok(target)
     }
 
@@ -269,13 +284,27 @@ impl<H: Host> Vm<H> {
         if data.is_extensible() || freeze && !data.is_frozen() {
             return false;
         }
-        self.ordered_shape(data).into_iter().all(|(atom, _)| {
+        let named_ok = self.ordered_shape(data).into_iter().all(|(atom, _)| {
             let attributes = self
                 .descriptors
                 .get(&(target, atom))
                 .copied()
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             !attributes.configurable && (!freeze || !attributes.writable)
-        })
+        });
+        let symbols_ok = self
+            .symbol_property_order
+            .get(&target)
+            .into_iter()
+            .flatten()
+            .all(|symbol| {
+                let attributes = self
+                    .symbol_descriptors
+                    .get(&(target, *symbol))
+                    .copied()
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                !attributes.configurable && (!freeze || !attributes.writable)
+            });
+        named_ok && symbols_ok
     }
 }
