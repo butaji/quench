@@ -65,6 +65,20 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::Iterator { source, .. }) = self.heap.get_mut(generator) {
             *source = generator;
         }
+        let root = self.heap.root(generator);
+        self.set_named(
+            p,
+            generator,
+            "return",
+            self.native_value(Native::IteratorReturn),
+        )?;
+        self.set_named(
+            p,
+            generator,
+            "throw",
+            self.native_value(Native::IteratorThrow),
+        )?;
+        self.heap.release_root(root);
         self.generators.insert(
             generator,
             GeneratorRecord {
@@ -86,6 +100,66 @@ impl<H: Host> Vm<H> {
         );
         self.frame_pool.push(Self::recycle_frame(frame));
         Ok(generator)
+    }
+
+    pub(super) fn generator_return(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let kind = self.generator_kind(generator)?;
+        let promise = (kind == IteratorKind::AsyncGenerator).then(|| self.promise_object());
+        self.close_generator(generator)?;
+        let result = self.iterator_result(value, true)?;
+        if let Some(promise) = promise {
+            self.promise_resolve_value(p, promise, result)?;
+            Ok(promise)
+        } else {
+            Ok(result)
+        }
+    }
+
+    pub(super) fn generator_throw(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let kind = self.generator_kind(generator)?;
+        self.close_generator(generator)?;
+        if kind == IteratorKind::AsyncGenerator {
+            let promise = self.promise_object();
+            self.promise_settle(p, promise, PromiseState::Rejected, value)?;
+            Ok(promise)
+        } else {
+            Err(JsError::thrown(value, "generator throw".into()))
+        }
+    }
+
+    fn generator_kind(&self, generator: Value) -> Result<IteratorKind, JsError> {
+        match self.heap.get(generator) {
+            Some(Cell::Iterator { kind, .. })
+                if matches!(kind, IteratorKind::Generator | IteratorKind::AsyncGenerator) =>
+            {
+                Ok(*kind)
+            }
+            _ => Err(JsError("generator receiver is invalid".into())),
+        }
+    }
+
+    fn close_generator(&mut self, generator: Value) -> Result<(), JsError> {
+        let Some(record) = self.generators.get_mut(&generator) else {
+            return Err(JsError("generator receiver is invalid".into()));
+        };
+        if record.running {
+            return Err(JsError("generator is already running".into()));
+        }
+        record.done = true;
+        record.continuation = None;
+        Ok(())
     }
 
     pub(super) fn generator_next(
