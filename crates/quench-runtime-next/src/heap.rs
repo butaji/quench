@@ -1,6 +1,7 @@
 use crate::value::Value;
 use crate::value_vec::ValueArena;
 use rustc_hash::FxHashMap;
+mod access;
 mod cell;
 mod cell_access;
 #[cfg(feature = "profile-memory")]
@@ -147,16 +148,6 @@ impl Heap {
         {
             self.memory_profile = memory_profile::MemoryProfile::default();
         }
-    }
-    pub fn get(&self, value: Value) -> Option<&Cell> {
-        let index = value.heap_index()? as usize;
-        // SAFETY: alloc mints live values and tracing preserves their handles.
-        unsafe { self.slots.get_unchecked(index).cell.as_ref() }
-    }
-    pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
-        let index = value.heap_index()? as usize;
-        // SAFETY: `get`'s live-handle invariant, with unique access at this edge.
-        unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
     }
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold

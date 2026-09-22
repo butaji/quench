@@ -4,7 +4,7 @@ use super::*;
 impl Heap {
     pub(crate) fn weak_handle(&self, value: Value) -> Option<WeakHandle> {
         let slot = value.heap_index()? as usize;
-        let _ = unsafe { self.slots.get_unchecked(slot).cell.as_ref() }?;
+        self.get(value)?;
         Some(WeakHandle {
             slot: slot as u32,
             generation: self.generations.get(slot).copied()?,
@@ -15,7 +15,7 @@ impl Heap {
         let slot = handle.slot as usize;
         (self.generations.get(slot).copied() == Some(handle.generation))
             .then_some(())
-            .and_then(|_| unsafe { self.slots.get_unchecked(slot).cell.as_ref() })
+            .and_then(|_| self.get(Value::heap(handle.slot)))
             .map(|_| Value::heap(handle.slot))
     }
 }

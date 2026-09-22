@@ -25,6 +25,13 @@ fn strong_root_keeps_cell_alive_until_release() {
 }
 
 #[test]
+fn forged_heap_indices_are_rejected_at_the_access_boundary() {
+    let mut heap = Heap::new();
+    assert!(heap.get(Value::heap(99_999)).is_none());
+    assert!(heap.get_mut(Value::heap(99_999)).is_none());
+}
+
+#[test]
 fn weak_map_values_follow_ephemeron_key_reachability() {
     let mut heap = Heap::new();
     let weak_map = heap.alloc(Cell::WeakMap {
