@@ -187,6 +187,6 @@ fn validate_range(fact: FunctionRecurrence) -> Option<()> {
     (recurrence.multiplier >= 0.0 && recurrence.addend >= 0.0 && maximum < TWO_TO_64)
         .then_some(())?;
     let score = i128::from(fact.initial_score);
-    let span = i128::from(recurrence.end) * i128::try_from(iterations).ok()?;
+    let span = i128::from(recurrence.end) * i128::from(iterations);
     ((score.abs() + span) <= MAX_SAFE_INTEGER).then_some(())
 }

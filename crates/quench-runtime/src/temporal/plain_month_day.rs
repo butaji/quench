@@ -267,11 +267,11 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         for annotation in annotations {
             let critical = annotation.starts_with('!');
             let annotation = annotation.strip_prefix('!').unwrap_or(annotation);
-            if annotation.starts_with("u-ca=") {
+            if let Some(calendar) = annotation.strip_prefix("u-ca=") {
                 calendars += 1;
                 critical_calendar |= critical;
                 if calendars == 1
-                    && !crate::temporal::plain_date::is_supported_calendar_name(&annotation[5..])
+                    && !crate::temporal::plain_date::is_supported_calendar_name(calendar)
                 {
                     return Err(crate::value::error::throw_range_error(
                         "Invalid calendar annotation",

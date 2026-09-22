@@ -100,6 +100,10 @@ impl<const N: usize> IcStubChain<N> {
         self.len
     }
 
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub const fn capacity(&self) -> usize {
         N
     }
