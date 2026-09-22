@@ -213,8 +213,9 @@ fn object_assign_observes_proxy_keys_descriptors_and_getters() {
       });
       var result = Object.assign({}, proxy);
       print(result.virtual); print(result[symbol]); print(Object.keys(result).join(','));
+      print(Object.values(proxy).join(',')); print(Object.entries(proxy)[0].join(','));
     "#;
-    assert_eq!(output(source), ["7", "8", "virtual"]);
+    assert_eq!(output(source), ["7", "8", "virtual", "7", "virtual,7"]);
 }
 
 #[test]
