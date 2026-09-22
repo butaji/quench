@@ -326,7 +326,7 @@ impl<H: Host> Vm<H> {
         self.function_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        self.object_data_mut(self.globals).unwrap().proto = self.object_proto;
+        self.object_data_mut(self.realm.globals).unwrap().proto = self.object_proto;
     }
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let console = self.object();
@@ -489,7 +489,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
-        self.set_property(self.globals, atom, value)
+        self.set_property(self.realm.globals, atom, value)
     }
     pub(super) fn set_named(
         &mut self,

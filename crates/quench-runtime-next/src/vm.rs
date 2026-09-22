@@ -105,6 +105,10 @@ struct PendingJob {
     this: Value,
     args: Vec<Value>,
 }
+struct Realm {
+    globals: Value,
+    jobs: Vec<PendingJob>,
+}
 enum NumericArguments<'a> {
     Values(&'a [Value]),
     Registers {
@@ -232,7 +236,7 @@ pub struct Vm<H> {
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,
-    globals: Value,
+    realm: Realm,
     object_proto: Value,
     function_proto: Value,
     array_proto: Value,
@@ -263,7 +267,6 @@ pub struct Vm<H> {
     natives: Vec<(Native, Value)>,
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
-    jobs: Vec<PendingJob>,
     with_stack: Vec<Value>,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
@@ -316,7 +319,7 @@ impl<H: Host> Vm<H> {
         self.heap.root_value(root)
     }
     pub(crate) fn enqueue_job(&mut self, callback: Value, args: Vec<Value>) {
-        self.jobs.push(PendingJob {
+        self.realm.jobs.push(PendingJob {
             callback,
             this: Value::UNDEFINED,
             args,
@@ -332,7 +335,7 @@ impl<H: Host> Vm<H> {
             self.report_memory("initialized");
         }
         let root = self.closure(program, 0, Value::NULL)?;
-        let result = self.call_value(program, root, self.globals, &[]);
+        let result = self.call_value(program, root, self.realm.globals, &[]);
         let jobs = self.drain_jobs(program);
         self.profile.report(&self.heap, program);
         #[cfg(feature = "profile-memory")]
@@ -404,7 +407,7 @@ impl<H: Host> Vm<H> {
         self.natives.clear();
         self.frames.clear();
         self.frame_pool.clear();
-        self.jobs.clear();
+        self.realm.jobs.clear();
         self.with_stack.clear();
         self.suspended.clear();
         self.suspended_free.clear();
@@ -453,7 +456,7 @@ impl<H: Host> Vm<H> {
         self.function_values.clear();
         self.finalization_registry_proto = Value::NULL;
         self.random_state = 0x4d59_5df4_d0f3_3173;
-        self.globals = self
+        self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
         for constant in &program.constants {
