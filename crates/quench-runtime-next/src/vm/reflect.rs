@@ -35,18 +35,7 @@ impl<H: Host> Vm<H> {
                     Err(_) => Value::FALSE,
                 })
             }
-            Native::ReflectIsExtensible => {
-                if self.object_data(target).is_none() {
-                    return Err(JsError("Reflect target is not an object".into()));
-                }
-                Ok(
-                    if self.object_data(target).is_some_and(Object::is_extensible) {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    },
-                )
-            }
+            Native::ReflectIsExtensible => self.object_is_extensible(p, args),
             Native::ReflectSet => {
                 let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {

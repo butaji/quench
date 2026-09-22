@@ -142,9 +142,31 @@ impl<H: Host> Vm<H> {
         Ok(source)
     }
 
-    pub(super) fn object_is_extensible(&self, args: &[Value]) -> bool {
-        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-        self.object_data(target).is_some_and(Object::is_extensible)
+    pub(super) fn object_is_extensible(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(source).cloned()
+        {
+            if handler.is_null() {
+                return Err(JsError("cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("isExtensible");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let result = self.call_value(p, trap, handler, &[target])?;
+                return Ok(Self::integrity_bool(self.truthy(result)));
+            }
+        }
+        let target = self.proxy_target(source);
+        let object = self
+            .object_data(target)
+            .ok_or_else(|| JsError("isExtensible target is not an object".into()))?;
+        Ok(Self::integrity_bool(object.is_extensible()))
     }
 
     pub(super) fn object_set_integrity(

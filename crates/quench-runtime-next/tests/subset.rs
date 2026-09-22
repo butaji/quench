@@ -149,6 +149,17 @@ fn proxy_prevent_extensions_trap_controls_integrity_operations() {
 }
 
 #[test]
+fn proxy_is_extensible_trap_controls_integrity_queries() {
+    let source = r#"
+      var target = {};
+      var proxy = new Proxy(target, { isExtensible: function(t) { print('trap'); return false; } });
+      print(Object.isExtensible(proxy));
+      print(Reflect.isExtensible(proxy));
+    "#;
+    assert_eq!(output(source), ["trap", "false", "trap", "false"]);
+}
+
+#[test]
 fn well_known_symbols_are_realm_stable_values() {
     assert_eq!(
         output(
