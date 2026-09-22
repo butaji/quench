@@ -50,6 +50,11 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<Value, JsError> {
+        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            return Ok(self
+                .symbol_property(object, key)
+                .unwrap_or(Value::UNDEFINED));
+        }
         if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {
             if let Some(value) = self.typed_array_get(object, index as usize) {
                 return Ok(value);
@@ -137,6 +142,9 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> Result<(), JsError> {
+        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            return self.set_symbol_property(object, key, value);
+        }
         if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {
             #[cfg(feature = "profile-aggregate")]
             let kind = self.heap.get(object).and_then(|cell| match cell {

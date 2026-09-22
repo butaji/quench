@@ -13,6 +13,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("Object.assign target is not an object".into()))?;
         for source in args.iter().copied().skip(1) {
             let source = self.box_object(source)?;
+            let source = self.proxy_target(source);
             let data = self.object_data(source).expect("boxed source is object");
             let values = self
                 .ordered_shape(data)
@@ -28,6 +29,23 @@ impl<H: Host> Vm<H> {
                 .collect::<Vec<_>>();
             for (atom, value) in values {
                 self.set_property_with_program(p, target, atom, value)?;
+            }
+            for symbol in self
+                .symbol_property_order
+                .get(&source)
+                .cloned()
+                .unwrap_or_default()
+            {
+                let attributes = self
+                    .symbol_descriptors
+                    .get(&(source, symbol))
+                    .copied()
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                if attributes.enumerable
+                    && let Some(value) = self.symbol_property(source, symbol)
+                {
+                    self.set_index(p, target, symbol, value)?;
+                }
             }
         }
         Ok(target)
@@ -91,6 +109,12 @@ impl<H: Host> Vm<H> {
         self.set_named(
             program,
             object,
+            "getOwnPropertySymbols",
+            self.native_value(Native::ObjectGetOwnPropertySymbols),
+        )?;
+        self.set_named(
+            program,
+            object,
             "getOwnPropertyDescriptors",
             self.native_value(Native::ObjectGetOwnPropertyDescriptors),
         )?;
@@ -133,6 +157,9 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectGetOwnPropertyNames => {
                 self.object_names(args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
+            Native::ObjectGetOwnPropertySymbols => {
+                self.object_symbols(args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectGetOwnPropertyDescriptor => {
                 self.object_get_own_property_descriptor(p, args)
@@ -196,7 +223,15 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("Object.hasOwn target is nullish".into()));
                 }
                 let target = self.box_object(target)?;
-                let text = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+                    return Ok(if self.symbol_property(target, key_value).is_some() {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    });
+                }
+                let text = self.to_string(p, key_value)?;
                 let key = self.intern_atom(&text);
                 Ok(if self.own_property(target, key).is_some() {
                     Value::TRUE
@@ -349,12 +384,16 @@ impl<H: Host> Vm<H> {
             .object_data(target)
             .map(|_| target)
             .ok_or_else(|| JsError("defineProperty target is not an object".into()))?;
-        let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let atom = self.intern_atom(&key);
+        let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         if self.object_data(descriptor).is_none() {
             return Err(JsError("property descriptor is not an object".into()));
         }
+        if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+            return self.define_symbol_property(target, key_value, descriptor);
+        }
+        let key = self.to_string(p, key_value)?;
+        let atom = self.intern_atom(&key);
         let existing = self.own_property(target, atom);
         let current = self
             .descriptors

@@ -41,6 +41,17 @@ impl<H: Host> Vm<H> {
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(self.symbol_registry.values().copied())
                 .chain(
+                    self.symbol_properties
+                        .iter()
+                        .flat_map(|((object, key), value)| [*object, *key, *value]),
+                )
+                .chain(
+                    self.symbol_descriptors
+                        .values()
+                        .flat_map(|attributes| [attributes.getter, attributes.setter])
+                        .flatten(),
+                )
+                .chain(
                     self.descriptors
                         .values()
                         .flat_map(|attributes| [attributes.getter, attributes.setter])
@@ -68,6 +79,27 @@ impl<H: Host> Vm<H> {
         self.megamorphic_fields.clear();
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
+        self.symbol_properties.retain(|(object, key), value| {
+            self.heap.get(*object).is_some()
+                && self.heap.get(*key).is_some()
+                && self.heap.get(*value).is_some()
+        });
+        self.symbol_property_order.retain(|object, keys| {
+            if self.heap.get(*object).is_none() {
+                return false;
+            }
+            keys.retain(|key| self.heap.get(*key).is_some());
+            !keys.is_empty()
+        });
+        self.symbol_descriptors.retain(|(object, key), attributes| {
+            self.heap.get(*object).is_some()
+                && self.heap.get(*key).is_some()
+                && attributes
+                    .getter
+                    .into_iter()
+                    .chain(attributes.setter)
+                    .all(|value| self.heap.get(value).is_some())
+        });
         self.retain_live_method_caches();
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
