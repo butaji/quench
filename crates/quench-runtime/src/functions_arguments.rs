@@ -1,24 +1,13 @@
 fn emit_function_expression(
     ops: &mut Vec<Op>,
     next: &mut u16,
-    body: Vec<Op>,
-    frame_register_count: u16,
-    params: u16,
-    captures: u16,
-    metadata: FunctionMetadata,
-    declared_name: Option<&str>,
-    source: Option<String>,
+    emission: FunctionEmission,
 ) -> u16 {
-    let function = emit_function_op(
-        ops,
-        next,
-        body,
-        frame_register_count,
-        params,
-        captures,
-        metadata,
-        source,
-    );
+    let FunctionEmission {
+        spec,
+        declared_name,
+    } = emission;
+    let function = emit_function_op(ops, next, spec);
     if let Some(name) = declared_name {
         ops.push(Op::SetFunctionName {
             function,
