@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 #[inline(always)]
@@ -68,9 +69,32 @@ impl<H: Host> Vm<H> {
             {
                 return self.proxy_get_symbol(p, target, handler, object, key);
             }
-            return Ok(self
-                .inherited_symbol_property(object, key)
-                .unwrap_or(Value::UNDEFINED));
+            let mut owner = object;
+            loop {
+                if let Some(value) = self.symbol_property(owner, key) {
+                    let attributes = self
+                        .descriptors
+                        .get(&(owner, PropertyKey::symbol(key)))
+                        .copied()
+                        .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                    if attributes.accessor {
+                        return attributes
+                            .getter
+                            .filter(|getter| !getter.is_undefined())
+                            .map_or(Ok(Value::UNDEFINED), |getter| {
+                                self.call_value(p, getter, object, &[])
+                            });
+                    }
+                    return Ok(value);
+                }
+                let Some(data) = self.object_data(owner) else {
+                    return Ok(Value::UNDEFINED);
+                };
+                owner = data.proto;
+                if owner.is_null() {
+                    return Ok(Value::UNDEFINED);
+                }
+            }
         }
         if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {
             if let Some(value) = self.typed_array_get(object, index as usize) {
