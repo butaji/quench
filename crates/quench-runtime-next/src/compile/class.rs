@@ -127,9 +127,6 @@ impl FunctionCompiler<'_, '_> {
                 }
                 continue;
             };
-            if method.kind == MethodDefinitionKind::Constructor {
-                continue;
-            }
             let accessor_name = match method.kind {
                 MethodDefinitionKind::Get => Some("get"),
                 MethodDefinitionKind::Set => Some("set"),
