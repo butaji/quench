@@ -403,6 +403,8 @@ impl<H: Host> Vm<H> {
             "TypeError",
             self.native_value(Native::RealmTypeError),
         )?;
+        let eval = self.native_with_env(Native::Eval, global);
+        self.set_named(program, global, "eval", eval)?;
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
         Ok(realm)
