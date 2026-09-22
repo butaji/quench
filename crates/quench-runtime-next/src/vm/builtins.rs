@@ -139,7 +139,7 @@ const NATIVES: &[Native] = &[
     Native::SetValues,
     Native::SetEntries,
     Native::SetForEach,
-    Native::IteratorNext,
+    Native::IteratorNext, Native::IteratorClose,
     Native::WeakMap,
     Native::WeakMapGet,
     Native::WeakMapSet,
@@ -220,6 +220,11 @@ impl<H: Host> Vm<H> {
         self.install_collections(program)?;
         self.install_weak_collections(program)?;
         self.install_iterators(program)?;
+        self.global(
+            program,
+            "\0rqj:iterator-close",
+            self.native_value(Native::IteratorClose),
+        )?;
         self.global(program, "undefined", Value::UNDEFINED)?;
         self.global(program, "NaN", Value::number(f64::NAN))?;
         self.global(program, "Infinity", Value::number(f64::INFINITY))?;
