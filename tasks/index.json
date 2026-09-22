@@ -21,7 +21,8 @@
     "host": ["21", "22", "23"],
     "performance": ["25", "26"],
     "specializers": ["29", "30", "31", "32", "33", "34"],
-    "simplification": ["35", "36"]
+    "simplification": ["35", "36"],
+    "frontends": ["37", "38", "39", "40", "41"]
   },
   "constraints": [
     "Use the pinned ../v2 source as the implementation and architecture reference, copied into this repository without a sibling build dependency.",
@@ -69,6 +70,11 @@
     {"id":"33","file":"33.md","title":"Generalize opcode superinstruction fusion","lane":"specializers","status":"pending","depends_on":["10","30"]},
     {"id":"34","file":"34.md","title":"Add shape-guarded iterator fast paths","lane":"specializers","status":"pending","depends_on":["08","29"]},
     {"id":"35","file":"35.md","title":"Unify typed array cell representation by kind","lane":"simplification","status":"pending","depends_on":["08"]},
-    {"id":"36","file":"36.md","title":"Move object integrity state onto the object cell","lane":"simplification","status":"pending","depends_on":["08"]}
+    {"id":"36","file":"36.md","title":"Move object integrity state onto the object cell","lane":"simplification","status":"pending","depends_on":["08"]},
+    {"id":"37","file":"37.md","title":"Lower Wasm operators to the shared residual bytecode","lane":"frontends","status":"pending","depends_on":["10","23"]},
+    {"id":"38","file":"38.md","title":"Extend binding-time materialization to Wasm immutables","lane":"frontends","status":"pending","depends_on":["37"]},
+    {"id":"39","file":"39.md","title":"Share a structured control-flow scope stack across front ends","lane":"frontends","status":"pending","depends_on":["37"]},
+    {"id":"40","file":"40.md","title":"Unify the OXC and Wasm engine and diagnostic types","lane":"frontends","status":"pending","depends_on":["37"]},
+    {"id":"41","file":"41.md","title":"Verify Wasm lowering consumes validator-derived types","lane":"frontends","status":"pending","depends_on":["23"]}
   ]
 }
