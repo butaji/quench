@@ -149,12 +149,6 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
-                    self.symbol_descriptors
-                        .values()
-                        .flat_map(|attributes| [attributes.getter, attributes.setter])
-                        .flatten(),
-                )
-                .chain(
                     self.descriptors
                         .values()
                         .flat_map(|attributes| [attributes.getter, attributes.setter])
@@ -230,17 +224,6 @@ impl<H: Host> Vm<H> {
         self.promise
             .async_resume_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.symbol_descriptors.retain(|(object, key), attributes| {
-            self.heap.get(*object).is_some()
-                && key
-                    .symbol_value()
-                    .is_some_and(|key| self.heap.get(key).is_some())
-                && attributes
-                    .getter
-                    .into_iter()
-                    .chain(attributes.setter)
-                    .all(|value| self.heap.get(value).is_some())
-        });
         self.retain_live_method_caches();
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();

@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
         for target_key in target_keys.iter().copied() {
             let required = match self.heap.get(target_key).cloned() {
                 Some(Cell::Symbol(_)) => self
-                    .symbol_descriptors
+                    .descriptors
                     .get(&(target, PropertyKey::symbol(target_key)))
                     .is_some_and(|attributes| !attributes.configurable),
                 Some(Cell::String(name)) => {
@@ -138,7 +138,7 @@ impl<H: Host> Vm<H> {
             ));
         }
         if self
-            .symbol_descriptors
+            .descriptors
             .get(&(object, key))
             .is_some_and(|attributes| !attributes.writable)
         {
@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
                 .or_default()
                 .push(key);
         }
-        self.symbol_descriptors
+        self.descriptors
             .entry((object, key))
             .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
         Ok(())
@@ -169,7 +169,7 @@ impl<H: Host> Vm<H> {
         let existing = self.symbol_property(target, key);
         let property_key = PropertyKey::symbol(key);
         let mut attributes = self
-            .symbol_descriptors
+            .descriptors
             .get(&(target, property_key))
             .copied()
             .unwrap_or(PropertyAttributes {
@@ -195,8 +195,7 @@ impl<H: Host> Vm<H> {
             .own_property(descriptor, value_atom)
             .unwrap_or(existing.unwrap_or(Value::UNDEFINED));
         self.set_symbol_property(target, key, value)?;
-        self.symbol_descriptors
-            .insert((target, property_key), attributes);
+        self.descriptors.insert((target, property_key), attributes);
         Ok(target)
     }
 
