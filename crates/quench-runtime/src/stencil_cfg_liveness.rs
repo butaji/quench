@@ -100,6 +100,7 @@ pub(super) fn live_inputs(
         .collect()
 }
 
+#[cfg(test)]
 pub(super) fn bounded_register_liveness(
     entries: &[BaselineEntry],
     operand_windows: &[Option<&[u16]>],
@@ -124,6 +125,7 @@ pub(super) fn bounded_register_liveness(
     vec![conservative; entries.len()]
 }
 
+#[cfg(test)]
 fn liveness_round(
     entries: &[BaselineEntry],
     windows: &[Option<&[u16]>],

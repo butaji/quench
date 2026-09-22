@@ -72,6 +72,7 @@ macro_rules! execution_events {
         const EVENT_NAMES: &[&str] = &[$($wire),+];
         #[cfg(feature = "execution-trace")]
         impl Event {
+            #[cfg(test)]
             pub(crate) const fn name(self) -> &'static str {
                 match self { $(Self::$name => $wire),+ }
             }
@@ -88,7 +89,6 @@ macro_rules! execution_events {
 execution_events! {
     LoopEntry => "loop_entry",
     LoopIteration => "loop_iteration",
-    FragmentEntry => "fragment_entry",
     LeafAttempt => "leaf_attempt",
     LeafHit => "leaf_hit",
     LeafReject => "leaf_reject",
@@ -132,7 +132,6 @@ execution_events! {
     NamedSetCacheEmpty => "named_set_cache_empty",
     NamedSetLayoutMismatch => "named_set_layout_mismatch",
     NamedSetSlotNotCell => "named_set_slot_not_cell",
-    NamedSetPromoteCell => "named_set_promote_cell",
 }
 
 #[cfg(feature = "execution-trace")]

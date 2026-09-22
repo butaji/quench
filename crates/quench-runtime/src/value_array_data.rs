@@ -272,6 +272,7 @@ impl DenseElements {
         true
     }
 
+    #[cfg(test)]
     fn detach_numbers(&mut self) -> bool {
         let Self::Numbers(values) = self else {
             return false;
@@ -420,6 +421,7 @@ impl ArrayData {
         self.arguments
     }
 
+    #[cfg(test)]
     pub(crate) fn has_argument_live(&self) -> bool {
         self.argument_live.is_some()
     }
@@ -493,6 +495,7 @@ impl ArrayData {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn is_holey(&self) -> bool {
         matches!(self.ownership.element_kind.get(), ArrayKind::Holey)
     }
@@ -545,11 +548,13 @@ impl ArrayData {
     pub(crate) fn is_sparse(&self) -> bool {
         matches!(self.ownership.element_kind.get(), ArrayKind::Sparse)
     }
+    #[cfg(test)]
     pub(crate) fn is_dense(&self) -> bool {
         !matches!(self.ownership.element_kind.get(), ArrayKind::Sparse)
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn is_numeric_packed(&self) -> bool {
         matches!(
             self.ownership.element_kind.get(),
@@ -634,6 +639,7 @@ impl ArrayData {
     /// `argument_live` field is shared between the original and any
     /// `Rc::make_mut` clones of this data, so overrides stored via
     /// `set_arguments_length_override` are visible to all references.
+    #[cfg(test)]
     pub(crate) fn argument_live_view(&self) -> Option<std::cell::Ref<'_, ArgumentLive>> {
         self.argument_live.as_ref().map(|live| live.borrow())
     }
@@ -801,6 +807,7 @@ impl ArrayData {
         self.length.set(self.length.get().max(length));
         self.ownership.element_kind.set(ArrayKind::Sparse);
     }
+    #[cfg(test)]
     pub(crate) fn append_live(&self, values: &[Value]) {
         let Some(live) = &self.argument_live else {
             return;
@@ -812,6 +819,7 @@ impl ArrayData {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn append_physical(&mut self, values: &[Value]) {
         match &mut self.values {
             DenseElements::Numbers(numbers)
@@ -893,6 +901,7 @@ impl ArrayData {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn numeric_cells(&self) -> Option<std::cell::Ref<'_, [std::cell::Cell<f64>]>> {
         self.widen_mutable_numeric_kind();
         let DenseElements::Numbers(values) = &self.values else {
@@ -933,6 +942,7 @@ impl ArrayData {
     /// Borrow a base-2^28 limb payload after one header guard. The element
     /// kind is the canonical proof that every word is an exact limb; callers
     /// therefore execute load/ALU/store without per-element float checks.
+    #[cfg(test)]
     pub(crate) fn limb28_kernel_words(&self) -> Option<std::cell::Ref<'_, [f64]>> {
         (self.ownership.element_kind.get() == ArrayKind::PackedLimb28
             && self.is_packed_ordinary())
@@ -942,6 +952,7 @@ impl ArrayData {
 
     /// Mutable limb view for kernels whose stores are proven masked to 28
     /// bits. General mutable numeric views widen the kind before returning.
+    #[cfg(test)]
     pub(crate) fn limb28_kernel_words_mut(&self) -> Option<std::cell::RefMut<'_, [f64]>> {
         (self.ownership.element_kind.get() == ArrayKind::PackedLimb28
             && self.is_packed_ordinary())
@@ -967,6 +978,7 @@ impl ArrayData {
 
     /// Snapshot an own-data numeric range after proving that no indexed
     /// descriptor, argument mapping, hole, or sparse tail can intercept it.
+    #[cfg(test)]
     pub(crate) fn numeric_kernel_range(&self, start: usize, end: usize) -> Option<Vec<f64>> {
         (start <= end
             && end <= self.logical_len()
@@ -986,6 +998,7 @@ impl ArrayData {
     /// store. This is a representation-only transition: every logical index
     /// must already exist as ordinary own data and no observable metadata may
     /// intercept indexed access.
+    #[cfg(test)]
     pub(crate) fn promote_sparse_numeric(&mut self) -> bool {
         if !self.is_sparse()
             || !self.descriptors.is_empty()
@@ -1018,6 +1031,7 @@ impl ArrayData {
         self.is_packed_ordinary()
     }
 
+    #[cfg(test)]
     fn numeric_sparse_tail(&self, start: usize) -> Option<Vec<f64>> {
         (start <= self.length.get()).then_some(())?;
         let mut tail = vec![None; self.length.get() - start];
@@ -1036,10 +1050,12 @@ impl ArrayData {
     /// Store an unboxed numeric slot while retaining canonical `Value`
     /// semantics at the storage boundary.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn set_numeric_index(&mut self, index: usize, number: f64) {
         self.set_index(index, Value::Number(number));
     }
 
+    #[cfg(test)]
     pub(crate) fn fill_numeric_constant(&mut self, start: usize, end: usize, number: f64) {
         debug_assert_eq!(start, 0);
         self.values.resize_numeric(end);
@@ -1073,6 +1089,7 @@ impl ArrayData {
         self.bump_backing_generation();
     }
 
+    #[cfg(test)]
     pub(crate) fn fill_numeric_range(&mut self, start: usize, end: usize, first: f64) {
         if self.values.len() < end {
             self.values.resize_numeric(end);
@@ -1167,6 +1184,7 @@ impl ArrayData {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn set_plain_existing_f64(&self, index: usize, number: f64) -> bool {
         let stored = self.is_plain_dense_access()
             && index < self.logical_len()
@@ -1183,6 +1201,7 @@ impl ArrayData {
     /// Mutate a preflighted ordinary own numeric element even when unrelated
     /// sparse properties keep the array's monotonic kind at `Sparse`.
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn set_proven_existing_f64(&self, index: usize, number: f64) -> bool {
         let stored = self.has_plain_dense_index(index)
             && self.values.set_existing_number(index, number);
@@ -1391,6 +1410,7 @@ impl ArrayData {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn last_dense_value(&self) -> Option<Value> {
         self.values
             .len()
@@ -1398,6 +1418,7 @@ impl ArrayData {
             .and_then(|index| self.dense_value_at(index))
     }
 
+    #[cfg(test)]
     pub(crate) fn dense_value_at_mut(&mut self, index: usize) -> Option<&mut Value> {
         if index >= self.logical_len()
             || index >= self.values.len()
@@ -1460,6 +1481,7 @@ impl ArrayData {
     /// means the caller must use the property-aware slow path.  Keeping the
     /// check here makes the no-allocation copy safe even when callers are
     /// changed independently of the array representation.
+    #[cfg(test)]
     pub(crate) fn copy_dense_within(&mut self, src: usize, dst: usize, len: usize) -> bool {
         let Some(src_end) = src.checked_add(len) else {
             return false;
@@ -1527,6 +1549,7 @@ impl ArrayData {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn next_index(&self, start: usize, length: usize) -> Option<usize> {
         let dense_end = self.values.len().min(length);
         (start..dense_end)

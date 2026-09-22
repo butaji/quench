@@ -197,6 +197,7 @@ impl NativeDenseCopyPlan {
             .map_err(|error| NativeDispatchError::Physical(format!("dense copy entry: {error:?}")))
     }
 
+    #[cfg(test)]
     pub(crate) fn route() -> impl Iterator<Item = &'static str> {
         ["AGetI", "ASetI", "AddConst", "Jump", "Return"].into_iter()
     }

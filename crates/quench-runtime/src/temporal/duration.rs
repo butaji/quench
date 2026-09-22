@@ -2097,6 +2097,7 @@ fn parse_largest_unit(options: Option<&Value>) -> Result<Option<usize>, VmError>
     unit_index(&unit).map(Some)
 }
 
+#[cfg(test)]
 fn balance_time_fields(fields: &mut [Value], first: usize) {
     for index in ((first + 1)..10).rev() {
         let base = match index {

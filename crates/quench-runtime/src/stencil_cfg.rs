@@ -20,6 +20,7 @@ pub(crate) struct RegionEdge {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) struct RegionBlock {
     pub start: usize,
     pub end: usize,
@@ -31,6 +32,7 @@ pub(crate) struct RegionBlock {
 /// registers so later emitters can materialize the recurrence without
 /// inventing a value-flow edge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) struct InductionCandidate {
     pub register: u16,
     pub source: u16,
@@ -101,6 +103,7 @@ impl RegionControlPlan {
     /// Return sorted basic-block spans derived from the verified block-entry
     /// set. The region end is the exclusive sentinel; no source-shaped window
     /// is reconstructed by consumers.
+    #[cfg(test)]
     pub(crate) fn block_ranges(&self) -> Option<Vec<RegionBlock>> {
         let mut starts = self.blocks.clone();
         starts.sort_unstable();
@@ -175,6 +178,7 @@ impl RegionControlPlan {
 
     /// Return blocks reached from more than one distinct predecessor. Duplicate
     /// edges from a single conditional instruction are not a join.
+    #[cfg(test)]
     pub(crate) fn join_blocks(&self) -> Vec<usize> {
         self.blocks()
             .iter()
@@ -218,6 +222,7 @@ impl RegionControlPlan {
             && self.blocks_match_edges()
     }
 
+    #[cfg(test)]
     pub(crate) fn permits_operation_transfer(
         &self,
         operations: &[crate::ir::Opcode],
@@ -367,6 +372,7 @@ impl ControlFlowFacts {
     /// Return the canonical predecessor PCs for a block boundary.  Consumers
     /// use this derived view to build join moves; they must not reconstruct a
     /// second predecessor graph from source-shaped windows.
+    #[cfg(test)]
     pub(crate) fn predecessors_at(&self, pc: usize) -> Option<&[usize]> {
         self.predecessors.get(pc).map(Vec::as_slice)
     }
@@ -375,6 +381,7 @@ impl ControlFlowFacts {
     /// only when it is live at the backedge target and redefined on the loop
     /// path before the transfer; values merely live through the loop are not
     /// classified as induction state.
+    #[cfg(test)]
     pub(crate) fn loop_carried_registers(
         &self,
         entries: &[BaselineEntry],
@@ -383,6 +390,7 @@ impl ControlFlowFacts {
         self.loop_carried_set(entries, plan).into_iter().collect()
     }
 
+    #[cfg(test)]
     fn loop_carried_set(
         &self,
         entries: &[BaselineEntry],
@@ -411,6 +419,7 @@ impl ControlFlowFacts {
     /// opaque updates and arithmetic constants remain ordinary loop state for
     /// later effect/type analysis.  Candidates are deduplicated so multiple
     /// backedges cannot create competing representations of one update.
+    #[cfg(test)]
     pub(crate) fn induction_candidates(
         &self,
         entries: &[BaselineEntry],
@@ -492,6 +501,7 @@ impl ControlFlowFacts {
             })
     }
 
+    #[cfg(test)]
     pub(crate) fn region_matches(
         &self,
         entries: &[BaselineEntry],

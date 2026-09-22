@@ -172,6 +172,7 @@ impl StencilArena {
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(test)]
     pub(crate) fn render_selected_f64x3<const N: usize>(
         &mut self,
         cache: &mut RenderedRegionCache,

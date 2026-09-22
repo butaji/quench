@@ -81,7 +81,7 @@ pub enum ArenaError {
 pub struct StencilArena {
     /// Retained only as an ownership buffer for the legacy renderer. Runtime
     /// execution never promotes this storage to executable memory.
-    storage: Box<[u8]>,
+    _storage: Box<[u8]>,
     ptr: *mut u8,
     capacity: usize,
     cursor: usize,
@@ -89,7 +89,7 @@ pub struct StencilArena {
     id: u64,
     published_entries: RefCell<HashMap<usize, PublishedEntry>>,
     last_physical_execution: Cell<Option<PhysicalExecutionWitness>>,
-    global_charge: BudgetReservation<'static>,
+    _global_charge: BudgetReservation<'static>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -218,21 +218,6 @@ pub(crate) struct AllocationLease {
 }
 
 impl AllocationLease {
-    pub(crate) fn invoke_dispatch(self, context: *mut std::ffi::c_void) -> Result<u64, ArenaError> {
-        if context.is_null() {
-            return Err(ArenaError::ProtectionFailed);
-        }
-        let entry = {
-            let pool = self
-                .owner
-                .try_borrow()
-                .map_err(|_| ArenaError::ProtectionFailed)?;
-            pool.validate_retained_address(self.address, self.owner_id, self.abi)?;
-            pool.dispatch_entry_with_abi(self.address, self.abi)?
-        };
-        Ok(entry(context))
-    }
-
     pub(crate) fn invoke<R>(self, invoke: impl FnOnce() -> R) -> Result<R, ArenaError> {
         let valid = self.owner.try_borrow().ok().is_some_and(|pool| {
             pool.validate_retained_address(self.address, self.owner_id, self.abi)

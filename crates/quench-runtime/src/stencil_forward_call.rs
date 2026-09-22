@@ -114,6 +114,7 @@ impl NativeForwardPairPlan {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn route(&self) -> &'static [&'static str] {
         match self.selection.calls {
             [PairCallSelection::IntegerSwitch { .. }, PairCallSelection::IntegerSwitch { .. }] => {
@@ -190,6 +191,7 @@ impl NativeForwardPairPlan {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn route() -> impl Iterator<Item = &'static str> {
     ["LoadLocalChecked", "Call", "Return"].into_iter()
 }

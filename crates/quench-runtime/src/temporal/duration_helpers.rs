@@ -1210,6 +1210,7 @@ fn same_fields(left: Option<&Value>, right: Option<&Value>) -> bool {
     })
 }
 
+#[cfg(test)]
 fn duration_value(value: &Value) -> i128 {
     [
         ("years", 31_536_000_000_000_000_i128),

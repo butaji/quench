@@ -21,6 +21,7 @@ pub(crate) struct AdmissionSpan {
 pub(crate) struct AdmissionStorage<A> {
     spans: Box<[AdmissionSpan]>,
     entries: Box<[A]>,
+    #[cfg(test)]
     charge: AdmissionMetadataCharge,
 }
 
@@ -28,12 +29,13 @@ impl<A> AdmissionStorage<A> {
     fn from_parts(
         spans: Vec<AdmissionSpan>,
         entries: Vec<A>,
-        charge: AdmissionMetadataCharge,
+        _charge: AdmissionMetadataCharge,
     ) -> Self {
         Self {
             spans: spans.into_boxed_slice(),
             entries: entries.into_boxed_slice(),
-            charge,
+            #[cfg(test)]
+            charge: _charge,
         }
     }
 

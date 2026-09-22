@@ -570,12 +570,14 @@ pub(crate) struct AsyncForOfState {
 /// values in the descriptor object and therefore cannot also carry a data
 /// value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct PropertyDescriptor {
     pub writable: Option<bool>,
     pub enumerable: Option<bool>,
     pub configurable: Option<bool>,
 }
 
+#[cfg(test)]
 impl PropertyDescriptor {
     #[inline]
     pub(crate) const fn empty() -> Self {
@@ -764,6 +766,7 @@ impl ObjectProperties {
     }
 
     #[cold]
+    #[cfg(test)]
     pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> {
         self.names
             .iter()
@@ -780,6 +783,7 @@ impl ObjectProperties {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn slot_value_mut(&mut self, slot: usize) -> Option<PropertyValueMut<'_>> {
         self.values.get(slot).map(|word| PropertyValueMut {
             value: Some(word.load()),
@@ -1268,6 +1272,7 @@ impl ObjectData {
         &self.properties
     }
 
+    #[cfg(test)]
     pub(crate) fn hot_properties_mut_for_transaction(&mut self) -> &mut ObjectProperties {
         &mut self.properties
     }
@@ -1277,6 +1282,7 @@ impl ObjectData {
     /// that retain a reference-derived cache must prove it points at this
     /// allocation and invalidate it when the owning `ObjectData` is replaced.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn properties_source(&self) -> *const ObjectProperties {
         &self.properties as *const ObjectProperties
     }
@@ -1937,6 +1943,7 @@ pub(crate) struct ObjectShape {
 /// The source object remains authoritative; this record only describes the
 /// derived `(shape_id, property_id)` cache key and its resulting layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct ObjectTransition {
     pub(crate) from: crate::identity::ShapeId,
     pub(crate) property: crate::identity::PropertyKeyId,
@@ -1947,6 +1954,7 @@ pub(crate) struct ObjectTransition {
 pub(crate) const DICTIONARY_SLOT_THRESHOLD: u32 = 32;
 /// Tiny objects stay on the ordinary property vector; this limit is deliberately
 /// derived from the measured fast path rather than introducing a second store.
+#[cfg(test)]
 pub(crate) const TINY_SLOT_LIMIT: u32 = 2;
 
 impl ObjectData {
@@ -1975,11 +1983,13 @@ impl ObjectData {
         }
     }
     #[inline]
+    #[cfg(test)]
     pub(crate) fn shape_id(&self) -> crate::identity::ShapeId {
         self.shape().id
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn is_tiny(&self) -> bool {
         let shape = self.shape();
         !shape.dictionary && shape.slots <= TINY_SLOT_LIMIT
@@ -1992,10 +2002,12 @@ impl ObjectData {
         self.shape().dictionary
     }
     #[inline]
+    #[cfg(test)]
     pub(crate) fn has_shape(&self, shape: crate::identity::ShapeId) -> bool {
         self.shape_id() == shape
     }
 
+    #[cfg(test)]
     pub(crate) fn slot_for(&self, key: &str) -> Option<usize> {
         if self.shape().dictionary || key.starts_with('\0') {
             return None;
@@ -2010,7 +2022,7 @@ impl ObjectData {
     ///
     /// Kept as a cheap debug-only assertion at call sites so optimized code
     /// cannot accidentally grow a second semantic representation.
-    #[cfg(debug_assertions)]
+    #[cfg(all(test, debug_assertions))]
     pub(crate) fn assert_canonical_slots(&self) {
         // Dictionary layouts intentionally do not expose positional slots.
         if self.shape().dictionary {
@@ -2028,6 +2040,7 @@ impl ObjectData {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn value_at_slot(&self, slot: usize) -> Option<Value> {
         let physical_slot = self
             .properties
@@ -2045,6 +2058,7 @@ impl ObjectData {
     /// reverse encounter order (including duplicate writes), while metadata
     /// remains visible only to the slow-path caller that interprets it.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn dictionary_value(&self, key: &str) -> Option<Value> {
         if !self.is_dictionary() || key.starts_with('\0') {
             return None;
@@ -2057,12 +2071,13 @@ impl ObjectData {
 
 impl ObjectData {
     #[inline]
+    #[cfg(test)]
     pub(crate) fn value_for_shape_slot(
         &self,
         shape: crate::identity::ShapeId,
         slot: usize,
     ) -> Option<Value> {
-        #[cfg(debug_assertions)]
+        #[cfg(all(test, debug_assertions))]
         self.assert_canonical_slots();
         // Dictionary layouts deliberately have no positional slot contract;
         // their canonical source remains the property vector and must use the
@@ -2074,6 +2089,7 @@ impl ObjectData {
 
 impl ObjectData {
     #[inline]
+    #[cfg(test)]
     pub(crate) fn transition_key(
         &self,
         property: &str,
@@ -2084,6 +2100,7 @@ impl ObjectData {
     /// Derive the canonical transition for `property`, without mutating the
     /// object. Existing properties retain their slot; a new property appends
     /// one slot. Dictionary layouts intentionally have no positional contract.
+    #[cfg(test)]
     pub(crate) fn transition_for(&self, property: &str) -> Option<ObjectTransition> {
         if property.starts_with('\0') || self.is_dictionary() {
             return None;
@@ -2341,6 +2358,7 @@ impl BindingCell {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn with_word<R>(
         &self,
         use_word: impl FnOnce(&crate::register_file::OwnedWord) -> R,
@@ -2349,6 +2367,7 @@ impl BindingCell {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn load_number(&self) -> Option<f64> {
         self.0.borrow().number()
     }

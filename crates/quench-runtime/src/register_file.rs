@@ -297,6 +297,7 @@ impl SlotWord {
         unsafe { (&mut *self.0.get()).store(value) }
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn store_object_or_null(
         &self,
@@ -316,6 +317,7 @@ impl SlotWord {
     /// balances ownership once per object entering or leaving the graph; nodes
     /// retained by the graph keep the same single incoming graph edge even
     /// when its physical owner slot changes.
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) unsafe fn store_graph_object_or_null_balanced(
         &self,
@@ -352,19 +354,6 @@ impl SlotWord {
     #[inline(always)]
     pub(crate) fn object_or_null_ptr(&self) -> Option<Option<*const crate::value::ObjectData>> {
         self.with_word(OwnedWord::object_or_null_ptr)
-    }
-
-    #[inline(always)]
-    pub(crate) fn object_or_null(&self) -> Option<Option<std::rc::Rc<crate::value::ObjectData>>> {
-        self.object_or_null_ptr().map(|pointer| {
-            pointer.map(|pointer| unsafe {
-                // The slot owns one strong reference for the duration of this
-                // single-threaded read. Retain before constructing the owned
-                // handle returned to the quickened kernel.
-                std::rc::Rc::increment_strong_count(pointer);
-                std::rc::Rc::from_raw(pointer)
-            })
-        })
     }
 
     #[inline(always)]

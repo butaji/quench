@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 use std::cell::Cell;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 enum Architecture {
     X86_64,
     Aarch64,
@@ -18,6 +19,7 @@ enum Architecture {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 enum ArmMode {
     Disabled,
     Leaves,
@@ -32,7 +34,9 @@ enum ArmMode {
     All,
 }
 
+#[cfg(test)]
 impl ArmMode {
+    #[cfg(test)]
     fn from_environment() -> Self {
         match std::env::var("QUENCH_AARCH64_STENCIL_MODE").as_deref() {
             Ok("leaves") => Self::Leaves,
@@ -52,6 +56,7 @@ impl ArmMode {
     }
 }
 
+#[cfg(test)]
 const fn local_fusion_policy(mode: ArmMode) -> LocalFusionPolicy {
     match mode {
         ArmMode::Fusion | ArmMode::All => LocalFusionPolicy::ALL,
@@ -72,8 +77,11 @@ impl LocalFusionPolicy {
 
     pub(crate) const NONE: Self = Self(0);
     pub(crate) const ALL: Self = Self(Self::NUMERIC | Self::PROPERTY | Self::PREDICATE);
+    #[cfg(test)]
     const NUMERIC_ONLY: Self = Self(Self::NUMERIC);
+    #[cfg(test)]
     const PROPERTY_ONLY: Self = Self(Self::PROPERTY);
+    #[cfg(test)]
     const PREDICATE_ONLY: Self = Self(Self::PREDICATE);
 
     pub(crate) const fn any(self) -> bool {
@@ -100,6 +108,7 @@ impl LocalFusionPolicy {
     }
 }
 
+#[cfg(test)]
 const fn architecture() -> Architecture {
     #[cfg(target_arch = "x86_64")]
     {
@@ -238,6 +247,7 @@ impl ExecutionPolicy {
         }
     }
 
+    #[cfg(test)]
     fn from_architecture(arch: Architecture, arm_opt_in: bool) -> Self {
         let arm_mode = if arm_opt_in {
             ArmMode::All
@@ -247,6 +257,7 @@ impl ExecutionPolicy {
         Self::from_architecture_and_mode(arch, arm_mode)
     }
 
+    #[cfg(test)]
     fn from_architecture_and_mode(arch: Architecture, arm_mode: ArmMode) -> Self {
         match arch {
             Architecture::X86_64 => Self {

@@ -5669,6 +5669,7 @@ mod stubs {
         Ok(Value::String(text))
     }
 
+    #[cfg(test)]
     fn plain_month_day_from(value: Option<&Value>) -> Result<Value, VmError> {
         let value =
             value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;
