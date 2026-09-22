@@ -408,10 +408,16 @@ impl Heap {
             Cell::Iterator {
                 object: value,
                 source,
+                generator,
                 ..
             } => {
                 object(value);
                 work.push(*source);
+                if let Some(record) = generator {
+                    if let Some(continuation) = record.continuation.as_ref() {
+                        work.extend(continuation.roots());
+                    }
+                }
             }
             Cell::Proxy {
                 object: value,

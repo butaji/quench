@@ -11,7 +11,7 @@ use crate::value_vec::ValueVec;
 use rustc_hash::FxHashMap;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
-mod activation; mod activation_lifecycle;
+pub(crate) mod activation; mod activation_lifecycle;
 mod arguments;
 mod array; mod array_buffer;
 mod array_builtins; mod array_group;
@@ -56,7 +56,7 @@ mod object_symbols;
 #[cfg(test)]
 mod object_tests;
 mod property_key;
-use activation::{Continuation, GeneratorRecord, SuspendedEntry};
+use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use numeric_site::NumericSite;
 use promise::PromiseRuntime;
@@ -270,7 +270,6 @@ pub struct Vm<H> {
     with_stack: Vec<Value>,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
-    generators: FxHashMap<Value, GeneratorRecord>,
     promise: PromiseRuntime,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
@@ -408,7 +407,6 @@ impl<H: Host> Vm<H> {
         self.with_stack.clear();
         self.suspended.clear();
         self.suspended_free.clear();
-        self.generators.clear();
         self.promise = Default::default();
         self.numeric_sites.clear();
         self.shapes.truncate(1);

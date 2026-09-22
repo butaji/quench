@@ -99,6 +99,7 @@ impl<H: Host> Vm<H> {
             source,
             kind,
             index: 0,
+            generator: None,
         }))
     }
 
@@ -132,6 +133,7 @@ impl<H: Host> Vm<H> {
             source,
             kind,
             index: 0,
+            generator: None,
         }))
     }
 
@@ -161,6 +163,7 @@ impl<H: Host> Vm<H> {
             source: iterator,
             kind: IteratorKind::AsyncFromSync,
             index: 0,
+            generator: None,
         }))
     }
 
@@ -189,6 +192,7 @@ impl<H: Host> Vm<H> {
             source,
             kind,
             index: 0,
+            generator: None,
         }))
     }
 
