@@ -452,14 +452,16 @@ fn evaluate_direct(
         arguments: forbidden_var_names.iter().any(|name| name == "arguments"),
     };
     let program = crate::reduce::reduce_statements::reduce_eval_source_in_context(
-        &source,
-        strict,
-        global,
-        crate::with_scope::is_active(),
-        bindings,
-        reusable_var_names,
-        forbidden_var_names,
-        grammar,
+        crate::reduce::reduce_statements::EvalSourceRequest {
+            source: &source,
+            inherited_strict: strict,
+            global,
+            dynamic_scope: crate::with_scope::is_active(),
+            bindings,
+            reusable_var_names,
+            forbidden_var_names,
+            grammar,
+        },
     )
     .map_err(|errors| syntax_error(errors, None))?;
     let local_slot = program
