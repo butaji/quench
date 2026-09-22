@@ -155,12 +155,17 @@ impl FunctionCompiler<'_, '_> {
         let (callee, this) = self.callee(&value.callee);
         let (base, count) = self.arguments(&value.arguments);
         let dst = self.reg();
+        let direct_eval = matches!(&value.callee, Expression::Identifier(identifier)
+            if identifier.name == "eval"
+                && !self.local_slots.contains_key(&self.owner.atom("eval"))
+                && !self.scopes.iter().any(|scope| scope.contains_key(&self.owner.atom("eval"))));
         self.emit(
             Op::Call,
             dst,
             callee,
             this,
-            (u32::from(base) << 16) | u32::from(count),
+            ((u32::from(base) << 16) | u32::from(count))
+                | if direct_eval { 0x8000_0000 } else { 0 },
         );
         dst
     }

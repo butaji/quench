@@ -80,6 +80,7 @@ impl<H: Host> Vm<H> {
             symbol_properties: FxHashMap::default(),
             symbol_property_order: FxHashMap::default(),
             function_values: vec![],
+            direct_eval: false,
             random_state: 0x4d59_5df4_d0f3_3173,
         }
     }
