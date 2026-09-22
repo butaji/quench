@@ -491,6 +491,7 @@ pub(crate) enum Cell {
         source: Value,
         kind: IteratorKind,
         index: usize,
+        generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
     },
     Proxy {
         object: Object,

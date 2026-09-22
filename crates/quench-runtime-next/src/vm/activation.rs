@@ -28,6 +28,7 @@ pub(crate) struct Continuation {
     pub promise: Value,
 }
 
+#[derive(Clone, Debug)]
 pub(crate) struct GeneratorRecord {
     pub(crate) continuation: Option<Continuation>,
     pub(crate) done: bool,

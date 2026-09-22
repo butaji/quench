@@ -3,6 +3,16 @@ use super::promise::PromiseState;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn generator_record_mut(&mut self, generator: Value) -> Option<&mut GeneratorRecord> {
+        match self.heap.get_mut(generator) {
+            Some(Cell::Iterator {
+                generator: Some(record),
+                ..
+            }) => Some(record.as_mut()),
+            _ => None,
+        }
+    }
+
     pub(super) fn call_generator(
         &mut self,
         p: &ResidualProgram,
@@ -79,6 +89,7 @@ impl<H: Host> Vm<H> {
                 IteratorKind::Generator
             },
             index: 0,
+            generator: None,
         });
         if let Some(Cell::Iterator { source, .. }) = self.heap.get_mut(generator) {
             *source = generator;
@@ -97,9 +108,8 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::IteratorThrow),
         )?;
         self.heap.release_root(root);
-        self.generators.insert(
-            generator,
-            GeneratorRecord {
+        if let Some(Cell::Iterator { generator: slot, .. }) = self.heap.get_mut(generator) {
+            *slot = Some(Box::new(GeneratorRecord {
                 continuation: Some(Continuation {
                     function: frame.function,
                     pc: frame.pc,
@@ -114,8 +124,10 @@ impl<H: Host> Vm<H> {
                 }),
                 done: false,
                 running: false,
-            },
-        );
+            }));
+        } else {
+            return Err(JsError("generator allocation lost its iterator cell".into()));
+        }
         self.frame_pool.push(Self::recycle_frame(frame));
         Ok(generator)
     }
@@ -174,7 +186,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn close_generator(&mut self, generator: Value) -> Result<(), JsError> {
-        let Some(record) = self.generators.get_mut(&generator) else {
+        let Some(record) = self.generator_record_mut(generator) else {
             return Err(JsError("generator receiver is invalid".into()));
         };
         if record.running {
@@ -202,7 +214,7 @@ impl<H: Host> Vm<H> {
         initial_error: Option<JsError>,
     ) -> Result<Value, JsError> {
         let (continuation, done, running) = {
-            let Some(record) = self.generators.get_mut(&generator) else {
+            let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
             };
             if record.running {
@@ -220,7 +232,7 @@ impl<H: Host> Vm<H> {
             return self.iterator_result(Value::UNDEFINED, true);
         }
         let continuation = continuation.ok_or_else(|| JsError("generator is suspended".into()))?;
-        if let Some(record) = self.generators.get_mut(&generator) {
+        if let Some(record) = self.generator_record_mut(generator) {
             record.running = true;
         }
         let mut frame = Frame {
@@ -238,7 +250,7 @@ impl<H: Host> Vm<H> {
         {
             if register as usize >= frame.registers.len() {
                 self.frame_pool.push(Self::recycle_frame(frame));
-                if let Some(record) = self.generators.get_mut(&generator) {
+                if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.done = true;
                 }
@@ -253,7 +265,7 @@ impl<H: Host> Vm<H> {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.frame_pool.push(Self::recycle_frame(frame));
-                if let Some(record) = self.generators.get_mut(&generator) {
+                if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.done = true;
                 }
@@ -266,7 +278,7 @@ impl<H: Host> Vm<H> {
                 destination,
                 frame: None,
             } => {
-                if let Some(record) = self.generators.get_mut(&generator) {
+                if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.continuation = Some(Continuation {
                         function: frame.function,
@@ -285,7 +297,7 @@ impl<H: Host> Vm<H> {
             }
             FrameOutcome::Complete(value) => {
                 self.frame_pool.push(Self::recycle_frame(frame));
-                if let Some(record) = self.generators.get_mut(&generator) {
+                if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.done = true;
                 }
@@ -293,7 +305,7 @@ impl<H: Host> Vm<H> {
             }
             FrameOutcome::Await { .. } => {
                 self.frame_pool.push(Self::recycle_frame(frame));
-                if let Some(record) = self.generators.get_mut(&generator) {
+                if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.done = true;
                 }
@@ -318,7 +330,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let promise = self.promise_object();
         let continuation = {
-            let Some(record) = self.generators.get_mut(&generator) else {
+            let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("async generator receiver is invalid".into()));
             };
             if record.running {
@@ -421,7 +433,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         destination: u16,
     ) -> Result<(), JsError> {
-        if let Some(record) = self.generators.get_mut(&generator) {
+        if let Some(record) = self.generator_record_mut(generator) {
             record.running = false;
             record.continuation = Some(Continuation {
                 function: frame.function,
@@ -448,7 +460,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         done: bool,
     ) -> Result<(), JsError> {
-        if let Some(record) = self.generators.get_mut(&generator) {
+        if let Some(record) = self.generator_record_mut(generator) {
             record.running = false;
             record.done = done;
             record.continuation = None;
@@ -464,7 +476,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
         error: JsError,
     ) -> Result<(), JsError> {
-        if let Some(record) = self.generators.get_mut(&generator) {
+        if let Some(record) = self.generator_record_mut(generator) {
             record.running = false;
             record.done = true;
             record.continuation = None;
