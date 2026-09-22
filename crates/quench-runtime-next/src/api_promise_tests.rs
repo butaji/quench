@@ -259,9 +259,12 @@ fn generator_return_and_throw_are_state_transitions() {
     let mut runtime = Runtime::new(host);
     runtime
         .compile_and_execute(ExecutionRequest::script(
-            "function* values() { yield 1; } var iterator = values(); print(iterator.return(9).value); print(iterator.next().done); try { iterator.throw('x'); } catch (error) { print(error); } async function* asyncValues() { yield 2; } var asyncIterator = asyncValues(); asyncIterator.next().then(function(step) { print(step.value); return asyncIterator.return(8); }).then(function(step) { print(step.value); });",
+            "function* values() { try { yield 1; } catch (error) { yield error; } } var iterator = values(); print(iterator.next().value); print(iterator.throw('x').value); print(iterator.next().done); var returned = values(); print(returned.return(9).value); print(returned.next().done); async function* asyncValues() { yield 2; } var asyncIterator = asyncValues(); asyncIterator.next().then(function(step) { print(step.value); return asyncIterator.return(8); }).then(function(step) { print(step.value); });",
             "generator-control.js",
         ))
         .unwrap();
-    assert_eq!(view.0.borrow().as_slice(), ["9", "true", "x", "2", "8"]);
+    assert_eq!(
+        view.0.borrow().as_slice(),
+        ["1", "x", "true", "9", "true", "2", "8"]
+    );
 }
