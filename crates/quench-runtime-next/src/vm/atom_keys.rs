@@ -23,6 +23,15 @@ impl<H: Host> Vm<H> {
             })
     }
 
+    pub(super) fn atom_value(&self, atom: Atom) -> JsString {
+        let index = atom as usize;
+        if index < self.atom_text.len() {
+            JsString::from_str(&self.atom_text[index])
+        } else {
+            self.dynamic_atoms[index - self.atom_text.len()].clone()
+        }
+    }
+
     fn atom_units_equal(&self, atom: Atom, units: &[u16]) -> bool {
         let index = atom as usize;
         if index < self.atom_text.len() {
