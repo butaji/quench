@@ -90,6 +90,21 @@ impl<H: Host> Vm<H> {
                 .copied()
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             let descriptor = self.object();
+            if attributes.accessor {
+                for (name, value) in [
+                    ("get", attributes.getter.unwrap_or(Value::UNDEFINED)),
+                    ("set", attributes.setter.unwrap_or(Value::UNDEFINED)),
+                    ("enumerable", Self::integrity_bool(attributes.enumerable)),
+                    (
+                        "configurable",
+                        Self::integrity_bool(attributes.configurable),
+                    ),
+                ] {
+                    let atom = self.intern_atom(name);
+                    self.set_property(descriptor, atom, value)?;
+                }
+                return Ok(descriptor);
+            }
             for (name, value) in [
                 ("value", value),
                 ("writable", Self::integrity_bool(attributes.writable)),

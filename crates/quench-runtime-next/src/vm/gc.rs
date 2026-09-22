@@ -197,7 +197,7 @@ impl<H: Host> Vm<H> {
                 && key
                     .symbol_value()
                     .is_some_and(|key| self.heap.get(key).is_some())
-                && self.heap.get(*value).is_some()
+                && (!value.is_heap() || self.heap.get(*value).is_some())
         });
         self.symbol_property_order.retain(|object, keys| {
             if self.heap.get(*object).is_none() {
