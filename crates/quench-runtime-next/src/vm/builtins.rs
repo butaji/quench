@@ -2,7 +2,7 @@ use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::Object,
+    Native::Print, Native::HostDone, Native::Object,
     Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
@@ -160,8 +160,8 @@ const NATIVES: &[Native] = &[
     Native::DisposableStackUseAsync, Native::DisposableStackDisposeAsync,
     Native::FunctionCall,
     Native::FunctionApply,
-    Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateToISOString, Native::DateToJSON, Native::DateParse, Native::DateUTC,
-    Native::Error,
+    Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateGetTimezoneOffset, Native::DateToISOString, Native::DateToJSON, Native::DateParse, Native::DateUTC,
+    Native::Error, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError,
     Native::RegExp,
     Native::RegExpExec,
     Native::RegExpTest,
@@ -246,7 +246,8 @@ impl<H: Host> Vm<H> {
         self.global(program, "Infinity", Value::number(f64::INFINITY))?;
         self.global(program, "print", self.native_value(Native::Print))?;
         self.install_date(program)?;
-        self.global(program, "Error", self.native_value(Native::Error))?;
+        self.install_host_globals(program)?;
+        self.install_errors(program)?;
         self.install_regexp(program)?;
         let symbol = self.native_value(Native::Symbol);
         self.set_named(program, symbol, "for", self.native_value(Native::SymbolFor))?;

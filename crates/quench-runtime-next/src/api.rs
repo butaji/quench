@@ -56,6 +56,14 @@ impl<H: Host> Runtime<H> {
         Self { vm: Vm::new(host) }
     }
 
+    pub fn host_mut(&mut self) -> &mut H {
+        &mut self.vm.host
+    }
+
+    pub fn into_host(self) -> H {
+        self.vm.host
+    }
+
     pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.execute(program)
