@@ -454,7 +454,6 @@ fn append_edges(value: &Value, ids: &HashMap<usize, usize>, output: &mut Vec<usi
             // the target is live, but it must not keep a trial-deleted node
             // alive or count as an internal strong edge.
             let _ = function;
-            return;
         }
         Value::BindingCell(cell) => append_edges(&cell.load(), ids, output),
         Value::Proxy(proxy) => {

@@ -58,7 +58,7 @@ fn set_property_preserving_identity(target: &Value, key: &str, value: Value) -> 
     if key.starts_with("Symbol.IntlLegacyConstructedSymbol\0") {
         object
             .properties
-            .retain(|(name, _)| name != &crate::builtins::descriptor_key(key));
+            .retain(|(name, _)| name != crate::builtins::descriptor_key(key));
         object.properties.push((
             crate::builtins::descriptor_key(key).into(),
             Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![

@@ -131,7 +131,7 @@ fn update_await_frame(
         .and_then(suspension_destination)
         .unwrap_or_else(|| await_destination(generator));
     try_push_frame(
-        &mut generator.machine.borrow_mut(),
+        generator.machine.borrow_mut(),
         crate::machine::Frame::Await {
             phase: 0,
             // Await is a stack marker; resumption continues from the machine
@@ -173,9 +173,9 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
     let Some(frames) = iterator_frame_chain(generator, state)? else {
         return Ok(false);
     };
-    let mut machine = generator.machine.borrow_mut();
+    let machine = generator.machine.borrow_mut();
     for frame in frames {
-        try_push_frame(&mut machine, frame)?;
+        try_push_frame(machine, frame)?;
     }
     Ok(true)
 }
@@ -197,7 +197,7 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
     else {
         return Ok(());
     };
-    let test = crate::execute::read_register(&registers(generator), *condition)?;
+    let test = crate::execute::read_register(registers(generator), *condition)?;
     let branch = if crate::execute::is_truthy(&test) {
         consequent
     } else {
@@ -217,7 +217,7 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         end: branch.range.end,
     };
     try_push_frame(
-        &mut generator.machine.borrow_mut(),
+        generator.machine.borrow_mut(),
         crate::machine::Frame::Branch {
             phase: crate::machine::BranchPhase::Body,
             branch_resume,
@@ -279,7 +279,7 @@ fn push_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(
     let body_resume = range_after(branch_range, suffix.len());
     let resume = parent_resume_range(generator, state);
     try_push_frame(
-        &mut generator.machine.borrow_mut(),
+        generator.machine.borrow_mut(),
         crate::machine::Frame::Try {
             phase,
             body: body.range,
@@ -321,7 +321,7 @@ fn push_private_frame(generator: &GeneratorData, state: &GeneratorState) -> Resu
     };
     let resume = parent_resume_range(generator, state);
     try_push_frame(
-        &mut generator.machine.borrow_mut(),
+        generator.machine.borrow_mut(),
         crate::machine::Frame::Private {
             phase: crate::machine::PrivatePhase::Body,
             environment,

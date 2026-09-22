@@ -110,10 +110,7 @@ pub(crate) fn execute_named(
         true,
         crate::execution_trace::call_target_name(&callee),
     );
-    let argument_values = argument
-        .as_ref()
-        .map(std::slice::from_ref)
-        .unwrap_or_default();
+    let argument_values = argument.as_slice();
     let argument_registers = (instruction.flags == 1).then_some(instruction.c);
     finish_named_call(
         registers,
@@ -178,10 +175,7 @@ fn execute_named_word_fast(
     let argument = (instruction.flags == 1)
         .then(|| read_register(registers, instruction.c))
         .transpose()?;
-    let arguments = argument
-        .as_ref()
-        .map(std::slice::from_ref)
-        .unwrap_or_default();
+    let arguments = argument.as_slice();
     if crate::functions::direct_call_eligible(&function) {
         // The named-property cache already guards the receiver layout and
         // physical slot. Since this slot owns the callable identity, probing

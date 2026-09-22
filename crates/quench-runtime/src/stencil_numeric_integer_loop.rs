@@ -498,7 +498,7 @@ fn affine_callee_formula(object: &crate::value::ObjectData, key: &str) -> Option
 }
 
 fn affine_function_formula(function: &crate::value::FunctionValue) -> Option<(i32, i32)> {
-    crate::functions::direct_call_eligible(&function).then_some(())?;
+    crate::functions::direct_call_eligible(function).then_some(())?;
     let fact = function.code.numeric_affine_i32()?;
     (usize::from(fact.parameter_slot) == function.captures.len())
         .then_some((fact.multiplier, fact.addend))

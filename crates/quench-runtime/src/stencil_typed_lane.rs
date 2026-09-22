@@ -94,7 +94,7 @@ fn validate_view(
 }
 
 fn lane_pointer(bytes: &mut [u8], offset: usize, lanes: usize) -> Option<*mut i32> {
-    (offset % BYTES_PER_LANE == 0).then_some(())?;
+    offset.is_multiple_of(BYTES_PER_LANE).then_some(())?;
     let length = lanes.checked_mul(BYTES_PER_LANE)?;
     let end = offset.checked_add(length)?;
     let slice = bytes.get_mut(offset..end)?;

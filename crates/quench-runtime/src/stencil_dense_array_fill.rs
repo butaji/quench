@@ -153,7 +153,7 @@ impl NativeDenseFillPlan {
     ) -> Result<Option<DenseFillOutcome>, NativeDispatchError> {
         let mut native = native_context(words, value, context);
         let status = self.invoke(&mut native)?;
-        let outcome = finish_native(status, &native, &words)?;
+        let outcome = finish_native(status, &native, words)?;
         if status == crate::vm::NATIVE_DISPATCH_INTERRUPT {
             context.clear_interrupt();
         }

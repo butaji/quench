@@ -494,13 +494,13 @@ fn execute_direct_eval(
     let _strict_eval = crate::locals::StrictEvalGuard::install(strict);
     let _guard = crate::locals::EnvironmentGuard::install_eval(environment);
     let mut registers = crate::register_file::RegisterFile::new();
-    let result = crate::vm::execute_code_in_environment(
+
+    crate::vm::execute_code_in_environment(
         code,
         &mut registers,
         &crate::vm::current_context_or_default(),
         crate::locals::current(),
-    );
-    result
+    )
 }
 
 fn syntax_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {

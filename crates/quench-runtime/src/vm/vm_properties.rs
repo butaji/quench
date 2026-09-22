@@ -380,9 +380,8 @@ fn promise_value_property(promise: &crate::value::PromiseData, value: &Value, ke
         return intrinsic_override_property(Builtin::PromisePrototype, key, value)
             .unwrap_or_else(|| crate::builtins::property(Builtin::PromisePrototype, key));
     }
-    let result =
-        promise_property_value(promise, key).unwrap_or_else(|| promise_property(value, key));
-    result
+
+    promise_property_value(promise, key).unwrap_or_else(|| promise_property(value, key))
 }
 
 fn promise_property_value(promise: &crate::value::PromiseData, key: &str) -> Option<Value> {

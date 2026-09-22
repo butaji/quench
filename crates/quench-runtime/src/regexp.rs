@@ -165,7 +165,7 @@ fn normalize_legacy_identity_escapes(pattern: &str, flags: &str) -> String {
                 continue;
             }
         }
-        if next >= '4' && next < '8' && (next as usize - '0' as usize) > capture_count {
+        if ('4'..'8').contains(&next) && (next as usize - '0' as usize) > capture_count {
             let mut end = index + 2;
             if end < chars.len() && chars[end] >= '0' && chars[end] < '8' {
                 end += 1;
@@ -574,10 +574,8 @@ fn find_match_utf16(
     let mut matched = regex.find_from_utf16(&units, start_units).next();
     if let Some(found) = &mut matched {
         found.range = utf16_range_to_bytes(text, &found.range);
-        for capture in &mut found.captures {
-            if let Some(range) = capture {
-                *range = utf16_range_to_bytes(text, range);
-            }
+        for range in found.captures.iter_mut().flatten() {
+            *range = utf16_range_to_bytes(text, range);
         }
         if sticky && found.start() != start {
             matched = None;
@@ -607,11 +605,11 @@ fn utf16_range_to_bytes(text: &str, range: &std::ops::Range<usize>) -> std::ops:
         ..crate::strings::utf16_byte_index(text, range.end)
 }
 
-fn compile_and_find<'a>(
+fn compile_and_find(
     receiver: &Value,
     source: &str,
     flags: &str,
-    text: &'a str,
+    text: &str,
     start: usize,
     sticky: bool,
 ) -> Result<Option<Match>, VmError> {
@@ -755,10 +753,12 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         return Ok(Value::Boolean(found.is_some()));
     }
     let s = argument_string(arguments)?;
-    if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
-        if crate::regexp_native::find_str(&source, &flags, &s, 0).is_some() {
-            return Ok(Value::Boolean(true));
-        }
+    if !flags.contains('g')
+        && !flags.contains('y')
+        && source.len() <= 3
+        && crate::regexp_native::find_str(&source, &flags, &s, 0).is_some()
+    {
+        return Ok(Value::Boolean(true));
     }
     if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
         set_last_index(receiver, 0.0)?;
@@ -809,10 +809,9 @@ fn surrogate_property_test(value: Option<&Value>, source: &str, flags: &str) -> 
     }
     let (negated, body) = if let Some(body) = source.strip_prefix("^\\p{") {
         (false, body.strip_suffix("}+$")?)
-    } else if let Some(body) = source.strip_prefix("^\\P{") {
-        (true, body.strip_suffix("}+$")?)
     } else {
-        return None;
+        let body = source.strip_prefix("^\\P{")?;
+        (true, body.strip_suffix("}+$")?)
     };
     let matches = matches!(
         body,

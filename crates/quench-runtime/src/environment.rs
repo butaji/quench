@@ -315,7 +315,7 @@ impl SlotStore {
             };
             let before = *old;
             *old += delta;
-            return Some((before, *old));
+            Some((before, *old))
         } else {
             let before = self.values().read_number(index)?;
             let after = before + delta;

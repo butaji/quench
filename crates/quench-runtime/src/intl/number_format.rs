@@ -18,7 +18,7 @@ pub(crate) fn group_integer(text: &str) -> String {
     let chars: Vec<char> = integer.chars().collect();
     let mut grouped = String::new();
     for (index, character) in chars.iter().enumerate() {
-        if index > 0 && (chars.len() - index) % 3 == 0 {
+        if index > 0 && (chars.len() - index).is_multiple_of(3) {
             grouped.push(',');
         }
         grouped.push(*character);

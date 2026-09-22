@@ -252,7 +252,7 @@ fn whitespace_to_word(bytes: &[u8], mut cursor: usize, word: &[u8]) -> Option<(b
 }
 
 fn is_boundary(byte: Option<u8>) -> bool {
-    byte.map_or(true, |byte| !byte.is_ascii_alphanumeric() && byte != b'_' && byte != b'$')
+    byte.is_none_or(|byte| !byte.is_ascii_alphanumeric() && byte != b'_' && byte != b'$')
 }
 
 fn skip_quoted(bytes: &[u8], mut cursor: usize) -> usize {

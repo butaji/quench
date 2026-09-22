@@ -610,13 +610,13 @@ fn cacheable_missing_prototype(
         let prototype_slot = owner.hot_properties().position_rev("\0prototype")?;
         match owner.hot_properties().slot_value(prototype_slot)? {
             Value::Null => {
-                return Some(missing_cache(
+                return missing_cache(
                     receiver,
                     depth,
                     links,
                     owner,
                     prototype_slot,
-                )?)
+                )
             }
             Value::Object(prototype) if depth < links.len() => {
                 links[depth] = Some(PrototypeLink {
@@ -1213,17 +1213,14 @@ pub(crate) fn proven_own_slot(object: &crate::value::ObjectData, key: &str) -> O
         return None;
     }
     let slot = object.physical_slot_for_name(key)?;
-    if !plain_metadata {
-        if object.has_accessor_descriptor(key)? {
+    if !plain_metadata
+        && object.has_accessor_descriptor(key)? {
             return None;
         }
-    }
     let own = object.hot_properties().slot_word(slot)?;
     // These are internal indirections, not observable property values. The
     // tagged-word fact rejects them without cloning a temporary `Value`.
-    if own.plain_tagged_bits().is_none() {
-        return None;
-    }
+    own.plain_tagged_bits()?;
     if key == "format" && own.is_intl_format_builtin() {
         return None;
     }
@@ -1260,9 +1257,7 @@ pub(crate) fn proven_own_word<'a>(
     // Internal indirections are only meaningful to the complete property
     // gateway.  The raw-word projection must never expose them, even when a
     // duplicate/metadata layout forced us through this conservative scan.
-    if own.plain_tagged_bits().is_none() {
-        return None;
-    }
+    own.plain_tagged_bits()?;
     if metadata.is_some_and(|value| accessor_descriptor(&value)) {
         return None;
     }

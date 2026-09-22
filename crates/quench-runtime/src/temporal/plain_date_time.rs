@@ -955,12 +955,11 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let calendar =
         calendar.ok_or_else(|| crate::value::error::throw_type_error("Missing calendar"))?;
-    if !crate::temporal::plain_date::is_temporal_date_like(calendar) {
-        if !matches!(calendar, Value::String(_) | Value::StringUnits(_))
-            || crate::conversion::is_symbol(calendar)
-        {
-            return Err(crate::value::error::throw_type_error("Invalid calendar"));
-        }
+    if !crate::temporal::plain_date::is_temporal_date_like(calendar)
+        && (!matches!(calendar, Value::String(_) | Value::StringUnits(_))
+            || crate::conversion::is_symbol(calendar))
+    {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
     let calendar = crate::temporal::parse_calendar_identifier(calendar)?;
     let mut values = fields(receiver)?;
@@ -1671,7 +1670,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         } else {
             increment >= maximum
         }
-        || (maximum as u64) % (increment as u64) != 0
+        || !(maximum as u64).is_multiple_of(increment as u64)
     {
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
@@ -2889,7 +2888,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     let (clock, fraction) = time
         .split_once('.')
         .or_else(|| time.split_once(','))
-        .map_or((time, ""), |parts| parts);
+        .unwrap_or((time, ""));
     let colon_clock = clock.contains(':');
     let clock = if colon_clock {
         clock.split(':').collect::<Vec<_>>()

@@ -200,7 +200,7 @@ pub(crate) fn define_global_declaration_property(
             .properties
             .iter()
             .rev()
-            .find_map(|(key, value)| (key == &descriptor_key).then_some(value));
+            .find_map(|(key, value)| (key == descriptor_key).then_some(value));
         let mut effective_descriptor = descriptor.to_vec();
         if let Some(crate::value::Value::Object(previous)) = previous_descriptor {
             for field in ["writable", "enumerable", "configurable", "get", "set"] {
@@ -219,7 +219,7 @@ pub(crate) fn define_global_declaration_property(
         staged.ensure_creation_order();
         staged
             .properties
-            .retain(|(key, _)| key != name && key != &descriptor_key && key != &deleted_key);
+            .retain(|(key, _)| key != name && key != descriptor_key && key != deleted_key);
         let value = effective_descriptor
             .iter()
             .rev()

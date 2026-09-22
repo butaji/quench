@@ -321,7 +321,7 @@ impl<const CAPACITY: usize> ValueGraph<CAPACITY> {
 }
 
 fn pure(opcode: Opcode) -> bool {
-    opcode.effects() == &[crate::facts::OperationEffect::Pure]
+    opcode.effects() == [crate::facts::OperationEffect::Pure]
 }
 
 fn is_i32_operator(operator: crate::ops::BinaryOp) -> bool {

@@ -766,7 +766,7 @@ fn validate_define_invariant(
         if let (Some(current_enum), Some(requested_enum)) =
             (current_field("enumerable"), field("enumerable"))
         {
-            if !crate::builtins::same_value(Some(&current_enum), Some(&requested_enum)) {
+            if !crate::builtins::same_value(Some(&current_enum), Some(requested_enum)) {
                 return Err(crate::value::error::throw_type_error(
                     "Proxy defineProperty invariant violated",
                 ));

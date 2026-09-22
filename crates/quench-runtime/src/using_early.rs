@@ -180,10 +180,7 @@ fn reject_for_of_bound_name_collisions(
         .flat_map(|declarator| crate::binding_patterns::names(&declarator.id));
     let declared =
         crate::semantic_early::var_declared_names_in(std::slice::from_ref(&statement.body));
-    if bound
-        .into_iter()
-        .any(|name| declared.iter().any(|other| name == *other))
-    {
+    if bound.into_iter().any(|name| declared.contains(&name)) {
         errors.push(USING_SYNTAX.to_string());
     }
 }

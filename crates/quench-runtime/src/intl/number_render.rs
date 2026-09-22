@@ -53,7 +53,7 @@ pub(crate) fn pad_locale_fraction(text: &str, minimum: u32, locale: &str) -> Str
     if fraction_digits == 0 {
         result.push(',');
     }
-    result.extend(std::iter::repeat('0').take(minimum as usize - fraction_digits));
+    result.extend(std::iter::repeat_n('0', minimum as usize - fraction_digits));
     result
 }
 

@@ -63,6 +63,6 @@ fn resume_after_private(
 
 fn install_private_frame_input(generator: &GeneratorData, input: &Value) -> bool {
     let Some(frame) = private_frame_resume(generator) else { return false; };
-    crate::execute::write_value(&mut registers_mut(generator), frame.yield_dst, input.clone());
+    crate::execute::write_value(registers_mut(generator), frame.yield_dst, input.clone());
     true
 }

@@ -11,7 +11,7 @@ fn suspended_conditional<'a>(
     else {
         return None;
     };
-    let test = crate::execute::read_register(&registers(generator), *condition).ok()?;
+    let test = crate::execute::read_register(registers(generator), *condition).ok()?;
     let branch = if crate::execute::is_truthy(&test) {
         consequent
     } else {
@@ -62,7 +62,7 @@ fn install_nested_resume_input(
     input: Value,
 ) {
     if let Some((Op::Yield { src }, _)) = suspended_conditional(generator, state) {
-        crate::execute::write_value(&mut registers_mut(generator), *src, input);
+        crate::execute::write_value(registers_mut(generator), *src, input);
         return;
     }
     if install_iterator_binding_input(generator, state, &input) {
@@ -75,7 +75,7 @@ fn install_nested_resume_input(
         return;
     };
     if let Some(Op::Yield { src }) = body.cold_at(index) {
-        crate::execute::write_value(&mut registers_mut(generator), *src, input);
+        crate::execute::write_value(registers_mut(generator), *src, input);
     }
 }
 

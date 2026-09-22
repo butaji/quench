@@ -186,7 +186,7 @@ fn validate_cond_branch19(dst: &[u8], offset: usize, displacement: i64) -> Resul
     let slot = dst
         .get(offset..offset.saturating_add(AARCH64_INSTRUCTION_BYTES))
         .ok_or(PatchError::OutOfBounds)?;
-    if offset % AARCH64_INSTRUCTION_BYTES != 0
+    if !offset.is_multiple_of(AARCH64_INSTRUCTION_BYTES)
         || displacement % AARCH64_INSTRUCTION_BYTES as i64 != 0
     {
         return Err(PatchError::UnsupportedOffset);

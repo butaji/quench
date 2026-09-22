@@ -183,7 +183,7 @@ fn valid_registers(registers: &[u8]) -> bool {
 }
 
 fn align_literals(bytes: &mut Vec<u8>) {
-    while bytes.len() % LITERAL_ALIGNMENT != 0 {
+    while !bytes.len().is_multiple_of(LITERAL_ALIGNMENT) {
         emit_word(bytes, NOP);
     }
 }
@@ -197,7 +197,7 @@ fn patch_literals(bytes: &mut Vec<u8>, literals: Vec<LiteralUse>) -> Option<()> 
         bytes[literal.instruction..literal.instruction + INSTRUCTION_BYTES]
             .copy_from_slice(&word.to_le_bytes());
     }
-    (bytes.len() % LITERAL_BYTES == 0).then_some(())
+    bytes.len().is_multiple_of(LITERAL_BYTES).then_some(())
 }
 
 fn emit_word(bytes: &mut Vec<u8>, word: u32) {

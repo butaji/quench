@@ -291,7 +291,7 @@ fn run_try_handler(
         return Ok(crate::completion::Completion::Throw(value));
     };
     if let Some(slot) = frame.catch_slot {
-        crate::execute::write_value(&mut registers_mut(generator), slot, value.clone());
+        crate::execute::write_value(registers_mut(generator), slot, value.clone());
         crate::locals::write(slot, value);
     }
     let step = execute_frame_step(generator, handler)?;
@@ -435,7 +435,7 @@ fn install_try_frame_input(generator: &GeneratorData, input: &Value) -> bool {
         return false;
     };
     crate::execute::write_value(
-        &mut registers_mut(generator),
+        registers_mut(generator),
         frame.yield_dst,
         input.clone(),
     );

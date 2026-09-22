@@ -21,8 +21,8 @@ fn iterator_frame_chain(
     let resume = parent_resume_range(generator, state);
     let mut frames = Vec::new();
     let registers = registers(generator);
-    if collect_for_of_frames(op, resume, &registers, &mut frames)?
-        || collect_iterator_frames(op, resume, &registers, &mut frames)?
+    if collect_for_of_frames(op, resume, registers, &mut frames)?
+        || collect_iterator_frames(op, resume, registers, &mut frames)?
     {
         return Ok(Some(frames));
     }
@@ -205,7 +205,7 @@ fn suspended_for_of_conditional<'a>(
     else {
         return None;
     };
-    let test = crate::execute::read_register(&registers(generator), *condition).ok()?;
+    let test = crate::execute::read_register(registers(generator), *condition).ok()?;
     let branch = if crate::execute::is_truthy(&test) {
         consequent
     } else {
@@ -351,12 +351,11 @@ fn resume_nested_code_mode(
         Op::Yield { src } => {
             let suffix = view.slice(index + 1, view.len()).ok_or(VmError::MissingReturn)?;
             let completion = execute_nested_from(view, registers, index + 1)?;
-            if binding_body && (suffix.is_empty() || suffix.cold_ops().next().is_none()) {
-                if matches!(&completion, crate::completion::Completion::Normal) {
+            if binding_body && (suffix.is_empty() || suffix.cold_ops().next().is_none())
+                && matches!(&completion, crate::completion::Completion::Normal) {
                     return crate::execute::read_register(registers, *src)
                         .map(crate::completion::Completion::Return);
                 }
-            }
             Ok(completion)
         }
         Op::YieldStar { .. } => {
@@ -731,12 +730,12 @@ fn push_for_of_body_frame(
         iterator,
     } = op
     {
-        let iterator_value = crate::execute::read_register(&registers(generator), *iterator)?;
+        let iterator_value = crate::execute::read_register(registers(generator), *iterator)?;
         let iterator_value = if matches!(iterator_value, Value::Undefined) {
-            let source = crate::execute::read_register(&registers(generator), *source)?;
+            let source = crate::execute::read_register(registers(generator), *source)?;
             let iterator_value = crate::collections::iterator::delegate_start(source)?;
             crate::execute::write_value(
-                &mut registers_mut(generator),
+                registers_mut(generator),
                 *iterator,
                 iterator_value.clone(),
             );
@@ -744,9 +743,9 @@ fn push_for_of_body_frame(
         } else {
             iterator_value
         };
-        let mut machine = generator.machine.borrow_mut();
+        let machine = generator.machine.borrow_mut();
         try_push_frame(
-            &mut machine,
+            machine,
             crate::machine::Frame::Delegate {
                 phase: 0,
                 iterator: iterator_value,
@@ -760,14 +759,14 @@ fn push_for_of_body_frame(
         if !collect_iterator_frames(
             op,
             range_after_iterator_op(frame.body, index),
-            &registers(generator),
+            registers(generator),
             &mut frames,
         )? {
             return Ok(false);
         }
-        let mut machine = generator.machine.borrow_mut();
+        let machine = generator.machine.borrow_mut();
         for nested in frames {
-            try_push_frame(&mut machine, nested)?;
+            try_push_frame(machine, nested)?;
         }
         return Ok(true);
     }
@@ -775,15 +774,15 @@ fn push_for_of_body_frame(
     let collected = collect_try_frames(
         op,
         range_after_iterator_op(frame.body, index),
-        &registers(generator),
+        registers(generator),
         &mut frames,
     )?;
     if !collected {
         return Ok(false);
     }
-    let mut machine = generator.machine.borrow_mut();
+    let machine = generator.machine.borrow_mut();
     for nested in frames {
-        try_push_frame(&mut machine, nested)?;
+        try_push_frame(machine, nested)?;
     }
     Ok(true)
 }
@@ -820,7 +819,7 @@ fn install_iterator_frame_input(generator: &GeneratorData, input: &Value) -> boo
         if *yield_dst == 0 {
             continue;
         }
-        crate::execute::write_value(&mut registers_mut(generator), *yield_dst, input.clone());
+        crate::execute::write_value(registers_mut(generator), *yield_dst, input.clone());
         return true;
     }
     false
@@ -877,7 +876,7 @@ fn resume_suspended_iterator_binding(
     };
     if !matches!(resume, crate::completion::Completion::Normal) {
         state.nested = 0;
-        return close_iterator_binding(op, &registers(generator), resume).map(Some);
+        return close_iterator_binding(op, registers(generator), resume).map(Some);
     }
     let step = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_generator_code_step(
@@ -899,7 +898,7 @@ fn resume_suspended_iterator_binding(
         return Ok(Some(completion));
     }
     state.nested = 0;
-    let completion = close_iterator_binding(op, &registers(generator), completion)?;
+    let completion = close_iterator_binding(op, registers(generator), completion)?;
     if matches!(completion, crate::completion::Completion::Normal) {
         let parent = parent_resume_range(generator, state);
         return resume_generator_range(generator, state, parent, completion).map(Some);
@@ -916,7 +915,7 @@ fn resume_iterator_conditional(
         return Ok(None);
     };
     if !matches!(resume, crate::completion::Completion::Normal) {
-        return close_iterator_binding(suspension.binding, &registers(generator), resume).map(Some);
+        return close_iterator_binding(suspension.binding, registers(generator), resume).map(Some);
     }
     let completion = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_code_completion_in_current_frame(
@@ -927,14 +926,14 @@ fn resume_iterator_conditional(
     let crate::completion::Completion::Return(value) = completion else {
         return Ok(Some(completion));
     };
-    write_conditional_result(suspension.conditional, &mut registers_mut(generator), value)?;
+    write_conditional_result(suspension.conditional, registers_mut(generator), value)?;
     let completion = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_code_completion_in_current_frame(
             suspension.body.slice(suspension.body_index + 1, suspension.body.len()).ok_or(VmError::MissingReturn)?,
             registers,
         )
     })?;
-    close_iterator_binding(suspension.binding, &registers(generator), completion).map(Some)
+    close_iterator_binding(suspension.binding, registers(generator), completion).map(Some)
 }
 
 fn write_conditional_result(
@@ -981,7 +980,7 @@ fn install_iterator_binding_input(
     }
     if let Some(suspension) = suspended_for_of_conditional(generator, state) {
         if let Some(Op::Yield { src }) = suspension.branch.cold_at(suspension.yield_index) {
-            crate::execute::write_value(&mut registers_mut(generator), *src, input.clone());
+            crate::execute::write_value(registers_mut(generator), *src, input.clone());
             return true;
         }
     }
@@ -991,7 +990,7 @@ fn install_iterator_binding_input(
     let Some(Op::Yield { src }) = body.cold_at(index) else {
         return false;
     };
-    crate::execute::write_value(&mut registers_mut(generator), *src, input.clone());
+    crate::execute::write_value(registers_mut(generator), *src, input.clone());
     true
 }
 
@@ -1020,7 +1019,7 @@ fn suspended_iterator_conditional<'a>(
     else {
         return None;
     };
-    let test = crate::execute::read_register(&registers(generator), *condition).ok()?;
+    let test = crate::execute::read_register(registers(generator), *condition).ok()?;
     let branch = if crate::execute::is_truthy(&test) {
         consequent
     } else {
@@ -1049,7 +1048,7 @@ fn install_iterator_conditional_input(
     let Some(Op::Yield { src }) = suspension.branch.cold_at(suspension.yield_index) else {
         return false;
     };
-    crate::execute::write_value(&mut registers_mut(generator), *src, input.clone());
+    crate::execute::write_value(registers_mut(generator), *src, input.clone());
     true
 }
 struct IteratorConditional<'a> {

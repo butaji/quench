@@ -542,7 +542,7 @@ fn move_join_operands(
                 && usize::from(false_tail.a) == join_pc
         } else {
             false_tail.opcode == crate::ir::Opcode::Return
-                && join_pc == false_pc.checked_add(1).unwrap_or(usize::MAX)
+                && join_pc == false_pc.saturating_add(1)
                 && false_tail.flags == 0
                 && false_tail.opcode.operands_are_canonical([
                     false_tail.a,

@@ -211,7 +211,7 @@ fn copy_guards_hold(source: &crate::value::ArrayData, target: &crate::value::Arr
         && target.is_plain_dense_access()
         && source.is_dense_numeric_data()
         && target.is_dense_numeric_data()
-        && target.len() != 0
+        && !target.is_empty()
         && source.len() <= target.len()
 }
 

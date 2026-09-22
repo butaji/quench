@@ -595,7 +595,7 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
     // A wakeup before its deadline must report the actual short elapsed
     // interval; timeout progression is driven by the host deadline below.
     let is_async =
-        result == "timed-out" && timeout.map_or(true, |value| value.is_nan() || value > 0.0);
+        result == "timed-out" && timeout.is_none_or(|value| value.is_nan() || value > 0.0);
     let result_value = if is_async {
         let promise = match crate::promise::new_promise() {
             Value::Promise(promise) => promise,

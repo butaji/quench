@@ -347,7 +347,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 }
             }
             if parts.len() == 1
-                && parts.get(0).is_some_and(|part| part.contains(['.', ',']))
+                && parts.first().is_some_and(|part| part.contains(['.', ',']))
                 && parts[0]
                     .split_once(['.', ','])
                     .is_some_and(|(whole, _)| whole.len() <= 2)
@@ -955,10 +955,7 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
             day as u32,
             &calendar,
         )
-        .map_or(
-            (month.parse::<u32>().unwrap_or(1), day as u32),
-            |(month, day)| (month, day),
-        )
+        .unwrap_or((month.parse::<u32>().unwrap_or(1), day as u32))
     } else {
         (month.parse::<u32>().unwrap_or(1), day as u32)
     };
@@ -1071,7 +1068,7 @@ fn with(
     let day_value = crate::execute::get_property_result(changes, "day")?;
     let day = match &day_value {
         Value::Undefined => original_day,
-        value => crate::conversion::to_number(&value)?,
+        value => crate::conversion::to_number(value)?,
     };
     if !day.is_finite() || day < 1.0 {
         return Err(crate::value::error::throw_range_error(

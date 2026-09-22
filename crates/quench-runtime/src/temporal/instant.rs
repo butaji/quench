@@ -747,7 +747,7 @@ fn epoch_nanos(text: &str) -> Result<i128, VmError> {
     let (clock, fraction) = time
         .split_once('.')
         .or_else(|| time.split_once(','))
-        .map_or((time, ""), |parts| parts);
+        .unwrap_or((time, ""));
     let digits = clock.replace(':', "");
     if !digits.chars().all(|value| value.is_ascii_digit())
         || !fraction.chars().all(|value| value.is_ascii_digit())
@@ -910,7 +910,7 @@ fn parse_offset(offset: &str) -> Result<i128, VmError> {
     let (base, fraction) = offset
         .trim_start_matches(['+', '-'])
         .split_once(['.', ','])
-        .map_or((offset.trim_start_matches(['+', '-']), ""), |parts| parts);
+        .unwrap_or((offset.trim_start_matches(['+', '-']), ""));
     let separators = base.matches(':').count();
     let value = base.replace(':', "");
     if (separators == 1 && value.len() != 4)

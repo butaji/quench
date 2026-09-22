@@ -206,10 +206,7 @@ impl SharedStencilSlab {
             return Err(ArenaError::Exhausted);
         }
         let mut slab = StencilArena::new_in_budget(self.slab_capacity, self.budget)?;
-        let address = match slab.render_or_get(&mut self.cache, key, stencil, values) {
-            Ok(address) => address,
-            Err(error) => return Err(error),
-        };
+        let address = slab.render_or_get(&mut self.cache, key, stencil, values)?;
         cache.insert_owned(key, signature, address, slab.id());
         self.slabs.push(slab);
         Ok(address)
@@ -290,11 +287,7 @@ impl SharedStencilSlab {
             return Err(ArenaError::Exhausted);
         }
         let mut slab = StencilArena::new_in_budget(self.slab_capacity, self.budget)?;
-        let address = match render_arena_physical(&mut slab, &mut self.cache, view, values, control)
-        {
-            Ok(address) => address,
-            Err(error) => return Err(error),
-        };
+        let address = render_arena_physical(&mut slab, &mut self.cache, view, values, control)?;
         cache.insert_owned(view.key, signature, address, slab.id());
         self.slabs.push(slab);
         Ok(address)

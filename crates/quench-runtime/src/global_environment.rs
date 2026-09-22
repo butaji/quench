@@ -205,8 +205,8 @@ fn create_var(
         remembered_flags.1,
         remembered_flags.2,
     );
-    let result = define_global(registers, name, descriptor);
-    result
+
+    define_global(registers, name, descriptor)
 }
 
 fn alias_existing_global(

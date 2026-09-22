@@ -398,7 +398,7 @@ fn global_builtin_deleted(global: &Value, key: &str) -> bool {
         return false;
     };
     let marker = crate::builtins::deleted_key(key);
-    properties.iter().any(|(name, _)| name == &marker)
+    properties.iter().any(|(name, _)| name == marker)
 }
 
 fn set_name(

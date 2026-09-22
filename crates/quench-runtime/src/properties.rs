@@ -458,7 +458,7 @@ pub(crate) fn execute_set_named_cached(
                 && assignment_source_is_direct(registers, src)
             {
                 if let Some((layout, slot)) = crate::machine::unpack_named_cache(cached) {
-                    if let Some(word) = cached_plain_writable_slot(&data, key, layout, slot) {
+                    if let Some(word) = cached_plain_writable_slot(data, key, layout, slot) {
                         crate::execution_trace::event(
                             crate::execution_trace::Event::NamedPropertySetHit,
                         );
@@ -653,7 +653,7 @@ pub(crate) fn proven_named_writable_slot(
         return None;
     }
     let (layout, slot) = crate::machine::unpack_named_cache(cache.get())?;
-    cached_plain_writable_slot(&data, key, layout, slot)?;
+    cached_plain_writable_slot(data, key, layout, slot)?;
     let access = data.guarded_plain_slot(layout, slot, key)?;
     access.accepts_non_owning_store().then_some(access)
 }

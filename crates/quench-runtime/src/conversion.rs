@@ -372,7 +372,7 @@ pub fn is_callable(value: &Value) -> bool {
             false
         }
         Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(&bound)
+            if crate::vm::is_intrinsic_bound(bound)
                 && matches!(
                     bound.target,
                     Value::Builtin(

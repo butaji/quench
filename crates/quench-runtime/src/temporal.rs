@@ -1520,7 +1520,7 @@ mod stubs {
             let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
             let days = era * 146_097 + day_of_era - 719_468;
             let local_epoch = days * 86_400_000_000_000
-                + time_parts.get(0).copied().unwrap_or(0) as i128 * 3_600_000_000_000
+                + time_parts.first().copied().unwrap_or(0) as i128 * 3_600_000_000_000
                 + time_parts.get(1).copied().unwrap_or(0) as i128 * 60_000_000_000
                 + time_parts.get(2).copied().unwrap_or(0) as i128 * 1_000_000_000
                 + fractional_nanos;
@@ -2106,7 +2106,6 @@ mod stubs {
                                 super::plain_date::calendar_date_from_code(
                                     year, &code, day, &calendar,
                                 )
-                                .map(|(ordinal, canonical)| (ordinal, canonical))
                             })
                         });
                     if let Some((ordinal, code)) = resolved {
@@ -2856,7 +2855,7 @@ mod stubs {
                         .find(|(key, _)| key == name)
                         .map(|(_, value)| value)
                         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
-                    let number = crate::conversion::to_number(&value)?;
+                    let number = crate::conversion::to_number(value)?;
                     if !number.is_finite() {
                         return Err(crate::value::error::throw_range_error("Invalid date"));
                     }
@@ -3058,10 +3057,7 @@ mod stubs {
             return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithPlainTime {
-            if arguments
-                .first()
-                .map_or(false, crate::conversion::is_symbol)
-            {
+            if arguments.first().is_some_and(crate::conversion::is_symbol) {
                 return Err(crate::value::error::throw_type_error("Invalid time"));
             }
             if let Some(value @ (Value::String(_) | Value::StringUnits(_))) = arguments.first() {
@@ -3142,7 +3138,7 @@ mod stubs {
             });
             let time = if arguments
                 .first()
-                .map_or(true, |value| matches!(value, Value::Undefined))
+                .is_none_or(|value| matches!(value, Value::Undefined))
             {
                 super::plain_time::construct(&[])?
             } else {
@@ -3203,7 +3199,7 @@ mod stubs {
                     }
                     if arguments
                         .first()
-                        .map_or(true, |value| matches!(value, Value::Undefined))
+                        .is_none_or(|value| matches!(value, Value::Undefined))
                     {
                         super::timezone_start_of_day_epoch(&timezone, epoch)
                             .unwrap_or(epoch + delta)
@@ -3219,7 +3215,7 @@ mod stubs {
             };
             let epoch = if arguments
                 .first()
-                .map_or(true, |value| matches!(value, Value::Undefined))
+                .is_none_or(|value| matches!(value, Value::Undefined))
             {
                 current_epoch
             } else {
@@ -4184,7 +4180,7 @@ mod stubs {
                 let mut fields = vec![Value::Number(0.0); 10];
                 fields[1] = Value::Number((months * operation_factor) as f64);
                 let sign = if fixed_wall_timezone {
-                    i128::from(residual.signum()) * i128::from(operation_factor)
+                    residual.signum() * i128::from(operation_factor)
                 } else {
                     i128::from(operation_factor)
                 };
@@ -4642,7 +4638,7 @@ mod stubs {
                     }
                 } else {
                     let anchor = start_date
-                        .checked_sub_months(chrono::Months::new(month_delta.unsigned_abs() as u32))
+                        .checked_sub_months(chrono::Months::new(month_delta.unsigned_abs()))
                         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
                     (anchor, (end_date - anchor).num_days())
                 };
@@ -4747,12 +4743,8 @@ mod stubs {
                                 0
                             }
                         }
-                        "halfEven" => {
-                            if twice > unit || (twice == unit && whole % 2 != 0) {
-                                sign as i32
-                            } else {
-                                0
-                            }
+                        "halfEven" if (twice > unit || (twice == unit && whole % 2 != 0)) => {
+                            sign as i32
                         }
                         _ => 0,
                     }
@@ -4821,12 +4813,10 @@ mod stubs {
                                     0
                                 }
                             }
-                            "halfEven" => {
-                                if twice > unit || (twice == unit && whole_years % 2 != 0) {
-                                    sign as i32
-                                } else {
-                                    0
-                                }
+                            "halfEven"
+                                if (twice > unit || (twice == unit && whole_years % 2 != 0)) =>
+                            {
+                                sign as i32
                             }
                             _ => 0,
                         }
@@ -4915,12 +4905,10 @@ mod stubs {
                                 0
                             }
                         }
-                        "halfEven" => {
-                            if twice > unit || (twice == unit && total_months % 2 != 0) {
-                                signed_residual.signum() as i32
-                            } else {
-                                0
-                            }
+                        "halfEven"
+                            if (twice > unit || (twice == unit && total_months % 2 != 0)) =>
+                        {
+                            signed_residual.signum() as i32
                         }
                         _ => 0,
                     };
@@ -5146,9 +5134,9 @@ mod stubs {
             let calendar = crate::conversion::to_string(&property("calendarId")?)?;
             if smallest == "day" {
                 let local_midnight = || -> Option<i128> {
-                    let year = crate::conversion::to_number(&property("year").ok()?).ok()? as f64;
-                    let month = crate::conversion::to_number(&property("month").ok()?).ok()? as f64;
-                    let day = crate::conversion::to_number(&property("day").ok()?).ok()? as f64;
+                    let year = crate::conversion::to_number(&property("year").ok()?).ok()?;
+                    let month = crate::conversion::to_number(&property("month").ok()?).ok()?;
+                    let day = crate::conversion::to_number(&property("day").ok()?).ok()?;
                     Some(
                         (super::plain_date::date_serial(year, month, day)
                             - super::plain_date::date_serial(1970.0, 1.0, 1.0))

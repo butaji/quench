@@ -249,7 +249,7 @@ fn object_enumerable_keys(data: &crate::value::ObjectData) -> Vec<String> {
             .filter(|key| key != "timeValue")
             .collect();
     };
-    if matches!(value, Value::String(ref value) if crate::conversion::is_symbol_string(&value)) {
+    if matches!(value, Value::String(ref value) if crate::conversion::is_symbol_string(value)) {
         return enumerable_ordered(properties)
             .into_iter()
             .filter(|key| key != "_value" && key != "constructor")

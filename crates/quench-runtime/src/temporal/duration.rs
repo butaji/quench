@@ -257,7 +257,7 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         ("nanoseconds", 1),
     ]
     .iter()
-    .map(|(name, factor)| duration_field(object, name) as i128 * factor)
+    .map(|(name, factor)| duration_field(object, name) * factor)
     .sum::<i128>();
     let divisor = match unit {
         "day" => 86_400_000_000_000_i128,
@@ -1680,7 +1680,7 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
         Some(value) if crate::value::is_object(value) => {
             let smallest = crate::execute::get_property_result(value, "smallestUnit")?;
             if !matches!(smallest, Value::Undefined) {
-                return Ok(crate::conversion::to_string(&smallest)?);
+                return crate::conversion::to_string(&smallest);
             }
             let largest = crate::execute::get_property_result(value, "largestUnit")?;
             if let Value::String(unit) = largest {
@@ -1961,7 +1961,7 @@ fn calendar_round(
             }
             if unit == 3 && largest <= 1 {
                 fields[2] = Value::Number(0.0);
-                fields[3] = Value::Number((target - larger_cursor).num_days() as f64 * sign as f64);
+                fields[3] = Value::Number((target - larger_cursor).num_days() as f64 * sign);
             }
             if unit == 3 && largest == 2 {
                 fields[2] = Value::Number((count / 7) as f64);
