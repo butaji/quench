@@ -323,10 +323,11 @@ impl Heap {
         value
     }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
-        self.properties.get(object.properties, slot)
+        self.properties
+            .get(object.properties, slot)
+            .filter(|value| !value.is_deleted())
     }
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
-        // SAFETY: forwarded immutable-shape slot invariant.
         unsafe { self.properties.get_unchecked(object.properties, slot) }
     }
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
@@ -340,7 +341,6 @@ impl Heap {
         value: Value,
     ) {
         let vector = self.get(object).unwrap().object().unwrap().properties;
-        // SAFETY: forwarded immutable-shape slot invariant.
         unsafe { self.properties.set_unchecked(vector, slot, value) };
     }
     pub(crate) fn property_push(&mut self, object: Value, value: Value) {
@@ -355,7 +355,13 @@ impl Heap {
     fn children(cell: &Cell, properties: &ValueArena, work: &mut Vec<Value>) {
         let mut object = |object: &Object| {
             work.push(object.proto);
-            work.extend(properties.values(object.properties).iter().copied());
+            work.extend(
+                properties
+                    .values(object.properties)
+                    .iter()
+                    .copied()
+                    .filter(|value| !value.is_deleted()),
+            );
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
             object(value);
