@@ -184,7 +184,8 @@ impl<H: Host> Vm<H> {
             Self::empty_object(self.float64_array_proto)
         };
         let cell = if kind == TypedArrayKind::Float32 {
-            Cell::Float32Array {
+            Cell::TypedArray {
+                kind: TypedArrayKind::Float32,
                 object,
                 buffer,
                 offset,
@@ -192,7 +193,8 @@ impl<H: Host> Vm<H> {
                 length_tracking,
             }
         } else {
-            Cell::Float64Array {
+            Cell::TypedArray {
+                kind: TypedArrayKind::Float64,
                 object,
                 buffer,
                 offset,

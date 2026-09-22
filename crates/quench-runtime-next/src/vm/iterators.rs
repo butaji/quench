@@ -39,16 +39,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn get_iterator(&mut self, source: Value) -> Result<Value, JsError> {
         let kind = match self.heap.get(source) {
-            Some(Cell::Array { .. })
-            | Some(Cell::Uint8Array { .. })
-            | Some(Cell::Uint8ClampedArray { .. })
-            | Some(Cell::Uint16Array { .. })
-            | Some(Cell::Uint32Array { .. })
-            | Some(Cell::Int8Array { .. })
-            | Some(Cell::Int16Array { .. })
-            | Some(Cell::Int32Array { .. })
-            | Some(Cell::Float32Array { .. })
-            | Some(Cell::Float64Array { .. }) => IteratorKind::Array,
+            Some(Cell::Array { .. }) | Some(Cell::TypedArray { .. }) => IteratorKind::Array,
             Some(Cell::String(_)) => IteratorKind::String,
             Some(Cell::Map { .. }) => IteratorKind::MapEntries,
             Some(Cell::Set { .. }) => IteratorKind::SetValues,
@@ -78,16 +69,7 @@ impl<H: Host> Vm<H> {
         };
         if !matches!(
             self.heap.get(source),
-            Some(Cell::Array { .. })
-                | Some(Cell::Uint8Array { .. })
-                | Some(Cell::Uint8ClampedArray { .. })
-                | Some(Cell::Uint16Array { .. })
-                | Some(Cell::Uint32Array { .. })
-                | Some(Cell::Int8Array { .. })
-                | Some(Cell::Int16Array { .. })
-                | Some(Cell::Int32Array { .. })
-                | Some(Cell::Float32Array { .. })
-                | Some(Cell::Float64Array { .. })
+            Some(Cell::Array { .. }) | Some(Cell::TypedArray { .. })
         ) {
             return Err(JsError("array iterator receiver is not array".into()));
         }

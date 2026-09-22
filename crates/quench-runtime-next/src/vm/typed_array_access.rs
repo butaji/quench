@@ -30,61 +30,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typed_array_get(&self, object: Value, index: usize) -> Option<Value> {
-        let (buffer, offset, _length, kind) = match self.heap.get(object) {
-            Some(Cell::Uint8Array {
+        let (buffer, offset, kind) = match self.heap.get(object) {
+            Some(Cell::TypedArray {
                 buffer,
                 offset,
-                length,
+                kind,
                 ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Uint8),
-            Some(Cell::Uint8ClampedArray {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Uint8Clamped),
-            Some(Cell::Uint16Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Uint16),
-            Some(Cell::Uint32Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Uint32),
-            Some(Cell::Int8Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Int8),
-            Some(Cell::Int16Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Int16),
-            Some(Cell::Int32Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Int32),
-            Some(Cell::Float32Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Float32),
-            Some(Cell::Float64Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Float64),
+            }) => (*buffer, *offset, *kind),
             _ => return None,
         };
         let length = self.typed_array_length(object)?;
@@ -125,123 +77,14 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
         let (buffer, offset, length, tracking, kind) = match self.heap.get(object) {
-            Some(Cell::Uint8Array {
+            Some(Cell::TypedArray {
                 buffer,
                 offset,
                 length,
                 length_tracking,
+                kind,
                 ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Uint8,
-            ),
-            Some(Cell::Uint8ClampedArray {
-                buffer,
-                offset,
-                length,
-                length_tracking,
-                ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Uint8Clamped,
-            ),
-            Some(Cell::Uint16Array {
-                buffer,
-                offset,
-                length,
-                length_tracking,
-                ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Uint16,
-            ),
-            Some(Cell::Uint32Array {
-                buffer,
-                offset,
-                length,
-                length_tracking,
-                ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Uint32,
-            ),
-            Some(Cell::Int8Array {
-                buffer,
-                offset,
-                length,
-                length_tracking,
-                ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Int8,
-            ),
-            Some(Cell::Int16Array {
-                buffer,
-                offset,
-                length,
-                length_tracking,
-                ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Int16,
-            ),
-            Some(Cell::Int32Array {
-                buffer,
-                offset,
-                length,
-                length_tracking,
-                ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Int32,
-            ),
-            Some(Cell::Float32Array {
-                buffer,
-                offset,
-                length,
-                length_tracking,
-                ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Float32,
-            ),
-            Some(Cell::Float64Array {
-                buffer,
-                offset,
-                length,
-                length_tracking,
-                ..
-            }) => (
-                *buffer,
-                *offset,
-                *length,
-                *length_tracking,
-                TypedArrayKind::Float64,
-            ),
+            }) => (*buffer, *offset, *length, *length_tracking, *kind),
             _ => return None,
         };
         if self.array_buffer_detached(buffer) {
@@ -266,15 +109,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn typed_array_shared(&self, object: Value) -> Option<bool> {
         let buffer = match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, .. })
-            | Some(Cell::Uint8ClampedArray { buffer, .. })
-            | Some(Cell::Uint16Array { buffer, .. })
-            | Some(Cell::Uint32Array { buffer, .. })
-            | Some(Cell::Int8Array { buffer, .. })
-            | Some(Cell::Int16Array { buffer, .. })
-            | Some(Cell::Int32Array { buffer, .. })
-            | Some(Cell::Float32Array { buffer, .. })
-            | Some(Cell::Float64Array { buffer, .. }) => *buffer,
+            Some(Cell::TypedArray { buffer, .. }) => *buffer,
             _ => return None,
         };
         match self.heap.get(buffer) {
@@ -285,30 +120,14 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn typed_array_kind(&self, object: Value) -> Option<TypedArrayKind> {
         match self.heap.get(object) {
-            Some(Cell::Uint8Array { .. }) => Some(TypedArrayKind::Uint8),
-            Some(Cell::Uint8ClampedArray { .. }) => Some(TypedArrayKind::Uint8Clamped),
-            Some(Cell::Uint16Array { .. }) => Some(TypedArrayKind::Uint16),
-            Some(Cell::Uint32Array { .. }) => Some(TypedArrayKind::Uint32),
-            Some(Cell::Int8Array { .. }) => Some(TypedArrayKind::Int8),
-            Some(Cell::Int16Array { .. }) => Some(TypedArrayKind::Int16),
-            Some(Cell::Int32Array { .. }) => Some(TypedArrayKind::Int32),
-            Some(Cell::Float32Array { .. }) => Some(TypedArrayKind::Float32),
-            Some(Cell::Float64Array { .. }) => Some(TypedArrayKind::Float64),
+            Some(Cell::TypedArray { kind, .. }) => Some(*kind),
             _ => None,
         }
     }
 
     pub(super) fn typed_array_byte_offset(&self, object: Value) -> Option<usize> {
         let (buffer, offset) = match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, offset, .. })
-            | Some(Cell::Uint8ClampedArray { buffer, offset, .. })
-            | Some(Cell::Uint16Array { buffer, offset, .. })
-            | Some(Cell::Uint32Array { buffer, offset, .. })
-            | Some(Cell::Int8Array { buffer, offset, .. })
-            | Some(Cell::Int16Array { buffer, offset, .. })
-            | Some(Cell::Int32Array { buffer, offset, .. })
-            | Some(Cell::Float32Array { buffer, offset, .. })
-            | Some(Cell::Float64Array { buffer, offset, .. }) => (*buffer, *offset),
+            Some(Cell::TypedArray { buffer, offset, .. }) => (*buffer, *offset),
             _ => return None,
         };
         let length = self.typed_array_length(object).unwrap_or(0);
@@ -326,15 +145,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn indexed_view_property(&self, object: Value, atom: Atom) -> Option<Value> {
         match self.heap.get(object) {
-            Some(Cell::Uint8Array { buffer, .. })
-            | Some(Cell::Uint8ClampedArray { buffer, .. })
-            | Some(Cell::Uint16Array { buffer, .. })
-            | Some(Cell::Uint32Array { buffer, .. })
-            | Some(Cell::Int8Array { buffer, .. })
-            | Some(Cell::Int16Array { buffer, .. })
-            | Some(Cell::Int32Array { buffer, .. })
-            | Some(Cell::Float32Array { buffer, .. })
-            | Some(Cell::Float64Array { buffer, .. }) => {
+            Some(Cell::TypedArray { buffer, .. }) => {
                 if atom == self.length_atom || self.lookup_atom("byteLength") == Some(atom) {
                     let width = self
                         .typed_array_kind(object)
@@ -389,61 +200,13 @@ impl<H: Host> Vm<H> {
         index: usize,
         value: Value,
     ) -> Result<bool, JsError> {
-        let (buffer, offset, _length, kind) = match self.heap.get(object) {
-            Some(Cell::Uint8Array {
+        let (buffer, offset, kind) = match self.heap.get(object) {
+            Some(Cell::TypedArray {
                 buffer,
                 offset,
-                length,
+                kind,
                 ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Uint8),
-            Some(Cell::Uint8ClampedArray {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Uint8Clamped),
-            Some(Cell::Uint16Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Uint16),
-            Some(Cell::Uint32Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Uint32),
-            Some(Cell::Int8Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Int8),
-            Some(Cell::Int16Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Int16),
-            Some(Cell::Int32Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Int32),
-            Some(Cell::Float32Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Float32),
-            Some(Cell::Float64Array {
-                buffer,
-                offset,
-                length,
-                ..
-            }) => (*buffer, *offset, *length, TypedArrayKind::Float64),
+            }) => (*buffer, *offset, *kind),
             _ => return Ok(false),
         };
         if self.array_buffer_detached(buffer) {

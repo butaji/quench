@@ -430,15 +430,7 @@ impl Heap {
             Cell::Object(_) => 0,
             Cell::Array { .. } => 1,
             Cell::ArrayBuffer { .. } => 0,
-            Cell::Uint8Array { .. }
-            | Cell::Uint8ClampedArray { .. }
-            | Cell::Uint16Array { .. }
-            | Cell::Uint32Array { .. }
-            | Cell::Int8Array { .. }
-            | Cell::Int16Array { .. }
-            | Cell::Int32Array { .. }
-            | Cell::Float32Array { .. }
-            | Cell::Float64Array { .. } => 0,
+            Cell::TypedArray { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
@@ -461,15 +453,7 @@ impl Heap {
             Cell::Object(_) | Cell::Iterator { .. } | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
-            Cell::Uint8Array { .. }
-            | Cell::Uint8ClampedArray { .. }
-            | Cell::Uint16Array { .. }
-            | Cell::Uint32Array { .. }
-            | Cell::Int8Array { .. }
-            | Cell::Int16Array { .. }
-            | Cell::Int32Array { .. }
-            | Cell::Float32Array { .. }
-            | Cell::Float64Array { .. } => 0,
+            Cell::TypedArray { .. } => 0,
             Cell::DataView { .. } => 0,
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
