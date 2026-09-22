@@ -84,7 +84,7 @@ impl<H: Host> Vm<H> {
                     },
                 )
             }
-            Native::ReflectOwnKeys => self.object_own_keys(target),
+            Native::ReflectOwnKeys => self.object_own_keys(p, target),
             Native::ReflectGetPrototypeOf => self.object_get_prototype_of(target),
             Native::ReflectSetPrototypeOf => {
                 let proto = args.get(1).copied().unwrap_or(Value::UNDEFINED);

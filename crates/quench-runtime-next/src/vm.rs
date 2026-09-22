@@ -43,6 +43,7 @@ mod object_builtins;
 mod object_descriptors;
 mod object_get;
 mod object_integrity;
+mod object_keys;
 mod object_static;
 mod object_symbols;
 #[cfg(test)]
