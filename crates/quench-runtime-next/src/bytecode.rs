@@ -129,6 +129,12 @@ pub struct Function {
     pub(crate) register_root_offset: u32,
 }
 
+/// High bit of `Function::arguments_slot` marks a mapped (sloppy, simple
+/// parameter-list) arguments object. Keeping this bit in the existing
+/// residual field preserves the binary format while making the mapping an
+/// explicit execution invariant.
+pub(crate) const MAPPED_ARGUMENTS_BIT: u16 = 1 << 15;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum DispatchClass {

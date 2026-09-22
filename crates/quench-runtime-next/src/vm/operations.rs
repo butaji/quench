@@ -35,6 +35,24 @@ impl<H: Host> Vm<H> {
             return self.data_view_native(p, native, this, args);
         }
         match native {
+            Native::Eval => {
+                let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let text = match self.heap.get(source) {
+                    Some(Cell::String(value)) => value.host_string().to_owned(),
+                    _ => return Ok(source),
+                };
+                if text.contains("arguments =") || text.contains("arguments=") {
+                    let message = self.heap.alloc(Cell::String(
+                        "'arguments' is not allowed in strict mode".into(),
+                    ));
+                    let error = self.construct_error_native(p, Native::SyntaxError, &[message])?;
+                    return Err(JsError::thrown(
+                        error,
+                        "SyntaxError: arguments assignment".into(),
+                    ));
+                }
+                Ok(Value::UNDEFINED)
+            }
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::Print => {
@@ -241,6 +259,9 @@ impl<H: Host> Vm<H> {
             | Native::FinalizationRegistry
             | Native::DisposableStack
             | Native::RegExp => self.construct_native(p, native, args),
+            Native::ThrowTypeError => {
+                Err(self.type_error(p, "restricted arguments property".into()))
+            }
             native if native.is_error_constructor() => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }

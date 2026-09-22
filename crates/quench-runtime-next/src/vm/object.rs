@@ -298,7 +298,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
-        if self.inherited_write_blocked(object, atom) {
+        if self.own_property(object, atom).is_none() && self.inherited_write_blocked(object, atom) {
             return Err(JsError(
                 "cannot write inherited non-writable property".into(),
             ));
@@ -380,7 +380,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
-        if self.inherited_write_blocked(object, atom) {
+        if self.own_property(object, atom).is_none() && self.inherited_write_blocked(object, atom) {
             return Err(JsError(
                 "cannot write inherited non-writable property".into(),
             ));

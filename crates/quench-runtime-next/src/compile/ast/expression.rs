@@ -23,6 +23,10 @@ impl FunctionCompiler<'_, '_> {
             Expression::ArrayExpression(value) => self.array_expression(value),
             Expression::ObjectExpression(value) => self.object_expression(value),
             Expression::StaticMemberExpression(value) => self.static_member(value),
+            Expression::PrivateFieldExpression(value) => {
+                let name = format!("#{}", value.field.name);
+                self.static_get(&value.object, &name)
+            }
             Expression::ComputedMemberExpression(value) => self.computed_member(value),
             Expression::ChainExpression(value) => self.chain_expression(&value.expression),
             Expression::AssignmentExpression(value) => self.assignment(value),

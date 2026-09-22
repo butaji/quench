@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::MAPPED_ARGUMENTS_BIT;
 
 impl<H: Host> Vm<H> {
     #[inline(never)]
@@ -53,11 +54,19 @@ impl<H: Host> Vm<H> {
                 elements: Rc::new(elements),
             });
         }
-        if let Some(slot) = function.arguments_slot {
-            frame.locals[usize::from(slot)] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+        if let Some(encoded_slot) = function.arguments_slot {
+            let mapped = encoded_slot & MAPPED_ARGUMENTS_BIT != 0;
+            let slot = encoded_slot & !MAPPED_ARGUMENTS_BIT;
+            let arguments = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.object_proto),
                 elements: Rc::new(args.to_vec()),
             });
+            frame.locals[usize::from(slot)] = arguments;
+            self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
+            if mapped {
+                let mapping = (0..function.params.min(args.len() as u16)).collect();
+                self.argument_maps.insert(arguments, mapping);
+            }
         }
         frame.function = id;
         frame.pc = 0;
@@ -91,6 +100,81 @@ impl<H: Host> Vm<H> {
                 Err(JsError("yield requires generator continuation".into()))
             }
         }
+    }
+
+    pub(super) fn initialize_arguments_object(
+        &mut self,
+        p: &ResidualProgram,
+        arguments: Value,
+        id: u32,
+        parent: Value,
+        args: &[Value],
+        mapped: bool,
+    ) -> Result<(), JsError> {
+        let length = self.intern_atom("length");
+        self.set_property(arguments, length, Value::number(args.len() as f64))?;
+        self.descriptors.insert(
+            (arguments, property_key::PropertyKey::string(length)),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let callee = self.intern_atom("callee");
+        let value = if mapped {
+            self.function_values
+                .get(&(id, parent))
+                .copied()
+                .unwrap_or(self.closure(p, id, parent)?)
+        } else {
+            Value::UNDEFINED
+        };
+        self.set_property(arguments, callee, value)?;
+        if mapped {
+            self.descriptors.insert(
+                (arguments, property_key::PropertyKey::string(callee)),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        } else {
+            let thrower = self.native_value(Native::ThrowTypeError);
+            self.descriptors.insert(
+                (arguments, property_key::PropertyKey::string(callee)),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: true,
+                    getter: Some(thrower),
+                    setter: Some(thrower),
+                },
+            );
+        }
+        if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
+            self.set_symbol_property(arguments, iterator, self.native_value(Native::ArrayValues))?;
+            self.descriptors.insert(
+                (arguments, property_key::PropertyKey::symbol(iterator)),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        Ok(())
     }
 
     pub(super) fn promote_frame_environment(&mut self, frame: usize) -> Value {
