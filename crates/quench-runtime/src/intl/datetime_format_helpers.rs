@@ -11,16 +11,16 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
                 // like legacy Date values, rather than treated as plain fields.
             } else {
                 let effective_slots = temporal_slots(slots, &fields)?;
-                if let Some(text) = temporal_date_format_result(
-                    &effective_slots,
-                    fields.year,
-                    fields.month,
-                    fields.day,
-                    fields.hour,
-                    fields.minute,
-                    fields.second,
-                    fields.millisecond,
-                ) {
+                if let Some(text) = temporal_date_format_result(TemporalDateFields {
+                    slots: &effective_slots,
+                    year: fields.year,
+                    month: fields.month,
+                    day: fields.day,
+                    hour: fields.hour,
+                    minute: fields.minute,
+                    second: fields.second,
+                    millis: fields.millisecond,
+                }) {
                     let numbering = slot_string(&effective_slots, "numberingSystem")
                         .unwrap_or_else(|| "latn".to_string());
                     let mut localized = crate::intl::number::localize_digits(text, &numbering);
@@ -1391,27 +1391,27 @@ fn range_values(
         }
         let start_slots = temporal_slots(slots, &start_temporal)?;
         let end_slots = temporal_slots(slots, &end_temporal)?;
-        let start = temporal_date_format_result(
-            &start_slots,
-            start_temporal.year,
-            start_temporal.month,
-            start_temporal.day,
-            start_temporal.hour,
-            start_temporal.minute,
-            start_temporal.second,
-            start_temporal.millisecond,
-        )
+        let start = temporal_date_format_result(TemporalDateFields {
+            slots: &start_slots,
+            year: start_temporal.year,
+            month: start_temporal.month,
+            day: start_temporal.day,
+            hour: start_temporal.hour,
+            minute: start_temporal.minute,
+            second: start_temporal.second,
+            millis: start_temporal.millisecond,
+        })
         .unwrap_or_default();
-        let end = temporal_date_format_result(
-            &end_slots,
-            end_temporal.year,
-            end_temporal.month,
-            end_temporal.day,
-            end_temporal.hour,
-            end_temporal.minute,
-            end_temporal.second,
-            end_temporal.millisecond,
-        )
+        let end = temporal_date_format_result(TemporalDateFields {
+            slots: &end_slots,
+            year: end_temporal.year,
+            month: end_temporal.month,
+            day: end_temporal.day,
+            hour: end_temporal.hour,
+            minute: end_temporal.minute,
+            second: end_temporal.second,
+            millis: end_temporal.millisecond,
+        })
         .unwrap_or_default();
         return Ok((start, end));
     }
