@@ -58,6 +58,7 @@ impl FunctionCompiler<'_, '_> {
                     FunctionOptions {
                         defaults: None,
                         async_function: false,
+                        generator: false,
                         instance_fields: Some(&instance_fields),
                         super_static: false,
                         rest_override: implicit_super,
@@ -396,6 +397,7 @@ impl Compiler<'_> {
             FunctionOptions {
                 defaults: Some(&method.value.params),
                 async_function: method.value.r#async,
+                generator: method.value.generator,
                 instance_fields,
                 super_static: method.r#static,
                 rest_override: false,
@@ -419,6 +421,7 @@ impl Compiler<'_> {
             FunctionOptions {
                 defaults: None,
                 async_function: false,
+                generator: false,
                 instance_fields: None,
                 super_static: true,
                 rest_override: false,
