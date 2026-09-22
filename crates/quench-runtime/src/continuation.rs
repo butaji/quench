@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LoopPhase {
+pub enum LoopPhase {
     Init,
     Test,
     Body,
@@ -7,7 +7,7 @@ pub(crate) enum LoopPhase {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum SuspensionPoint {
+pub enum SuspensionPoint {
     Yield {
         resume: Option<crate::machine::CodeRange>,
         src: u16,
