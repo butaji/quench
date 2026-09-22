@@ -29,10 +29,6 @@ impl JsString {
         &self.units
     }
 
-    pub(crate) fn host_string(&self) -> &str {
-        &self.host
-    }
-
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
         self.units.len() * std::mem::size_of::<u16>() + self.host.capacity()
@@ -43,6 +39,13 @@ impl JsString {
         units.extend(text.encode_utf16());
         self.units = Rc::from(units);
         self.host.push_str(text);
+    }
+
+    pub(crate) fn push_js_string(&mut self, text: &Self) {
+        let mut units = self.units.to_vec();
+        units.extend(text.units.iter().copied());
+        self.units = Rc::from(units);
+        self.host.push_str(&text.host);
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {
@@ -121,7 +124,7 @@ mod tests {
     fn preserves_lone_surrogates_until_host_conversion() {
         let value = JsString::from_units(&[0xD800, b'a' as u16, 0xDC00]);
         assert_eq!(value.units(), &[0xD800, b'a' as u16, 0xDC00]);
-        assert_eq!(value.host_string(), "�a�");
+        assert_eq!(value.to_string(), "�a�");
     }
 
     #[test]

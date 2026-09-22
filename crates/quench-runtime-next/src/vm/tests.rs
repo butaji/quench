@@ -31,16 +31,16 @@ fn js_error_is_pointer_sized() {
 #[test]
 fn dynamic_primitive_strings_are_canonicalized() {
     let mut vm = Vm::new(SilentHost);
-    let first = vm.intern_dynamic_string("same text".into());
-    let second = vm.intern_dynamic_string("same text".into());
+    let first = vm.intern_dynamic_value("same text".into());
+    let second = vm.intern_dynamic_value("same text".into());
     assert_eq!(first, second);
 }
 
 #[test]
 fn repeated_string_concatenations_use_the_bounded_cache() {
     let mut vm = Vm::new(SilentHost);
-    let left = vm.intern_dynamic_string("left".into());
-    let right = vm.intern_dynamic_string("right".into());
+    let left = vm.intern_dynamic_value("left".into());
+    let right = vm.intern_dynamic_value("right".into());
     let first = vm.intern_dynamic_concat(left, right).unwrap();
     let second = vm.intern_dynamic_concat(left, right).unwrap();
     assert_eq!(first, second);

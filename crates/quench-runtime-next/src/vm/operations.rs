@@ -388,8 +388,9 @@ impl<H: Host> Vm<H> {
             }
             #[cfg(feature = "profile-aggregate")]
             self.profile.string_concat(false);
-            let text = self.to_string(p, left)? + &self.to_string(p, right)?;
-            return Ok(self.intern_dynamic_string(text));
+            let mut text = self.coerce_js_string(p, left)?;
+            text.push_js_string(&self.coerce_js_string(p, right)?);
+            return Ok(self.intern_dynamic_value(text));
         }
         let answer = match op {
             0 => self.equal(p, left, right)?,

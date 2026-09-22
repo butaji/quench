@@ -1,6 +1,18 @@
+use super::wtf16::JsString;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn coerce_js_string(
+        &mut self,
+        program: &ResidualProgram,
+        value: Value,
+    ) -> Result<JsString, JsError> {
+        if let Some(Cell::String(text)) = self.heap.get(value) {
+            return Ok(text.clone());
+        }
+        Ok(self.to_string(program, value)?.into())
+    }
+
     pub(super) fn unary(
         &mut self,
         p: &ResidualProgram,
