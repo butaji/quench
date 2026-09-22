@@ -73,6 +73,7 @@ mod tests {
             locals: vec![],
             captured: false,
             registers: vec![],
+            with_base: 0,
         });
         vm
     }

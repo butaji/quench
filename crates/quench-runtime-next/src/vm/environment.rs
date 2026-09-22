@@ -1,6 +1,30 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn resolve_name(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+        _cache: u16,
+    ) -> Result<Value, JsError> {
+        let name = self.atom_name(atom);
+        if !name.starts_with('\0') {
+            let key = self.heap.alloc(Cell::String(name.into()));
+            let with_base = self
+                .frames
+                .last()
+                .map_or(self.with_stack.len(), |frame| frame.with_base)
+                .min(self.with_stack.len());
+            let with_objects = self.with_stack[with_base..].to_vec();
+            for object in with_objects.into_iter().rev() {
+                if self.has_property(p, object, key)? {
+                    return Ok(object);
+                }
+            }
+        }
+        Ok(self.globals)
+    }
+
     #[inline(always)]
     pub(super) fn capture_env(&self, frame: usize, depth: u16) -> Option<Value> {
         let frame = &self.frames[frame];
@@ -66,7 +90,13 @@ impl<H: Host> Vm<H> {
         let name = self.atom_name(atom);
         if !name.starts_with('\0') {
             let key = self.heap.alloc(Cell::String(name.into()));
-            for object in self.with_stack.clone().into_iter().rev() {
+            let with_base = self
+                .frames
+                .last()
+                .map_or(self.with_stack.len(), |frame| frame.with_base)
+                .min(self.with_stack.len());
+            let with_objects = self.with_stack[with_base..].to_vec();
+            for object in with_objects.into_iter().rev() {
                 if self.has_property(p, object, key)? {
                     return self.get_property(p, object, atom);
                 }
@@ -88,7 +118,13 @@ impl<H: Host> Vm<H> {
         let name = self.atom_name(atom);
         if !name.starts_with('\0') {
             let key = self.heap.alloc(Cell::String(name.into()));
-            for object in self.with_stack.clone().into_iter().rev() {
+            let with_base = self
+                .frames
+                .last()
+                .map_or(self.with_stack.len(), |frame| frame.with_base)
+                .min(self.with_stack.len());
+            let with_objects = self.with_stack[with_base..].to_vec();
+            for object in with_objects.into_iter().rev() {
                 if self.has_property(p, object, key)? {
                     return self.get_property(p, object, atom);
                 }
@@ -107,7 +143,13 @@ impl<H: Host> Vm<H> {
         let name = self.atom_name(atom);
         if !name.starts_with('\0') {
             let key = self.heap.alloc(Cell::String(name.into()));
-            for object in self.with_stack.clone().into_iter().rev() {
+            let with_base = self
+                .frames
+                .last()
+                .map_or(self.with_stack.len(), |frame| frame.with_base)
+                .min(self.with_stack.len());
+            let with_objects = self.with_stack[with_base..].to_vec();
+            for object in with_objects.into_iter().rev() {
                 if self.has_property(p, object, key)? {
                     return self.set_property_with_program(p, object, atom, value);
                 }

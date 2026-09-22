@@ -292,6 +292,10 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
             instruction.a() == register
         }
+        Op::StoreResolvedName => {
+            instruction.a() == register || instruction.b() == register
+        }
+        Op::ResolveName => false,
         Op::GetField if instruction.b() == FieldBase::NESTED => {
             fields
                 .get(instruction.imm() as usize)
@@ -302,6 +306,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::GetIndex | Op::MakeObject2 => {
             instruction.b() == register || instruction.c() == register
         }
+        Op::ToPropertyKey => instruction.b() == register,
         Op::SuperConstArrayObject2 => true,
         Op::SetField => instruction.a() == register || instruction.b() == register,
         Op::SetThisField => instruction.a() == register,

@@ -21,6 +21,7 @@ impl<H: Host> Vm<H> {
             locals: vec![],
             captured: false,
             registers: vec![],
+            with_base: self.with_stack.len(),
         });
         frame
             .locals
@@ -229,6 +230,7 @@ impl<H: Host> Vm<H> {
             locals: continuation.locals,
             captured: continuation.captured,
             registers: continuation.registers,
+            with_base: self.with_stack.len(),
         };
         if initial_error.is_none()
             && let Some(register) = continuation.resume_register
@@ -345,6 +347,7 @@ impl<H: Host> Vm<H> {
             locals: continuation.locals,
             captured: continuation.captured,
             registers: continuation.registers,
+            with_base: self.with_stack.len(),
         };
         if let Some(register) = continuation.resume_register {
             if register as usize >= frame.registers.len() {
