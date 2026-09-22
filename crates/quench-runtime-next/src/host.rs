@@ -8,6 +8,7 @@ pub enum CapabilityId {
     WriteLine = 1,
     ClockMillis = 2,
     Done = 3,
+    CreateRealm = 4,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,6 +53,7 @@ impl<'a, H: Host> HostContext<'a, H> {
                 self.host.done(text);
                 0.0
             }
+            CapabilityId::CreateRealm => 0.0,
         }
     }
 }

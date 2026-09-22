@@ -11,10 +11,17 @@ use rqj::{CapabilityId, Engine, Host, HostGlobal, Runtime, SystemHost};
 
 use crate::Test262Host;
 
-static TEST262_GLOBALS: [HostGlobal; 1] = [HostGlobal {
-    name: "$DONE",
-    capability: CapabilityId::Done,
+static HOST_GLOBALS: [HostGlobal; 1] = [HostGlobal {
+    name: "$262",
+    capability: CapabilityId::CreateRealm,
 }];
+static ASYNC_GLOBALS: [HostGlobal; 2] = [
+    HOST_GLOBALS[0],
+    HostGlobal {
+        name: "$DONE",
+        capability: CapabilityId::Done,
+    },
+];
 
 #[derive(Debug, Default)]
 pub struct RuntimeNextHost {
@@ -41,9 +48,9 @@ impl Host for RuntimeNextHost {
 
     fn globals(&self) -> &'static [HostGlobal] {
         if self.async_test {
-            &TEST262_GLOBALS
+            &ASYNC_GLOBALS
         } else {
-            &[]
+            &HOST_GLOBALS
         }
     }
 
