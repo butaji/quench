@@ -10804,10 +10804,11 @@ impl Machine {
         value: Value,
     ) -> Option<crate::completion::CallContinuation> {
         let continuation = self.pop_call_frame()?;
-        let valid_source = self
-            .store
-            .as_ref()
-            .is_some_and(|store| continuation.has_valid_caller_address(store));
+        let valid_source = self.store.as_ref().is_some_and(|store| {
+            store
+                .range_len(continuation.caller_code)
+                .is_some_and(|length| continuation.caller_pc < length)
+        });
         if !valid_source {
             return None;
         }
