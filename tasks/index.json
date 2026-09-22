@@ -26,6 +26,10 @@
     "gates": ["42"]
   },
   "constraints": [
+    "The final architecture has one VM core with optimizer tiers and exact generic fallbacks; no JIT, executable-memory backend, copy-and-patch stencil, or second execution core is permitted.",
+    "OXC owns JavaScript syntax and the JavaScript conformance gate is 100% of the pinned Test262 inventory.",
+    "The shared VM core owns Wasm execution and the Wasm conformance gate is 100% of the pinned Wasm suite.",
+    "The Node host/API layer remains separate from JavaScript semantics and the Node compatibility gate is 100% of the tracked inventory.",
     "Use the pinned ../v2 source as the implementation and architecture reference, copied into this repository without a sibling build dependency.",
     "The final engine is interpreter-only: no guest JIT, copy-and-patch stencils, executable-memory runtime, or permanent legacy backend.",
     "Preserve Quench CLI behavior and observable ECMAScript, Node, and Wasm behavior; internal Rust APIs may change.",
