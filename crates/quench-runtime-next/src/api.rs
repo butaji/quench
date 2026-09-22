@@ -453,4 +453,18 @@ mod tests {
             ["cleanup", "reject-cleanup", "3", "4"]
         );
     }
+
+    #[test]
+    fn promise_all_and_race_use_rooted_aggregate_jobs() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "Promise.all([Promise.resolve(1), 2]).then(function(values) { print(values.join(',')); }); Promise.race([Promise.reject(3), Promise.resolve(4)]).catch(print);",
+                "promise-aggregates.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["1,2", "3"]);
+    }
 }

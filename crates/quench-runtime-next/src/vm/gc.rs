@@ -99,6 +99,22 @@ impl<H: Host> Vm<H> {
                             ]
                         }),
                 )
+                .chain(
+                    self.promise
+                        .aggregates
+                        .iter()
+                        .flat_map(|(aggregate, record)| {
+                            std::iter::once(*aggregate)
+                                .chain(std::iter::once(record.output))
+                                .chain(record.values.iter().copied())
+                        }),
+                )
+                .chain(
+                    self.promise
+                        .aggregate_jobs
+                        .iter()
+                        .flat_map(|(job, aggregate_job)| [*job, aggregate_job.aggregate]),
+                )
                 .chain(self.jobs.iter().flat_map(|job| {
                     std::iter::once(job.callback)
                         .chain(std::iter::once(job.this))
@@ -190,6 +206,12 @@ impl<H: Host> Vm<H> {
             .retain(|job, _| self.heap.get(*job).is_some());
         self.promise
             .finally_jobs
+            .retain(|job, _| self.heap.get(*job).is_some());
+        self.promise
+            .aggregates
+            .retain(|aggregate, _| self.heap.get(*aggregate).is_some());
+        self.promise
+            .aggregate_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
         self.symbol_descriptors.retain(|(object, key), attributes| {
             self.heap.get(*object).is_some()
