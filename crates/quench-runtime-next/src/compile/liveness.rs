@@ -122,9 +122,9 @@ fn uses(
         Op::Call => {
             bit(instruction.b())
                 | bit(instruction.c())
-                | range((instruction.imm() >> 16) as u16, instruction.imm() as u16)
+                | range(((instruction.imm() & 0x3fff_ffff) >> 16) as u16, instruction.imm() as u16)
         }
-        Op::CallKnown => range((instruction.imm() >> 16) as u16, instruction.imm() as u16),
+        Op::CallKnown => range(((instruction.imm() & 0x3fff_ffff) >> 16) as u16, instruction.imm() as u16),
         Op::CallMethod => bit(instruction.b()) | method_arguments(instruction, methods),
         Op::CallThisMethod => method_arguments(instruction, methods),
         Op::Construct => bit(instruction.b()) | range(instruction.c(), instruction.imm() as u16),
@@ -238,6 +238,7 @@ mod tests {
             rest: false,
             is_async: false,
             is_generator: false,
+            parameter_eval_arguments_error: false,
             arguments_slot: None,
             strict: false,
             locals: 0,

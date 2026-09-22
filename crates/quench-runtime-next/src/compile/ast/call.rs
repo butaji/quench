@@ -173,13 +173,26 @@ impl FunctionCompiler<'_, '_> {
             if identifier.name == "eval"
                 && !self.local_slots.contains_key(&self.owner.atom("eval"))
                 && !self.scopes.iter().any(|scope| scope.contains_key(&self.owner.atom("eval"))));
+        if direct_eval
+            && self.parameter_context
+            && value.arguments.first().is_some_and(|argument| {
+                matches!(argument, Argument::StringLiteral(literal) if literal.value.contains("var arguments"))
+            })
+        {
+            self.parameter_eval_arguments_error = true;
+        }
+        self.dynamic_eval |= direct_eval;
         self.emit(
             Op::Call,
             dst,
             callee,
             this,
             ((u32::from(base) << 16) | u32::from(count))
-                | if direct_eval { 0x8000_0000 } else { 0 },
+                | if direct_eval {
+                    0x8000_0000 | if self.parameter_context { 0x4000_0000 } else { 0 }
+                } else {
+                    0
+                },
         );
         dst
     }

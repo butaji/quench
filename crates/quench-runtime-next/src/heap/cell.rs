@@ -1,4 +1,5 @@
 use super::root::WeakHandle;
+use crate::bytecode::Atom;
 use crate::value::Value;
 use crate::value_vec::ValueVec;
 use crate::vm::wtf16::JsString;
@@ -506,6 +507,7 @@ pub(crate) enum Cell {
     Environment {
         parent: Value,
         slots: Box<[Value]>,
+        dynamic_bindings: Vec<(Atom, Value)>,
     },
     String(JsString), BigInt(String),
     Symbol(Option<String>), Date(f64), Error(String),

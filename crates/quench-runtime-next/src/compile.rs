@@ -376,7 +376,7 @@ impl<'a> Compiler<'a> {
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         self.collect_locals(body, &mut locals);
-        let arguments_slot = if locals.contains(&self.atom("arguments")) {
+        let arguments_slot = if parent.is_none() || locals.contains(&self.atom("arguments")) {
             None
         } else {
             locals.push(self.atom("arguments"));
@@ -463,6 +463,7 @@ impl<'a> Compiler<'a> {
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
             is_generator: options.generator,
+            parameter_eval_arguments_error: function.parameter_eval_arguments_error,
             arguments_slot,
             strict: root_strict,
             locals: function.locals.len() as u16,

@@ -245,6 +245,21 @@ impl<H: Host> Vm<H> {
         self.global(program, "undefined", Value::UNDEFINED)?;
         self.global(program, "NaN", Value::number(f64::NAN))?;
         self.global(program, "Infinity", Value::number(f64::INFINITY))?;
+        for name in ["undefined", "NaN", "Infinity"] {
+            let atom = self.intern_atom(name);
+            self.set_property_attributes(
+                self.realm.globals,
+                property_key::PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         self.global(program, "print", self.native_value(Native::Print))?;
         self.global(program, "eval", self.native_value(Native::Eval))?;
         self.global(

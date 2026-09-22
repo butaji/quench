@@ -298,24 +298,29 @@ impl<H: Host> Vm<H> {
             }
             Op::Call => {
                 self.profile.call_source(0);
-                let base = ((i.imm() & 0x7fff_ffff) >> 16) as u16;
-                let n = i.imm() as u16;
+                let base = ((i.imm() & 0x3fff_ffff) >> 16) as u16;
+                let n = (i.imm() & 0xffff) as u16;
                 let arguments = CallArguments::from_values((0..n).map(|x| self.read(f, base + x)));
                 let this = self.read(f, i.c());
                 let callee = self.read(f, i.b());
                 let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
                 let direct_eval = i.imm() & 0x8000_0000 != 0;
+                let parameter_eval = i.imm() & 0x4000_0000 != 0;
                 let previous_direct_eval = self.direct_eval;
+                let previous_parameter_eval = self.parameter_eval;
                 self.direct_eval = direct_eval;
+                self.parameter_eval = parameter_eval;
                 let value = match self.call_value(p, callee, this, args) {
                     Ok(value) => value,
                     Err(error) => {
                         self.direct_eval = previous_direct_eval;
+                        self.parameter_eval = previous_parameter_eval;
                         return Err(error);
                     }
                 };
                 self.direct_eval = previous_direct_eval;
+                self.parameter_eval = previous_parameter_eval;
                 if i.a() & RETURN_REGISTER != 0 {
                     self.profile.terminal_call(0);
                     return Ok(StepResult::Return(value));

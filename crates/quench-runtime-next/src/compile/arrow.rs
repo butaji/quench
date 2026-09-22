@@ -81,6 +81,7 @@ impl Compiler<'_> {
             rest: value.params.rest.is_some(),
             is_async: value.r#async,
             is_generator: false,
+            parameter_eval_arguments_error: false,
             arguments_slot: None,
             strict,
             locals: function.locals.len() as u16,

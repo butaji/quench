@@ -46,6 +46,7 @@ pub(super) fn write_program(
         out.u8(u8::from(function.rest));
         out.u8(u8::from(function.is_async));
         out.u8(u8::from(function.is_generator));
+        out.u8(u8::from(function.parameter_eval_arguments_error));
         out.u8(u8::from(function.strict));
         out.u16(function.arguments_slot.unwrap_or(u16::MAX));
         out.u16(function.locals);
@@ -163,6 +164,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             1 => true,
             _ => return Err("invalid generator function flag".into()),
         };
+        let parameter_eval_arguments_error = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid parameter eval flag".into()),
+        };
         let strict = match input.u8()? {
             0 => false,
             1 => true,
@@ -241,6 +247,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             rest,
             is_async,
             is_generator,
+            parameter_eval_arguments_error,
             arguments_slot,
             strict,
             locals,
