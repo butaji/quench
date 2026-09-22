@@ -290,17 +290,6 @@ fn create_function(
     define_global(registers, name, descriptor)
 }
 
-fn descriptor_flags_from_fields(descriptor: &[(String, Value)]) -> (bool, bool, bool) {
-    let flag = |name: &str| {
-        descriptor
-            .iter()
-            .rev()
-            .find_map(|(key, value)| (key == name).then_some(matches!(value, Value::Boolean(true))))
-            .unwrap_or(false)
-    };
-    (flag("writable"), flag("enumerable"), flag("configurable"))
-}
-
 fn binding_cell(name: &str, slot: u16, value: Option<&Value>) -> Rc<crate::value::BindingCell> {
     let slot_cell = crate::locals::slot_cell(slot);
     let cell = raw_binding_cell(name).unwrap_or_else(|| Rc::clone(&slot_cell));

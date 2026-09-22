@@ -402,15 +402,6 @@ fn direct_constructor_plan(
     ))
 }
 
-pub(crate) fn direct_constructor_allocation_is_scalarizable(
-    function: &std::rc::Rc<crate::value::FunctionValue>,
-    prototype: &crate::value::Value,
-) -> bool {
-    function.instance_fields.borrow().is_empty()
-        && crate::functions::is_constructible(function)
-        && direct_constructor_plan(function, prototype).is_some()
-}
-
 fn direct_constructor_fields(
     function: &crate::value::FunctionValue,
 ) -> Vec<(

@@ -140,16 +140,6 @@ pub fn expire_async_waiters() {
     }
 }
 
-/// Whether an async wait is still waiting for a timeout or notification.
-pub(crate) fn has_async_waiters() -> bool {
-    AGENT_WAITERS.with(|waiters| {
-        waiters
-            .borrow()
-            .iter()
-            .any(|waiter| waiter.async_promise.is_some())
-    })
-}
-
 /// Return the shortest remaining finite async-wait deadline.
 pub(crate) fn next_async_wait_duration() -> Option<std::time::Duration> {
     let now = Instant::now();
