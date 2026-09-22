@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -215,6 +216,25 @@ impl<H: Host> Vm<H> {
         if strict_local && self.own_property(self.realm.globals, atom).is_none() {
             return Err(self.reference_error(p, format!("{} is not defined", name)));
         }
-        self.set_field_cached(p, self.realm.globals, atom, value, cache)
+        let result = self.set_field_cached(p, self.realm.globals, atom, value, cache);
+        let root_declared = self.frames.last().is_some_and(|frame| frame.function == 0)
+            && p.functions
+                .first()
+                .is_some_and(|function| function.local_atoms.contains(&atom));
+        if result.is_ok() && root_declared {
+            self.set_property_attributes(
+                self.realm.globals,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        result
     }
 }
