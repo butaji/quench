@@ -39,6 +39,11 @@ impl<H: Host> Vm<H> {
                     self.iterator_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
+                .chain(
+                    self.finalization_jobs
+                        .iter()
+                        .flat_map(|(callback, held)| [*callback, *held]),
+                )
                 .chain(self.symbol_registry.values().copied())
                 .chain(self.well_known_symbols.values().copied())
                 .chain(
@@ -78,7 +83,7 @@ impl<H: Host> Vm<H> {
                             },
                         ))
                 }));
-        self.heap.collect(roots);
+        self.finalization_jobs.extend(self.heap.collect(roots));
         self.field_caches.fill(EMPTY_CACHE);
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
@@ -121,5 +126,19 @@ impl<H: Host> Vm<H> {
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
         }
+    }
+
+    pub(super) fn drain_finalization_jobs(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<Value, JsError> {
+        let mut index = 0;
+        while index < self.finalization_jobs.len() {
+            let (callback, held) = self.finalization_jobs[index];
+            self.call_value(program, callback, Value::UNDEFINED, &[held])?;
+            index += 1;
+        }
+        self.finalization_jobs.drain(..index);
+        Ok(Value::UNDEFINED)
     }
 }

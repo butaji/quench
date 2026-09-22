@@ -152,6 +152,9 @@ const NATIVES: &[Native] = &[
     Native::WeakSetDelete,
     Native::WeakRef,
     Native::WeakRefDeref,
+    Native::FinalizationRegistry,
+    Native::FinalizationRegistryRegister,
+    Native::FinalizationRegistryUnregister,
     Native::FunctionCall,
     Native::FunctionApply,
     Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateToISOString, Native::DateToJSON, Native::DateParse, Native::DateUTC,
@@ -220,6 +223,7 @@ impl<H: Host> Vm<H> {
         self.install_atomics(program)?;
         self.install_collections(program)?;
         self.install_weak_collections(program)?;
+        self.install_finalization_registry(program)?;
         self.install_iterators(program)?;
         self.global(
             program,

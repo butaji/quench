@@ -54,6 +54,32 @@ fn array_buffer_backing_is_accounted_until_owner_collection() {
 }
 
 #[test]
+fn finalization_jobs_are_created_for_unmarked_targets() {
+    let mut heap = Heap::new();
+    let target = heap.alloc(Cell::Object(Object {
+        proto: Value::NULL,
+        properties: ValueVec::new(),
+    }));
+    let target = heap.weak_handle(target).unwrap();
+    let registry = heap.alloc(Cell::FinalizationRegistry {
+        object: Object {
+            proto: Value::NULL,
+            properties: ValueVec::new(),
+        },
+        callback: Value::number(1.0),
+        entries: Box::new(FinalizationEntries(vec![FinalizationEntry {
+            target,
+            held: Value::number(2.0),
+            token: None,
+        }])),
+    });
+    let root = heap.root(registry);
+    let jobs = heap.collect([]);
+    assert_eq!(jobs, [(Value::number(1.0), Value::number(2.0))]);
+    assert!(heap.release_root(root));
+}
+
+#[test]
 fn weak_map_values_follow_ephemeron_key_reachability() {
     let mut heap = Heap::new();
     let weak_map = heap.alloc(Cell::WeakMap {

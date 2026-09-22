@@ -239,4 +239,18 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["7", "3"]);
     }
+
+    #[test]
+    fn finalization_registry_registers_and_unregisters_generation_checked_tokens() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var registry = new FinalizationRegistry(function() {}); var target = {}; var token = {}; registry.register(target, 1, token); print(registry.unregister(token)); print(registry.unregister(token));",
+                "finalization.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["true", "false"]);
+    }
 }

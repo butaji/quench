@@ -20,6 +20,7 @@ impl Cell {
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
+            | Self::FinalizationRegistry { object, .. }
             | Self::Iterator { object, .. } => Some(object),
             Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
@@ -39,6 +40,7 @@ impl Cell {
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
+            | Self::FinalizationRegistry { object, .. }
             | Self::Iterator { object, .. } => Some(object),
             Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),

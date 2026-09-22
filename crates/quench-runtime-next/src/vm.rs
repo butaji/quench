@@ -32,6 +32,7 @@ mod dispatch_numeric;
 mod environment;
 mod error;
 mod field_cache;
+mod finalization;
 mod gc;
 mod index;
 mod iterators;
@@ -206,6 +207,7 @@ pub struct Vm<H> {
     weak_map_proto: Value,
     weak_set_proto: Value,
     weak_ref_proto: Value,
+    finalization_registry_proto: Value,
     iterator_proto: Value,
     regexp_proto: Value,
     constants: Vec<Value>,
@@ -213,6 +215,7 @@ pub struct Vm<H> {
     natives: Vec<(Native, Value)>,
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
+    finalization_jobs: Vec<(Value, Value)>,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Vec<Atom>>,
@@ -262,11 +265,13 @@ impl<H: Host> Vm<H> {
         }
         let root = self.closure(program, 0, Value::NULL)?;
         let result = self.call_value(program, root, self.globals, &[]);
+        let finalization = self.drain_finalization_jobs(program);
         self.profile.report(&self.heap, program);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
             self.report_memory("complete");
         }
+        finalization?;
         result
     }
     #[cfg(feature = "profile-memory")]
@@ -331,6 +336,7 @@ impl<H: Host> Vm<H> {
         self.natives.clear();
         self.frames.clear();
         self.frame_pool.clear();
+        self.finalization_jobs.clear();
         self.numeric_sites.clear();
         self.shapes.truncate(1);
         self.transitions.clear();
@@ -370,6 +376,7 @@ impl<H: Host> Vm<H> {
         self.symbol_properties.clear();
         self.symbol_property_order.clear();
         self.symbol_descriptors.clear();
+        self.finalization_registry_proto = Value::NULL;
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.globals = self
             .heap
