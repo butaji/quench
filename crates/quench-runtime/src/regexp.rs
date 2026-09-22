@@ -1204,25 +1204,6 @@ fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
     writable
 }
 
-pub(crate) fn repeat_exact_global_exec(
-    receiver: &crate::value::ObjectData,
-    input: &str,
-) -> Option<()> {
-    let source = receiver.hot_properties().slot_value(REGEXP_SOURCE_SLOT)?;
-    let flags = receiver.hot_properties().slot_value(REGEXP_FLAGS_SLOT)?;
-    let (Value::String(source), Value::String(flags)) = (source, flags) else {
-        return None;
-    };
-    if source != input || !source.bytes().all(|byte| byte.is_ascii_alphanumeric()) || flags != "g" {
-        return None;
-    }
-    let last_index = receiver
-        .hot_properties()
-        .slot_word(REGEXP_LAST_INDEX_SLOT)?;
-    last_index.store(Value::Number(input.encode_utf16().count() as f64));
-    Some(())
-}
-
 fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a str) {
     let search_start = if flags.contains('g') || flags.contains('y') {
         crate::strings::utf16_byte_index(s, last_index)

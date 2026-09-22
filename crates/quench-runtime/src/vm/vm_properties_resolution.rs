@@ -270,30 +270,6 @@ fn is_missing_terminal(entry: &PrototypeNamedCache) -> bool {
     )
 }
 
-#[inline(always)]
-fn named_cached_payload(value: &Value) -> NamedCachedPayload {
-    match value {
-        Value::BindingCell(cell) => NamedCachedPayload::Cell(std::rc::Rc::as_ptr(cell)),
-        value => NamedCachedPayload::Value(property_value(value)),
-    }
-}
-
-/// Return a raw pointer to the canonical word cell on a guarded named hit.
-/// The pointer remains owned by `object`; callers must keep that object alive
-/// until the word has been copied.
-#[inline(always)]
-pub(crate) fn get_named_cached_cell(
-    object: &crate::value::ObjectData,
-    key: &str,
-    cache: &std::cell::Cell<u64>,
-) -> Option<*const crate::value::BindingCell> {
-    match get_named_cached_payload(object, key, cache)? {
-        NamedCachedPayload::Word(_) => None,
-        NamedCachedPayload::Cell(cell) => Some(cell),
-        NamedCachedPayload::Value(_) => None,
-    }
-}
-
 const PROTOTYPE_CACHE_TAG: u64 = 1 << 63;
 
 #[derive(Clone)]
