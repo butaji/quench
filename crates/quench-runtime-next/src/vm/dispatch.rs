@@ -161,9 +161,19 @@ impl<H: Host> Vm<H> {
                 self.profile.binary(i.imm() as usize, i.b(), i.c());
                 let left = self.resolve_operand(p, f, Operand(i.b()))?;
                 let right = self.resolve_operand(p, f, Operand(i.c()))?;
-                #[cfg(feature = "profile-aggregate")]
-                self.profile_regional_binary(f, *pc - 1, i.imm(), left, right);
-                let v = self.binary(p, i.imm(), left, right)?;
+                let site_pc = *pc - 1;
+                let armed = self.profile_regional_binary(f, site_pc, i.imm(), left, right);
+                let v = if armed {
+                    match self.numeric_binary(i.imm(), left, right) {
+                        Some(value) => value,
+                        None => {
+                            self.deopt_numeric_site(f, site_pc);
+                            self.binary(p, i.imm(), left, right)?
+                        }
+                    }
+                } else {
+                    self.binary(p, i.imm(), left, right)?
+                };
                 if i.a() & RETURN_REGISTER != 0 {
                     return Ok(Some(v));
                 }
