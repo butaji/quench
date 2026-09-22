@@ -33,6 +33,7 @@ impl FunctionCompiler<'_, '_> {
             Statement::LabeledStatement(item) => self.labeled_statement(item),
             Statement::ThrowStatement(item) => {
                 let value = self.expression(&item.argument);
+                self.close_active_iterators();
                 self.emit(Op::Throw, value, 0, 0, 0);
             }
             Statement::TryStatement(item) => self.try_statement(item),
@@ -52,6 +53,19 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
+    fn close_active_iterators(&mut self) {
+        if self.iterator_closures.is_empty() {
+            return;
+        }
+        let close_fn = self.load_name("\0rqj:iterator-close");
+        let iterators = self.iterator_closures.clone();
+        for atom in iterators.into_iter().rev() {
+            let iterator = self.load_atom(atom);
+            let ignored = self.reg();
+            self.emit(Op::Call, ignored, close_fn, iterator, 0);
+        }
+    }
+
     fn return_expression(&mut self, expression: &Expression<'_>) {
         if !self.finally_contexts.is_empty() {
             let value = self.expression(expression);
@@ -68,12 +82,13 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => {
                 let value = self.expression(expression);
-                self.emit(Op::Return, value, 0, 0, 0);
+                self.emit_return(value);
             }
         }
     }
 
     fn emit_return(&mut self, value: Register) {
+        self.close_active_iterators();
         let Some(context) = self.finally_contexts.last() else {
             self.emit(Op::Return, value, 0, 0, 0);
             return;
@@ -92,13 +107,13 @@ impl FunctionCompiler<'_, '_> {
         let left = self.expression(&value.left);
         let false_edge = self.emit(Op::JumpFalse, left, 0, 0, 0);
         if value.operator.is_or() {
-            self.emit(Op::Return, left, 0, 0, 0);
+            self.emit_return(left);
             self.patch(false_edge);
             self.return_expression(&value.right);
         } else {
             self.return_expression(&value.right);
             self.patch(false_edge);
-            self.emit(Op::Return, left, 0, 0, 0);
+            self.emit_return(left);
         }
     }
 
@@ -231,10 +246,12 @@ impl FunctionCompiler<'_, '_> {
             value_cache,
             value_atom,
         );
+        self.iterator_closures.push(iterator_atom);
         self.bind_for_of_left(&item.left, value);
         self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
+        self.iterator_closures.pop();
         let update = self.code.len() as u32;
         self.patch_edges(&control.continues, update);
         self.emit(Op::Jump, 0, 0, 0, head);
