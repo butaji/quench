@@ -308,6 +308,7 @@ pub struct Vm<H> {
     // the small set of captured environments it has materialized.
     function_values: Vec<Vec<(Value, Value)>>,
     direct_eval: bool,
+    parameter_eval: bool,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -419,6 +420,7 @@ impl<H: Host> Vm<H> {
         self.suspended.clear();
         self.suspended_free.clear();
         self.direct_eval = false;
+        self.parameter_eval = false;
         self.promise = Default::default();
         self.numeric_sites.clear();
         self.shapes.truncate(1);

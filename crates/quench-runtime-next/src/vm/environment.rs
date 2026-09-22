@@ -1,6 +1,40 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn dynamic_binding(&self, frame: usize, atom: Atom) -> Option<Value> {
+        if let Some(value) = self.frames.get(frame).and_then(|frame| {
+            frame
+                .dynamic_bindings
+                .iter()
+                .rev()
+                .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
+        }) {
+            return Some(value);
+        }
+        let mut env = self.frames.get(frame).map(|frame| frame.env)?;
+        loop {
+            let Cell::Environment {
+                parent,
+                dynamic_bindings,
+                ..
+            } = self.heap.get(env)?
+            else {
+                return None;
+            };
+            if let Some(value) = dynamic_bindings
+                .iter()
+                .rev()
+                .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
+            {
+                return Some(value);
+            }
+            if parent.is_null() {
+                return None;
+            }
+            env = *parent;
+        }
+    }
+
     pub(super) fn resolve_name(
         &mut self,
         p: &ResidualProgram,
@@ -101,13 +135,7 @@ impl<H: Host> Vm<H> {
                     return self.get_property(p, object, atom);
                 }
             }
-            if let Some(value) = self.frames.last().and_then(|frame| {
-                frame
-                    .dynamic_bindings
-                    .iter()
-                    .rev()
-                    .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
-            }) {
+            if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
                 return Ok(value);
             }
         }
@@ -138,13 +166,7 @@ impl<H: Host> Vm<H> {
                     return self.get_property(p, object, atom);
                 }
             }
-            if let Some(value) = self.frames.last().and_then(|frame| {
-                frame
-                    .dynamic_bindings
-                    .iter()
-                    .rev()
-                    .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
-            }) {
+            if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
                 return Ok(value);
             }
         }

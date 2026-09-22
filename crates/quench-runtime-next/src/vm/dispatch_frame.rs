@@ -29,6 +29,11 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<FrameOutcome, JsError> {
         self.profile.function(id as usize);
+        if p.functions[id as usize].parameter_eval_arguments_error {
+            return Err(self
+                .syntax_error_result(p, "arguments binding is not allowed in function parameters")
+                .expect_err("syntax_error_result must throw"));
+        }
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
             function: 0,
@@ -209,6 +214,7 @@ impl<H: Host> Vm<H> {
         let env = self.heap.alloc(Cell::Environment {
             parent,
             slots: slots.into_boxed_slice(),
+            dynamic_bindings: self.frames[frame].dynamic_bindings.clone(),
         });
         self.frames[frame].env = env;
         self.frames[frame].captured = true;
@@ -217,10 +223,10 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn clone_frame_environment(&mut self, frame: usize) {
         let source = self.promote_frame_environment(frame);
-        let Some(Cell::Environment { parent, slots }) = self.heap.get(source).cloned() else {
+        let Some(Cell::Environment { parent, slots, dynamic_bindings }) = self.heap.get(source).cloned() else {
             return;
         };
-        let env = self.heap.alloc(Cell::Environment { parent, slots });
+        let env = self.heap.alloc(Cell::Environment { parent, slots, dynamic_bindings });
         self.frames[frame].env = env;
     }
 

@@ -67,6 +67,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) generator: bool,
     with_depth: u16,
     pub(super) strict: bool,
+    pub(super) dynamic_eval: bool,
+    parameter_context: bool,
+    pub(super) parameter_eval_arguments_error: bool,
     lexical_scopes: Vec<FxHashMap<Atom, Atom>>,
     disposable_stack: Option<Atom>,
 }
@@ -113,6 +116,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             generator,
             with_depth: 0,
             strict: false,
+            dynamic_eval: false,
+            parameter_context: false,
+            parameter_eval_arguments_error: false,
             lexical_scopes: Vec::new(),
             disposable_stack: None,
         }
@@ -365,7 +371,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         Operand::register(undefined),
                     );
                     let skip = self.emit(Op::JumpFalse, missing, 0, 0, 0);
+                    let previous = self.parameter_context;
+                    self.parameter_context = true;
                     let value = self.expression(initializer);
+                    self.parameter_context = previous;
                     self.store_atom(atom, value);
                     self.patch(skip);
                 }
@@ -418,8 +427,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.lexical_scopes.pop();
     }
 
-    pub(super) fn capture_scopes(&self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
+    pub(super) fn capture_scopes(&mut self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
         let mut scope = (*self.local_slots).clone();
+        if self.dynamic_eval {
+            scope.remove(&self.owner.atom("arguments"));
+        }
         for lexical in &self.lexical_scopes {
             for (source, target) in lexical {
                 if let Some(slot) = self.local_slots.get(target).copied() {

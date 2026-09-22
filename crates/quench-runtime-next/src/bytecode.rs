@@ -124,6 +124,7 @@ pub struct Function {
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
+    pub parameter_eval_arguments_error: bool,
     pub arguments_slot: Option<u16>,
     pub strict: bool,
     pub locals: u16,
@@ -270,7 +271,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 
 impl ResidualProgram {
     pub const FORMAT_VERSION: u8 = 13;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_000d_0006;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_000d_0007;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

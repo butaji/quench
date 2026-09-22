@@ -321,9 +321,9 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::Call => {
             instruction.b() == register
                 || instruction.c() == register
-                || range((instruction.imm() >> 16) as u16, instruction.imm() as u16)
+                || range(((instruction.imm() & 0x3fff_ffff) >> 16) as u16, instruction.imm() as u16)
         }
-        Op::CallKnown => range((instruction.imm() >> 16) as u16, instruction.imm() as u16),
+        Op::CallKnown => range(((instruction.imm() & 0x3fff_ffff) >> 16) as u16, instruction.imm() as u16),
         Op::CallMethod | Op::CallThisMethod => true,
         Op::Construct => {
             instruction.b() == register || range(instruction.c(), instruction.imm() as u16)

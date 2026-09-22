@@ -248,7 +248,7 @@ impl ResidualProgram {
                             || !register(instruction.b())
                             || !register(instruction.c())
                             || (instruction.imm() & u16::MAX as u32) > 8
-                            || (((instruction.imm() & 0x7fff_ffff) >> 16) as u16)
+                            || (((instruction.imm() & 0x3fff_ffff) >> 16) as u16)
                                 .checked_add((instruction.imm() & u16::MAX as u32) as u16)
                                 .is_none_or(|end| end > function.registers)
                             || (instruction.op() == Op::CallKnown
