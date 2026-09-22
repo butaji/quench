@@ -56,14 +56,12 @@ impl Engine {
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(source, name, SpecializationMode::Enabled)
     }
-
     pub fn specialize_unspecialized(
         source: &str,
         name: &str,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(source, name, SpecializationMode::Disabled)
     }
-
     fn specialize_with_mode(
         source: &str,
         name: &str,
@@ -189,6 +187,9 @@ impl<'a> Compiler<'a> {
                 Span::default(),
                 "SyntaxError: assignment to arguments is not allowed in strict mode",
             );
+        }
+        if let Some(error) = early::block_early_error(program) {
+            self.reject(Span::default(), error);
         }
         self.compile_function(
             None,

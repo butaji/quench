@@ -15,8 +15,12 @@ impl FunctionCompiler<'_, '_> {
                 .reject(item.span, "for-await-of requires an async function");
             return;
         }
+        let scoped = self.push_iteration_scope(&item.left);
         let source = self.expression(&item.right);
         self.for_iterable(&item.left, &item.body, source, item.r#await, label);
+        if scoped {
+            self.lexical_scopes.pop();
+        }
     }
 
     pub(super) fn for_in_statement(&mut self, item: &ForInStatement<'_>) {
@@ -28,6 +32,7 @@ impl FunctionCompiler<'_, '_> {
         item: &ForInStatement<'_>,
         label: Option<Atom>,
     ) {
+        let scoped = self.push_iteration_scope(&item.left);
         let object = self.expression(&item.right);
         let constructor = self.load_name("Object");
         let atom = self.owner.atom("keys");
@@ -47,6 +52,9 @@ impl FunctionCompiler<'_, '_> {
         let source = self.reg();
         self.emit(Op::Call, source, keys, this, (u32::from(base) << 16) | 1);
         self.for_iterable(&item.left, &item.body, source, false, label);
+        if scoped {
+            self.lexical_scopes.pop();
+        }
     }
 
     fn for_iterable(
@@ -110,6 +118,13 @@ impl FunctionCompiler<'_, '_> {
             value_atom,
         );
         self.iterator_closures.push(iterator_atom);
+        if matches!(
+            left,
+            ForStatementLeft::VariableDeclaration(declaration)
+                if declaration.kind != VariableDeclarationKind::Var
+        ) {
+            self.emit(Op::CloneEnv, 0, 0, 0, 0);
+        }
         self.bind_for_of_left(left, value);
         self.push_control(ControlKind::Loop, label);
         self.statement(body);
@@ -126,6 +141,21 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::Call, ignored, close_fn, iterator, 0);
         let end = self.code.len() as u32;
         self.patch_to(end_edge, end);
+    }
+
+    fn push_iteration_scope(&mut self, left: &ForStatementLeft<'_>) -> bool {
+        let ForStatementLeft::VariableDeclaration(declaration) = left else {
+            return false;
+        };
+        if declaration.kind == VariableDeclarationKind::Var {
+            return false;
+        }
+        let mut scope = FxHashMap::default();
+        for item in &declaration.declarations {
+            self.map_pattern_lexicals(&item.id, &mut scope);
+        }
+        self.lexical_scopes.push(scope);
+        true
     }
 
     fn bind_for_of_left(&mut self, left: &ForStatementLeft<'_>, value: Register) {
