@@ -11,8 +11,16 @@ pub(super) const TYPED_ARRAY_INSTALLS: &[(TypedArrayKind, Native, &str)] = &[
     (TypedArrayKind::Int8, Native::Int8Array, "Int8Array"),
     (TypedArrayKind::Int16, Native::Int16Array, "Int16Array"),
     (TypedArrayKind::Int32, Native::Int32Array, "Int32Array"),
-    (TypedArrayKind::BigInt64, Native::BigInt64Array, "BigInt64Array"),
-    (TypedArrayKind::BigUint64, Native::BigUint64Array, "BigUint64Array"),
+    (
+        TypedArrayKind::BigInt64,
+        Native::BigInt64Array,
+        "BigInt64Array",
+    ),
+    (
+        TypedArrayKind::BigUint64,
+        Native::BigUint64Array,
+        "BigUint64Array",
+    ),
     (
         TypedArrayKind::Float32,
         Native::Float32Array,

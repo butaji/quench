@@ -188,7 +188,12 @@ fn number_string(value: f64) -> String {
         return "NaN".into();
     }
     if value.is_infinite() {
-        return if value.is_sign_negative() { "-Infinity" } else { "Infinity" }.into();
+        return if value.is_sign_negative() {
+            "-Infinity"
+        } else {
+            "Infinity"
+        }
+        .into();
     }
     if value == 0.0 {
         return "0".into();

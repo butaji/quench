@@ -135,6 +135,26 @@ impl<H: Host> Vm<H> {
                         return self.syntax_error_result(p, "reserved binding in strict eval");
                     }
                     let atom = self.intern_atom(name);
+                    if self.direct_eval && name == "arguments" {
+                        let parameter_binding = self
+                            .frames
+                            .last()
+                            .and_then(|frame| p.functions.get(frame.function as usize))
+                            .and_then(|function| {
+                                function
+                                    .local_atoms
+                                    .iter()
+                                    .position(|candidate| *candidate == atom)
+                                    .map(|slot| slot < usize::from(function.params))
+                            })
+                            .unwrap_or(false);
+                        if parameter_binding {
+                            return self.syntax_error_result(
+                                p,
+                                "arguments binding conflicts with parameter",
+                            );
+                        }
+                    }
                     let value = self.eval_simple_expression(p, expression, strict)?;
                     if !lexical {
                         self.store_eval_local(p, atom, value);
@@ -157,7 +177,9 @@ impl<H: Host> Vm<H> {
             if let Some(name) = statement.strip_prefix("delete ") {
                 let atom = self.intern_atom(name.trim());
                 if let Some(frame) = self.frames.last_mut() {
-                    frame.dynamic_bindings.retain(|(candidate, _)| *candidate != atom);
+                    frame
+                        .dynamic_bindings
+                        .retain(|(candidate, _)| *candidate != atom);
                 }
                 result = Value::TRUE;
                 continue;
@@ -313,10 +335,16 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<(), JsError> {
         let rest = statement.strip_prefix("function ").unwrap_or_default();
-        let Some(open) = rest.find('(') else { return Ok(()) };
+        let Some(open) = rest.find('(') else {
+            return Ok(());
+        };
         let name = rest[..open].trim();
-        let Some(body_start) = statement.find('{') else { return Ok(()) };
-        let Some(body_end) = statement.rfind('}') else { return Ok(()) };
+        let Some(body_start) = statement.find('{') else {
+            return Ok(());
+        };
+        let Some(body_end) = statement.rfind('}') else {
+            return Ok(());
+        };
         if name.is_empty() || body_end <= body_start {
             return Ok(());
         }
@@ -332,7 +360,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn load_eval_name(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
-            if self.direct_eval {
+        if self.direct_eval {
             let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
             let with_base = self
                 .frames
@@ -415,10 +443,7 @@ impl<H: Host> Vm<H> {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
         if self.direct_eval {
-            let global_frame = self
-                .frames
-                .last()
-                .is_some_and(|frame| frame.function == 0);
+            let global_frame = self.frames.last().is_some_and(|frame| frame.function == 0);
             if global_frame {
                 self.store_eval_local(p, atom, value);
                 return self.define_global_eval_binding(p, atom, value);
@@ -514,15 +539,18 @@ impl<H: Host> Vm<H> {
         for index in (0..self.frames.len()).rev() {
             let frame = &self.frames[index];
             if index != current
-                && (frame.function != 0
-                    || self.own_property(self.realm.globals, atom).is_none())
+                && (frame.function != 0 || self.own_property(self.realm.globals, atom).is_none())
             {
                 continue;
             }
             let Some(function) = p.functions.get(frame.function as usize) else {
                 continue;
             };
-            let Some(slot) = function.local_atoms.iter().position(|candidate| *candidate == atom) else {
+            let Some(slot) = function
+                .local_atoms
+                .iter()
+                .position(|candidate| *candidate == atom)
+            else {
                 continue;
             };
             if frame.captured {
@@ -552,7 +580,11 @@ impl<H: Host> Vm<H> {
                 let Some(function) = p.functions.get(frame.function as usize) else {
                     continue;
                 };
-                let Some(slot) = function.local_atoms.iter().position(|candidate| *candidate == atom) else {
+                let Some(slot) = function
+                    .local_atoms
+                    .iter()
+                    .position(|candidate| *candidate == atom)
+                else {
                     continue;
                 };
                 (frame.captured, frame.env, slot)
