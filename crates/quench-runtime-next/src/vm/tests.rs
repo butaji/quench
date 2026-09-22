@@ -130,7 +130,7 @@ fn untaken_closure_branch_does_not_allocate_environments() {
     vm.initialize(&program).unwrap();
     let baseline = vm.heap.stats().0;
     let root = vm.closure(&program, 0, Value::NULL).unwrap();
-    let globals = vm.globals;
+    let globals = vm.realm.globals;
     vm.call_value(&program, root, globals, &[]).unwrap();
     let execution_allocations = vm.heap.stats().0 - baseline;
     assert!(

@@ -35,7 +35,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .copied()
                 .chain([
-                    self.globals,
+                    self.realm.globals,
                     self.object_proto,
                     self.function_proto,
                     self.array_proto,
@@ -133,7 +133,7 @@ impl<H: Host> Vm<H> {
                                 .flatten()
                         }),
                 )
-                .chain(self.jobs.iter().flat_map(|job| {
+                .chain(self.realm.jobs.iter().flat_map(|job| {
                     std::iter::once(job.callback)
                         .chain(std::iter::once(job.this))
                         .chain(job.args.iter().copied())
@@ -189,7 +189,7 @@ impl<H: Host> Vm<H> {
                         // argument is a semantic use-after-collection.
                         .chain(frame.registers.iter().copied())
                 }));
-        self.jobs.extend(
+        self.realm.jobs.extend(
             self.heap
                 .collect(roots)
                 .into_iter()
@@ -258,15 +258,15 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         let mut index = 0;
-        while index < self.jobs.len() {
-            let job = &self.jobs[index];
+        while index < self.realm.jobs.len() {
+            let job = &self.realm.jobs[index];
             let callback = job.callback;
             let this = job.this;
             let args = job.args.clone();
             self.call_value(program, callback, this, &args)?;
             index += 1;
         }
-        self.jobs.drain(..index);
+        self.realm.jobs.drain(..index);
         Ok(Value::UNDEFINED)
     }
 }
