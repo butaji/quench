@@ -372,6 +372,7 @@ mod tests {
 
     fn program(function: Function, roots: Vec<u64>) -> ResidualProgram {
         ResidualProgram {
+            specialized: true,
             atoms: AtomTable::default(),
             constants: vec![],
             functions: vec![function],

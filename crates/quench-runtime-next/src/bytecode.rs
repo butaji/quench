@@ -220,6 +220,7 @@ impl Operand {
 
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
+    pub(crate) specialized: bool,
     pub(crate) atoms: AtomTable,
     pub(crate) constants: Vec<Constant>,
     pub(crate) functions: Vec<Function>,
@@ -241,8 +242,8 @@ fn local_loads_in_bounds(code: &[Instr], locals: u16) -> bool {
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 6;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0006_0002;
+    pub const FORMAT_VERSION: u8 = 7;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0007_0002;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()
@@ -253,11 +254,11 @@ impl ResidualProgram {
             .map(|function| function.code.len())
             .sum()
     }
-
     pub fn write_binary(&self, path: &std::path::Path) -> Result<(), String> {
         let mut out = BinaryWriter::new();
-        out.bytes.extend_from_slice(b"RQJ\0\x06");
+        out.bytes.extend_from_slice(b"RQJ\0\x07");
         out.u64(Self::RUNTIME_ABI_FINGERPRINT);
+        out.u8(u8::from(self.specialized));
         out.strings(&self.atoms);
         out.u32(self.constants.len() as u32);
         for value in &self.constants {
@@ -349,11 +350,16 @@ impl ResidualProgram {
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
         let mut input = BinaryReader::new(&bytes);
-        input.magic(b"RQJ\0\x06")?;
+        input.magic(b"RQJ\0\x07")?;
         let abi = input.u64()?;
         if abi != Self::RUNTIME_ABI_FINGERPRINT {
             return Err("residual runtime ABI mismatch".into());
         }
+        let specialized = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid residual specialization mode".into()),
+        };
         let atoms = input.strings()?;
         let constants = input.list(|input| match input.u8()? {
             0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
@@ -469,6 +475,7 @@ impl ResidualProgram {
         let register_roots = input.list(|input| input.u64())?;
         input.finish()?;
         let program = Self {
+            specialized,
             atoms,
             constants,
             functions,
@@ -484,7 +491,6 @@ impl ResidualProgram {
         Ok(program)
     }
 }
-
 use binary::{BinaryReader, BinaryWriter};
 
 mod binary;

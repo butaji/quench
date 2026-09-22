@@ -255,6 +255,7 @@ impl<'a> Compiler<'a> {
         method_arguments.shrink_to_fit();
         self.field_sites.shrink_to_fit();
         let program = ResidualProgram {
+            specialized: self.mode == SpecializationMode::Enabled,
             atoms,
             constants: self.constants,
             functions,

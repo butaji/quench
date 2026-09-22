@@ -105,6 +105,7 @@ mod tests {
     #[test]
     fn partitions_pairs_and_nonsequential_boundaries_by_dispatch_class() {
         let program = ResidualProgram {
+            specialized: true,
             atoms: AtomTable::default(),
             constants: Vec::new(),
             functions: vec![

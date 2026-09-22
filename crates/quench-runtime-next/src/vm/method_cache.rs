@@ -164,15 +164,27 @@ impl<H: Host> Vm<H> {
             .object_data(this)
             .map(|object| (object.shape(), object.proto))
             .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
-        let mut cached = self.method_caches[site]
-            .iter()
-            .find(|entry| entry.shape == shape && (entry.proto == proto || entry.proto == this))
-            .and_then(|entry| entry.target);
+        let mut cached = self
+            .specialized
+            .then(|| {
+                self.method_caches[site]
+                    .iter()
+                    .find(|entry| {
+                        entry.shape == shape && (entry.proto == proto || entry.proto == this)
+                    })
+                    .and_then(|entry| entry.target)
+            })
+            .flatten();
         #[cfg(feature = "profile-aggregate")]
-        let mut cache_tier = self.method_caches[site].iter().position(|entry| {
-            entry.shape == shape && (entry.proto == proto || entry.proto == this)
-        });
-        if cached.is_none() {
+        let mut cache_tier = self
+            .specialized
+            .then(|| {
+                self.method_caches[site].iter().position(|entry| {
+                    entry.shape == shape && (entry.proto == proto || entry.proto == this)
+                })
+            })
+            .flatten();
+        if self.specialized && cached.is_none() {
             cached = self
                 .megamorphic_methods
                 .iter()
@@ -225,16 +237,18 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("value is not callable".into()));
                 }
             };
-            #[cfg(feature = "profile-aggregate")]
-            self.profile_method_refill(site, shape, cache_proto, target);
-            self.record_method_cache(
-                site,
-                MethodCache {
-                    shape,
-                    proto: cache_proto,
-                    target: Some(target),
-                },
-            );
+            if self.specialized {
+                #[cfg(feature = "profile-aggregate")]
+                self.profile_method_refill(site, shape, cache_proto, target);
+                self.record_method_cache(
+                    site,
+                    MethodCache {
+                        shape,
+                        proto: cache_proto,
+                        target: Some(target),
+                    },
+                );
+            }
             target
         };
         let target_kind = match target {
