@@ -34,7 +34,10 @@ impl<H: Host> Vm<H> {
         }
         if let Some(index) = key.as_int().filter(|index| *index >= 0)
             && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
-            && let Some(value) = elements.get(index as usize).copied()
+            && let Some(value) = elements
+                .get(index as usize)
+                .copied()
+                .filter(|value| !value.is_deleted())
         {
             #[cfg(feature = "profile-aggregate")]
             self.profile.index_get(0);
@@ -67,7 +70,10 @@ impl<H: Host> Vm<H> {
             }
             if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
                 let index = index as usize;
-                let dense = elements.get(index).copied();
+                let dense = elements
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_deleted());
                 let sparse = dense
                     .is_none()
                     .then(|| self.heap.sparse_get(object, index))

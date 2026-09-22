@@ -225,6 +225,7 @@ impl<H: Host> Vm<H> {
         let value = elements
             .get(index)
             .copied()
+            .filter(|value| !value.is_deleted())
             .or_else(|| self.heap.sparse_get(source, index))
             .unwrap_or(Value::UNDEFINED);
         match kind {

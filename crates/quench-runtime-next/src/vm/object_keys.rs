@@ -1,6 +1,30 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn array_name_keys(&mut self, object: Value) -> Option<Vec<Value>> {
+        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
+            return None;
+        };
+        let elements = Rc::clone(elements);
+        let length = self.heap.sparse_length(object).unwrap_or(elements.len());
+        let indices = (0..length)
+            .filter(|index| {
+                elements
+                    .get(*index)
+                    .copied()
+                    .filter(|value| !value.is_deleted())
+                    .or_else(|| self.heap.sparse_get(object, *index))
+                    .is_some()
+            })
+            .collect::<Vec<_>>();
+        Some(
+            indices
+                .into_iter()
+                .map(|index| self.heap.alloc(Cell::String(index.to_string())))
+                .collect(),
+        )
+    }
+
     pub(super) fn object_values(
         &mut self,
         p: &ResidualProgram,
@@ -88,17 +112,21 @@ impl<H: Host> Vm<H> {
         }
         let object = self.proxy_target(object);
         let object = self.box_object(object)?;
+        let mut values = self.array_name_keys(object).unwrap_or_default();
         let data = self.object_data(object).expect("boxed target is object");
-        let atoms = self
+        let named_atoms = self
             .ordered_shape(data)
             .into_iter()
-            .filter(|(atom, _)| self.is_enumerable(object, *atom))
+            .filter(|(atom, slot)| {
+                self.heap.property_get(data, *slot).is_some() && self.is_enumerable(object, *atom)
+            })
             .map(|(atom, _)| atom)
             .collect::<Vec<_>>();
-        let values = atoms
-            .into_iter()
-            .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
-            .collect();
+        values.extend(
+            named_atoms
+                .into_iter()
+                .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into()))),
+        );
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),
@@ -122,17 +150,19 @@ impl<H: Host> Vm<H> {
         }
         let object = self.proxy_target(object);
         let object = self.box_object(object)?;
+        let mut values = self.array_name_keys(object).unwrap_or_default();
         let data = self.object_data(object).expect("boxed target is object");
-        let atoms = self
+        let named_atoms = self
             .ordered_shape(data)
             .into_iter()
             .filter(|(_, slot)| self.heap.property_get(data, *slot).is_some())
             .map(|(atom, _)| atom)
             .collect::<Vec<_>>();
-        let values = atoms
-            .into_iter()
-            .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into())))
-            .collect();
+        values.extend(
+            named_atoms
+                .into_iter()
+                .map(|atom| self.heap.alloc(Cell::String(self.atom_name(atom).into()))),
+        );
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),

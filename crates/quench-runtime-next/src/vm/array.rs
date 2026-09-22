@@ -1,5 +1,19 @@
 use super::*;
 
+pub(super) fn normalized_array_values(elements: &[Value]) -> Vec<Value> {
+    elements
+        .iter()
+        .copied()
+        .map(|value| {
+            if value.is_deleted() {
+                Value::UNDEFINED
+            } else {
+                value
+            }
+        })
+        .collect()
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn array_reverse_native(&mut self, this: Value) -> Result<Value, JsError> {
         let values = match self.heap.get(this) {

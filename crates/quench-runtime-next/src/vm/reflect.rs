@@ -99,7 +99,9 @@ impl<H: Host> Vm<H> {
                     vec![]
                 } else {
                     match self.heap.get(argument_array) {
-                        Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                        Some(Cell::Array { elements, .. }) => {
+                            super::array::normalized_array_values(elements)
+                        }
                         _ => {
                             return Err(JsError(
                                 "Reflect.construct arguments must be an array".into(),
