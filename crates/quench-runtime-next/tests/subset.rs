@@ -87,6 +87,16 @@ fn well_known_symbols_are_realm_stable_values() {
 }
 
 #[test]
+fn symbol_descriptions_and_primitive_methods_preserve_identity() {
+    assert_eq!(
+        output(
+            "var symbol = Symbol('hello'); print(symbol.description); print(symbol.toString()); print(symbol.valueOf() === symbol);"
+        ),
+        ["hello", "Symbol(hello)", "true"],
+    );
+}
+
+#[test]
 fn custom_symbol_iterator_uses_the_shared_iterator_protocol() {
     assert_eq!(
         output(

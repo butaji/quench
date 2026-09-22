@@ -206,12 +206,9 @@ impl<H: Host> Vm<H> {
                 let text = self.to_string(p, value)?;
                 Ok(self.heap.alloc(Cell::String(text)))
             }
-            Native::Symbol => {
-                let description = match args.first().copied() {
-                    None | Some(Value::UNDEFINED) => None,
-                    Some(value) => Some(self.to_string(p, value)?),
-                };
-                Ok(self.heap.alloc(Cell::Symbol(description)))
+            Native::Symbol => self.call_symbol_constructor(p, args),
+            Native::SymbolToString | Native::SymbolValueOf => {
+                self.call_symbol_value_native(p, native, this)
             }
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
             Native::Date => Ok(self.heap.alloc(Cell::Date(
