@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 mod bytecode;
+mod bigint;
 mod compile;
 mod heap;
 mod host;

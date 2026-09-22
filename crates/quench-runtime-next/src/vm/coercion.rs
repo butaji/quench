@@ -31,6 +31,22 @@ impl<H: Host> Vm<H> {
         op: u32,
         value: Value,
     ) -> Result<Value, JsError> {
+        let value = if matches!(op, 0 | 1 | 3) && self.object_data(value).is_some() {
+            self.to_primitive(p, value, "number")?
+        } else {
+            value
+        };
+        if let Some(Cell::BigInt(value)) = self.heap.get(value).cloned() {
+            let value = value.parse::<num_bigint::BigInt>().map_err(|_| {
+                self.type_error(p, "Invalid BigInt value".into())
+            })?;
+            if op == 1 {
+                return Ok(self.heap.alloc(Cell::BigInt((-value).to_str_radix(10))));
+            }
+            if op == 3 {
+                return Ok(self.heap.alloc(Cell::BigInt((!value).to_str_radix(10))));
+            }
+        }
         Ok(match op {
             0 => Value::number(self.to_number(p, value)?),
             1 => Value::number(-self.to_number(p, value)?),
@@ -174,7 +190,7 @@ impl<H: Host> Vm<H> {
         Ok("[object Object]".into())
     }
 
-    fn to_primitive(
+    pub(super) fn to_primitive(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -185,7 +201,13 @@ impl<H: Host> Vm<H> {
         }
         if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
             let method = self.get_index(program, value, symbol)?;
-            if !method.is_undefined() {
+            if !method.is_undefined() && !method.is_null() {
+                if !self.is_function(method) {
+                    return Err(self.type_error(
+                        program,
+                        "Symbol.toPrimitive is not callable".into(),
+                    ));
+                }
                 let hint = self.heap.alloc(Cell::String(hint.into()));
                 let result = self.call_value(program, method, value, &[hint])?;
                 if self.object_data(result).is_none() {
@@ -227,10 +249,11 @@ impl<H: Host> Vm<H> {
         if a == b {
             return true;
         }
-        matches!(
-            (self.heap.get(a), self.heap.get(b)),
-            (Some(Cell::String(a)), Some(Cell::String(b))) if a == b
-        )
+        match (self.heap.get(a), self.heap.get(b)) {
+            (Some(Cell::String(a)), Some(Cell::String(b))) => a == b,
+            (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
+            _ => false,
+        }
     }
 
     #[inline(always)]
