@@ -67,6 +67,7 @@ const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 
 opcodes!(
     Nop => Effect::PURE,
+    CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
     Wide => Effect::PURE,
     LoadConst => Effect::PURE,
     LoadLocal => Effect::PURE,

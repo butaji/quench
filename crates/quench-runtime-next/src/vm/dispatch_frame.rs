@@ -193,6 +193,15 @@ impl<H: Host> Vm<H> {
         env
     }
 
+    pub(super) fn clone_frame_environment(&mut self, frame: usize) {
+        let source = self.promote_frame_environment(frame);
+        let Some(Cell::Environment { parent, slots }) = self.heap.get(source).cloned() else {
+            return;
+        };
+        let env = self.heap.alloc(Cell::Environment { parent, slots });
+        self.frames[frame].env = env;
+    }
+
     pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
         const RETAINED_VALUES: usize = 256;
         if frame.locals.capacity() > RETAINED_VALUES {
