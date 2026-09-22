@@ -79,7 +79,7 @@ impl<H: Host> Vm<H> {
                 let len = args.first().and_then(|v| v.as_number()).unwrap_or(0.0) as usize;
                 Ok(self.heap.alloc(Cell::Array {
                     object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(vec![Value::UNDEFINED; len]),
+                    elements: Rc::new(vec![Value::DELETED; len]),
                 }))
             }
             Native::ArrayBuffer | Native::SharedArrayBuffer => {

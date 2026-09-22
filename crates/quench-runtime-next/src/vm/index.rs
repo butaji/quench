@@ -33,6 +33,14 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         if let Some(index) = key.as_int().filter(|index| *index >= 0)
+            && self
+                .array_descriptor(object, index as usize)
+                .is_some_and(|attributes| attributes.accessor)
+        {
+            let atom = self.intern_atom(&index.to_string());
+            return self.get_property(p, object, atom);
+        }
+        if let Some(index) = key.as_int().filter(|index| *index >= 0)
             && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
             && let Some(value) = elements
                 .get(index as usize)
@@ -76,7 +84,11 @@ impl<H: Host> Vm<H> {
                     .filter(|value| !value.is_deleted());
                 let sparse = dense
                     .is_none()
-                    .then(|| self.heap.sparse_get(object, index))
+                    .then(|| {
+                        self.heap
+                            .sparse_get(object, index)
+                            .filter(|value| !value.is_deleted())
+                    })
                     .flatten();
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.index_get(
@@ -113,9 +125,20 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         if let Some(index) = key.as_int().filter(|index| *index >= 0) {
             let index = index as usize;
+            if self
+                .array_descriptor(object, index)
+                .is_some_and(|attributes| attributes.accessor)
+            {
+                let atom = self.intern_atom(&index.to_string());
+                return self.set_property_with_program(p, object, atom, value);
+            }
             if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
-                let existing =
-                    index < elements.len() || self.heap.sparse_get(object, index).is_some();
+                let existing = index < elements.len()
+                    && elements.get(index).is_some_and(|value| !value.is_deleted())
+                    || self
+                        .heap
+                        .sparse_get(object, index)
+                        .is_some_and(|value| !value.is_deleted());
                 let integrity = self.object_data(object);
                 if integrity.is_some_and(Object::is_frozen)
                     || integrity.is_some_and(|object| !object.is_extensible()) && !existing
@@ -128,7 +151,8 @@ impl<H: Host> Vm<H> {
             }
             let replaces = matches!(
                 self.heap.get(object),
-                Some(Cell::Array { elements, .. }) if index < elements.len()
+                Some(Cell::Array { elements, .. })
+                    if elements.get(index).is_some_and(|value| !value.is_deleted())
             );
             if replaces {
                 let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
@@ -223,7 +247,7 @@ impl<H: Host> Vm<H> {
             self.profile
                 .array_write_ownership(Rc::strong_count(elements) != 1);
             let elements = mutable_array_elements(elements);
-            elements.resize(index + 1, Value::UNDEFINED);
+            elements.resize(index + 1, Value::DELETED);
             elements[index] = value;
         }
         true
@@ -237,7 +261,12 @@ impl<H: Host> Vm<H> {
         let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
             return Err(JsError("array receiver is not array".into()));
         };
-        let existing = index < elements.len() || self.heap.sparse_get(object, index).is_some();
+        let existing = index < elements.len()
+            && elements.get(index).is_some_and(|value| !value.is_deleted())
+            || self
+                .heap
+                .sparse_get(object, index)
+                .is_some_and(|value| !value.is_deleted());
         let integrity = self.object_data(object);
         if integrity.is_some_and(Object::is_frozen)
             || integrity.is_some_and(|object| !object.is_extensible()) && !existing
