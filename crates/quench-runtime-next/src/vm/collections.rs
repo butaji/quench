@@ -33,7 +33,6 @@ impl<H: Host> Vm<H> {
                 | Native::WeakRefDeref
         )
     }
-
     pub(super) fn construct_weak_collection_native(
         &mut self,
         native: Native,
@@ -51,18 +50,20 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(cell))
     }
-
     pub(super) fn construct_weak_ref_native(&mut self, args: &[Value]) -> Result<Value, JsError> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         if self.object_data(target).is_none() {
             return Err(JsError("WeakRef target must be an object".into()));
         }
+        let target = self
+            .heap
+            .weak_handle(target)
+            .ok_or_else(|| JsError("WeakRef target is not a live object".into()))?;
         Ok(self.heap.alloc(Cell::WeakRef {
             object: Self::empty_object(self.weak_ref_proto),
-            target,
+            target: Some(target),
         }))
     }
-
     pub(super) fn install_weak_collections(
         &mut self,
         program: &ResidualProgram,
@@ -113,7 +114,6 @@ impl<H: Host> Vm<H> {
         self.set_named(program, weak_ref, "prototype", self.weak_ref_proto)?;
         self.global(program, "WeakRef", weak_ref)
     }
-
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
         self.map_proto = self.object();
@@ -150,7 +150,6 @@ impl<H: Host> Vm<H> {
         self.set_named(program, set, "prototype", self.set_proto)?;
         self.global(program, "Set", set)
     }
-
     pub(super) fn construct_collection_native(
         &mut self,
         native: Native,
@@ -210,7 +209,6 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(cell))
     }
-
     pub(super) fn call_collection_native(
         &mut self,
         p: &ResidualProgram,
@@ -440,12 +438,13 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::WeakRef { target, .. }) = self.heap.get(this) else {
                     return Err(JsError("WeakRef method receiver is not a WeakRef".into()));
                 };
-                Ok(*target)
+                Ok(target
+                    .and_then(|target| self.heap.weak_value(target))
+                    .unwrap_or(Value::UNDEFINED))
             }
             _ => Err(JsError("invalid collection native".into())),
         }
     }
-
     pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
         let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
             return None;
@@ -479,7 +478,6 @@ impl<H: Host> Vm<H> {
             Err(JsError("weak collection keys must be objects".into()))
         }
     }
-
     fn weak_map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
         let Some(Cell::WeakMap { entries, .. }) = self.heap.get(map) else {
             return None;

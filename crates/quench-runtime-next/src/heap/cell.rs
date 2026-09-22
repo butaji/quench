@@ -1,3 +1,4 @@
+use super::root::WeakHandle;
 use crate::value::Value;
 use crate::value_vec::ValueVec;
 use crate::vm::wtf16::JsString;
@@ -367,7 +368,7 @@ pub(crate) enum Cell {
     },
     WeakRef {
         object: Object,
-        target: Value,
+        target: Option<WeakHandle>,
     },
     Iterator {
         object: Object,

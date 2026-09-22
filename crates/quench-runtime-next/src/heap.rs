@@ -20,6 +20,7 @@ pub(crate) struct Heap {
     slots: SlotArena,
     marks: Vec<u64>,
     free: Vec<u32>,
+    generations: Vec<u32>,
     allocations: usize,
     threshold: usize,
     total_allocations: u64,
@@ -82,6 +83,8 @@ impl Heap {
             if let Some(arrays) = &mut self.sparse_arrays {
                 arrays.remove(&index);
             }
+            self.generations[index as usize] =
+                self.generations[index as usize].wrapping_add(1).max(1);
             self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
             #[cfg(feature = "profile-memory")]
             self.memory_profile.allocated(
@@ -104,6 +107,7 @@ impl Heap {
         if index / 64 == self.marks.len() {
             self.marks.push(0);
         }
+        self.generations.push(1);
         self.peak_live = self.peak_live.max(self.slots.len() - self.free.len());
         Value::heap(index as u32)
     }
@@ -124,6 +128,7 @@ impl Heap {
         self.slots.clear();
         self.marks.clear();
         self.free.clear();
+        self.generations.clear();
         self.allocations = 0;
         self.threshold = 384;
         self.total_allocations = 0;
@@ -145,14 +150,12 @@ impl Heap {
     }
     pub fn get(&self, value: Value) -> Option<&Cell> {
         let index = value.heap_index()? as usize;
-        // SAFETY: heap Values are minted only by `alloc`; tracing keeps every
-        // reachable handle live, and raw indices never cross the VM boundary.
+        // SAFETY: alloc mints live values and tracing preserves their handles.
         unsafe { self.slots.get_unchecked(index).cell.as_ref() }
     }
     pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
         let index = value.heap_index()? as usize;
-        // SAFETY: identical live-handle invariant to `get`; unique mutable
-        // access remains confined to this heap edge.
+        // SAFETY: `get`'s live-handle invariant, with unique access at this edge.
         unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
     }
     pub fn should_collect(&self) -> bool {
@@ -290,14 +293,12 @@ impl Heap {
             .get(&index)
             .copied()
     }
-
     pub(crate) fn sparse_length(&self, array: Value) -> Option<usize> {
         self.sparse_arrays
             .as_ref()?
             .get(&array.heap_index()?)
             .map(|elements| elements.length)
     }
-
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
         let arrays = self
             .sparse_arrays
@@ -306,7 +307,6 @@ impl Heap {
         elements.values.insert(index, value);
         elements.length = elements.length.max(index.saturating_add(1));
     }
-
     pub(crate) fn sparse_pop(&mut self, array: Value, dense_len: usize) -> Value {
         let index = array.heap_index().unwrap();
         let arrays = self.sparse_arrays.as_mut().unwrap();
