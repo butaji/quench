@@ -1,5 +1,7 @@
 use super::wtf16::JsString;
-use super::{CallTarget, JsError, MethodCache, Vm};
+use super::{
+    CallTarget, JsError, MethodCache, Vm, activation::Completion, activation::Continuation,
+};
 use crate::{Engine, Host, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -209,4 +211,30 @@ fn pending_jobs_use_the_shared_interpreter_after_root_release() {
     assert!(vm.release_root(argument_root));
     vm.drain_jobs(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["7"]);
+}
+
+#[test]
+fn suspended_continuations_are_rooted_until_generation_checked_resume() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize("print(0);", "continuation.js").unwrap();
+    vm.initialize(&program).unwrap();
+    let live = vm.heap.alloc(crate::heap::Cell::Environment {
+        parent: Value::NULL,
+        slots: Box::new([]),
+    });
+    let id = vm.suspend_continuation(Continuation {
+        function: 0,
+        pc: 0,
+        env: live,
+        this: Value::UNDEFINED,
+        locals: vec![],
+        registers: vec![],
+        completion: Completion::Yield(Value::UNDEFINED),
+    });
+    vm.collect_now(&program);
+    assert!(vm.heap.get(live).is_some());
+    assert!(vm.resume_continuation(id).is_some());
+    assert!(vm.resume_continuation(id).is_none());
+    vm.collect_now(&program);
+    assert!(vm.heap.get(live).is_none());
 }

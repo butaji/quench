@@ -12,6 +12,7 @@ use rustc_hash::FxHashMap;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 mod activation;
+mod activation_lifecycle;
 mod array;
 mod array_buffer;
 mod array_builtins;
@@ -53,7 +54,7 @@ mod object_symbols;
 #[cfg(test)]
 mod object_tests;
 mod property_key;
-use activation::Continuation;
+use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use numeric_site::NumericSite;
 mod operations;
@@ -224,7 +225,8 @@ pub struct Vm<H> {
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
     jobs: Vec<PendingJob>,
-    suspended: Vec<Continuation>,
+    suspended: Vec<SuspendedEntry>,
+    suspended_free: Vec<u32>,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Vec<Atom>>,
@@ -276,6 +278,7 @@ impl<H: Host> Vm<H> {
             args,
         });
     }
+
     pub fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
     }
@@ -360,6 +363,7 @@ impl<H: Host> Vm<H> {
         self.frame_pool.clear();
         self.jobs.clear();
         self.suspended.clear();
+        self.suspended_free.clear();
         self.numeric_sites.clear();
         self.shapes.truncate(1);
         self.shape_slots.truncate(1);
