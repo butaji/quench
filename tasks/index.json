@@ -9,7 +9,7 @@
     "reference_repository": "../v2",
     "reference_commit": "e511d1f7e401ecff8cfc4f7cccb6292e6426be44"
   },
-  "next_task": "03",
+  "next_task": "04",
   "completion_policy": "retain_done",
   "lanes": {
     "critical_path": [
@@ -42,8 +42,8 @@
   "items": [
     {"id":"01","file":"01.md","title":"Freeze baselines and rewrite inputs","lane":"critical_path","status":"done","depends_on":[]},
     {"id":"02","file":"02.md","title":"Remove JIT, stencils, and the migrated native core","lane":"critical_path","status":"done","depends_on":["01"]},
-    {"id":"03","file":"03.md","title":"Clean the interpreter oracle and repository","lane":"critical_path","status":"in_progress","depends_on":["02"]},
-    {"id":"04","file":"04.md","title":"Import the pinned v2 runtime snapshot","lane":"critical_path","status":"pending","depends_on":["03"]},
+    {"id":"03","file":"03.md","title":"Clean the interpreter oracle and repository","lane":"critical_path","status":"done","depends_on":["02"]},
+    {"id":"04","file":"04.md","title":"Import the pinned v2 runtime snapshot","lane":"critical_path","status":"in_progress","depends_on":["03"]},
     {"id":"05","file":"05.md","title":"Establish engine and residual-program contracts","lane":"critical_path","status":"pending","depends_on":["04"]},
     {"id":"06","file":"06.md","title":"Adopt tagged values and JavaScript strings","lane":"critical_path","status":"pending","depends_on":["05"]},
     {"id":"07","file":"07.md","title":"Extend the tracing heap and root lifecycle","lane":"critical_path","status":"pending","depends_on":["06"]},
