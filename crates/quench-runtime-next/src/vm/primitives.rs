@@ -39,7 +39,34 @@ impl<H: Host> Vm<H> {
                     JsError("BigInt.prototype.valueOf called on incompatible receiver".into())
                 })
             }
-            Native::StringToString | Native::StringValueOf => Ok(this),
+            Native::StringToString | Native::StringValueOf => {
+                if matches!(self.heap.get(this), Some(Cell::String(_))) {
+                    Ok(this)
+                } else {
+                    let value_atom = self.intern_atom("\0rqj:string-value");
+                    Ok(self.own_property(this, value_atom).unwrap_or(this))
+                }
+            }
+            Native::NumberValueOf => {
+                if this.as_number().is_some() {
+                    Ok(this)
+                } else {
+                    let value_atom = self.intern_atom("\0rqj:number-value");
+                    self.own_property(this, value_atom).ok_or_else(|| {
+                        JsError("Number.prototype.valueOf called on incompatible receiver".into())
+                    })
+                }
+            }
+            Native::BooleanValueOf => {
+                if this.as_bool().is_some() {
+                    Ok(this)
+                } else {
+                    let value_atom = self.intern_atom("\0rqj:boolean-value");
+                    self.own_property(this, value_atom).ok_or_else(|| {
+                        JsError("Boolean.prototype.valueOf called on incompatible receiver".into())
+                    })
+                }
+            }
             Native::StringCharCodeAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
                 let Some(Cell::String(text)) = self.heap.get(this) else {

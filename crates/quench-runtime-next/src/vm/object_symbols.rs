@@ -99,7 +99,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Vec<Value>, JsError> {
         let keys = self.object_own_keys(p, object)?;
         Ok(match self.heap.get(keys) {
-            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+            Some(Cell::Array { elements, .. }) => elements
+                .iter()
+                .copied()
+                .filter(|key| {
+                    !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with('\0'))
+                })
+                .collect(),
             _ => Vec::new(),
         })
     }
