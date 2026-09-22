@@ -51,6 +51,12 @@ impl<H: Host> Vm<H> {
         key: Value,
     ) -> Result<Value, JsError> {
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            if let Some(Cell::Proxy {
+                target, handler, ..
+            }) = self.heap.get(object).cloned()
+            {
+                return self.proxy_get_symbol(p, target, handler, object, key);
+            }
             return Ok(self
                 .symbol_property(object, key)
                 .unwrap_or(Value::UNDEFINED));
@@ -143,6 +149,12 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            if let Some(Cell::Proxy {
+                target, handler, ..
+            }) = self.heap.get(object).cloned()
+            {
+                return self.proxy_set_symbol(p, target, handler, object, key, value);
+            }
             return self.set_symbol_property(object, key, value);
         }
         if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {

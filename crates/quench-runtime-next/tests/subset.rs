@@ -67,6 +67,16 @@ fn symbol_keys_remain_identity_values_across_property_reflection() {
 }
 
 #[test]
+fn proxy_symbol_get_and_set_traps_preserve_symbol_identity() {
+    assert_eq!(
+        output(
+            "var key = Symbol('key'); var target = {}; var proxy = new Proxy(target, { get: function(t, property) { return property === key ? 9 : 0; }, set: function(t, property, value) { t[property] = value + 1; return true; } }); print(proxy[key]); proxy[key] = 4; print(target[key]);"
+        ),
+        ["9", "5"],
+    );
+}
+
+#[test]
 fn well_known_symbols_are_realm_stable_values() {
     assert_eq!(
         output(

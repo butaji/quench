@@ -62,6 +62,49 @@ impl<H: Host> Vm<H> {
         self.set_property_with_program(p, target, atom, value)
     }
 
+    pub(super) fn proxy_get_symbol(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        if handler.is_null() {
+            return Err(JsError("cannot access a revoked proxy".into()));
+        }
+        let trap = self.proxy_trap(p, handler, "get")?;
+        if self.is_function(trap) {
+            return self.call_value(p, trap, handler, &[target, key, receiver]);
+        }
+        Ok(self
+            .symbol_property(target, key)
+            .unwrap_or(Value::UNDEFINED))
+    }
+
+    pub(super) fn proxy_set_symbol(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        key: Value,
+        value: Value,
+    ) -> Result<(), JsError> {
+        if handler.is_null() {
+            return Err(JsError("cannot access a revoked proxy".into()));
+        }
+        let trap = self.proxy_trap(p, handler, "set")?;
+        if self.is_function(trap) {
+            let result = self.call_value(p, trap, handler, &[target, key, value, receiver])?;
+            if !self.truthy(result) {
+                return Err(JsError("proxy set trap returned false".into()));
+            }
+            return Ok(());
+        }
+        self.set_symbol_property(target, key, value)
+    }
+
     pub(super) fn get_property(
         &mut self,
         p: &ResidualProgram,
