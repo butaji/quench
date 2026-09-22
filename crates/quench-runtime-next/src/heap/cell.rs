@@ -139,7 +139,7 @@ pub(crate) enum Native {
     SetValues,
     SetEntries,
     SetForEach,
-    IteratorNext, IteratorClose,
+    IteratorNext, IteratorClose, IteratorSelf,
     WeakMap,
     WeakMapGet,
     WeakMapSet,

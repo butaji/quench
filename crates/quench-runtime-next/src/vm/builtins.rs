@@ -140,7 +140,7 @@ const NATIVES: &[Native] = &[
     Native::SetValues,
     Native::SetEntries,
     Native::SetForEach,
-    Native::IteratorNext, Native::IteratorClose,
+    Native::IteratorNext, Native::IteratorClose, Native::IteratorSelf,
     Native::WeakMap,
     Native::WeakMapGet,
     Native::WeakMapSet,
@@ -276,6 +276,7 @@ impl<H: Host> Vm<H> {
             self.set_named(program, symbol, name, value)?;
         }
         self.global(program, "Symbol", symbol)?;
+        self.install_iterator_self(program)?;
         let string = self.native_value(Native::String);
         self.set_named(
             program,
@@ -454,7 +455,6 @@ impl<H: Host> Vm<H> {
         self.profile.dynamic_atom();
         atom
     }
-
     pub(super) fn atom_hash(name: &str) -> u64 {
         Self::atom_hash_units(&name.encode_utf16().collect::<Vec<_>>())
     }

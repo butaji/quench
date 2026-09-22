@@ -200,9 +200,12 @@ fn generators_share_continuations_with_iterator_results() {
     let mut runtime = Runtime::new(host);
     runtime
         .compile_and_execute(ExecutionRequest::script(
-            "function* values() { var received = yield 1; yield received + 1; return 9; } var iterator = values(); var first = iterator.next(); print(first.value); var second = iterator.next(4); print(second.value); var done = iterator.next(); print(done.value); print(done.done); print(iterator.next().done);",
+            "function* values() { var received = yield 1; yield received + 1; return 9; } function* sequence() { yield 2; yield 4; } var iterator = values(); var first = iterator.next(); print(first.value); var second = iterator.next(4); print(second.value); var done = iterator.next(); print(done.value); print(done.done); print(iterator.next().done); print(typeof iterator[Symbol.iterator]); var sum = 0; for (var value of sequence()) { sum = sum + value; } print(sum);",
             "generators.js",
         ))
         .unwrap();
-    assert_eq!(view.0.borrow().as_slice(), ["1", "5", "9", "true", "true"]);
+    assert_eq!(
+        view.0.borrow().as_slice(),
+        ["1", "5", "9", "true", "true", "function", "6"]
+    );
 }

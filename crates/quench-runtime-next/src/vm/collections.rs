@@ -23,6 +23,7 @@ impl<H: Host> Vm<H> {
                 | Native::SetForEach
                 | Native::IteratorNext
                 | Native::IteratorClose
+                | Native::IteratorSelf
                 | Native::WeakMapGet
                 | Native::WeakMapSet
                 | Native::WeakMapHas
@@ -363,6 +364,7 @@ impl<H: Host> Vm<H> {
             }
             Native::IteratorNext => self.iterator_next_with_args(p, this, args),
             Native::IteratorClose => self.iterator_close(p, this),
+            Native::IteratorSelf => Ok(this),
             Native::WeakMapGet => {
                 let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let Some(index) = self.weak_map_entry_index(this, key) else {
@@ -464,7 +466,6 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|candidate| self.same_value_zero(*candidate, value))
     }
-
     pub(super) fn same_value_zero(&self, left: Value, right: Value) -> bool {
         left == right
             || (left.as_number().is_some_and(f64::is_nan)
@@ -472,7 +473,6 @@ impl<H: Host> Vm<H> {
             || matches!((self.heap.get(left), self.heap.get(right)),
                 (Some(Cell::String(left)), Some(Cell::String(right))) if left == right)
     }
-
     pub(super) fn weak_key(&self, value: Value) -> Result<Value, JsError> {
         if self.object_data(value).is_some() {
             Ok(value)
