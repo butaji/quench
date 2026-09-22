@@ -161,7 +161,7 @@ pub(crate) enum Native {
     DisposableStackDispose,
     DisposableStackUseAsync,
     DisposableStackDisposeAsync,
-    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall,
+    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction,
     Date,
     DateNow,
     DateGetTime, DateValueOf, DateGetTimezoneOffset, DateToISOString, DateToJSON, DateParse, DateUTC,
@@ -242,7 +242,7 @@ impl Native {
     pub(crate) fn is_function_native(self) -> bool {
         matches!(
             self,
-            Self::Function | Self::FunctionReturnThis | Self::FunctionReturnName
+            Self::Function | Self::FunctionReturnThis | Self::FunctionReturnName | Self::AsyncFunction | Self::GeneratorFunction | Self::AsyncGeneratorFunction
         )
     }
 
