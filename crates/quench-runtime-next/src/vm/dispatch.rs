@@ -164,6 +164,17 @@ impl<H: Host> Vm<H> {
                 let v = self.get_index(p, self.read(f, i.b()), self.read(f, i.c()))?;
                 self.write(f, i.a(), v);
             }
+            Op::ResolveName => {
+                let value = self.resolve_name(p, i.imm(), i.c())?;
+                self.write(f, i.a(), value);
+            }
+            Op::StoreResolvedName => {
+                self.set_property_with_program(p, self.read(f, i.b()), i.imm(), self.read(f, i.a()))?;
+            }
+            Op::ToPropertyKey => {
+                let value = self.to_property_key(p, self.read(f, i.b()))?;
+                self.write(f, i.a(), value);
+            }
             Op::GetIterator => {
                 let value = self.get_iterator(p, self.read(f, i.b()))?;
                 self.write(f, i.a(), value);

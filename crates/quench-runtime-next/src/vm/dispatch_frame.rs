@@ -38,6 +38,7 @@ impl<H: Host> Vm<H> {
             locals: vec![],
             captured: false,
             registers: vec![],
+            with_base: self.with_stack.len(),
         });
         frame
             .locals
@@ -73,6 +74,7 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         frame.this = this;
         frame.captured = false;
+        frame.with_base = self.with_stack.len();
         let register_count = function.registers as usize;
         if frame.registers.capacity() < register_count {
             frame

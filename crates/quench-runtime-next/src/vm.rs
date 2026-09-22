@@ -98,6 +98,7 @@ pub(super) struct Frame {
     locals: Vec<Value>,
     captured: bool,
     registers: Vec<Value>,
+    with_base: usize,
 }
 struct PendingJob {
     callback: Value,

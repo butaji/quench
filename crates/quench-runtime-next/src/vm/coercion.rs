@@ -2,6 +2,18 @@ use super::wtf16::JsString;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn to_property_key(
+        &mut self,
+        program: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
+            return Ok(value);
+        }
+        let text = self.coerce_js_string(program, value)?;
+        Ok(self.heap.alloc(Cell::String(text)))
+    }
+
     pub(super) fn coerce_js_string(
         &mut self,
         program: &ResidualProgram,
