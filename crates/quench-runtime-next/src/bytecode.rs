@@ -76,6 +76,7 @@ opcodes!(
     LoadCapture => Effect::READS_HEAP,
     StoreCapture => Effect::WRITES_HEAP,
     LoadName => READ_THROW,
+    LoadNameTypeof => Effect::READS_HEAP,
     StoreName => WRITE_THROW,
     LoadThis => Effect::PURE,
     MakeClosure => CALL_EFFECT,

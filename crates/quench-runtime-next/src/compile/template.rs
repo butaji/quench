@@ -20,12 +20,20 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::SetIndex, string, strings, key, 0);
         }
         let this = self.literal(Constant::Undefined);
+        // Evaluate substitutions before reserving the contiguous call-argument
+        // window. Each expression may allocate temporaries; reserving a slot
+        // first would let those temporaries occupy the next argument register.
+        let substitutions = value
+            .quasi
+            .expressions
+            .iter()
+            .map(|expression| self.expression(expression))
+            .collect::<Vec<_>>();
         let base = self.next_reg;
         let strings_arg = self.reg();
         self.emit(Op::Move, strings_arg, strings, 0, 0);
-        for expression in &value.quasi.expressions {
+        for value in substitutions {
             let argument = self.reg();
-            let value = self.expression(expression);
             self.emit(Op::Move, argument, value, 0, 0);
         }
         let result = self.reg();

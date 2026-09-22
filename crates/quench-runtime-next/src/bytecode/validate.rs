@@ -119,7 +119,7 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} capture depth is invalid"));
                     }
-                    Op::LoadName | Op::StoreName
+                    Op::LoadName | Op::LoadNameTypeof | Op::StoreName
                         if !atom(instruction.imm()) || !cache(instruction.c()) =>
                     {
                         return Err(format!("function {index} name site is invalid"));

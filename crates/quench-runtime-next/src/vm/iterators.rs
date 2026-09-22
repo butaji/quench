@@ -38,6 +38,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn install_iterator_self(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        self.install_collection_iterators()?;
         let Some(iterator) = self.well_known_symbols.get("iterator").copied() else {
             return Ok(());
         };

@@ -249,6 +249,7 @@ fn rewrite_once(function: &mut BcFunction, field_sites: &mut Vec<FieldSite>) -> 
                             | Op::LoadEnvLocal
                             | Op::LoadCapture
                             | Op::LoadName
+                            | Op::LoadNameTypeof
                             | Op::Binary
                             | Op::Unary
                             | Op::GetField

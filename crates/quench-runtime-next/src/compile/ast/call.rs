@@ -5,7 +5,25 @@ impl FunctionCompiler<'_, '_> {
         if value.operator == UnaryOperator::Delete {
             return self.delete_expression(&value.argument);
         }
-        let input = self.expression(&value.argument);
+        let input = if value.operator == UnaryOperator::Typeof {
+            if let Expression::Identifier(identifier) = &value.argument {
+                let atom = self.owner.atom(identifier.name.as_str());
+                let bound = self.local_slots.contains_key(&atom)
+                    || self.scopes.iter().any(|scope| scope.contains_key(&atom));
+                if bound {
+                    self.expression(&value.argument)
+                } else {
+                    let input = self.reg();
+                    let cache = self.owner.cache_site();
+                    self.emit(Op::LoadNameTypeof, input, 0, cache, atom);
+                    input
+                }
+            } else {
+                self.expression(&value.argument)
+            }
+        } else {
+            self.expression(&value.argument)
+        };
         let dst = self.reg();
         self.emit(Op::Unary, dst, input, 0, value.operator as u32);
         dst
