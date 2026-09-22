@@ -269,6 +269,11 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
+        if self.inherited_write_blocked(object, atom) {
+            return Err(JsError(
+                "cannot write inherited non-writable property".into(),
+            ));
+        }
         let existing = self.object_data(object).and_then(|data| {
             self.shapes[data.shape() as usize]
                 .iter()
@@ -344,6 +349,11 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
+        if self.inherited_write_blocked(object, atom) {
+            return Err(JsError(
+                "cannot write inherited non-writable property".into(),
+            ));
+        }
         self.set_property(object, atom, value)
     }
 
@@ -363,6 +373,17 @@ impl<H: Host> Vm<H> {
                 return None;
             }
         }
+    }
+
+    pub(super) fn inherited_write_blocked(&self, object: Value, atom: Atom) -> bool {
+        let mut object = self.object_data(object).map(|data| data.proto);
+        while let Some(current) = object.filter(|value| !value.is_null()) {
+            if let Some(attributes) = self.descriptors.get(&(current, atom)).copied() {
+                return !attributes.accessor && !attributes.writable;
+            }
+            object = self.object_data(current).map(|data| data.proto);
+        }
+        false
     }
     fn callable_write(&self, object: Value, slot: usize, value: Value) -> bool {
         self.is_function(value)
