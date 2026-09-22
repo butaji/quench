@@ -219,7 +219,7 @@ impl<H: Host> Vm<H> {
                 match self.heap.get(key).cloned() {
                     Some(Cell::Symbol(_)) => self.set_symbol_property(result, key, descriptor)?,
                     Some(Cell::String(name)) => {
-                        let atom = self.intern_atom(name.host_string());
+                        let atom = self.intern_js_atom(&name);
                         self.set_property(result, atom, descriptor)?;
                     }
                     _ => unreachable!("validated own property key"),
@@ -238,7 +238,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(key).cloned() {
                 Some(Cell::Symbol(_)) => self.set_symbol_property(result, key, descriptor)?,
                 Some(Cell::String(name)) => {
-                    let atom = self.intern_atom(name.host_string());
+                    let atom = self.intern_js_atom(&name);
                     self.set_property(result, atom, descriptor)?;
                 }
                 _ => unreachable!("validated own property key"),

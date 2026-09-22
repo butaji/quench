@@ -54,7 +54,7 @@ impl<H: Host> Vm<H> {
                     .get(&(target, PropertyKey::symbol(target_key)))
                     .is_some_and(|attributes| !attributes.configurable),
                 Some(Cell::String(name)) => {
-                    let atom = self.intern_atom(name.host_string());
+                    let atom = self.intern_js_atom(&name);
                     self.own_property(target, atom).is_some_and(|_| {
                         !self
                             .descriptors
