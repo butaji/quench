@@ -117,7 +117,9 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
         self.global(program, "globalThis", self.globals)?;
-        self.global(program, "Function", self.native_value(Native::Function))?;
+        let function = self.native_value(Native::Function);
+        self.set_named(program, function, "prototype", self.function_proto)?;
+        self.global(program, "Function", function)?;
         let symbol = self.native_value(Native::Symbol);
         let symbol_prototype = self.object();
         self.set_named(program, symbol, "prototype", symbol_prototype)?;

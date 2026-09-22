@@ -277,18 +277,27 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn arguments(&mut self, values: &[Argument<'_>]) -> (Register, u16) {
+        // Evaluate first, then reserve the contiguous ABI argument window.
+        // Reserving targets before expression lowering lets expression
+        // temporaries occupy later argument registers.
+        let expressions = values
+            .iter()
+            .filter_map(|argument| {
+                let Some(expression) = argument.as_expression() else {
+                    self.owner
+                        .reject(argument.span(), "spread arguments unsupported");
+                    return None;
+                };
+                Some(self.expression(expression))
+            })
+            .collect::<Vec<_>>();
         let base = self.next_reg;
-        let targets: Vec<_> = (0..values.len()).map(|_| self.reg()).collect();
-        for (argument, target) in values.iter().zip(targets) {
-            let Some(expression) = argument.as_expression() else {
-                self.owner
-                    .reject(argument.span(), "spread arguments unsupported");
-                continue;
-            };
-            let value = self.expression(expression);
+        let targets: Vec<_> = (0..expressions.len()).map(|_| self.reg()).collect();
+        let count = targets.len() as u16;
+        for (value, target) in expressions.into_iter().zip(targets) {
             self.emit(Op::Move, target, value, 0, 0);
         }
-        (base, values.len() as u16)
+        (base, count)
     }
 
     pub(super) fn has_spread(values: &[Argument<'_>]) -> bool {

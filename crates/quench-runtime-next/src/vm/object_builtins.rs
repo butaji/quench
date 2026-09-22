@@ -36,6 +36,12 @@ impl<H: Host> Vm<H> {
         )?;
         self.set_named(
             program,
+            self.function_proto,
+            "bind",
+            self.native_value(Native::FunctionBind),
+        )?;
+        self.set_named(
+            program,
             object,
             "keys",
             self.native_value(Native::ObjectKeys),

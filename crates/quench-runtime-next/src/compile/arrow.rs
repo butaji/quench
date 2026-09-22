@@ -9,6 +9,7 @@ impl Compiler<'_> {
     ) -> u32 {
         let id = self.functions.len() as u32;
         self.functions.push(None);
+        let arrow_marker = self.atom("\0rqj:arrow");
         let params = FunctionCompiler::params_from_formals(&value.params, self);
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
@@ -66,7 +67,10 @@ impl Compiler<'_> {
         }
         let result = BcFunction {
             parent,
-            name: None,
+            // Keep the arrow/non-constructor invariant in the residual
+            // function table without adding a second callable representation.
+            // The marker is VM-internal and never materialized as `.name`.
+            name: Some(arrow_marker),
             params: params.len() as u16,
             rest: value.params.rest.is_some(),
             is_async: value.r#async,

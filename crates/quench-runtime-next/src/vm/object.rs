@@ -273,6 +273,7 @@ impl<H: Host> Vm<H> {
         // cache key, clear the derived method view at this single mutation
         // boundary; correctness takes precedence over a stale fast path.
         let _ = invalidates_method;
+        self.invalidate_field_caches();
         self.invalidate_method_caches();
         Ok(())
     }
@@ -321,6 +322,7 @@ impl<H: Host> Vm<H> {
                     .property_set_unchecked(object, cache.slot as usize, value);
             }
             let _ = invalidates_method;
+            self.invalidate_field_caches();
             self.invalidate_method_caches();
             self.profile.field_cache_hit(0, 0);
             return Ok(());
@@ -335,6 +337,7 @@ impl<H: Host> Vm<H> {
                     .property_set_unchecked(object, cache.slot as usize, value);
             }
             let _ = invalidates_method;
+            self.invalidate_field_caches();
             self.invalidate_method_caches();
             self.profile.field_cache_hit(2, 0);
             return Ok(());
