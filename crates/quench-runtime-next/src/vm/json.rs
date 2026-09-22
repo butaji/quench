@@ -82,31 +82,218 @@ fn write_json(value: &JsonValue, output: &mut String) {
     }
 }
 
+struct JsonParser<'a> {
+    units: &'a [u16],
+    index: usize,
+}
+
+impl<'a> JsonParser<'a> {
+    fn new(units: &'a [u16]) -> Self {
+        Self { units, index: 0 }
+    }
+
+    fn parse(mut self) -> Result<JsonValue, String> {
+        let value = self.value()?;
+        self.whitespace();
+        (self.index == self.units.len())
+            .then_some(value)
+            .ok_or_else(|| "trailing characters".into())
+    }
+
+    fn value(&mut self) -> Result<JsonValue, String> {
+        self.whitespace();
+        match self.peek() {
+            Some(110) => self.literal(b"null", JsonValue::Null),
+            Some(116) => self.literal(b"true", JsonValue::Bool(true)),
+            Some(102) => self.literal(b"false", JsonValue::Bool(false)),
+            Some(34) => self.string().map(JsonValue::String),
+            Some(91) => self.array(),
+            Some(123) => self.object(),
+            Some(45 | 48..=57) => self.number(),
+            _ => Err("expected JSON value".into()),
+        }
+    }
+
+    fn literal(&mut self, expected: &[u8], value: JsonValue) -> Result<JsonValue, String> {
+        if expected
+            .iter()
+            .copied()
+            .all(|unit| self.take() == Some(u16::from(unit)))
+        {
+            Ok(value)
+        } else {
+            Err("invalid literal".into())
+        }
+    }
+
+    fn string(&mut self) -> Result<JsString, String> {
+        self.expect(b'"')?;
+        let mut units = Vec::new();
+        loop {
+            match self.take() {
+                Some(34) => return Ok(JsString::from_units(&units)),
+                Some(92) => self.escape(&mut units)?,
+                Some(unit) if unit >= 0x20 => units.push(unit),
+                _ => return Err("unterminated JSON string".into()),
+            }
+        }
+    }
+
+    fn escape(&mut self, output: &mut Vec<u16>) -> Result<(), String> {
+        let unit = self
+            .take()
+            .ok_or_else(|| "unterminated escape".to_owned())?;
+        match unit {
+            34 | 92 | 47 => output.push(unit),
+            98 => output.push(0x08),
+            102 => output.push(0x0c),
+            110 => output.push(b'\n' as u16),
+            114 => output.push(b'\r' as u16),
+            116 => output.push(b'\t' as u16),
+            117 => output.push(self.hex_escape()?),
+            _ => return Err("invalid JSON escape".into()),
+        }
+        Ok(())
+    }
+
+    fn hex_escape(&mut self) -> Result<u16, String> {
+        let mut value = 0;
+        for _ in 0..4 {
+            let digit = self
+                .take()
+                .and_then(hex_digit)
+                .ok_or_else(|| "invalid Unicode escape".to_owned())?;
+            value = value * 16 + digit;
+        }
+        Ok(value)
+    }
+
+    fn array(&mut self) -> Result<JsonValue, String> {
+        self.expect(b'[')?;
+        let mut values = Vec::new();
+        self.whitespace();
+        if self.take_if(b']') {
+            return Ok(JsonValue::Array(values));
+        }
+        loop {
+            values.push(self.value()?);
+            self.whitespace();
+            if self.take_if(b']') {
+                return Ok(JsonValue::Array(values));
+            }
+            self.expect(b',')?;
+        }
+    }
+
+    fn object(&mut self) -> Result<JsonValue, String> {
+        self.expect(b'{')?;
+        let mut values = Vec::new();
+        self.whitespace();
+        if self.take_if(b'}') {
+            return Ok(JsonValue::Object(values));
+        }
+        loop {
+            self.whitespace();
+            let key = self.string()?;
+            self.whitespace();
+            self.expect(b':')?;
+            values.push((key, self.value()?));
+            self.whitespace();
+            if self.take_if(b'}') {
+                return Ok(JsonValue::Object(values));
+            }
+            self.expect(b',')?;
+        }
+    }
+
+    fn number(&mut self) -> Result<JsonValue, String> {
+        let start = self.index;
+        while self
+            .peek()
+            .is_some_and(|unit| b"-+0123456789.eE".contains(&(unit as u8)))
+        {
+            self.index += 1;
+        }
+        let text = String::from_utf16(&self.units[start..self.index])
+            .map_err(|_| "invalid number".to_owned())?;
+        let number = text
+            .parse::<f64>()
+            .map_err(|_| "invalid number".to_owned())?;
+        let number =
+            serde_json::Number::from_f64(number).ok_or_else(|| "invalid number".to_owned())?;
+        Ok(JsonValue::Number(number))
+    }
+
+    fn whitespace(&mut self) {
+        while self
+            .peek()
+            .is_some_and(|unit| matches!(unit, 0x20 | 0x09 | 0x0a | 0x0d))
+        {
+            self.index += 1;
+        }
+    }
+
+    fn expect(&mut self, expected: u8) -> Result<(), String> {
+        (self.take() == Some(u16::from(expected)))
+            .then_some(())
+            .ok_or_else(|| format!("expected `{}`", expected as char))
+    }
+
+    fn take_if(&mut self, expected: u8) -> bool {
+        if self.peek() == Some(u16::from(expected)) {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn take(&mut self) -> Option<u16> {
+        let value = self.peek()?;
+        self.index += 1;
+        Some(value)
+    }
+
+    fn peek(&self) -> Option<u16> {
+        self.units.get(self.index).copied()
+    }
+}
+
+fn hex_digit(unit: u16) -> Option<u16> {
+    match unit {
+        48..=57 => Some(unit - 48),
+        97..=102 => Some(unit - 97 + 10),
+        65..=70 => Some(unit - 65 + 10),
+        _ => None,
+    }
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn json_parse(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let parsed: serde_json::Value = serde_json::from_str(&text)
+        let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let parsed = JsonParser::new(text.units())
+            .parse()
             .map_err(|error| JsError(format!("JSON parse: {error}").into()))?;
         self.parse_json_value(&parsed)
     }
 
-    fn parse_json_value(&mut self, value: &serde_json::Value) -> Result<Value, JsError> {
+    fn parse_json_value(&mut self, value: &JsonValue) -> Result<Value, JsError> {
         Ok(match value {
-            serde_json::Value::Null => Value::NULL,
-            serde_json::Value::Bool(value) => {
+            JsonValue::Null => Value::NULL,
+            JsonValue::Bool(value) => {
                 if *value {
                     Value::TRUE
                 } else {
                     Value::FALSE
                 }
             }
-            serde_json::Value::Number(value) => Value::number(value.as_f64().unwrap_or(f64::NAN)),
-            serde_json::Value::String(value) => self.heap.alloc(Cell::String(value.clone().into())),
-            serde_json::Value::Array(values) => {
+            JsonValue::Number(value) => Value::number(value.as_f64().unwrap_or(f64::NAN)),
+            JsonValue::String(value) => self.heap.alloc(Cell::String(value.clone())),
+            JsonValue::Array(values) => {
                 let values = values
                     .iter()
                     .map(|value| self.parse_json_value(value))
@@ -116,10 +303,10 @@ impl<H: Host> Vm<H> {
                     elements: Rc::new(values),
                 })
             }
-            serde_json::Value::Object(values) => {
+            JsonValue::Object(values) => {
                 let object = self.object();
                 for (key, value) in values {
-                    let atom = self.intern_atom(key);
+                    let atom = self.intern_atom(key.host_string());
                     let value = self.parse_json_value(value)?;
                     self.set_property(object, atom, value)?;
                 }
@@ -244,7 +431,7 @@ impl<H: Host> Vm<H> {
 
 #[cfg(test)]
 mod tests {
-    use super::{JsString, write_json_string};
+    use super::{JsString, JsonParser, JsonValue, write_json_string};
 
     #[test]
     fn json_string_writer_preserves_lone_surrogates() {
@@ -260,5 +447,15 @@ mod tests {
         let mut output = String::new();
         write_json_string(&value, &mut output);
         assert_eq!(output, "\"🦀\"");
+    }
+
+    #[test]
+    fn json_parser_keeps_escaped_surrogate_units() {
+        let source = r#""\ud800a\udc00""#;
+        let units = source.encode_utf16().collect::<Vec<_>>();
+        let JsonValue::String(value) = JsonParser::new(&units).parse().unwrap() else {
+            panic!("expected string");
+        };
+        assert_eq!(value.units(), &[0xD800, b'a' as u16, 0xDC00]);
     }
 }
