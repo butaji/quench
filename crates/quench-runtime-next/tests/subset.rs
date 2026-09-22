@@ -82,6 +82,16 @@ fn destructuring_computed_keys_use_indexed_property_lookup() {
 }
 
 #[test]
+fn destructuring_assignments_share_binding_pattern_semantics() {
+    assert_eq!(
+        output(
+            "var answer; var second; var tail; var key = 'answer'; ({ [key]: answer, ...tail } = { answer: 40, extra: 7 }); [answer, second = 2] = [answer, undefined]; print(answer); print(second); print(tail.extra);"
+        ),
+        ["40", "2", "7"],
+    );
+}
+
+#[test]
 fn object_is_uses_same_value_semantics() {
     assert_eq!(
         output(

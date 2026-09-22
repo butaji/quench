@@ -280,16 +280,6 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::GetIndex, dst, object, key, 0);
         dst
     }
-    pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
-        let right = self.expression(&value.right);
-        let simple = value.left.as_simple_assignment_target();
-        let Some(target) = simple else {
-            self.owner
-                .reject(value.span, "assignment pattern unsupported");
-            return right;
-        };
-        self.assign_target(target, right, value.operator as u8)
-    }
     pub(super) fn assign_target(
         &mut self,
         target: &SimpleAssignmentTarget<'_>,
