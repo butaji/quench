@@ -277,7 +277,8 @@ impl<H: Host> Vm<H> {
                         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
             })
         else {
-            return Err(JsError("dynamic Function source is unsupported".into()));
+            let body = self.heap.alloc(Cell::String(JsString::from_str(source)));
+            return Ok(self.native_with_env(Native::DynamicFunction, body));
         };
         let name = self.heap.alloc(Cell::String(JsString::from_str(name)));
         Ok(self.native_with_env(Native::FunctionReturnName, name))
@@ -329,6 +330,16 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
                 let atom = self.intern_js_atom(&name);
                 self.get_property(program, self.realm.globals, atom)
+            }
+            Native::DynamicFunction => {
+                let source = self
+                    .active_native_env()
+                    .and_then(|value| match self.heap.get(value) {
+                        Some(Cell::String(source)) => Some(source.host_string().to_owned()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
+                self.eval_source_simple(program, &source, false)
             }
             _ => self.function_native(program, args),
         }
