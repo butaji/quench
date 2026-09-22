@@ -7030,13 +7030,6 @@ fn quickened_native_own_slot(
     })
 }
 
-fn native_property_object(value: &crate::value::Value) -> Option<&crate::value::ObjectData> {
-    let crate::value::Value::Object(object) = value else {
-        return None;
-    };
-    native_property_object_guard(object)
-}
-
 fn execute_property_numeric(
     code: crate::machine::CodeView<'_>,
     start: usize,
