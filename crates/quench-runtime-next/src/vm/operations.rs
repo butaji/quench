@@ -44,23 +44,21 @@ impl<H: Host> Vm<H> {
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
-                let this = self.box_object(this)?;
                 let key_value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-                    return Ok(self.symbol_prototype_property(this, key_value, native));
+                let descriptor = self.object_get_own_property_descriptor(p, &[this, key_value])?;
+                if descriptor.is_undefined() {
+                    return Ok(Value::FALSE);
                 }
-                let text = self.to_string(p, key_value)?;
-                let key = self.intern_atom(&text);
-                Ok(
-                    if self.own_property(this, key).is_some()
-                        && (native == Native::ObjectPrototypeHasOwnProperty
-                            || self.is_enumerable(this, key))
-                    {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    },
-                )
+                if native == Native::ObjectPrototypeHasOwnProperty {
+                    return Ok(Value::TRUE);
+                }
+                let enumerable = self.intern_atom("enumerable");
+                let enumerable_value = self.get_property(p, descriptor, enumerable)?;
+                Ok(if self.truthy(enumerable_value) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
             }
             Native::ObjectPrototypeIsPrototypeOf => {
                 let target = args.first().copied().unwrap_or(Value::UNDEFINED);

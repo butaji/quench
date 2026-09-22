@@ -194,16 +194,9 @@ impl<H: Host> Vm<H> {
                 }
                 let target = self.box_object(target)?;
                 let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-                    return Ok(if self.symbol_property(target, key_value).is_some() {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    });
-                }
-                let text = self.to_string(p, key_value)?;
-                let key = self.intern_atom(&text);
-                Ok(if self.own_property(target, key).is_some() {
+                let descriptor =
+                    self.object_get_own_property_descriptor(p, &[target, key_value])?;
+                Ok(if !descriptor.is_undefined() {
                     Value::TRUE
                 } else {
                     Value::FALSE
