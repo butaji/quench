@@ -440,7 +440,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn array_index(name: &str) -> Option<u32> {
+pub(super) fn array_index(name: &str) -> Option<u32> {
     if name.is_empty() || name != "0" && name.starts_with('0') {
         return None;
     }

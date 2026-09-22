@@ -67,7 +67,7 @@ impl<H: Host> Vm<H> {
         array_element: bool,
         ancestors: &mut Vec<Value>,
     ) -> Result<Option<serde_json::Value>, JsError> {
-        if value.is_undefined() {
+        if value.is_undefined() || value.is_deleted() {
             return Ok(array_element.then_some(serde_json::Value::Null));
         }
         if value.is_null() {

@@ -19,7 +19,7 @@ impl<H: Host> Vm<H> {
             }
             3 => Value::number((!(number_to_u32(self.to_number(p, value)?) as i32)) as f64),
             4 => {
-                let text = if value.is_undefined() {
+                let text = if value.is_undefined() || value.is_deleted() {
                     "undefined"
                 } else if value.as_bool().is_some() {
                     "boolean"
@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
         if value.is_null() {
             return Ok(0.0);
         }
-        if value.is_undefined() {
+        if value.is_undefined() || value.is_deleted() {
             return Ok(f64::NAN);
         }
         match self.heap.get(value) {
@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
-        if value.is_undefined() {
+        if value.is_undefined() || value.is_deleted() {
             return Ok("undefined".into());
         }
         if value.is_null() {

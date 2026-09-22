@@ -181,7 +181,9 @@ impl<H: Host> Vm<H> {
                     vec![]
                 } else {
                     match self.heap.get(argument_array) {
-                        Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                        Some(Cell::Array { elements, .. }) => {
+                            super::array::normalized_array_values(elements)
+                        }
                         _ => return Err(JsError("apply arguments must be an array".into())),
                     }
                 };
@@ -491,6 +493,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn truthy(&self, v: Value) -> bool {
         !(v.is_null()
             || v.is_undefined()
+            || v.is_deleted()
             || v == Value::FALSE
             || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan()))
     }
