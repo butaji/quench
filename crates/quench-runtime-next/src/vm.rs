@@ -44,6 +44,7 @@ mod object_descriptors;
 mod object_get;
 mod object_integrity;
 mod object_static;
+mod object_symbols;
 #[cfg(test)]
 mod object_tests;
 use call_arguments::CallArguments;
@@ -231,6 +232,9 @@ pub struct Vm<H> {
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
     descriptors: FxHashMap<(Value, Atom), PropertyAttributes>,
+    symbol_properties: FxHashMap<(Value, Value), Value>,
+    symbol_property_order: FxHashMap<Value, Vec<Value>>,
+    symbol_descriptors: FxHashMap<(Value, Value), PropertyAttributes>,
     random_state: u64,
 }
 impl<H: Host> Vm<H> {
@@ -355,6 +359,9 @@ impl<H: Host> Vm<H> {
         self.megamorphic_methods.clear();
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
         self.descriptors.clear();
+        self.symbol_properties.clear();
+        self.symbol_property_order.clear();
+        self.symbol_descriptors.clear();
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.globals = self
             .heap

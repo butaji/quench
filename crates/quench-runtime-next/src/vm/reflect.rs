@@ -10,7 +10,11 @@ impl<H: Host> Vm<H> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         match native {
             Native::ReflectGet => {
-                let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+                    return self.get_index(p, target, key_value);
+                }
+                let key = self.to_string(p, key_value)?;
                 let atom = self.intern_atom(&key);
                 self.get_property(p, target, atom)
             }
@@ -44,7 +48,25 @@ impl<H: Host> Vm<H> {
                 )
             }
             Native::ReflectSet => {
-                let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+                    return Ok(
+                        if self
+                            .set_index(
+                                p,
+                                target,
+                                key_value,
+                                args.get(2).copied().unwrap_or(Value::UNDEFINED),
+                            )
+                            .is_ok()
+                        {
+                            Value::TRUE
+                        } else {
+                            Value::FALSE
+                        },
+                    );
+                }
+                let key = self.to_string(p, key_value)?;
                 let atom = self.intern_atom(&key);
                 Ok(
                     if self
@@ -62,7 +84,7 @@ impl<H: Host> Vm<H> {
                     },
                 )
             }
-            Native::ReflectOwnKeys => self.object_names(target),
+            Native::ReflectOwnKeys => self.object_own_keys(target),
             Native::ReflectGetPrototypeOf => self.object_get_prototype_of(target),
             Native::ReflectSetPrototypeOf => {
                 let proto = args.get(1).copied().unwrap_or(Value::UNDEFINED);
