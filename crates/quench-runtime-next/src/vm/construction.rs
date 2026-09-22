@@ -36,6 +36,8 @@ impl<H: Host> Vm<H> {
                         | Native::Int8Array
                         | Native::Int16Array
                         | Native::Int32Array
+                        | Native::BigInt64Array
+                        | Native::BigUint64Array
                         | Native::Float32Array
                         | Native::Float64Array
                         | Native::DataView
@@ -212,6 +214,8 @@ impl<H: Host> Vm<H> {
             Native::Int8Array => self.construct_int8_array_native(p, args),
             Native::Int16Array => self.construct_int16_array_native(p, args),
             Native::Int32Array => self.construct_int32_array_native(p, args),
+            Native::BigInt64Array => self.construct_bigint64_array_native(p, args),
+            Native::BigUint64Array => self.construct_biguint64_array_native(p, args),
             Native::Float32Array => self.construct_float32_array_native(p, args),
             Native::Float64Array => self.construct_float64_array_native(p, args),
             Native::DataView => self.construct_data_view_native(p, args),

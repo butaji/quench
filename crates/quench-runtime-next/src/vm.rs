@@ -11,15 +11,11 @@ use crate::value_vec::ValueVec;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
-mod activation;
-mod activation_lifecycle;
+mod activation; mod activation_lifecycle;
 mod arguments;
-mod array;
-mod array_buffer;
-mod array_builtins;
-mod array_group;
-mod array_indexed;
-mod array_modern;
+mod array; mod array_buffer;
+mod array_builtins; mod array_group;
+mod array_indexed; mod array_modern;
 mod atom_keys;
 mod atomics;
 mod builtins;
@@ -156,6 +152,8 @@ struct StringConcatCache {
     right: Value,
     result: Value,
 }
+#[derive(Clone)]
+struct Shape { keys: Vec<Atom>, slots: FxHashMap<Atom, u16> }
 const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
     left: Value::UNDEFINED,
     right: Value::UNDEFINED,
@@ -237,6 +235,8 @@ pub struct Vm<H> {
     int8_array_proto: Value,
     int16_array_proto: Value,
     int32_array_proto: Value,
+    bigint64_array_proto: Value,
+    biguint64_array_proto: Value,
     float32_array_proto: Value,
     float64_array_proto: Value,
     data_view_proto: Value,
@@ -255,14 +255,14 @@ pub struct Vm<H> {
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
     jobs: Vec<PendingJob>,
+    with_stack: Vec<Value>,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     generators: FxHashMap<Value, GeneratorRecord>,
     promise: PromiseRuntime,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
-    shapes: Vec<Vec<Atom>>,
-    shape_slots: Vec<FxHashMap<Atom, u16>>,
+    shapes: Vec<Shape>,
     transitions: FxHashMap<(u32, Atom), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
@@ -347,9 +347,9 @@ impl<H: Host> Vm<H> {
         let shape_bytes: usize = self
             .shapes
             .iter()
-            .map(|shape| shape.capacity() * size_of::<Atom>())
+            .map(|shape| shape.keys.capacity() * size_of::<Atom>())
             .sum();
-        let max_shape_width = self.shapes.iter().map(Vec::len).max().unwrap_or(0);
+        let max_shape_width = self.shapes.iter().map(|shape| shape.keys.len()).max().unwrap_or(0);
         let cell_counts = self.heap.cell_counts();
         let live_payload_bytes = self.heap.live_payload_bytes();
         let (live_property_values, live_property_capacity) = self.heap.live_property_stats();
@@ -396,13 +396,13 @@ impl<H: Host> Vm<H> {
         self.frames.clear();
         self.frame_pool.clear();
         self.jobs.clear();
+        self.with_stack.clear();
         self.suspended.clear();
         self.suspended_free.clear();
         self.generators.clear();
         self.promise = Default::default();
         self.numeric_sites.clear();
         self.shapes.truncate(1);
-        self.shape_slots.truncate(1);
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
         self.atoms.clear();

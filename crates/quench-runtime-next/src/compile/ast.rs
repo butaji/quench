@@ -65,6 +65,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) super_home_atom: Option<Atom>,
     pub(super) async_function: bool,
     pub(super) generator: bool,
+    with_depth: u16,
     pub(super) strict: bool,
     lexical_scopes: Vec<FxHashMap<Atom, Atom>>,
     disposable_stack: Option<Atom>,
@@ -110,6 +111,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             super_home_atom: None,
             async_function,
             generator,
+            with_depth: 0,
             strict: false,
             lexical_scopes: Vec::new(),
             disposable_stack: None,
@@ -310,30 +312,31 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn emit_implicit_super(&mut self) {
         let base = self.load_name("\0rqj:super");
-        let apply = self.reg();
-        let atom = self.owner.atom("apply");
+        let reflect = self.load_name("Reflect");
+        let construct = self.reg();
+        let atom = self.owner.atom("construct");
         let cache = self.owner.cache_site();
         self.emit(
             Op::GetField,
-            apply,
-            FieldBase::register(base).0,
+            construct,
+            FieldBase::register(reflect).0,
             cache,
             atom,
         );
-        let base_args = self.next_reg;
-        let this = self.reg();
-        self.emit(Op::LoadThis, this, 0, 0, 0);
         let args = self.load_name("\0rqj:derived-args");
+        let base_arg = self.reg();
+        self.emit(Op::Move, base_arg, base, 0, 0);
         let args_arg = self.reg();
         self.emit(Op::Move, args_arg, args, 0, 0);
         let result = self.reg();
         self.emit(
             Op::Call,
             result,
-            apply,
-            base,
-            (u32::from(base_args) << 16) | 2,
+            construct,
+            reflect,
+            (u32::from(base_arg) << 16) | 2,
         );
+        self.emit(Op::Return, result, 0, 0, 0);
     }
 
     fn static_key<'c>(key: &'c PropertyKey<'c>) -> Option<&'c str> {

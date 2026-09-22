@@ -425,7 +425,7 @@ impl<H: Host> Vm<H> {
                 }
                 ancestors.push(value);
                 let shape = object.shape();
-                let keys = self.shapes[shape as usize].clone();
+                let keys = self.shapes[shape as usize].keys.clone();
                 let mut output = Vec::new();
                 let result = (|| {
                     for (slot, atom) in keys.into_iter().enumerate() {

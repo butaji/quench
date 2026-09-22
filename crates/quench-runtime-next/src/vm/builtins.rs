@@ -2,7 +2,7 @@ use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::Object,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object,
     Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
@@ -89,6 +89,8 @@ const NATIVES: &[Native] = &[
     Native::Int8Array,
     Native::Int16Array,
     Native::Int32Array,
+    Native::BigInt64Array,
+    Native::BigUint64Array,
     Native::Float32Array,
     Native::Float64Array,
     Native::Uint8ArraySet,
@@ -245,6 +247,8 @@ impl<H: Host> Vm<H> {
         self.global(program, "Infinity", Value::number(f64::INFINITY))?;
         self.global(program, "print", self.native_value(Native::Print))?;
         self.global(program, "eval", self.native_value(Native::Eval))?;
+        self.global(program, "\0rqj:with-enter", self.native_value(Native::WithEnter))?;
+        self.global(program, "\0rqj:with-exit", self.native_value(Native::WithExit))?;
         self.install_date(program)?;
         self.install_host_globals(program)?;
         self.install_errors(program)?;
