@@ -1,3 +1,5 @@
+use super::promise::PromiseState;
+
 const ENTRIES: &str = "\0rqj:disposable-stack:entries";
 const DISPOSED: &str = "\0rqj:disposable-stack:disposed";
 
@@ -10,6 +12,8 @@ impl<H: Host> Vm<H> {
                 | Native::DisposableStackAdopt
                 | Native::DisposableStackDefer
                 | Native::DisposableStackDispose
+                | Native::DisposableStackUseAsync
+                | Native::DisposableStackDisposeAsync
         )
     }
 
@@ -21,6 +25,8 @@ impl<H: Host> Vm<H> {
             ("adopt", Native::DisposableStackAdopt),
             ("defer", Native::DisposableStackDefer),
             ("dispose", Native::DisposableStackDispose),
+            ("useAsync", Native::DisposableStackUseAsync),
+            ("disposeAsync", Native::DisposableStackDisposeAsync),
         ] {
             self.set_named(
                 p,
@@ -35,6 +41,14 @@ impl<H: Host> Vm<H> {
                 prototype,
                 symbol,
                 self.native_value(Native::DisposableStackDispose),
+            )?;
+        }
+        if let Some(symbol) = self.well_known_symbols.get("asyncDispose").copied() {
+            self.set_index(
+                p,
+                prototype,
+                symbol,
+                self.native_value(Native::DisposableStackDisposeAsync),
             )?;
         }
         self.set_named(p, constructor, "prototype", prototype)?;
@@ -80,9 +94,14 @@ impl<H: Host> Vm<H> {
             self.require_stack(this)?;
             return self.stack_dispose(p, this);
         }
+        if native == Native::DisposableStackDisposeAsync {
+            self.require_stack(this)?;
+            return self.stack_dispose_async(p, this);
+        }
         self.require_open_stack(this)?;
         match native {
             Native::DisposableStackUse => self.stack_use(p, this, args),
+            Native::DisposableStackUseAsync => self.stack_use_async(p, this, args),
             Native::DisposableStackAdopt => self.stack_adopt(this, args),
             Native::DisposableStackDefer => self.stack_defer(this, args),
             _ => Err(JsError("invalid disposal native".into())),
@@ -131,6 +150,38 @@ impl<H: Host> Vm<H> {
         if !self.is_function(callback) {
             return Err(JsError(
                 "disposable value has no callable dispose method".into(),
+            ));
+        }
+        self.push_stack_entry(stack, callback, value, 0)?;
+        Ok(value)
+    }
+
+    fn stack_use_async(
+        &mut self,
+        p: &ResidualProgram,
+        stack: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let async_symbol = self
+            .well_known_symbols
+            .get("asyncDispose")
+            .copied()
+            .ok_or_else(|| JsError("Symbol.asyncDispose is unavailable".into()))?;
+        let dispose_symbol = self
+            .well_known_symbols
+            .get("dispose")
+            .copied()
+            .ok_or_else(|| JsError("Symbol.dispose is unavailable".into()))?;
+        let callback = self.get_index(p, value, async_symbol)?;
+        let callback = if callback.is_undefined() || callback.is_null() {
+            self.get_index(p, value, dispose_symbol)?
+        } else {
+            callback
+        };
+        if !self.is_function(callback) {
+            return Err(JsError(
+                "disposable value has no callable async dispose method".into(),
             ));
         }
         self.push_stack_entry(stack, callback, value, 0)?;
@@ -218,6 +269,53 @@ impl<H: Host> Vm<H> {
             }
         }
         first_error.map_or(Ok(Value::UNDEFINED), Err)
+    }
+
+    fn stack_dispose_async(&mut self, p: &ResidualProgram, stack: Value) -> Result<Value, JsError> {
+        let disposed_atom = self.intern_atom(DISPOSED);
+        if self.truthy(
+            self.own_property(stack, disposed_atom)
+                .unwrap_or(Value::FALSE),
+        ) {
+            return self.promise_for_value(p, Value::UNDEFINED);
+        }
+        self.set_property(stack, disposed_atom, Value::TRUE)?;
+        let entries = self.stack_entries(stack)?;
+        let values = match self.heap.get_mut(entries) {
+            Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
+            _ => return Err(JsError("DisposableStack entries are invalid".into())),
+        };
+        let mut results = Vec::with_capacity(values.len());
+        let mut first_error = None;
+        for entry in values.iter().rev().copied() {
+            let Some(Cell::Array { elements, .. }) = self.heap.get(entry) else {
+                continue;
+            };
+            let callback = elements.first().copied().unwrap_or(Value::UNDEFINED);
+            let value = elements.get(1).copied().unwrap_or(Value::UNDEFINED);
+            match self.call_value(p, callback, value, &[]) {
+                Ok(result) => results.push(result),
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(
+                            error
+                                .thrown_value()
+                                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message()))),
+                        );
+                    }
+                }
+            }
+        }
+        let array = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(results),
+        });
+        if let Some(reason) = first_error {
+            let promise = self.promise_object();
+            self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+            return Ok(promise);
+        }
+        self.call_promise_native(p, Native::PromiseAll, Value::UNDEFINED, &[array])
     }
 
     fn stack_entries(&mut self, stack: Value) -> Result<Value, JsError> {

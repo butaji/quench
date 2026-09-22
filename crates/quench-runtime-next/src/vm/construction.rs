@@ -20,6 +20,8 @@ impl<H: Host> Vm<H> {
         if let Some(atom) = self.lookup_atom("prototype") {
             self.set_property(function, atom, prototype)?;
         }
+        let constructor_atom = self.intern_atom("constructor");
+        self.set_property(prototype, constructor_atom, function)?;
         Ok(function)
     }
 
