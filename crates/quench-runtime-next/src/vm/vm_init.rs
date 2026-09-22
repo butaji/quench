@@ -82,6 +82,7 @@ impl<H: Host> Vm<H> {
             function_values: vec![],
             direct_eval: false,
             parameter_eval: false,
+            construct_target: None,
             random_state: 0x4d59_5df4_d0f3_3173,
         }
     }
