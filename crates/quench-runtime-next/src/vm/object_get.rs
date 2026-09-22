@@ -200,6 +200,18 @@ impl<H: Host> Vm<H> {
                         Value::UNDEFINED
                     });
                 }
+                Some(Cell::Symbol(description)) => {
+                    let description = description.clone();
+                    return Ok(match self.atom_name(atom) {
+                        "description" => description
+                            .as_ref()
+                            .map(|value| self.heap.alloc(Cell::String(value.clone())))
+                            .unwrap_or(Value::UNDEFINED),
+                        "toString" => self.native_value(Native::SymbolToString),
+                        "valueOf" => self.native_value(Native::SymbolValueOf),
+                        _ => Value::UNDEFINED,
+                    });
+                }
                 Some(Cell::Date(_)) => return Ok(self.date_property_native(atom)),
                 Some(Cell::Object(x)) | Some(Cell::Array { object: x, .. }) => object = x.proto,
                 Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
