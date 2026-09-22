@@ -47,10 +47,11 @@ impl<H: Host> Vm<H> {
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
             if mapped {
-                self.argument_maps.insert(
-                    arguments,
-                    (0..function.params.min(args.len() as u16)).collect(),
-                );
+                if let Some(object) = self.object_data_mut(arguments) {
+                    object.arguments_map = Some(
+                        (0..function.params.min(args.len() as u16)).collect(),
+                    );
+                }
             }
         }
         frame.function = id;

@@ -384,6 +384,8 @@ pub(crate) struct Object {
     // Property names live once in the VM's immutable shape table; objects keep
     // only the data vector selected by that shape.
     pub properties: ValueVec,
+    pub arguments_map: Option<Vec<u16>>,
+    pub arguments_object: bool,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct FinalizationEntry {
@@ -423,6 +425,9 @@ impl Object {
     }
     pub(crate) fn set_frozen(&mut self, value: bool) {
         self.properties.set_frozen(value);
+    }
+    pub(crate) fn is_arguments_object(&self) -> bool {
+        self.arguments_object
     }
 }
 #[derive(Clone, Debug)]

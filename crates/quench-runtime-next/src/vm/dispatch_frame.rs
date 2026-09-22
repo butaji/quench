@@ -66,7 +66,9 @@ impl<H: Host> Vm<H> {
             self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
             if mapped {
                 let mapping = (0..function.params.min(args.len() as u16)).collect();
-                self.argument_maps.insert(arguments, mapping);
+                if let Some(object) = self.object_data_mut(arguments) {
+                    object.arguments_map = Some(mapping);
+                }
             }
         }
         frame.function = id;
@@ -119,7 +121,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         mapped: bool,
     ) -> Result<(), JsError> {
-        self.argument_objects.insert(arguments);
+        if let Some(object) = self.object_data_mut(arguments) {
+            object.arguments_object = true;
+        }
         let length = self.intern_atom("length");
         self.set_property(arguments, length, Value::number(args.len() as f64))?;
         self.set_property_attributes(
