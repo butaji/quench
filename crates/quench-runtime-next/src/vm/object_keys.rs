@@ -113,6 +113,17 @@ impl<H: Host> Vm<H> {
         let object = self.proxy_target(object);
         let object = self.box_object(object)?;
         let mut values = self.array_name_keys(object).unwrap_or_default();
+        values.retain(|key| {
+            let Some(Cell::String(name)) = self.heap.get(*key).cloned() else {
+                return false;
+            };
+            let atom = self.intern_atom(&name);
+            self.descriptors
+                .get(&(object, atom))
+                .copied()
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
+                .enumerable
+        });
         let data = self.object_data(object).expect("boxed target is object");
         let named_atoms = self
             .ordered_shape(data)

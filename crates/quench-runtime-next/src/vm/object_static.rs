@@ -344,6 +344,11 @@ impl<H: Host> Vm<H> {
             return self.define_symbol_property(target, key_value, descriptor);
         }
         let key = self.to_string(p, key_value)?;
+        if let Some(index) = array_index(&key).map(|index| index as usize)
+            && matches!(self.heap.get(target), Some(Cell::Array { .. }))
+        {
+            return self.define_array_property(p, target, index, descriptor);
+        }
         let atom = self.intern_atom(&key);
         let existing = self.own_property(target, atom);
         let current = self
