@@ -1,6 +1,12 @@
 use super::property_key::PropertyKey;
 use super::*;
 impl<H: Host> Vm<H> {
+    pub(super) fn invalidate_field_caches(&mut self) {
+        self.field_caches.fill(EMPTY_CACHE);
+        self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
+        self.megamorphic_fields.clear();
+    }
+
     #[inline(always)]
     pub(super) fn resolve_field_base(&self, frame: usize, base: FieldBase) -> Value {
         match base.register_index() {

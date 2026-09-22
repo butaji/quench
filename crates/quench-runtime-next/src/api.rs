@@ -281,4 +281,18 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["done", "7"]);
     }
+
+    #[test]
+    fn prototype_mutation_rejects_cycles_and_invalidates_property_caches() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "var first = { value: 1 }; var second = Object.create(first); print(second.value); var third = { value: 3 }; Object.setPrototypeOf(second, third); print(second.value); try { Object.setPrototypeOf(third, second); print(\"not-rejected\"); } catch (error) { print(\"cycle\"); }",
+                "prototype-cycle.js",
+            ))
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["1", "3", "cycle"]);
+    }
 }

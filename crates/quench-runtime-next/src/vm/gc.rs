@@ -84,9 +84,7 @@ impl<H: Host> Vm<H> {
                         ))
                 }));
         self.finalization_jobs.extend(self.heap.collect(roots));
-        self.field_caches.fill(EMPTY_CACHE);
-        self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
-        self.megamorphic_fields.clear();
+        self.invalidate_field_caches();
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
         self.symbol_properties.retain(|(object, key), value| {

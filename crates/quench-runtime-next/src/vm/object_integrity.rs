@@ -1,6 +1,5 @@
 use super::property_key::PropertyKey;
 use super::*;
-
 impl<H: Host> Vm<H> {
     pub(super) fn object_delete_property(
         &mut self,
@@ -183,9 +182,21 @@ impl<H: Host> Vm<H> {
                 "cannot change prototype of non-extensible object".into(),
             ));
         }
+        let mut cursor = proto;
+        while !cursor.is_null() {
+            if cursor == target {
+                return Err(JsError("prototype chain cycle".into()));
+            }
+            cursor = self
+                .object_data(cursor)
+                .map(|object| object.proto)
+                .unwrap_or(Value::NULL);
+        }
         self.object_data_mut(target)
             .expect("object validated")
             .proto = proto;
+        self.invalidate_field_caches();
+        self.invalidate_method_caches();
         Ok(target)
     }
 
