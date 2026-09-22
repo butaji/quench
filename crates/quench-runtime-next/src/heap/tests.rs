@@ -80,3 +80,24 @@ fn weak_ref_target_is_cleared_after_collection() {
     ));
     assert!(heap.release_root(reference_root));
 }
+
+#[test]
+fn object_integrity_metadata_survives_collection() {
+    let mut heap = Heap::new();
+    let object = heap.alloc(Cell::Object(Object {
+        proto: Value::NULL,
+        properties: ValueVec::new(),
+    }));
+    if let Some(Cell::Object(data)) = heap.get_mut(object) {
+        data.set_extensible(false);
+        data.set_frozen(true);
+    }
+    let garbage = (0..512)
+        .map(|_| heap.alloc(Cell::String("garbage".into())))
+        .collect::<Vec<_>>();
+    heap.collect([object]);
+    assert!(
+        matches!(heap.get(object), Some(Cell::Object(data)) if !data.is_extensible() && data.is_frozen())
+    );
+    assert!(garbage.iter().all(|value| heap.get(*value).is_none()));
+}
