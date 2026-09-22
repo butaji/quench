@@ -119,7 +119,8 @@ impl<H: Host> Vm<H> {
             | Native::ReferenceError
             | Native::SyntaxError
             | Native::TypeError
-            | Native::URIError => self.construct_error_native(p, native, args),
+            | Native::URIError
+            | Native::RealmTypeError => self.construct_error_native(p, native, args),
             Native::String => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, value)?;
