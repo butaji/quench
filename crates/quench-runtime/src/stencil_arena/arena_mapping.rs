@@ -121,7 +121,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(f64, f64) -> f64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -138,7 +138,12 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe {
+            std::mem::transmute::<
+                usize,
+                extern "C" fn(*mut crate::native_control::NativeCompareBranchContext) -> u32,
+            >(address)
+        })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -158,7 +163,12 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe {
+            std::mem::transmute::<
+                usize,
+                extern "C" fn(*mut crate::native_property::NativePropertyWriteContext) -> u32,
+            >(address)
+        })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -172,7 +182,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(f64) -> f64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -186,7 +196,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(u64) -> u64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -203,7 +213,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(u64, u64) -> u64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -217,7 +227,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(u64, u64) -> u64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -231,7 +241,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(f64) -> u64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -245,7 +255,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn() -> u64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -259,7 +269,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(f64, f64) -> u64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -273,7 +283,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(i32, i32) -> i32>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -287,7 +297,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(i32) -> i32>(address) })
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -309,7 +319,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(u32, u32) -> u32>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -323,7 +333,7 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe { std::mem::transmute::<usize, extern "C" fn(f64, f64, f64) -> f64>(address) })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -338,7 +348,12 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe {
+            std::mem::transmute::<
+                usize,
+                extern "C" fn(*const crate::native_core::value_word::TaggedValue) -> u64,
+            >(address)
+        })
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -355,7 +370,12 @@ impl StencilArena {
         if !self.executable || address < base || address >= end {
             return Err(ArenaError::ProtectionFailed);
         }
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe {
+            std::mem::transmute::<
+                usize,
+                extern "C" fn(*mut crate::native_property::NativePropertyReadContext) -> u32,
+            >(address)
+        })
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -421,7 +441,9 @@ impl StencilArena {
         abi: crate::stencil_select::RegionAbi,
     ) -> Result<extern "C" fn(*mut std::ffi::c_void) -> u64, ArenaError> {
         self.require_abi(address, abi)?;
-        Ok(unsafe { std::mem::transmute(address) })
+        Ok(unsafe {
+            std::mem::transmute::<usize, extern "C" fn(*mut std::ffi::c_void) -> u64>(address)
+        })
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
