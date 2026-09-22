@@ -6,7 +6,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let target = self.box_object(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let target = self.box_object(target)?;
         let key = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
         let atom = self.intern_atom(&key);
         let Some(value) = self.own_property(target, atom) else {
@@ -53,7 +54,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let target = self.box_object(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let target = self.box_object(target)?;
         let data = self.object_data(target).expect("boxed target is object");
         let keys = self.ordered_shape(data);
         let result = self.object();
