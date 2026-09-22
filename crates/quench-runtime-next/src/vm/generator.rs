@@ -22,6 +22,11 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.profile.function(id as usize);
+        let parameter_eval_arguments_error = p.functions[id as usize].parameter_eval_arguments_error;
+        if parameter_eval_arguments_error {
+            return self
+                .syntax_error_result(p, "arguments binding is not allowed in generator parameters");
+        }
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
             function: 0,

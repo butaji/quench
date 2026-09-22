@@ -433,9 +433,14 @@ impl Heap {
                 object(value);
                 work.push(*env);
             }
-            Cell::Environment { parent, slots, .. } => {
+            Cell::Environment {
+                parent,
+                slots,
+                dynamic_bindings,
+            } => {
                 work.push(*parent);
                 work.extend(slots.iter().copied());
+                work.extend(dynamic_bindings.iter().map(|(_, value)| *value));
             }
             Cell::String(_)
             | Cell::BigInt(_)
