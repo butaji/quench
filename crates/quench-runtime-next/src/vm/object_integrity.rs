@@ -2,6 +2,7 @@ use super::*;
 
 impl<H: Host> Vm<H> {
     pub(super) fn object_get_prototype_of(&self, value: Value) -> Result<Value, JsError> {
+        let value = self.proxy_target(value);
         self.object_data(value)
             .map(|object| object.proto)
             .ok_or_else(|| JsError("Object.getPrototypeOf target is not an object".into()))
@@ -12,6 +13,7 @@ impl<H: Host> Vm<H> {
         target: Value,
         proto: Value,
     ) -> Result<Value, JsError> {
+        let target = self.proxy_target(target);
         if !proto.is_null() && self.object_data(proto).is_none() {
             return Err(JsError("Object prototype is not an object".into()));
         }
