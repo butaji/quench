@@ -11,11 +11,15 @@ use crate::value_vec::ValueVec;
 use rustc_hash::FxHashMap;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
-pub(crate) mod activation; mod activation_lifecycle;
+pub(crate) mod activation;
+mod activation_lifecycle;
 mod arguments;
-mod array; mod array_buffer;
-mod array_builtins; mod array_group;
-mod array_indexed; mod array_modern;
+mod array;
+mod array_buffer;
+mod array_builtins;
+mod array_group;
+mod array_indexed;
+mod array_modern;
 mod atom_keys;
 mod atomics;
 mod builtins;
@@ -359,7 +363,12 @@ impl<H: Host> Vm<H> {
             .iter()
             .map(|shape| shape.keys.capacity() * size_of::<Atom>())
             .sum();
-        let max_shape_width = self.shapes.iter().map(|shape| shape.keys.len()).max().unwrap_or(0);
+        let max_shape_width = self
+            .shapes
+            .iter()
+            .map(|shape| shape.keys.len())
+            .max()
+            .unwrap_or(0);
         let cell_counts = self.heap.cell_counts();
         let live_payload_bytes = self.heap.live_payload_bytes();
         let (live_property_values, live_property_capacity) = self.heap.live_property_stats();
@@ -450,7 +459,8 @@ impl<H: Host> Vm<H> {
         self.symbol_properties.clear();
         self.symbol_property_order.clear();
         self.function_values.clear();
-        self.function_values.resize_with(program.functions.len(), Vec::new);
+        self.function_values
+            .resize_with(program.functions.len(), Vec::new);
         self.finalization_registry_proto = Value::NULL;
         self.random_state = 0x4d59_5df4_d0f3_3173;
         self.realm.globals = self
