@@ -16,6 +16,13 @@ struct Frame {
     caught: Vec<(u32, Vec<Slot>)>,
 }
 
+struct CallRequest {
+    inst: u32,
+    func: u32,
+    args: Vec<Slot>,
+    dsts: Box<[u16]>,
+}
+
 enum Step {
     Next,
     Jump(u32),
@@ -69,11 +76,25 @@ pub fn interpret(
                 dsts,
                 tail,
             }) => {
+                let request = CallRequest {
+                    inst,
+                    func,
+                    args,
+                    dsts,
+                };
                 let result = if tail {
-                    dispatch_tail(vm, &mut frames, &mut current, inst, func, args, depth)
+                    dispatch_tail(
+                        vm,
+                        &mut frames,
+                        &mut current,
+                        request.inst,
+                        request.func,
+                        request.args,
+                        depth,
+                    )
                 } else {
                     current.pc += 1;
-                    dispatch_call(vm, &mut frames, &mut current, inst, func, args, dsts, depth)
+                    dispatch_call(vm, &mut frames, &mut current, request, depth)
                 };
                 if let Err(Failure::Exception { tag, args }) = result {
                     if !take_catch(vm, &mut frames, &mut current, tag, args) {
@@ -165,12 +186,15 @@ fn dispatch_call(
     vm: &Instance,
     frames: &mut Vec<Frame>,
     current: &mut Frame,
-    inst: u32,
-    func: u32,
-    args: Vec<Slot>,
-    dsts: Box<[u16]>,
+    request: CallRequest,
     depth: usize,
 ) -> Result<(), Failure> {
+    let CallRequest {
+        inst,
+        func,
+        args,
+        dsts,
+    } = request;
     if inst != vm.id() {
         let other = instance::lookup_func(inst, func).ok_or(Failure::Trap(Trap::Unimplemented))?;
         if depth + frames.len() + 1 >= MAX_CALL_DEPTH {
