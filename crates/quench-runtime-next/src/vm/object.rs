@@ -8,6 +8,71 @@ impl<H: Host> Vm<H> {
             .and_then(|shape| shape.slots.get(&atom).copied())
             .map(usize::from)
     }
+    #[inline(always)]
+    pub(super) fn property_attributes(
+        &self,
+        object: Value,
+        key: PropertyKey,
+    ) -> Option<PropertyAttributes> {
+        if let PropertyKey::String(atom) = key
+            && let Some(data) = self.object_data(object)
+            && let Some(slot) = self.shape_slot(data.shape(), atom)
+            && let Some(attributes) = self
+                .shapes
+                .get(data.shape() as usize)
+                .and_then(|shape| shape.descriptors.get(slot))
+        {
+            return Some(*attributes);
+        }
+        self.descriptors.get(&(object, key)).copied()
+    }
+    pub(super) fn set_property_attributes(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        attributes: PropertyAttributes,
+    ) {
+        if let PropertyKey::String(atom) = key
+            && let Some(data) = self.object_data(object)
+            && let Some(slot) = self.shape_slot(data.shape(), atom)
+        {
+            let shape = data.shape();
+            let mut next = self.shapes[shape as usize].clone();
+            next.descriptors[slot] = attributes;
+            let next_id = self.shapes.len() as u32;
+            self.shapes.push(next);
+            self.heap
+                .register_property_shape(next_id, self.shapes[next_id as usize].keys.len());
+            self.object_data_mut(object)
+                .expect("object survived descriptor transition")
+                .set_shape(next_id);
+            self.invalidate_field_caches();
+            self.invalidate_method_caches();
+            return;
+        }
+        self.descriptors.insert((object, key), attributes);
+    }
+    pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
+        if let PropertyKey::String(atom) = key
+            && let Some(data) = self.object_data(object)
+            && let Some(slot) = self.shape_slot(data.shape(), atom)
+        {
+            let shape = data.shape();
+            let mut next = self.shapes[shape as usize].clone();
+            next.descriptors[slot] = DEFAULT_PROPERTY_ATTRIBUTES;
+            let next_id = self.shapes.len() as u32;
+            self.shapes.push(next);
+            self.heap
+                .register_property_shape(next_id, self.shapes[next_id as usize].keys.len());
+            self.object_data_mut(object)
+                .expect("object survived descriptor transition")
+                .set_shape(next_id);
+            self.invalidate_field_caches();
+            self.invalidate_method_caches();
+            return;
+        }
+        self.descriptors.remove(&(object, key));
+    }
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
@@ -263,9 +328,9 @@ impl<H: Host> Vm<H> {
             self.heap.property_push(object, value);
             self.object_data_mut(object).unwrap().set_shape(next_shape);
         }
-        self.descriptors
-            .entry((object, PropertyKey::string(atom)))
-            .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
+        // New ordinary properties receive the default descriptor in the
+        // transition shape; exotic/indexed properties retain their keyed
+        // descriptor path.
         // A property write can replace a callable observed through any
         // receiver/prototype cache. Until mutation epochs are part of the
         // cache key, clear the derived method view at this single mutation
@@ -393,11 +458,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<PropertyAttributes> {
         loop {
-            if let Some(attributes) = self
-                .descriptors
-                .get(&(object, PropertyKey::string(atom)))
-                .copied()
-            {
+            if let Some(attributes) = self.property_attributes(object, PropertyKey::string(atom)) {
                 return attributes.accessor.then_some(attributes);
             }
             if self.own_property(object, atom).is_some() {
@@ -413,10 +474,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn inherited_write_blocked(&self, object: Value, atom: Atom) -> bool {
         let mut object = self.object_data(object).map(|data| data.proto);
         while let Some(current) = object.filter(|value| !value.is_null()) {
-            if let Some(attributes) = self
-                .descriptors
-                .get(&(current, PropertyKey::string(atom)))
-                .copied()
+            if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom))
             {
                 return !attributes.accessor && !attributes.writable;
             }
@@ -480,10 +538,16 @@ impl<H: Host> Vm<H> {
         self.profile.shape_transition(false);
         let mut fields = self.shapes[shape as usize].keys.clone();
         let mut slots = self.shapes[shape as usize].slots.clone();
+        let mut descriptors = self.shapes[shape as usize].descriptors.clone();
         slots.insert(atom, fields.len() as u16);
         fields.push(atom);
+        descriptors.push(DEFAULT_PROPERTY_ATTRIBUTES);
         let next = self.shapes.len() as u32;
-        self.shapes.push(Shape { keys: fields, slots });
+        self.shapes.push(Shape {
+            keys: fields,
+            slots,
+            descriptors,
+        });
         self.heap
             .register_property_shape(next, self.shapes[next as usize].keys.len());
         self.transitions.insert((shape, atom), next);

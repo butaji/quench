@@ -171,6 +171,13 @@ impl<H: Host> Vm<H> {
                         .flat_map(|attributes| [attributes.getter, attributes.setter])
                         .flatten(),
                 )
+                .chain(
+                    self.shapes
+                        .iter()
+                        .flat_map(|shape| shape.descriptors.iter())
+                        .flat_map(|attributes| [attributes.getter, attributes.setter])
+                        .flatten(),
+                )
                 .chain(self.frames.iter().flat_map(|frame| {
                     [frame.env, frame.this]
                         .into_iter()

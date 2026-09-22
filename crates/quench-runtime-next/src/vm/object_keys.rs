@@ -120,9 +120,7 @@ impl<H: Host> Vm<H> {
                 return false;
             }
             let atom = self.intern_js_atom(&name);
-            self.descriptors
-                .get(&(object, PropertyKey::string(atom)))
-                .copied()
+            self.property_attributes(object, PropertyKey::string(atom))
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
                 .enumerable
         });
