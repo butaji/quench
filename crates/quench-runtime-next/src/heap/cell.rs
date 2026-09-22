@@ -6,7 +6,7 @@ use std::rc::Rc;
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, RealmTypeError, Eval, Function, FunctionReturnThis, FunctionReturnName,
+    Print, HostDone, CreateRealm, RealmTypeError, Eval, Function, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, DynamicDerivedClass,
     Object,
     ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen,
@@ -248,7 +248,7 @@ impl Native {
     pub(crate) fn is_function_native(self) -> bool {
         matches!(
             self,
-            Self::Function | Self::FunctionReturnThis | Self::FunctionReturnName | Self::AsyncFunction | Self::GeneratorFunction | Self::AsyncGeneratorFunction
+            Self::Function | Self::FunctionReturnThis | Self::FunctionReturnName | Self::FunctionReturnClass | Self::AsyncFunction | Self::GeneratorFunction | Self::AsyncGeneratorFunction
         )
     }
 
