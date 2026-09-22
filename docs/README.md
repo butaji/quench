@@ -26,6 +26,16 @@ TEST262_REPORT=target/test262-report.json \
   cargo run --release -p quench-test262 --bin run-all
 ```
 
+The rewrite gate must use the v2-derived runtime explicitly while it is being
+closed stage by stage:
+
+```sh
+cargo run --release -p quench-test262 --bin run-stages-next -- 0 0
+```
+
+The existing `run-stages`/`run-all` binaries retain the legacy host for
+reference comparisons and are not evidence for the next-runtime gate.
+
 For long runs, execute deterministic file batches sequentially:
 
 ```sh

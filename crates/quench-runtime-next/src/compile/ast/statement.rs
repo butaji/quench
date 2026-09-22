@@ -59,7 +59,6 @@ impl FunctionCompiler<'_, '_> {
             ),
         }
     }
-
     fn return_statement(&mut self, item: &ReturnStatement<'_>) {
         if let Some(value) = &item.argument {
             self.return_expression(value);
@@ -68,7 +67,6 @@ impl FunctionCompiler<'_, '_> {
             self.emit_return(value);
         }
     }
-
     fn close_active_iterators(&mut self) {
         if self.iterator_closures.is_empty() {
             return;
@@ -81,7 +79,6 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::Call, ignored, close_fn, iterator, 0);
         }
     }
-
     fn return_expression(&mut self, expression: &Expression<'_>) {
         if !self.finally_contexts.is_empty() {
             let value = self.expression(expression);
@@ -102,7 +99,6 @@ impl FunctionCompiler<'_, '_> {
             }
         }
     }
-
     fn emit_return(&mut self, value: Register) {
         self.close_active_iterators();
         let Some(context) = self.finally_contexts.last() else {
@@ -138,9 +134,9 @@ impl FunctionCompiler<'_, '_> {
             declaration.kind,
             VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
         ) {
-            if declaration.kind == VariableDeclarationKind::AwaitUsing {
+            if declaration.kind == VariableDeclarationKind::AwaitUsing && !self.async_function {
                 self.owner
-                    .reject(declaration.span, "await using is not supported yet");
+                    .reject(declaration.span, "await using requires an async function");
                 return;
             }
             let stack = self.ensure_disposable_stack();
@@ -150,7 +146,12 @@ impl FunctionCompiler<'_, '_> {
                 } else {
                     self.literal(Constant::Undefined)
                 };
-                let registered = self.call_disposable_method(stack, "use", value);
+                let method = if declaration.kind == VariableDeclarationKind::AwaitUsing {
+                    "useAsync"
+                } else {
+                    "use"
+                };
+                let registered = self.call_disposable_method(stack, method, value);
                 self.bind_pattern(&item.id, registered);
             }
             return;

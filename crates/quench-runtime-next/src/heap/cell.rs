@@ -159,6 +159,8 @@ pub(crate) enum Native {
     DisposableStackAdopt,
     DisposableStackDefer,
     DisposableStackDispose,
+    DisposableStackUseAsync,
+    DisposableStackDisposeAsync,
     FunctionCall,
     FunctionApply,
     Date,

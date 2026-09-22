@@ -299,3 +299,20 @@ fn using_declaration_registers_and_disposes_on_normal_scope_exit() {
         .unwrap();
     assert_eq!(view.0.borrow().as_slice(), ["true", "disposed", "after"]);
 }
+
+#[test]
+fn await_using_awaits_async_disposal_before_function_completion() {
+    let host = Capture::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    runtime
+        .compile_and_execute(ExecutionRequest::script(
+            "async function run() { var firstResource = { [Symbol.asyncDispose]: function() { print('first'); return Promise.resolve(1); } }; var secondResource = { [Symbol.asyncDispose]: function() { print('second'); return Promise.resolve(2); } }; await using first = firstResource, second = secondResource; print(first === firstResource && second === secondResource); } run().then(function() { print('after'); });",
+            "await-using.js",
+        ))
+        .unwrap();
+    assert_eq!(
+        view.0.borrow().as_slice(),
+        ["true", "second", "first", "after"]
+    );
+}
