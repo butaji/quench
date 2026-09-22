@@ -211,11 +211,6 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn arguments(&mut self, values: &[Argument<'_>]) -> (Register, u16) {
-        if values.len() > 8 {
-            let span = values.first().map_or(Span::default(), GetSpan::span);
-            self.owner
-                .reject(span, "at most eight call arguments are supported");
-        }
         let base = self.next_reg;
         let targets: Vec<_> = (0..values.len()).map(|_| self.reg()).collect();
         for (argument, target) in values.iter().zip(targets) {
@@ -323,11 +318,6 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn argument_registers(&mut self, values: &[Argument<'_>]) -> Vec<Register> {
-        if values.len() > 8 {
-            let span = values.first().map_or(Span::default(), GetSpan::span);
-            self.owner
-                .reject(span, "at most eight call arguments are supported");
-        }
         values
             .iter()
             .filter_map(|argument| {
