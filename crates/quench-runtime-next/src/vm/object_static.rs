@@ -222,8 +222,8 @@ impl<H: Host> Vm<H> {
                 || (a == b && (a != 0.0 || a.is_sign_negative() == b.is_sign_negative()));
         }
         match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::String(a)), Some(Cell::String(b)))
-            | (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
+            (Some(Cell::String(a)), Some(Cell::String(b))) => a == b,
+            (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
             _ => left == right,
         }
     }
@@ -278,10 +278,11 @@ impl<H: Host> Vm<H> {
         }
         let object = self.object();
         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
-            for (index, unit) in text.encode_utf16().enumerate() {
+            for (index, unit) in text.units().iter().copied().enumerate() {
                 let key = self.intern_atom(&index.to_string());
-                let character = char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}');
-                let value = self.heap.alloc(Cell::String(character.to_string()));
+                let value = self
+                    .heap
+                    .alloc(Cell::String(super::wtf16::JsString::from_units(&[unit])));
                 self.set_property(object, key, value)?;
             }
         }
@@ -309,7 +310,7 @@ impl<H: Host> Vm<H> {
                     key_value
                 } else {
                     let text = self.to_string(p, key_value)?;
-                    self.heap.alloc(Cell::String(text))
+                    self.heap.alloc(Cell::String(text.into()))
                 };
                 let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
                 if self.object_data(descriptor).is_none() {

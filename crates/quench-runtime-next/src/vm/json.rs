@@ -23,7 +23,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             serde_json::Value::Number(value) => Value::number(value.as_f64().unwrap_or(f64::NAN)),
-            serde_json::Value::String(value) => self.heap.alloc(Cell::String(value.clone())),
+            serde_json::Value::String(value) => self.heap.alloc(Cell::String(value.clone().into())),
             serde_json::Value::Array(values) => {
                 let values = values
                     .iter()
@@ -57,7 +57,7 @@ impl<H: Host> Vm<H> {
         };
         let text = serde_json::to_string(&value)
             .map_err(|error| JsError(format!("JSON stringify: {error}").into()))?;
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self.heap.alloc(Cell::String(text.into())))
     }
 
     #[expect(clippy::wrong_self_convention)]
@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
             return Ok(Some(serde_json::Value::Number(number)));
         }
         match self.heap.get(value).cloned() {
-            Some(Cell::String(value)) => Ok(Some(serde_json::Value::String(value))),
+            Some(Cell::String(value)) => Ok(Some(serde_json::Value::String(value.to_string()))),
             Some(Cell::BigInt(_)) | Some(Cell::Symbol(_)) => {
                 Err(JsError("JSON cannot stringify this value".into()))
             }

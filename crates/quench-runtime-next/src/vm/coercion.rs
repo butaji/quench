@@ -100,7 +100,8 @@ impl<H: Host> Vm<H> {
             });
         }
         match self.heap.get(value) {
-            Some(Cell::String(value)) | Some(Cell::Error(value)) => return Ok(value.clone()),
+            Some(Cell::String(value)) => return Ok(value.to_string()),
+            Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.clone()),
             Some(Cell::Symbol(description)) => {
                 return Ok(format!("Symbol({})", description.as_deref().unwrap_or("")));
@@ -116,5 +117,24 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok("[object Object]".into())
+    }
+
+    pub(super) fn strict_equal(&self, a: Value, b: Value) -> bool {
+        if a == b {
+            return true;
+        }
+        matches!(
+            (self.heap.get(a), self.heap.get(b)),
+            (Some(Cell::String(a)), Some(Cell::String(b))) if a == b
+        )
+    }
+
+    #[inline(always)]
+    pub(super) fn truthy(&self, v: Value) -> bool {
+        !(v.is_null()
+            || v.is_undefined()
+            || v.is_deleted()
+            || v == Value::FALSE
+            || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan()))
     }
 }

@@ -19,7 +19,7 @@ impl<H: Host> Vm<H> {
                 key_value
             } else {
                 let text = self.to_string(p, key_value)?;
-                self.heap.alloc(Cell::String(text))
+                self.heap.alloc(Cell::String(text.into()))
             };
             let trap_atom = self.intern_atom("deleteProperty");
             let trap = self.get_property(p, handler, trap_atom)?;

@@ -36,13 +36,10 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::String(text)) = self.heap.get(this) else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
-                let unit = index.try_into().ok().and_then(|index: usize| {
-                    if text.is_ascii() {
-                        text.as_bytes().get(index).copied().map(u16::from)
-                    } else {
-                        text.encode_utf16().nth(index)
-                    }
-                });
+                let unit = index
+                    .try_into()
+                    .ok()
+                    .and_then(|index: usize| text.units().get(index).copied());
                 Ok(unit.map_or_else(
                     || Value::number(f64::NAN),
                     |unit| Value::number(unit.into()),
@@ -53,15 +50,17 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
-                let unit = index.try_into().ok().and_then(|index: usize| {
-                    if receiver.is_ascii() {
-                        receiver.as_bytes().get(index).copied().map(u16::from)
-                    } else {
-                        receiver.encode_utf16().nth(index)
-                    }
-                });
-                let text = unit.map_or_else(String::new, |unit| String::from_utf16_lossy(&[unit]));
-                Ok(self.heap.alloc(Cell::String(text)))
+                let Some(index) = usize::try_from(index).ok() else {
+                    return Ok(self
+                        .heap
+                        .alloc(Cell::String(super::wtf16::JsString::from_units(&[]))));
+                };
+                let units = receiver.units();
+                let value = units.get(index).map_or_else(
+                    || super::wtf16::JsString::from_units(&[]),
+                    |unit| super::wtf16::JsString::from_units(std::slice::from_ref(unit)),
+                );
+                Ok(self.heap.alloc(Cell::String(value)))
             }
             Native::StringSubstring => {
                 if let Some(length) = self.ascii_string_len(this) {
@@ -129,7 +128,7 @@ impl<H: Host> Vm<H> {
                     .to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
                     .encode_utf16()
                     .collect::<Vec<_>>();
-                let text = receiver.encode_utf16().collect::<Vec<_>>();
+                let text = receiver.units().to_vec();
                 let result = if native == Native::StringIndexOf {
                     let start = self
                         .to_number(p, args.get(1).copied().unwrap_or(Value::number(0.0)))?
@@ -179,11 +178,16 @@ impl<H: Host> Vm<H> {
                     let separator = self.to_string(p, separator)?;
                     if separator.is_empty() {
                         receiver
-                            .encode_utf16()
-                            .map(|unit| String::from_utf16_lossy(&[unit]))
+                            .units()
+                            .iter()
+                            .copied()
+                            .map(|unit| super::wtf16::JsString::from_units(&[unit]))
                             .collect()
                     } else {
-                        receiver.split(&separator).map(str::to_owned).collect()
+                        receiver
+                            .split(&separator)
+                            .map(super::wtf16::JsString::from)
+                            .collect()
                     }
                 };
                 let values = parts
@@ -232,7 +236,7 @@ impl<H: Host> Vm<H> {
                 if size > 64 * 1024 * 1024 {
                     return Err(JsError("string repeat count is too large".into()));
                 }
-                Ok(self.heap.alloc(Cell::String(receiver.repeat(count))))
+                Ok(self.heap.alloc(Cell::String(receiver.repeat(count).into())))
             }
             Native::StringPadStart | Native::StringPadEnd => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
@@ -244,7 +248,7 @@ impl<H: Host> Vm<H> {
                     return Ok(self.heap.alloc(Cell::String(receiver)));
                 }
                 let target = target.trunc().min(64.0 * 1024.0 * 1024.0) as usize;
-                let receiver_units: Vec<u16> = receiver.encode_utf16().collect();
+                let receiver_units = receiver.units().to_vec();
                 if receiver_units.len() >= target {
                     return Ok(self.heap.alloc(Cell::String(receiver)));
                 }
@@ -271,19 +275,17 @@ impl<H: Host> Vm<H> {
             }
             Native::EncodeUri | Native::EncodeUriComponent => {
                 let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                Ok(self
-                    .heap
-                    .alloc(Cell::String(super::string_extra::encode_uri(
-                        &value,
-                        native == Native::EncodeUriComponent,
-                    ))))
+                Ok(self.heap.alloc(Cell::String(
+                    super::string_extra::encode_uri(&value, native == Native::EncodeUriComponent)
+                        .into(),
+                )))
             }
             Native::DecodeUri | Native::DecodeUriComponent => {
                 let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let decoded =
                     super::string_extra::decode_uri(&value, native == Native::DecodeUriComponent)
                         .map_err(|message| JsError(message.into()))?;
-                Ok(self.heap.alloc(Cell::String(decoded)))
+                Ok(self.heap.alloc(Cell::String(decoded.into())))
             }
             Native::StringFromCharCode => {
                 let mut units = Vec::with_capacity(args.len());
@@ -308,7 +310,7 @@ impl<H: Host> Vm<H> {
                     }
                     text.push(char::from_u32(code_point).expect("validated code point"));
                 }
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::ParseInt => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -375,11 +377,9 @@ impl<H: Host> Vm<H> {
                 if !(2..=36).contains(&radix) {
                     return Err(JsError("invalid number radix".into()));
                 }
-                Ok(self
-                    .heap
-                    .alloc(Cell::String(super::string_extra::number_to_radix(
-                        number, radix,
-                    ))))
+                Ok(self.heap.alloc(Cell::String(
+                    super::string_extra::number_to_radix(number, radix).into(),
+                )))
             }
             _ => unreachable!("non-primitive native routed to primitive library"),
         }
@@ -400,7 +400,7 @@ impl<H: Host> Vm<H> {
 
     fn string_units(&self, value: Value) -> Result<Vec<u16>, JsError> {
         match self.heap.get(value) {
-            Some(Cell::String(text)) => Ok(super::wtf16::Wtf16::from_str(text).units().to_vec()),
+            Some(Cell::String(text)) => Ok(text.units().to_vec()),
             _ => Err(JsError("string method receiver is not a string".into())),
         }
     }
@@ -422,11 +422,12 @@ impl<H: Host> Vm<H> {
             return Err(JsError("string method receiver is not a string".into()));
         };
         let result = text[start..end].to_owned();
-        Ok(self.heap.alloc(Cell::String(result)))
+        Ok(self.heap.alloc(Cell::String(result.into())))
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {
-        let text = super::wtf16::Wtf16::from_units(units).to_host_string();
-        Ok(self.heap.alloc(Cell::String(text)))
+        Ok(self
+            .heap
+            .alloc(Cell::String(super::wtf16::JsString::from_units(units))))
     }
 }
