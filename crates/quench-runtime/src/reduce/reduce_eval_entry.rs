@@ -8,27 +8,41 @@ pub fn reduce_eval_source(
     bindings: &[(String, u16)],
     forbidden_var_names: &[String],
 ) -> Result<ResidualProgram, Vec<String>> {
-    reduce_eval_source_in_context(
+    reduce_eval_source_in_context(EvalSourceRequest {
         source,
         inherited_strict,
         global,
-        false,
+        dynamic_scope: false,
         bindings,
-        &[],
+        reusable_var_names: &[],
         forbidden_var_names,
-        crate::semantic::EvalGrammarContext::default(),
-    )
+        grammar: crate::semantic::EvalGrammarContext::default(),
+    })
 }
+pub(crate) struct EvalSourceRequest<'a> {
+    pub(crate) source: &'a str,
+    pub(crate) inherited_strict: bool,
+    pub(crate) global: bool,
+    pub(crate) dynamic_scope: bool,
+    pub(crate) bindings: &'a [(String, u16)],
+    pub(crate) reusable_var_names: &'a [String],
+    pub(crate) forbidden_var_names: &'a [String],
+    pub(crate) grammar: crate::semantic::EvalGrammarContext,
+}
+
 pub(crate) fn reduce_eval_source_in_context(
-    source: &str,
-    inherited_strict: bool,
-    global: bool,
-    dynamic_scope: bool,
-    bindings: &[(String, u16)],
-    reusable_var_names: &[String],
-    forbidden_var_names: &[String],
-    grammar: crate::semantic::EvalGrammarContext,
+    request: EvalSourceRequest<'_>,
 ) -> Result<ResidualProgram, Vec<String>> {
+    let EvalSourceRequest {
+        source,
+        inherited_strict,
+        global,
+        dynamic_scope,
+        bindings,
+        reusable_var_names,
+        forbidden_var_names,
+        grammar,
+    } = request;
     if has_top_level_eval_control(source) {
         return Err(vec!["SyntaxError: break or continue outside of loop".into()]);
     }
