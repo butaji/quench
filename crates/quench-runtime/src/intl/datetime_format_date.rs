@@ -8,6 +8,17 @@
 
 use crate::value::Value as RuntimeValue;
 
+pub(crate) struct TemporalDateFields<'a> {
+    slots: &'a [(String, RuntimeValue)],
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    second: u32,
+    millis: u32,
+}
+
 pub(crate) fn date_format_result(slots: &[(String, RuntimeValue)], number: f64) -> Option<String> {
     let has_year = lookup_slot_string(slots, "year").is_some();
     let has_month = lookup_slot_string(slots, "month").is_some();
@@ -95,16 +106,17 @@ fn parse_zone_offset_minutes(value: &str) -> Option<i32> {
 /// Format Temporal plain values directly from their calendar fields. Unlike
 /// Date values, these fields are not subject to TimeClip and must ignore the
 /// formatter's time-zone conversion.
-pub(crate) fn temporal_date_format_result(
-    slots: &[(String, RuntimeValue)],
-    year: i32,
-    month: u32,
-    day: u32,
-    hour: u32,
-    minute: u32,
-    second: u32,
-    millis: u32,
-) -> Option<String> {
+pub(crate) fn temporal_date_format_result(fields: TemporalDateFields<'_>) -> Option<String> {
+    let TemporalDateFields {
+        slots,
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millis,
+    } = fields;
     let has_year = lookup_slot_string(slots, "year").is_some();
     let has_month = lookup_slot_string(slots, "month").is_some();
     let has_day = lookup_slot_string(slots, "day").is_some();
