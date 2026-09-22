@@ -419,4 +419,21 @@ mod tests {
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["self", "9"]);
     }
+
+    #[test]
+    fn promise_finally_runs_in_order_and_preserves_settlement() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
+            .compile_and_execute(ExecutionRequest::script(
+                "Promise.resolve(3).finally(function() { print('cleanup'); }).then(print); Promise.reject(4).finally(function() { print('reject-cleanup'); }).catch(print);",
+                "promise-finally.js",
+            ))
+            .unwrap();
+        assert_eq!(
+            view.0.borrow().as_slice(),
+            ["cleanup", "reject-cleanup", "3", "4"]
+        );
+    }
 }

@@ -211,8 +211,8 @@ const NATIVES: &[Native] = &[
     Native::PromiseReject,
     Native::PromiseThen,
     Native::PromiseCatch,
-    Native::PromiseReactionJob,
-    Native::PromiseThenableJob,
+    Native::PromiseFinally, Native::PromiseReactionJob,
+    Native::PromiseThenableJob, Native::PromiseFinallyJob,
 ];
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
