@@ -392,9 +392,15 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn try_statement(&mut self, item: &TryStatement<'_>) {
-        if item.finalizer.is_some() {
-            self.owner
-                .reject(item.span, "try/finally is outside the supported subset");
+        if let Some(finalizer) = &item.finalizer {
+            if item.handler.is_none() {
+                self.try_finally_statement(item, finalizer);
+            } else {
+                self.owner.reject(
+                    item.span,
+                    "try/catch/finally is outside the supported subset",
+                );
+            }
             return;
         }
         let Some(handler) = &item.handler else {
@@ -421,6 +427,32 @@ impl FunctionCompiler<'_, '_> {
         }
         self.statements(&handler.body.body);
         self.patch(skip);
+    }
+
+    fn try_finally_statement(&mut self, item: &TryStatement<'_>, finalizer: &BlockStatement<'_>) {
+        let error_atom = self.hidden_local("\0rqj:finally-error");
+        let start = self.code.len() as u32;
+        self.statements(&item.block.body);
+        let end = self.code.len() as u32;
+        self.statements(&finalizer.body);
+        let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
+        let exceptional_target = self.code.len() as u32;
+        self.statements(&finalizer.body);
+        let error = self.load_atom(error_atom);
+        self.emit(Op::Throw, error, 0, 0, 0);
+        let end_target = self.code.len() as u32;
+        self.patch_to(normal_exit, end_target);
+        let slot = self
+            .locals
+            .iter()
+            .position(|atom| *atom == error_atom)
+            .map(|slot| slot as u16);
+        self.handlers.push(crate::bytecode::Handler {
+            start,
+            end,
+            target: exceptional_target,
+            slot,
+        });
     }
 
     fn catch_slot(&mut self, handler: &CatchClause<'_>) -> (Option<u16>, Option<Atom>) {
