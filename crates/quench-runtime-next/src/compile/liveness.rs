@@ -97,9 +97,12 @@ fn uses(
         Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
             bit(instruction.a())
         }
+        Op::StoreResolvedName => bit(instruction.a()) | bit(instruction.b()),
+        Op::ResolveName => 0,
         Op::GetIterator | Op::GetAsyncIterator => bit(instruction.b()),
         Op::GetField => field_base(instruction, fields),
         Op::GetIndex => operand(instruction.b(), fields) | operand(instruction.c(), fields),
+        Op::ToPropertyKey => bit(instruction.b()),
         Op::MakeObject2 => bit(instruction.b()) | bit(instruction.c()),
         Op::SuperConstArrayObject2 => superinstructions[instruction.imm() as usize]
             .code
@@ -142,6 +145,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::LoadCapture
         | Op::LoadName
         | Op::LoadNameTypeof
+        | Op::ResolveName
         | Op::LoadThis
         | Op::MakeClosure
         | Op::MakeArray
@@ -152,6 +156,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::GetAsyncIterator
         | Op::GetField
         | Op::GetIndex
+        | Op::ToPropertyKey
         | Op::Binary
         | Op::NumericAdd
         | Op::NumericMultiply

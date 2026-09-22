@@ -163,6 +163,7 @@ impl<H: Host> Vm<H> {
             locals: continuation.locals,
             captured: continuation.captured,
             registers: continuation.registers,
+            with_base: self.with_stack.len(),
         };
         if !resume.rejected
             && let Some(register) = continuation.resume_register

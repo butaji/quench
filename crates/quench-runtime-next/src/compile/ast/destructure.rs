@@ -210,10 +210,23 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn bind_pattern(&mut self, pattern: &BindingPattern<'_>, value: Register) {
+        self.bind_pattern_with_reference(pattern, value, None);
+    }
+
+    fn bind_pattern_with_reference(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        value: Register,
+        reference: Option<Register>,
+    ) {
         match pattern {
             BindingPattern::BindingIdentifier(id) => {
                 let atom = self.owner.atom(id.name.as_str());
-                self.store_atom(atom, value);
+                if let Some(reference) = reference {
+                    self.emit(Op::StoreResolvedName, value, reference, 0, atom);
+                } else {
+                    self.store_atom(atom, value);
+                }
             }
             BindingPattern::ObjectPattern(object) => {
                 self.require_object_coercible(value);
@@ -221,17 +234,24 @@ impl FunctionCompiler<'_, '_> {
                     let dst = self.reg();
                     if let Some(expression) = property.key.as_expression() {
                         let key = self.expression(expression);
-                        self.emit(Op::GetIndex, dst, value, key, 0);
+                        let property_key = self.reg();
+                        self.emit(Op::ToPropertyKey, property_key, key, 0, 0);
+                        let reference = self.resolve_binding_pattern(&property.value);
+                        self.emit(Op::GetIndex, dst, value, property_key, 0);
+                        self.bind_pattern_with_reference(&property.value, dst, reference);
+                        continue;
                     } else if let Some(key) = Self::binding_key(&property.key) {
                         let atom = self.owner.atom(key);
+                        let reference = self.resolve_binding_pattern(&property.value);
                         let cache = self.owner.cache_site();
                         self.emit(Op::GetField, dst, FieldBase::register(value).0, cache, atom);
+                        self.bind_pattern_with_reference(&property.value, dst, reference);
+                        continue;
                     } else {
                         self.owner
                             .reject(property.span, "destructuring key is unsupported");
                         continue;
                     }
-                    self.bind_pattern(&property.value, dst);
                 }
                 if let Some(rest) = &object.rest {
                     let rest_value = self.object_rest(value, object);
@@ -282,7 +302,7 @@ impl FunctionCompiler<'_, '_> {
                 let fallback = self.expression(&assignment.right);
                 self.emit(Op::Move, selected, fallback, 0, 0);
                 self.patch(skip);
-                self.bind_pattern(&assignment.left, selected);
+                self.bind_pattern_with_reference(&assignment.left, selected, reference);
             }
         }
     }
@@ -332,9 +352,33 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
+    fn resolve_binding_pattern(&mut self, pattern: &BindingPattern<'_>) -> Option<Register> {
+        let target = match pattern {
+            BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
+            BindingPattern::AssignmentPattern(assignment) => {
+                match &assignment.left {
+                    BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let name = target?;
+        if self.with_depth == 0 {
+            return None;
+        }
+        let atom = self.owner.atom(name);
+        let dst = self.reg();
+        let cache = self.owner.cache_site();
+        self.emit(Op::ResolveName, dst, 0, cache, atom);
+        Some(dst)
+    }
+
     fn resolve_assignment_name(&mut self, atom: Atom) {
         if self.with_depth != 0 {
-            let _ = self.load_atom(atom);
+            let dst = self.reg();
+            let cache = self.owner.cache_site();
+            self.emit(Op::LoadNameTypeof, dst, 0, cache, atom);
         }
     }
 
