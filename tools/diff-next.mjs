@@ -6,8 +6,17 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
-function observable({ status, signal, timed_out, stdout, stderr, spawn_error }) {
-  return JSON.stringify({ status, signal, timed_out, stdout, stderr, spawn_error });
+function observable(
+  { status, signal, timed_out, stdout, stderr, spawn_error },
+) {
+  return JSON.stringify({
+    status,
+    signal,
+    timed_out,
+    stdout,
+    stderr,
+    spawn_error,
+  });
 }
 
 function semanticStderr(stderr) {
@@ -17,7 +26,8 @@ function semanticStderr(stderr) {
       if (!line) return false;
       try {
         const record = JSON.parse(line);
-        return !(typeof record.kind === "string" && record.kind.startsWith("rqj-"));
+        return !(typeof record.kind === "string" &&
+          record.kind.startsWith("rqj-"));
       } catch {
         return true;
       }
@@ -35,16 +45,33 @@ if (selfTest) {
   const assert = (condition, message) => {
     if (!condition) throw new Error(`self-test failed: ${message}`);
   };
-  const executeSelfTest = (label, args, timeout) => execute(label, process.execPath, args, timeout);
-  const timeout = executeSelfTest("timeout", ["-e", "setTimeout(() => {}, 1000)"], 10);
+  const executeSelfTest = (label, args, timeout) =>
+    execute(label, process.execPath, args, timeout);
+  const timeout = executeSelfTest("timeout", [
+    "-e",
+    "setTimeout(() => {}, 1000)",
+  ], 10);
   assert(timeout.timed_out, "timeout is classified");
   const crash = executeSelfTest("crash", ["-e", "process.exit(7)"], 1000);
   assert(crash.status === 7 && !crash.timed_out, "nonzero exit is preserved");
-  const measured = { status: 0, signal: null, timed_out: false, stdout: "42\n", stderr: '{"kind":"rqj-profile"}\n', spawn_error: null };
+  const measured = {
+    status: 0,
+    signal: null,
+    timed_out: false,
+    stdout: "42\n",
+    stderr: '{"kind":"rqj-profile"}\n',
+    spawn_error: null,
+  };
   const clean = { ...measured, stderr: "" };
-  assert(semanticObservable(measured) === semanticObservable(clean), "measurement stderr is non-semantic");
+  assert(
+    semanticObservable(measured) === semanticObservable(clean),
+    "measurement stderr is non-semantic",
+  );
   const values = [timeout, crash].map(observable);
-  assert(values[0] !== values[1], "observable mismatches remain distinguishable");
+  assert(
+    values[0] !== values[1],
+    "observable mismatches remain distinguishable",
+  );
   console.log("diff-next self-test: ok");
   process.exit(0);
 }
@@ -58,7 +85,9 @@ if (!fs.existsSync(absoluteSource)) {
   console.error(`missing script: ${absoluteSource}`);
   process.exit(2);
 }
-const sourceSha256 = createHash("sha256").update(fs.readFileSync(absoluteSource)).digest("hex");
+const sourceSha256 = createHash("sha256").update(
+  fs.readFileSync(absoluteSource),
+).digest("hex");
 
 const entries = [
   {
@@ -83,7 +112,12 @@ const entries = [
   },
 ];
 
-function execute(label, command, args, timeout = Number(process.env.DIFF_TIMEOUT_MS ?? 30_000)) {
+function execute(
+  label,
+  command,
+  args,
+  timeout = Number(process.env.DIFF_TIMEOUT_MS ?? 30_000),
+) {
   const started = performance.now();
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
@@ -107,7 +141,9 @@ function execute(label, command, args, timeout = Number(process.env.DIFF_TIMEOUT
   };
 }
 
-const results = entries.map((entry) => execute(entry.label, entry.command, entry.args()));
+const results = entries.map((entry) =>
+  execute(entry.label, entry.command, entry.args())
+);
 const reference = semanticObservable(results[3]);
 const optimized = semanticObservable(results[1]);
 
@@ -119,7 +155,9 @@ console.log(
       source_sha256: sourceSha256,
       timeout_ms: Number(process.env.DIFF_TIMEOUT_MS ?? 30_000),
       results,
-      matches_node: results.slice(0, 3).map((result) => semanticObservable(result) === reference),
+      matches_node: results.slice(0, 3).map((result) =>
+        semanticObservable(result) === reference
+      ),
       matches_next: semanticObservable(results[2]) === optimized,
     },
     null,

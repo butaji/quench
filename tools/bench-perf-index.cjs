@@ -7,7 +7,11 @@ const cp = require("node:child_process");
 const os = require("node:os");
 
 const root = path.resolve(__dirname, "..");
-const benchmarkScript = path.join(root, "quench-bench", "run-quench-runtime.mjs");
+const benchmarkScript = path.join(
+  root,
+  "quench-bench",
+  "run-quench-runtime.mjs",
+);
 const args = process.argv.slice(2);
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -19,14 +23,23 @@ const parseArg = (name, fallback = null) => {
   return args[idx + 1];
 };
 
-const binary = parseArg("--binary", path.join(root, "target", "debug", "quench-node"));
-const output = parseArg("--out", path.join(root, "target", "bench-perf-index.json"));
+const binary = parseArg(
+  "--binary",
+  path.join(root, "target", "debug", "quench-node"),
+);
+const output = parseArg(
+  "--out",
+  path.join(root, "target", "bench-perf-index.json"),
+);
 const baseInput = parseArg("--base");
 const only = parseArg(
   "--only",
-  "richards,deltablue,crypto,raytrace,earley-boyer,regexp,splay,navier-stokes"
+  "richards,deltablue,crypto,raytrace,earley-boyer,regexp,splay,navier-stokes",
 );
-const repeats = Math.max(1, Number.parseInt(parseArg("--repeat", "1"), 10) || 1);
+const repeats = Math.max(
+  1,
+  Number.parseInt(parseArg("--repeat", "1"), 10) || 1,
+);
 const timeoutMs = Number(parseArg("--timeout-ms", String(DEFAULT_TIMEOUT_MS)));
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
   throw new Error("--timeout-ms must be a positive number");
@@ -73,14 +86,20 @@ const parseBenchOutput = (json) => {
     };
   });
 
-  const valid = suites.filter((entry) => Number.isFinite(entry.score) && entry.wall_ms > 0);
+  const valid = suites.filter((entry) =>
+    Number.isFinite(entry.score) && entry.wall_ms > 0
+  );
   return {
     suites,
     count: valid.length,
-    min_score: valid.length ? Math.min(...valid.map((v) => v.score) ) : 0,
-    max_score: valid.length ? Math.max(...valid.map((v) => v.score) ) : 0,
-    mean_score: valid.length ? valid.reduce((acc, value) => acc + value.score, 0) / valid.length : 0,
-    mean_wall_ms: valid.length ? valid.reduce((acc, value) => acc + value.wall_ms, 0) / valid.length : 0,
+    min_score: valid.length ? Math.min(...valid.map((v) => v.score)) : 0,
+    max_score: valid.length ? Math.max(...valid.map((v) => v.score)) : 0,
+    mean_score: valid.length
+      ? valid.reduce((acc, value) => acc + value.score, 0) / valid.length
+      : 0,
+    mean_wall_ms: valid.length
+      ? valid.reduce((acc, value) => acc + value.wall_ms, 0) / valid.length
+      : 0,
     run_payload: json,
   };
 };
@@ -94,7 +113,10 @@ const parseMetricEnvelope = (payload) => {
     return payload.metric;
   }
 
-  if (payload.aggregate && typeof payload.aggregate === "object" && payload.aggregate.metric) {
+  if (
+    payload.aggregate && typeof payload.aggregate === "object" &&
+    payload.aggregate.metric
+  ) {
     return payload.aggregate.metric;
   }
 
@@ -104,31 +126,44 @@ const parseMetricEnvelope = (payload) => {
 const runSingle = (runLabel) => {
   const out = path.join(
     os.tmpdir(),
-    `quench-bench-${Date.now()}-${Math.random().toString(16).slice(2)}.json`
+    `quench-bench-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
   );
-  const timeArgs = [benchmarkScript, "--binary", binary, "--out", out, "--only", only,
-    "--timeout-ms", String(timeoutMs)];
+  const timeArgs = [
+    benchmarkScript,
+    "--binary",
+    binary,
+    "--out",
+    out,
+    "--only",
+    only,
+    "--timeout-ms",
+    String(timeoutMs),
+  ];
 
   const isDarwin = process.platform === "darwin";
   const proc = isDarwin
     ? cp.spawnSync(
-        "/usr/bin/time",
-        ["-l", process.execPath, ...timeArgs],
-        {
-          cwd: root,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: processTimeoutMs,
-          killSignal: "SIGKILL",
-        }
-      )
-    : cp.spawnSync("/usr/bin/time", ["-f", "%M", process.execPath, ...timeArgs], {
+      "/usr/bin/time",
+      ["-l", process.execPath, ...timeArgs],
+      {
         cwd: root,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: processTimeoutMs,
         killSignal: "SIGKILL",
-      });
+      },
+    )
+    : cp.spawnSync(
+      "/usr/bin/time",
+      ["-f", "%M", process.execPath, ...timeArgs],
+      {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: processTimeoutMs,
+        killSignal: "SIGKILL",
+      },
+    );
 
   const stdout = proc.stdout || "";
   const stderr = proc.stderr || "";
@@ -203,7 +238,8 @@ const runAll = () => {
   };
 
   const aggregateWall = successful.length
-    ? successful.reduce((acc, run) => acc + (run.parsed.mean_wall_ms || 0), 0) / successful.length
+    ? successful.reduce((acc, run) => acc + (run.parsed.mean_wall_ms || 0), 0) /
+      successful.length
     : 0;
   const aggregateRss = successful.length
     ? successful.reduce((acc, run) => {

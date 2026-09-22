@@ -4,8 +4,8 @@
   "scripts": {
     "lint:js": "eslint --max-warnings=0 .",
     "lint:all": "npm run format:check && npm run lint:js && tools/lint-rust.sh",
-    "format:check": "deno fmt --check crates tests/node-compat tools AGENTS.md README.md package.json eslint.config.js",
-    "format:write": "deno fmt crates tests/node-compat tools AGENTS.md README.md package.json eslint.config.js"
+    "format:check": "deno fmt --check tools README.md package.json eslint.config.js crates/quench-runtime/src/native_core/PROVENANCE.md crates/quench-node/src/modules/stream_prelude.js",
+    "format:write": "deno fmt tools README.md package.json eslint.config.js crates/quench-runtime/src/native_core/PROVENANCE.md crates/quench-node/src/modules/stream_prelude.js"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

@@ -20,12 +20,16 @@ function discover(current, output = []) {
   for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
     const full = path.join(current, entry.name);
     if (entry.isDirectory()) discover(full, output);
-    else if (entry.isFile() && /\.(?:js|mjs)$/.test(entry.name)) output.push(full);
+    else if (entry.isFile() && /\.(?:js|mjs)$/.test(entry.name)) {
+      output.push(full);
+    }
   }
   return output;
 }
 
-const sources = discover(directory).sort((left, right) => left.localeCompare(right));
+const sources = discover(directory).sort((left, right) =>
+  left.localeCompare(right)
+);
 if (!sources.length) {
   console.error(`no JavaScript fixtures found under: ${directory}`);
   process.exit(2);
@@ -59,8 +63,8 @@ for (const source of sources) {
 }
 
 const mismatches = records.filter((record) => {
-  const nodeMismatch =
-    Array.isArray(record.matches_node) && record.matches_node.some((match) => !match);
+  const nodeMismatch = Array.isArray(record.matches_node) &&
+    record.matches_node.some((match) => !match);
   return nodeMismatch || record.matches_next !== true;
 }).length;
 console.log(
@@ -69,7 +73,9 @@ console.log(
       schema: 2,
       root: directory,
       fixture_count: sources.length,
-      deterministic_order: sources.map((source) => path.relative(directory, source)),
+      deterministic_order: sources.map((source) =>
+        path.relative(directory, source)
+      ),
       mismatch_count: mismatches,
       records,
     },

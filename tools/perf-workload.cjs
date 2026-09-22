@@ -26,5 +26,17 @@ for (let i = 0; i < iterations; i++) {
   if ((i & 1023) === 0) sampleRss();
 }
 const wallMs = Number(process.hrtime.bigint() - started) / 1e6;
-if (checksum <= 0 || !Number.isFinite(checksum)) throw new Error("workload checksum mismatch");
-console.log(JSON.stringify({ iterations, checksum, allocations, copies, bytes, peak_rss: peakRss, wall_ms: wallMs }));
+if (checksum <= 0 || !Number.isFinite(checksum)) {
+  throw new Error("workload checksum mismatch");
+}
+console.log(
+  JSON.stringify({
+    iterations,
+    checksum,
+    allocations,
+    copies,
+    bytes,
+    peak_rss: peakRss,
+    wall_ms: wallMs,
+  }),
+);
