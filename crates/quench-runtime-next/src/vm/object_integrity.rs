@@ -19,8 +19,8 @@ impl<H: Host> Vm<H> {
             let key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
                 key_value
             } else {
-                let text = self.to_string(p, key_value)?;
-                self.heap.alloc(Cell::String(text.into()))
+                let text = self.coerce_js_string(p, key_value)?;
+                self.heap.alloc(Cell::String(text))
             };
             let trap_atom = self.intern_atom("deleteProperty");
             let trap = self.get_property(p, handler, trap_atom)?;
@@ -63,13 +63,14 @@ impl<H: Host> Vm<H> {
             }
             return Ok(Value::TRUE);
         }
-        let key = self.to_string(p, key_value)?;
-        if let Some(index) = super::object_static::array_index(&key).map(|index| index as usize)
+        let key = self.coerce_js_string(p, key_value)?;
+        if let Some(index) =
+            super::object_static::array_index(key.host_string()).map(|index| index as usize)
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))
         {
             return Ok(self.delete_array_index(target, index));
         }
-        let atom = self.intern_atom(&key);
+        let atom = self.intern_js_atom(&key);
         let Some(slot) = self.shapes[self.object_data(target).unwrap().shape() as usize]
             .iter()
             .position(|candidate| *candidate == atom)
