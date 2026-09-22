@@ -44,7 +44,6 @@ mod object_static;
 mod object_tests;
 mod operations;
 mod primitives;
-#[cfg(feature = "profile-aggregate")]
 mod profile_edges;
 mod reflect;
 mod regexp;
@@ -129,6 +128,13 @@ struct Frame {
     locals: Vec<Value>,
     captured: bool,
     registers: Vec<Value>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct NumericSite {
+    consistent_fast: u16,
+    slow_path: u16,
+    armed: bool,
 }
 enum NumericArguments<'a> {
     Values(&'a [Value]),
@@ -250,6 +256,7 @@ pub struct Vm<H> {
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
     profile: Profile,
+    numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Vec<Atom>>,
     transitions: FxHashMap<(u32, Atom), u32>,
     atom_text: AtomTable,
@@ -362,6 +369,7 @@ impl<H: Host> Vm<H> {
         self.natives.clear();
         self.frames.clear();
         self.frame_pool.clear();
+        self.numeric_sites.clear();
         self.shapes.truncate(1);
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
