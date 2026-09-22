@@ -110,12 +110,36 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    pub(super) fn object_prevent_extensions(&mut self, args: &[Value]) -> Result<Value, JsError> {
-        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+    pub(super) fn object_prevent_extensions(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(source).cloned()
+        {
+            if handler.is_null() {
+                return Err(JsError("cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("preventExtensions");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let result = self.call_value(p, trap, handler, &[target])?;
+                if !self.truthy(result) {
+                    return Err(JsError(
+                        "proxy preventExtensions trap returned false".into(),
+                    ));
+                }
+                return Ok(source);
+            }
+        }
+        let target = self.proxy_target(source);
         if let Some(object) = self.object_data_mut(target) {
             object.set_extensible(false);
         }
-        Ok(target)
+        Ok(source)
     }
 
     pub(super) fn object_is_extensible(&self, args: &[Value]) -> bool {

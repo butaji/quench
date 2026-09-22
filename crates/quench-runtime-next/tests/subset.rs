@@ -138,6 +138,17 @@ fn proxy_prototype_traps_control_reflective_operations() {
 }
 
 #[test]
+fn proxy_prevent_extensions_trap_controls_integrity_operations() {
+    let source = r#"
+      var target = {};
+      var proxy = new Proxy(target, { preventExtensions: function(t) { print('trap'); return false; } });
+      try { Object.preventExtensions(proxy); } catch (error) { print('object-failed'); }
+      print(Reflect.preventExtensions(proxy));
+    "#;
+    assert_eq!(output(source), ["trap", "object-failed", "trap", "false"]);
+}
+
+#[test]
 fn well_known_symbols_are_realm_stable_values() {
     assert_eq!(
         output(

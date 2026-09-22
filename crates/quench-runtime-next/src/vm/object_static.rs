@@ -220,7 +220,7 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 })
             }
-            Native::ObjectPreventExtensions => self.object_prevent_extensions(args),
+            Native::ObjectPreventExtensions => self.object_prevent_extensions(p, args),
             Native::ObjectIsExtensible => Ok(Self::integrity_bool(self.object_is_extensible(args))),
             Native::ObjectSeal => self.object_set_integrity(args, false),
             Native::ObjectIsSealed => Ok(Self::integrity_bool(
