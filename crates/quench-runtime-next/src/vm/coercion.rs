@@ -85,8 +85,15 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() || value.is_deleted() {
             return Ok(f64::NAN);
         }
+        if self.object_data(value).is_some() {
+            let primitive = self.to_primitive(program, value, "number")?;
+            return self.to_number(program, primitive);
+        }
         match self.heap.get(value) {
             Some(Cell::Date(value)) => return Ok(*value),
+            Some(Cell::Symbol(_)) => {
+                return Err(self.type_error(program, "cannot convert a Symbol value to a number".into()));
+            }
             Some(Cell::String(value)) => {
                 let text = value.host_string().trim();
                 let radix = if text.starts_with("0x") || text.starts_with("0X") {
@@ -133,6 +140,10 @@ impl<H: Host> Vm<H> {
         if let Some(value) = value.as_number() {
             return Ok(number_string(value));
         }
+        if self.object_data(value).is_some() {
+            let primitive = self.to_primitive(program, value, "string")?;
+            return self.to_string(program, primitive);
+        }
         match self.heap.get(value) {
             Some(Cell::Function { .. }) => return Ok("function () { [native code] }".into()),
             Some(Cell::String(value)) => return Ok(value.to_string()),
@@ -161,6 +172,55 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok("[object Object]".into())
+    }
+
+    fn to_primitive(
+        &mut self,
+        program: &ResidualProgram,
+        value: Value,
+        hint: &str,
+    ) -> Result<Value, JsError> {
+        if !self.object_data(value).is_some() {
+            return Ok(value);
+        }
+        if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
+            let method = self.get_index(program, value, symbol)?;
+            if !method.is_undefined() {
+                let hint = self.heap.alloc(Cell::String(hint.into()));
+                let result = self.call_value(program, method, value, &[hint])?;
+                if self.object_data(result).is_none() {
+                    return Ok(result);
+                }
+                return Err(self.type_error(
+                    program,
+                    "Cannot convert object to primitive value".into(),
+                ));
+            }
+        }
+        let names = if hint == "string" {
+            ["toString", "valueOf"]
+        } else {
+            ["valueOf", "toString"]
+        };
+        let mut attempted = false;
+        for name in names {
+            let atom = self.intern_atom(name);
+            let method = self.get_property(program, value, atom)?;
+            if self.is_function(method) {
+                attempted = true;
+                let result = self.call_value(program, method, value, &[])?;
+                if self.object_data(result).is_none() {
+                    return Ok(result);
+                }
+            }
+        }
+        if !attempted {
+            return Ok(self.heap.alloc(Cell::String("[object Object]".into())));
+        }
+        Err(self.type_error(
+            program,
+            "Cannot convert object to primitive value".into(),
+        ))
     }
 
     pub(super) fn strict_equal(&self, a: Value, b: Value) -> bool {
