@@ -292,6 +292,7 @@ impl<H: Host> Vm<H> {
                     | Cell::WeakMap { .. }
                     | Cell::WeakSet { .. }
                     | Cell::WeakRef { .. }
+                    | Cell::FinalizationRegistry { .. }
                     | Cell::Iterator { .. }
                     | Cell::Proxy { .. }
                     | Cell::Function { .. }

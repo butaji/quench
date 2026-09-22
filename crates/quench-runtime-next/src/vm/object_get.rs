@@ -225,6 +225,7 @@ impl<H: Host> Vm<H> {
                     object = x.proto
                 }
                 Some(Cell::WeakRef { object: x, .. }) => object = x.proto,
+                Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto,
                 Some(Cell::Iterator { object: x, .. }) => object = x.proto,
                 Some(Cell::Function { object: x, .. }) => object = x.proto,
                 _ => return Ok(Value::UNDEFINED),
