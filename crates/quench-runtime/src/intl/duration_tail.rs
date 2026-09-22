@@ -53,13 +53,6 @@ fn format_days(days: i64) -> String {
     format!("{grouped} {}", if days == 1 { "day" } else { "days" })
 }
 
-fn digital_fraction(slots: &[(String, Value)], nanoseconds: i64) -> Option<String> {
-    let digits = slot_number(slots, "fractionalDigits");
-    let raw = format!("{nanoseconds:09}");
-    let count = digits.map_or_else(|| raw.trim_end_matches('0').len(), |value| value as usize);
-    (count > 0).then(|| format!(".{}", &raw[..count.min(9)]))
-}
-
 fn slot_number(slots: &[(String, Value)], key: &str) -> Option<f64> {
     slots.iter().find_map(|(name, value)| {
         (name == key)
