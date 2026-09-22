@@ -35,6 +35,12 @@ impl FunctionCompiler<'_, '_> {
             Expression::NewExpression(value) => self.construct(value),
             Expression::SequenceExpression(value) => self.sequence_expression(value),
             Expression::ParenthesizedExpression(value) => self.expression(&value.expression),
+            Expression::AwaitExpression(value) if self.async_function => {
+                let source = self.expression(&value.argument);
+                let destination = self.reg();
+                self.emit(Op::Await, destination, source, 0, 0);
+                destination
+            }
             _ => {
                 self.owner.reject(
                     expression.span(),

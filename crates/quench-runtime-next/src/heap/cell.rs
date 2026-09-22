@@ -202,6 +202,7 @@ pub(crate) enum Native {
     PromiseFinallyJob,
     PromiseFinallyContinuationJob,
     PromiseAggregateJob,
+    PromiseAsyncResumeJob,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -310,6 +311,7 @@ impl Native {
                 | Self::PromiseFinallyJob
                 | Self::PromiseFinallyContinuationJob
                 | Self::PromiseAggregateJob
+                | Self::PromiseAsyncResumeJob
         )
     }
 }

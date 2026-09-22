@@ -10,6 +10,20 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        match self.call_user_frame(p, id, parent, this, args)? {
+            FrameOutcome::Complete(value) => Ok(value),
+            FrameOutcome::Await { .. } => Err(JsError("await requires async continuation".into())),
+        }
+    }
+
+    pub(super) fn call_user_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+    ) -> Result<FrameOutcome, JsError> {
         self.profile.function(id as usize);
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
@@ -52,8 +66,19 @@ impl<H: Host> Vm<H> {
         self.frames.push(frame);
         let result = self.run_frame_general(p, self.frames.len() - 1);
         let frame = self.frames.pop().unwrap();
-        self.frame_pool.push(Self::recycle_frame(frame));
-        result
+        match result? {
+            FrameOutcome::Complete(value) => {
+                self.frame_pool.push(Self::recycle_frame(frame));
+                Ok(FrameOutcome::Complete(value))
+            }
+            FrameOutcome::Await {
+                value, destination, ..
+            } => Ok(FrameOutcome::Await {
+                value,
+                destination,
+                frame: Some(frame),
+            }),
+        }
     }
 
     pub(super) fn promote_frame_environment(&mut self, frame: usize) -> Value {
@@ -88,10 +113,45 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-    ) -> Result<Value, JsError> {
+    ) -> Result<FrameOutcome, JsError> {
+        self.run_frame_general_with_error(p, frame, None)
+    }
+
+    pub(super) fn run_frame_general_with_error(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        initial_error: Option<JsError>,
+    ) -> Result<FrameOutcome, JsError> {
         let function = self.frames[frame].function as usize;
         let code = &p.functions[function].code;
         let mut pc = self.frames[frame].pc;
+        if let Some(error) = initial_error {
+            let throwing_pc = pc.saturating_sub(1) as u32;
+            let handler = p.functions[function]
+                .handlers
+                .iter()
+                .find(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
+                .copied();
+            let Some(handler) = handler else {
+                return Err(error);
+            };
+            if let Some(slot) = handler.slot {
+                let value = error
+                    .thrown_value()
+                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                if self.frames[frame].captured {
+                    let env = self.frames[frame].env;
+                    let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) else {
+                        return Err(JsError("invalid catch environment".into()));
+                    };
+                    slots[slot as usize] = value;
+                } else {
+                    self.frames[frame].locals[slot as usize] = value;
+                }
+            }
+            pc = handler.target as usize;
+        }
         loop {
             let instruction_pc = pc;
             // SAFETY: the validated residual program has in-range branch targets
@@ -109,11 +169,19 @@ impl<H: Host> Vm<H> {
             #[cfg(not(feature = "profile-aggregate"))]
             self.profile.opcode(ins.op() as usize);
             match self.step(p, frame, ins, &mut pc) {
-                Ok(Some(value)) => {
+                Ok(StepResult::Return(value)) => {
                     self.frames[frame].pc = pc;
-                    return Ok(value);
+                    return Ok(FrameOutcome::Complete(value));
                 }
-                Ok(None) => {}
+                Ok(StepResult::Continue) => {}
+                Ok(StepResult::Await { value, destination }) => {
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::Await {
+                        value,
+                        destination,
+                        frame: None,
+                    });
+                }
                 Err(error) => {
                     let throwing_pc = instruction_pc as u32;
                     let handler = p.functions[function]

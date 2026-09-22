@@ -58,6 +58,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) finally_contexts: Vec<FinallyContext>,
     packed_domain_error: bool,
     pub(super) super_static: bool,
+    pub(super) async_function: bool,
 }
 
 impl<'a, 'b> FunctionCompiler<'a, 'b> {
@@ -67,6 +68,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
         function_id: u32,
         super_static: bool,
+        async_function: bool,
     ) -> Self {
         if locals.len() > usize::from(u16::MAX) {
             owner.reject(Span::default(), "function exceeds the local-slot limit");
@@ -94,6 +96,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             finally_contexts: vec![],
             packed_domain_error: false,
             super_static,
+            async_function,
         }
     }
 
