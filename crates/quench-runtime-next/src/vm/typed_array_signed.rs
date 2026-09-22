@@ -198,21 +198,24 @@ impl<H: Host> Vm<H> {
             _ => unreachable!(),
         };
         let cell = match kind {
-            TypedArrayKind::Int8 => Cell::Int8Array {
+            TypedArrayKind::Int8 => Cell::TypedArray {
+                kind: TypedArrayKind::Int8,
                 object,
                 buffer,
                 offset,
                 length,
                 length_tracking,
             },
-            TypedArrayKind::Int16 => Cell::Int16Array {
+            TypedArrayKind::Int16 => Cell::TypedArray {
+                kind: TypedArrayKind::Int16,
                 object,
                 buffer,
                 offset,
                 length,
                 length_tracking,
             },
-            TypedArrayKind::Int32 => Cell::Int32Array {
+            TypedArrayKind::Int32 => Cell::TypedArray {
+                kind: TypedArrayKind::Int32,
                 object,
                 buffer,
                 offset,
