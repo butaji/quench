@@ -68,6 +68,12 @@ impl<H: Host> Vm<H> {
                         .chain(record.reactions.iter().flat_map(|reaction| {
                             [reaction.on_fulfilled, reaction.on_rejected, reaction.next]
                         }))
+                        .chain(
+                            record
+                                .finally_reactions
+                                .iter()
+                                .flat_map(|reaction| [reaction.handler, reaction.next]),
+                        )
                 }))
                 .chain(self.promise.jobs.iter().flat_map(|(job, reaction)| {
                     [*job, reaction.handler, reaction.next, reaction.value]
@@ -78,6 +84,19 @@ impl<H: Host> Vm<H> {
                         .iter()
                         .flat_map(|(job, thenable)| {
                             [*job, thenable.then, thenable.thenable, thenable.promise]
+                        }),
+                )
+                .chain(
+                    self.promise
+                        .finally_jobs
+                        .iter()
+                        .flat_map(|(job, finally_job)| {
+                            [
+                                *job,
+                                finally_job.handler,
+                                finally_job.next,
+                                finally_job.value,
+                            ]
                         }),
                 )
                 .chain(self.jobs.iter().flat_map(|job| {
@@ -168,6 +187,9 @@ impl<H: Host> Vm<H> {
             .retain(|job, _| self.heap.get(*job).is_some());
         self.promise
             .thenable_jobs
+            .retain(|job, _| self.heap.get(*job).is_some());
+        self.promise
+            .finally_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
         self.symbol_descriptors.retain(|(object, key), attributes| {
             self.heap.get(*object).is_some()

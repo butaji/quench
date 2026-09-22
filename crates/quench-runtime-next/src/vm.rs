@@ -62,6 +62,7 @@ mod operations;
 mod primitives;
 mod profile_edges;
 mod promise;
+mod promise_jobs;
 mod proxy;
 mod reflect;
 mod regexp;
@@ -277,7 +278,6 @@ impl<H: Host> Vm<H> {
             args,
         });
     }
-
     pub fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
     }

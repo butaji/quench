@@ -14,11 +14,18 @@ pub(super) struct PromiseReaction {
     pub(super) next: Value,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FinallyReaction {
+    pub(super) handler: Value,
+    pub(super) next: Value,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct PromiseRecord {
     pub(super) state: PromiseState,
     pub(super) result: Value,
     pub(super) reactions: Vec<PromiseReaction>,
+    pub(super) finally_reactions: Vec<FinallyReaction>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -36,11 +43,20 @@ pub(super) struct ThenableJob {
     pub(super) promise: Value,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FinallyJob {
+    pub(super) handler: Value,
+    pub(super) next: Value,
+    pub(super) rejected: bool,
+    pub(super) value: Value,
+}
+
 pub(super) struct PromiseRuntime {
     pub(super) proto: Value,
     pub(super) records: FxHashMap<Value, PromiseRecord>,
     pub(super) jobs: FxHashMap<Value, PromiseJob>,
     pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
+    pub(super) finally_jobs: FxHashMap<Value, FinallyJob>,
     pub(super) active_native: Vec<Value>,
 }
 
@@ -51,6 +67,7 @@ impl Default for PromiseRuntime {
             records: FxHashMap::default(),
             jobs: FxHashMap::default(),
             thenable_jobs: FxHashMap::default(),
+            finally_jobs: FxHashMap::default(),
             active_native: vec![],
         }
     }
@@ -97,6 +114,12 @@ impl<H: Host> Vm<H> {
         )?;
         self.set_named(
             program,
+            self.promise.proto,
+            "finally",
+            self.native_value(Native::PromiseFinally),
+        )?;
+        self.set_named(
+            program,
             promise,
             "resolve",
             self.native_value(Native::PromiseResolve),
@@ -120,6 +143,7 @@ impl<H: Host> Vm<H> {
                 state: PromiseState::Pending,
                 result: Value::UNDEFINED,
                 reactions: vec![],
+                finally_reactions: vec![],
             },
         );
         promise
@@ -214,10 +238,14 @@ impl<H: Host> Vm<H> {
                 Value::UNDEFINED,
                 args.first().copied().unwrap_or(Value::UNDEFINED),
             ),
+            Native::PromiseFinally => {
+                self.promise_finally(p, this, args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
             Native::PromiseReactionJob => {
                 self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::PromiseThenableJob => self.promise_thenable_job(p),
+            Native::PromiseFinallyJob => self.promise_finally_job(p),
             _ => unreachable!(),
         }
     }
@@ -230,7 +258,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn promise_resolve_value(
+    pub(super) fn promise_resolve_value(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
@@ -328,114 +356,62 @@ impl<H: Host> Vm<H> {
         Ok(next)
     }
 
-    fn promise_settle(
+    fn promise_finally(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        handler: Value,
+    ) -> Result<Value, JsError> {
+        if !self.is_function(handler) {
+            return self.promise_then(p, promise, Value::UNDEFINED, Value::UNDEFINED);
+        }
+        let Some(record) = self.promise.records.get(&promise).cloned() else {
+            return Err(JsError(
+                "Promise.prototype method called on non-Promise".into(),
+            ));
+        };
+        let next = self.promise_object();
+        let reaction = FinallyReaction { handler, next };
+        if record.state == PromiseState::Pending {
+            self.promise
+                .records
+                .get_mut(&promise)
+                .unwrap()
+                .finally_reactions
+                .push(reaction);
+        } else {
+            self.enqueue_promise_finally(reaction, record.state, record.result);
+        }
+        Ok(next)
+    }
+
+    pub(super) fn promise_settle(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
         state: PromiseState,
         result: Value,
     ) -> Result<(), JsError> {
-        let Some(record) = self.promise.records.get_mut(&promise) else {
-            return Err(JsError("invalid Promise state".into()));
+        let (reactions, finally_reactions) = {
+            let Some(record) = self.promise.records.get_mut(&promise) else {
+                return Err(JsError("invalid Promise state".into()));
+            };
+            if record.state != PromiseState::Pending {
+                return Ok(());
+            }
+            record.state = state;
+            record.result = result;
+            (
+                std::mem::take(&mut record.reactions),
+                std::mem::take(&mut record.finally_reactions),
+            )
         };
-        if record.state != PromiseState::Pending {
-            return Ok(());
-        }
-        record.state = state;
-        record.result = result;
-        let reactions = std::mem::take(&mut record.reactions);
         for reaction in reactions {
             self.enqueue_promise_reaction(p, reaction, state, result);
         }
+        for reaction in finally_reactions {
+            self.enqueue_promise_finally(reaction, state, result);
+        }
         Ok(())
-    }
-
-    fn enqueue_promise_reaction(
-        &mut self,
-        _p: &ResidualProgram,
-        reaction: PromiseReaction,
-        state: PromiseState,
-        value: Value,
-    ) {
-        let handler = if state == PromiseState::Fulfilled {
-            reaction.on_fulfilled
-        } else {
-            reaction.on_rejected
-        };
-        let job = self.native_with_env(Native::PromiseReactionJob, Value::NULL);
-        self.promise.jobs.insert(
-            job,
-            PromiseJob {
-                handler,
-                next: reaction.next,
-                rejected: state == PromiseState::Rejected,
-                value,
-            },
-        );
-        self.enqueue_job(job, vec![value]);
-    }
-
-    fn promise_reaction_job(
-        &mut self,
-        p: &ResidualProgram,
-        value: Value,
-    ) -> Result<Value, JsError> {
-        let job = *self
-            .promise
-            .active_native
-            .last()
-            .ok_or_else(|| JsError("Promise job without callback".into()))?;
-        let reaction = self
-            .promise
-            .jobs
-            .remove(&job)
-            .ok_or_else(|| JsError("stale Promise job".into()))?;
-        if !self.is_function(reaction.handler) {
-            return self
-                .promise_settle(
-                    p,
-                    reaction.next,
-                    if reaction.rejected {
-                        PromiseState::Rejected
-                    } else {
-                        PromiseState::Fulfilled
-                    },
-                    value,
-                )
-                .map(|_| Value::UNDEFINED);
-        }
-        match self.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
-            Ok(result) => self.promise_resolve_value(p, reaction.next, result),
-            Err(error) => self.promise_settle(
-                p,
-                reaction.next,
-                PromiseState::Rejected,
-                error.thrown_value().unwrap_or(Value::UNDEFINED),
-            ),
-        }
-        .map(|_| Value::UNDEFINED)
-    }
-
-    fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
-        let job = *self
-            .promise
-            .active_native
-            .last()
-            .ok_or_else(|| JsError("Promise thenable job without callback".into()))?;
-        let thenable = self
-            .promise
-            .thenable_jobs
-            .remove(&job)
-            .ok_or_else(|| JsError("stale Promise thenable job".into()))?;
-        let resolve = self.native_with_env(Native::PromiseResolve, thenable.promise);
-        let reject = self.native_with_env(Native::PromiseReject, thenable.promise);
-        if let Err(error) = self.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
-        {
-            let reason = error
-                .thrown_value()
-                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-            self.promise_settle(p, thenable.promise, PromiseState::Rejected, reason)?;
-        }
-        Ok(Value::UNDEFINED)
     }
 }
