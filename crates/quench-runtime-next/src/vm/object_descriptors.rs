@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
                 return Ok(Value::UNDEFINED);
             };
             let attributes = self
-                .symbol_descriptors
+                .descriptors
                 .get(&(target, PropertyKey::symbol(key_value)))
                 .copied()
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);

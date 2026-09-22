@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
                 return Ok(Value::TRUE);
             }
             if self
-                .symbol_descriptors
+                .descriptors
                 .get(&(target, PropertyKey::symbol(key_value)))
                 .is_some_and(|attributes| !attributes.configurable)
             {
@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
             }
             let property_key = PropertyKey::symbol(key_value);
             self.symbol_properties.remove(&(target, property_key));
-            self.symbol_descriptors.remove(&(target, property_key));
+            self.descriptors.remove(&(target, property_key));
             if let Some(keys) = self.symbol_property_order.get_mut(&target) {
                 keys.retain(|candidate| *candidate != property_key);
             }
@@ -370,7 +370,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or_default();
         for symbol in symbols {
             let attributes = self
-                .symbol_descriptors
+                .descriptors
                 .entry((target, symbol))
                 .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
             attributes.configurable = false;
@@ -409,7 +409,7 @@ impl<H: Host> Vm<H> {
             .flatten()
             .all(|symbol| {
                 let attributes = self
-                    .symbol_descriptors
+                    .descriptors
                     .get(&(target, *symbol))
                     .copied()
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
