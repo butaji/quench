@@ -29,13 +29,48 @@ impl<H: Host> Vm<H> {
                     self.heap.alloc(Cell::String(text))
                 };
                 let result = self.call_value(p, trap, handler, &[target, key])?;
-                if result.is_undefined() || result.is_null() {
+                if result.is_undefined() {
+                    let target_descriptor =
+                        self.object_get_own_property_descriptor(p, &[target, key])?;
+                    if !target_descriptor.is_undefined() {
+                        let configurable = self.descriptor_flag(target_descriptor, "configurable");
+                        if !configurable
+                            || self
+                                .object_data(target)
+                                .is_some_and(|object| !object.is_extensible())
+                        {
+                            return Err(JsError(
+                                "proxy descriptor trap cannot hide a target property".into(),
+                            ));
+                        }
+                    }
                     return Ok(Value::UNDEFINED);
                 }
                 if self.object_data(result).is_none() {
                     return Err(JsError(
                         "proxy getOwnPropertyDescriptor trap must return an object or undefined"
                             .into(),
+                    ));
+                }
+                let target_descriptor =
+                    self.object_get_own_property_descriptor(p, &[target, key])?;
+                if target_descriptor.is_undefined()
+                    && self
+                        .object_data(target)
+                        .is_some_and(|object| !object.is_extensible())
+                {
+                    return Err(JsError(
+                        "proxy descriptor trap added a property to a sealed target".into(),
+                    ));
+                }
+                if !target_descriptor.is_undefined()
+                    && !self.descriptor_flag(target_descriptor, "configurable")
+                    && (self.descriptor_flag(result, "configurable")
+                        || self.descriptor_flag(result, "enumerable")
+                            != self.descriptor_flag(target_descriptor, "enumerable"))
+                {
+                    return Err(JsError(
+                        "proxy descriptor trap changed a non-configurable target property".into(),
                     ));
                 }
                 return Ok(result);
@@ -107,6 +142,12 @@ impl<H: Host> Vm<H> {
             self.set_property(descriptor, atom, value)?;
         }
         Ok(descriptor)
+    }
+
+    fn descriptor_flag(&mut self, descriptor: Value, name: &str) -> bool {
+        let atom = self.intern_atom(name);
+        self.own_property(descriptor, atom)
+            .is_some_and(|value| self.truthy(value))
     }
 
     pub(super) fn object_get_own_property_descriptors(
