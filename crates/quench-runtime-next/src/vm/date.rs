@@ -5,6 +5,8 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 impl<H: Host> Vm<H> {
     pub(super) fn install_date(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let date = self.native_value(Native::Date);
+        let prototype = self.object();
+        self.set_named(program, date, "prototype", prototype)?;
         for (name, native) in [
             ("now", Native::DateNow),
             ("parse", Native::DateParse),

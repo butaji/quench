@@ -37,6 +37,8 @@ impl<H: Host> Vm<H> {
                     "boolean"
                 } else if value.as_number().is_some() {
                     "number"
+                } else if matches!(self.heap.get(value), Some(Cell::String(_))) {
+                    "string"
                 } else if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
                     "bigint"
                 } else if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
