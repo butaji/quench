@@ -25,11 +25,8 @@ pub(crate) fn select_receiver_loop(
     validate_loop(code, &ops, receiver.object, receiver.function)?;
     IntegerLoopSelection::at(
         0,
-        ops[5].b,
-        ops[7].a,
-        ops[10].a,
-        6,
-        14,
+        (ops[5].b, ops[7].a, ops[10].a),
+        (6, 14),
         receiver.multiplier,
         IntegerRecurrence::ReceiverConstant(receiver.addend),
     )

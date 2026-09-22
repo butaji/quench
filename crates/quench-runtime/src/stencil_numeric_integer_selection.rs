@@ -80,11 +80,8 @@ fn select_local_loop_body(
     let addend = add_const_i32(code, i[8])?;
     IntegerLoopSelection::at(
         start,
-        i[1].b,
-        i[11].a,
-        i[16].a,
-        5,
-        2,
+        (i[1].b, i[11].a, i[16].a),
+        (5, 2),
         multiplier,
         IntegerRecurrence::LocalConstantBody(addend),
     )
@@ -176,11 +173,8 @@ fn select_local_loop(
     let addend = add_const_i32(code, i[14])?;
     IntegerLoopSelection::at(
         start,
-        i[7].b,
-        i[1].a,
-        i[4].a,
-        0,
-        8,
+        (i[7].b, i[1].a, i[4].a),
+        (0, 8),
         multiplier,
         IntegerRecurrence::LocalConstant(addend),
     )
@@ -232,11 +226,8 @@ fn select_index_loop(
     index_bindings_match(code, &instructions, start)?;
     IntegerLoopSelection::at(
         start,
-        instructions[0].b,
-        instructions[2].a,
-        instructions[5].a,
-        1,
-        9,
+        (instructions[0].b, instructions[2].a, instructions[5].a),
+        (1, 9),
         number_i32(code, instructions[13])?,
         IntegerRecurrence::Index,
     )
@@ -352,11 +343,8 @@ fn select_constant_loop(
     constant_operators(code, &i)?;
     IntegerLoopSelection::at(
         start,
-        i[0].b,
-        i[2].a,
-        i[5].a,
-        1,
-        9,
+        (i[0].b, i[2].a, i[5].a),
+        (1, 9),
         multiplier,
         IntegerRecurrence::Constant(addend),
     )

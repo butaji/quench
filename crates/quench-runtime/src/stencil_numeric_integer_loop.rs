@@ -172,14 +172,13 @@ pub(crate) struct IntegerLoopSelection {
 impl IntegerLoopSelection {
     pub(crate) fn at(
         start: usize,
-        state_slot: u16,
-        value_slot: u16,
-        index_slot: u16,
-        seed_offset: usize,
-        bound_offset: usize,
+        slots: (u16, u16, u16),
+        offsets: (usize, usize),
         multiplier: i32,
         recurrence: IntegerRecurrence,
     ) -> Option<Self> {
+        let (state_slot, value_slot, index_slot) = slots;
+        let (seed_offset, bound_offset) = offsets;
         Some(Self {
             state_slot,
             value_slot,
@@ -547,8 +546,9 @@ mod tests {
 
     #[test]
     fn selection_offsets_are_derived_from_cfg_start() {
-        let selection = IntegerLoopSelection::at(17, 2, 3, 4, 1, 9, 33, IntegerRecurrence::Index)
-            .expect("relative recipe offsets fit the code range");
+        let selection =
+            IntegerLoopSelection::at(17, (2, 3, 4), (1, 9), 33, IntegerRecurrence::Index)
+                .expect("relative recipe offsets fit the code range");
         assert_eq!(selection.seed_pc, 18);
         assert_eq!(selection.bound_pc, 26);
         assert_eq!(selection.loop_header_pc, 24);

@@ -40,11 +40,8 @@ fn select_bound_loop(
     validate_bound_loop(code, &i)?;
     IntegerLoopSelection::at(
         0,
-        i[0].b,
-        i[8].a,
-        i[11].a,
-        7,
-        15,
+        (i[0].b, i[8].a, i[11].a),
+        (7, 15),
         0,
         IntegerRecurrence::BoundCallee(metadata_name(code, 1)?),
     )
@@ -142,11 +139,8 @@ fn select_direct_loop(
     direct_bindings_match(code, &i)?;
     IntegerLoopSelection::at(
         0,
-        i[0].b,
-        i[2].a,
-        i[8].a,
-        1,
-        12,
+        (i[0].b, i[2].a, i[8].a),
+        (1, 12),
         0,
         IntegerRecurrence::DirectCallee(metadata_name(code, 4)?),
     )
@@ -262,11 +256,8 @@ fn select_polymorphic_loop(
     polymorphic_bindings_match(code, &i)?;
     IntegerLoopSelection::at(
         0,
-        i[0].b,
-        i[2].a,
-        i[5].a,
-        1,
-        9,
+        (i[0].b, i[2].a, i[5].a),
+        (1, 9),
         0,
         IntegerRecurrence::EquivalentCallees([metadata_name(code, 17)?, metadata_name(code, 21)?]),
     )
@@ -389,11 +380,8 @@ fn select_named_loop(
     let fact = crate::function_physical::numeric_affine_named_loop(code)?;
     IntegerLoopSelection::at(
         0,
-        fact.parameter_slot,
-        fact.value_slot,
-        fact.index_slot,
-        1,
-        9,
+        (fact.parameter_slot, fact.value_slot, fact.index_slot),
+        (1, 9),
         0,
         IntegerRecurrence::NamedCallee(fact.method_key),
     )
