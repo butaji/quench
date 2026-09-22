@@ -1294,7 +1294,7 @@ fn calendar_time_round(
     let mut fields = vec![Value::Number(0.0); 10];
     let largest = largest_unit(options);
     if largest.is_none() || largest.is_some_and(|largest| largest <= 1) {
-        for unit in 0..2 {
+        for (unit, field) in fields.iter_mut().enumerate().take(2) {
             if unit == 0 && largest.is_some_and(|largest| largest > 0) {
                 continue;
             }
@@ -1315,7 +1315,7 @@ fn calendar_time_round(
                 cursor = next;
                 count += sign as i64;
             }
-            fields[unit] = Value::Number(count as f64);
+            *field = Value::Number(count as f64);
         }
     }
     if largest == Some(2) {
@@ -1863,7 +1863,7 @@ fn calendar_round(
     let mut fields = vec![Value::Number(0.0); 10];
     if preserve_calendar {
         let mut larger_cursor = start;
-        for index in 0..unit {
+        for (index, field) in fields.iter_mut().enumerate().take(unit) {
             if index == 2 && unit >= 3 {
                 continue;
             }
@@ -1881,7 +1881,7 @@ fn calendar_round(
                 larger_cursor = next;
                 larger_count += sign as i64;
             }
-            fields[index] = Value::Number(larger_count as f64);
+            *field = Value::Number(larger_count as f64);
         }
     }
     if unit == 1 && preserve_calendar && duration_field(object, "years") != 0 {
@@ -1893,7 +1893,7 @@ fn calendar_round(
     if !preserve_larger {
         if let Some(largest) = largest_unit(options).filter(|largest| *largest < unit) {
             let mut larger_cursor = start;
-            for larger_unit in largest..unit {
+            for (larger_unit, field) in fields.iter_mut().enumerate().take(unit).skip(largest) {
                 if larger_unit == 2 && unit >= 3 {
                     continue;
                 }
@@ -1911,7 +1911,7 @@ fn calendar_round(
                     larger_cursor = next;
                     larger_count += sign as i64;
                 }
-                fields[larger_unit] = Value::Number(larger_count as f64);
+                *field = Value::Number(larger_count as f64);
             }
             fields[unit] = Value::Number(if larger_cursor == target {
                 0.0
@@ -1996,7 +1996,7 @@ fn calendar_round(
     if count == unrounded_count && !has_smallest && (has_higher || has_lower) && !balanced_to_larger
     {
         let mut lower_cursor = cursor;
-        for lower_unit in (unit + 1)..=3 {
+        for (lower_unit, field) in fields.iter_mut().enumerate().take(4).skip(unit + 1) {
             if lower_unit == 2 && unit < 2 {
                 continue;
             }
@@ -2014,7 +2014,7 @@ fn calendar_round(
                 lower_cursor = next;
                 lower_count += sign as i64;
             }
-            fields[lower_unit] = Value::Number(lower_count as f64);
+            *field = Value::Number(lower_count as f64);
         }
     }
     construct(&fields)

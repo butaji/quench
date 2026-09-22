@@ -183,10 +183,12 @@ mod tests {
             &lexical
         ));
 
-        let mut dynamic = ProgramDb::default();
-        dynamic.function_has_direct_eval = true;
-        dynamic.in_function = true;
-        dynamic.eval_var_scope_start = 4;
+        let dynamic = ProgramDb {
+            function_has_direct_eval: true,
+            in_function: true,
+            eval_var_scope_start: 4,
+            ..Default::default()
+        };
         assert!(!proven_initialized_local("value", 3, &dynamic, &locals));
     }
 }
