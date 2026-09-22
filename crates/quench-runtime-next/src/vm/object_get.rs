@@ -1,6 +1,55 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn proxy_trap(
+        &mut self,
+        p: &ResidualProgram,
+        handler: Value,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let atom = self
+            .lookup_atom(name)
+            .ok_or_else(|| JsError("proxy trap atom is unavailable".into()))?;
+        self.get_property(p, handler, atom)
+    }
+
+    pub(super) fn proxy_get(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        atom: Atom,
+    ) -> Result<Value, JsError> {
+        let trap = self.proxy_trap(p, handler, "get")?;
+        if self.is_function(trap) {
+            let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+            return self.call_value(p, trap, handler, &[target, key, receiver]);
+        }
+        self.get_property(p, target, atom)
+    }
+
+    pub(super) fn proxy_set(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        atom: Atom,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let trap = self.proxy_trap(p, handler, "set")?;
+        if self.is_function(trap) {
+            let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+            let result = self.call_value(p, trap, handler, &[target, key, value, receiver])?;
+            if !self.truthy(result) {
+                return Err(JsError("proxy set trap returned false".into()));
+            }
+            return Ok(());
+        }
+        self.set_property_with_program(p, target, atom, value)
+    }
+
     pub(super) fn get_property(
         &mut self,
         p: &ResidualProgram,
@@ -21,6 +70,12 @@ impl<H: Host> Vm<H> {
         let receiver = object;
         let mut object = object;
         loop {
+            if let Some(Cell::Proxy {
+                target, handler, ..
+            }) = self.heap.get(object).cloned()
+            {
+                return self.proxy_get(p, target, handler, receiver, atom);
+            }
             if let Some(attributes) = self.descriptors.get(&(object, atom)).copied()
                 && attributes.accessor
             {

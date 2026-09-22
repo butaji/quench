@@ -406,6 +406,14 @@ impl Heap {
                 object(value);
                 work.push(*source);
             }
+            Cell::Proxy {
+                object: value,
+                target,
+                handler,
+            } => {
+                object(value);
+                work.extend([*target, *handler]);
+            }
             Cell::Function {
                 object: value, env, ..
             } => {
@@ -435,6 +443,7 @@ impl Heap {
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
             Cell::Iterator { .. } => 4,
+            Cell::Proxy { .. } => 0,
             Cell::WeakMap { .. } => 5,
             Cell::WeakSet { .. } => 6,
             Cell::WeakRef { .. } => 7,
@@ -450,7 +459,7 @@ impl Heap {
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         match cell {
-            Cell::Object(_) | Cell::Iterator { .. } | Cell::Date(_) => 0,
+            Cell::Object(_) | Cell::Iterator { .. } | Cell::Proxy { .. } | Cell::Date(_) => 0,
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::TypedArray { .. } => 0,

@@ -15,6 +15,7 @@ pub(crate) enum Native {
     ReflectGetPrototypeOf,
     ReflectSetPrototypeOf,
     ReflectConstruct,
+    Proxy,
     JsonParse,
     JsonStringify,
     Array,
@@ -372,6 +373,11 @@ pub(crate) enum Cell {
         source: Value,
         kind: IteratorKind,
         index: usize,
+    },
+    Proxy {
+        object: Object,
+        target: Value,
+        handler: Value,
     },
     Function {
         object: Box<Object>,
