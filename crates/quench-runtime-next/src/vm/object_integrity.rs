@@ -201,10 +201,35 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn object_set_integrity(
         &mut self,
+        p: &ResidualProgram,
         args: &[Value],
         freeze: bool,
     ) -> Result<Value, JsError> {
-        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if matches!(self.heap.get(source), Some(Cell::Proxy { .. })) {
+            self.object_prevent_extensions(p, args)?;
+            let configurable_atom = self.intern_atom("configurable");
+            let writable_atom = self.intern_atom("writable");
+            for key in self.object_own_key_values(p, source)? {
+                let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
+                if descriptor.is_undefined() {
+                    continue;
+                }
+                self.set_property(descriptor, configurable_atom, Value::FALSE)?;
+                if freeze {
+                    self.set_property(descriptor, writable_atom, Value::FALSE)?;
+                }
+                self.object_define_property(p, &[source, key, descriptor])?;
+            }
+            if freeze {
+                let target = self.proxy_target(source);
+                if let Some(object) = self.object_data_mut(target) {
+                    object.set_frozen(true);
+                }
+            }
+            return Ok(source);
+        }
+        let target = self.proxy_target(source);
         if self.object_data(target).is_none() {
             return Ok(target);
         }
@@ -237,7 +262,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn object_is_integrity_level(&self, args: &[Value], freeze: bool) -> bool {
-        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
         let Some(data) = self.object_data(target) else {
             return true;
         };

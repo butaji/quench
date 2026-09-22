@@ -176,6 +176,19 @@ fn proxy_integrity_traps_enforce_non_extensible_target_agreement() {
 }
 
 #[test]
+fn proxy_seal_and_freeze_forward_integrity_to_target() {
+    let source = r#"
+      var target = { value: 1 }; var proxy = new Proxy(target, {});
+      Object.seal(proxy); print(Object.isSealed(proxy)); print(Object.isExtensible(target));
+      target.value = 2; print(target.value);
+      var frozen = { value: 3 }; var frozenProxy = new Proxy(frozen, {});
+      Object.freeze(frozenProxy); print(Object.isFrozen(frozenProxy));
+      try { frozen.value = 4; } catch (error) { print('frozen'); }
+    "#;
+    assert_eq!(output(source), ["true", "false", "2", "true", "frozen"]);
+}
+
+#[test]
 fn proxy_own_keys_enforces_target_key_invariants() {
     let source = r#"
       var target = {};
