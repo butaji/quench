@@ -34,10 +34,10 @@ impl<H: Host> Vm<H> {
             if !self.truthy(enumerable) {
                 continue;
             }
-            let value = if let Some(index) = super::object_static::array_index(&name) {
+            let value = if let Some(index) = super::object_static::array_index(name.host_string()) {
                 self.get_index(p, object, Value::number(index as f64))?
             } else {
-                let atom = self.intern_atom(&name);
+                let atom = self.intern_atom(name.host_string());
                 self.get_property(p, object, atom)?
             };
             values.push(value);
@@ -68,10 +68,10 @@ impl<H: Host> Vm<H> {
             if !self.truthy(enumerable) {
                 continue;
             }
-            let value = if let Some(index) = super::object_static::array_index(&name) {
+            let value = if let Some(index) = super::object_static::array_index(name.host_string()) {
                 self.get_index(p, object, Value::number(index as f64))?
             } else {
-                let atom = self.intern_atom(&name);
+                let atom = self.intern_atom(name.host_string());
                 self.get_property(p, object, atom)?
             };
             let key = self.heap.alloc(Cell::String(name));
@@ -99,7 +99,7 @@ impl<H: Host> Vm<H> {
                     let Some(Cell::String(name)) = self.heap.get(*key).cloned() else {
                         return false;
                     };
-                    let atom = self.intern_atom(&name);
+                    let atom = self.intern_atom(name.host_string());
                     self.is_enumerable(target, atom)
                 })
                 .collect();
@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
             let Some(Cell::String(name)) = self.heap.get(*key).cloned() else {
                 return false;
             };
-            let atom = self.intern_atom(&name);
+            let atom = self.intern_atom(name.host_string());
             self.descriptors
                 .get(&(object, PropertyKey::string(atom)))
                 .copied()

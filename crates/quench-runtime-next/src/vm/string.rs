@@ -60,9 +60,9 @@ impl<H: Host> Vm<H> {
             }
             Native::StringToUpperCase | Native::StringToLowerCase => {
                 let text = if native == Native::StringToUpperCase {
-                    receiver.to_uppercase()
+                    receiver.host_string().to_uppercase()
                 } else {
-                    receiver.to_lowercase()
+                    receiver.host_string().to_lowercase()
                 };
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }
@@ -77,10 +77,10 @@ impl<H: Host> Vm<H> {
                 use unicode_normalization::UnicodeNormalization;
                 let form = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let text = match form.as_str() {
-                    "NFC" | "undefined" => receiver.nfc().collect(),
-                    "NFD" => receiver.nfd().collect(),
-                    "NFKC" => receiver.nfkc().collect(),
-                    "NFKD" => receiver.nfkd().collect(),
+                    "NFC" | "undefined" => receiver.host_string().nfc().collect(),
+                    "NFD" => receiver.host_string().nfd().collect(),
+                    "NFKC" => receiver.host_string().nfkc().collect(),
+                    "NFKD" => receiver.host_string().nfkd().collect(),
                     _ => return Err(JsError("invalid normalization form".into())),
                 };
                 Ok(self.heap.alloc(Cell::String(text)))
@@ -127,6 +127,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
         };
+        let receiver_host = receiver.host_string();
         let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
         let (source, flags) = if self.is_regexp(pattern) {
             let source_atom = self.intern_atom("source");
@@ -141,7 +142,7 @@ impl<H: Host> Vm<H> {
             (regex::escape(&self.to_string(p, pattern)?), String::new())
         };
         let regex = Self::compile_regexp(&source, &flags)?;
-        let Some(first) = regex.captures(&receiver) else {
+        let Some(first) = regex.captures(receiver_host) else {
             return Ok(if native == Native::StringSearch {
                 Value::number(-1.0)
             } else {
@@ -150,12 +151,12 @@ impl<H: Host> Vm<H> {
         };
         if native == Native::StringSearch {
             return Ok(Value::number(first.get(0).map_or(-1isize, |value| {
-                utf16_index(&receiver, value.start()) as isize
+                utf16_index(receiver_host, value.start()) as isize
             }) as f64));
         }
         if flags.contains('g') {
             let values = regex
-                .captures_iter(&receiver)
+                .captures_iter(receiver_host)
                 .filter_map(|captures| captures.get(0))
                 .map(|value| self.heap.alloc(Cell::String(value.as_str().into())))
                 .collect();
@@ -184,7 +185,7 @@ impl<H: Host> Vm<H> {
             Value::number(
                 first
                     .get(0)
-                    .map_or(0, |value| utf16_index(&receiver, value.start()))
+                    .map_or(0, |value| utf16_index(receiver_host, value.start()))
                     as f64,
             ),
         )?;
@@ -203,6 +204,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
         };
+        let receiver_host = receiver.host_string();
         let source_atom = self.intern_atom("source");
         let flags_atom = self.intern_atom("flags");
         let source_value = self.get_property(p, separator, source_atom)?;
@@ -212,12 +214,12 @@ impl<H: Host> Vm<H> {
         let regex = Self::compile_regexp(&source, &flags)?;
         let mut values = Vec::new();
         let mut cursor = 0;
-        for captures in regex.captures_iter(&receiver) {
+        for captures in regex.captures_iter(receiver_host) {
             let Some(whole) = captures.get(0) else {
                 continue;
             };
             values.push(self.heap.alloc(Cell::String(
-                receiver[cursor..whole.start()].to_owned().into(),
+                receiver_host[cursor..whole.start()].to_owned().into(),
             )));
             for capture in captures.iter().skip(1) {
                 values.push(capture.map_or(Value::UNDEFINED, |value| {
@@ -232,7 +234,7 @@ impl<H: Host> Vm<H> {
         if values.len() < limit {
             values.push(
                 self.heap
-                    .alloc(Cell::String(receiver[cursor..].to_owned().into())),
+                    .alloc(Cell::String(receiver_host[cursor..].to_owned().into())),
             );
         }
         values.truncate(limit);
@@ -252,6 +254,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
         };
+        let receiver_host = receiver.host_string();
         let replacement_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let replacement_function = matches!(
             self.heap.get(replacement_value),
@@ -275,17 +278,17 @@ impl<H: Host> Vm<H> {
                 return Err(JsError("replaceAll requires a global RegExp".into()));
             }
             let global = flags.contains('g') || replace_all;
-            let mut result = String::with_capacity(receiver.len());
+            let mut result = String::with_capacity(receiver_host.len());
             let mut cursor = 0;
             let mut replaced = false;
-            for captures in regex.captures_iter(&receiver) {
+            for captures in regex.captures_iter(receiver_host) {
                 if replaced && !global {
                     break;
                 }
                 let Some(whole) = captures.get(0) else {
                     continue;
                 };
-                result.push_str(&receiver[cursor..whole.start()]);
+                result.push_str(&receiver_host[cursor..whole.start()]);
                 let replacement_text = if replacement_function {
                     let mut callback_args = Vec::with_capacity(captures.len() + 3);
                     callback_args.push(self.heap.alloc(Cell::String(whole.as_str().into())));
@@ -294,7 +297,9 @@ impl<H: Host> Vm<H> {
                             self.heap.alloc(Cell::String(value.as_str().into()))
                         })
                     }));
-                    callback_args.push(Value::number(utf16_index(&receiver, whole.start()) as f64));
+                    callback_args.push(Value::number(
+                        utf16_index(receiver_host, whole.start()) as f64
+                    ));
                     callback_args.push(self.heap.alloc(Cell::String(receiver.clone())));
                     let value =
                         self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
@@ -309,7 +314,7 @@ impl<H: Host> Vm<H> {
                         &replacement,
                         whole.as_str(),
                         &captured,
-                        &receiver,
+                        receiver_host,
                         whole.start(),
                         whole.end(),
                     )
@@ -321,7 +326,7 @@ impl<H: Host> Vm<H> {
             if !replaced {
                 return Ok(self.heap.alloc(Cell::String(receiver)));
             }
-            result.push_str(&receiver[cursor..]);
+            result.push_str(&receiver_host[cursor..]);
             return Ok(self.heap.alloc(Cell::String(result.into())));
         }
         let search = self.to_string(p, search_value)?;
@@ -360,18 +365,18 @@ impl<H: Host> Vm<H> {
             output.extend(text.encode_utf16());
             return self.string_from_units(&output);
         }
-        let Some(index) = receiver.find(&search) else {
+        let Some(index) = receiver_host.find(&search) else {
             return Ok(self.heap.alloc(Cell::String(receiver)));
         };
         if replace_all && !search.is_empty() {
-            let mut result = String::with_capacity(receiver.len());
+            let mut result = String::with_capacity(receiver_host.len());
             let mut cursor = 0;
-            for (index, _) in receiver.match_indices(&search) {
-                result.push_str(&receiver[cursor..index]);
+            for (index, _) in receiver_host.match_indices(&search) {
+                result.push_str(&receiver_host[cursor..index]);
                 let replacement_text = if replacement_function {
                     let callback_args = [
                         self.heap.alloc(Cell::String(search.clone().into())),
-                        Value::number(utf16_index(&receiver, index) as f64),
+                        Value::number(utf16_index(receiver_host, index) as f64),
                         self.heap.alloc(Cell::String(receiver.clone())),
                     ];
                     let value =
@@ -382,7 +387,7 @@ impl<H: Host> Vm<H> {
                         &replacement,
                         &search,
                         &[],
-                        &receiver,
+                        receiver_host,
                         index,
                         index + search.len(),
                     )
@@ -390,13 +395,13 @@ impl<H: Host> Vm<H> {
                 result.push_str(&replacement_text);
                 cursor = index + search.len();
             }
-            result.push_str(&receiver[cursor..]);
+            result.push_str(&receiver_host[cursor..]);
             return Ok(self.heap.alloc(Cell::String(result.into())));
         }
         let replacement = if replacement_function {
             let callback_args = [
                 self.heap.alloc(Cell::String(search.clone().into())),
-                Value::number(utf16_index(&receiver, index) as f64),
+                Value::number(utf16_index(receiver_host, index) as f64),
                 self.heap.alloc(Cell::String(receiver.clone())),
             ];
             let value = self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
@@ -406,16 +411,17 @@ impl<H: Host> Vm<H> {
                 &replacement,
                 &search,
                 &[],
-                &receiver,
+                receiver_host,
                 index,
                 index + search.len(),
             )
         };
-        let mut result =
-            String::with_capacity(receiver.len() + replacement.len().saturating_sub(search.len()));
-        result.push_str(&receiver[..index]);
+        let mut result = String::with_capacity(
+            receiver_host.len() + replacement.len().saturating_sub(search.len()),
+        );
+        result.push_str(&receiver_host[..index]);
         result.push_str(&replacement);
-        result.push_str(&receiver[index + search.len()..]);
+        result.push_str(&receiver_host[index + search.len()..]);
         Ok(self.heap.alloc(Cell::String(result.into())))
     }
 }

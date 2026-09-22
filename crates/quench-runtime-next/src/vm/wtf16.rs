@@ -1,8 +1,5 @@
 use std::rc::Rc;
 
-use std::borrow::Borrow;
-use std::ops::Deref;
-
 /// Heap-owned JavaScript string. The UTF-16 units are authoritative; `host`
 /// is only the explicit lossy Rust-text view used at host/API boundaries.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -27,6 +24,10 @@ impl JsString {
 
     pub(crate) fn units(&self) -> &[u16] {
         &self.units
+    }
+
+    pub(crate) fn host_string(&self) -> &str {
+        &self.host
     }
 
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
@@ -107,32 +108,6 @@ impl From<JsString> for String {
 impl FromIterator<char> for JsString {
     fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
         Self::from(iter.into_iter().collect::<String>())
-    }
-}
-
-impl PartialEq<String> for JsString {
-    fn eq(&self, other: &String) -> bool {
-        self.host == *other
-    }
-}
-
-impl AsRef<str> for JsString {
-    fn as_ref(&self) -> &str {
-        &self.host
-    }
-}
-
-impl Borrow<str> for JsString {
-    fn borrow(&self) -> &str {
-        &self.host
-    }
-}
-
-impl Deref for JsString {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &self.host
     }
 }
 

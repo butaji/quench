@@ -73,7 +73,9 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value) {
             Some(Cell::Date(value)) => return Ok(*value),
-            Some(Cell::String(value)) => return Ok(value.parse().unwrap_or(f64::NAN)),
+            Some(Cell::String(value)) => {
+                return Ok(value.host_string().parse().unwrap_or(f64::NAN));
+            }
             Some(Cell::BigInt(value)) => return Ok(value.parse().unwrap_or(f64::NAN)),
             _ => {}
         }
