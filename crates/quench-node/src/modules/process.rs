@@ -1417,14 +1417,6 @@ fn prepend_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &
     }
 }
 
-fn value_to_string(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
-        _ => String::new(),
-    }
-}
-
 fn value_to_i32(value: &Value) -> i32 {
     match value {
         Value::Number(n) => *n as i32,

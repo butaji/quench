@@ -67,7 +67,6 @@ const HASH_ERROR_LISTENER_PROP: &str = "\0quench:crypto:error-listener";
 pub(crate) const HASH_HANDLE_PROP: &str = "Symbol.kHandle\0crypto";
 const ENCODING_PROP: &str = "\0quench:crypto:encoding";
 const WRITABLE_STATE_PROP: &str = "_writableState";
-const SIGN_KEY_PROP: &str = "\0quench:crypto:sign-key";
 const SIGN_OPTIONS_PROP: &str = "\0quench:crypto:sign-options";
 
 pub fn argon2(
@@ -6485,19 +6484,6 @@ fn number_received(number: f64) -> String {
     }
 }
 
-fn integer(value: Option<&Value>, name: &str) -> Result<usize, VmError> {
-    let Some(Value::Number(number)) = value else {
-        return Err(execute::type_error(&format!(
-            "The \"{name}\" argument must be of type number"
-        )));
-    };
-    if !number.is_finite() || *number < 0.0 || number.fract() != 0.0 || *number > usize::MAX as f64
-    {
-        return Err(execute::type_error("The value is out of range"));
-    }
-    Ok(*number as usize)
-}
-
 fn callback_type() -> VmError {
     invalid_type("The \"callback\" argument must be of type function")
 }
@@ -6590,13 +6576,6 @@ fn writable_view(
         Value::Uint16Array(view) => view!(view, 2),
         Value::DataView(view) => Some((view.buffer.clone(), view.byte_offset, view.byte_length, 1)),
         _ => None,
-    }
-}
-
-fn integer_or(value: Option<&Value>, default: usize) -> Result<usize, VmError> {
-    match value {
-        None | Some(Value::Undefined) => Ok(default),
-        Some(value) => integer(Some(value), "offset"),
     }
 }
 
