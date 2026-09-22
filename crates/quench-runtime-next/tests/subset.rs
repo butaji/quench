@@ -1891,6 +1891,21 @@ fn computed_class_fields_and_methods_use_key_expressions() {
 }
 
 #[test]
+fn class_accessors_define_receiver_preserving_getters_and_setters() {
+    let source = r#"
+      class Box {
+        get answer() { return this.value + 1; }
+        set answer(value) { this.value = value; }
+        static get kind() { return 'box'; }
+      }
+      var box = new Box();
+      box.answer = 41;
+      print(box.answer); print(Box.kind);
+    "#;
+    assert_eq!(output(source), ["42", "box"]);
+}
+
+#[test]
 fn object_prototypes_and_function_call_support_inheritance() {
     let source = r#"
       Object.prototype.inheritsFrom = function (parent) {
