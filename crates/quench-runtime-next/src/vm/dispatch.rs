@@ -14,20 +14,37 @@ impl<H: Host> Vm<H> {
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => self.write(f, i.a(), self.constants[i.imm() as usize]),
             Op::LoadLocal => {
-                // SAFETY: compiler construction and residual decoding establish
-                // the frame-local bound before interpretation.
-                let v = unsafe {
-                    *self
-                        .frames
-                        .get_unchecked(f)
-                        .locals
-                        .get_unchecked(i.imm() as usize)
+                let slot = i.imm() as usize;
+                let v = if self.frames[f].captured {
+                    let Some(Cell::Environment { slots, .. }) = self.heap.get(self.frames[f].env)
+                    else {
+                        return Err(JsError("invalid local environment".into()));
+                    };
+                    *slots
+                        .get(slot)
+                        .ok_or_else(|| JsError("invalid local slot".into()))?
+                } else {
+                    // SAFETY: compiler construction and residual decoding establish
+                    // the frame-local bound before interpretation.
+                    unsafe { *self.frames.get_unchecked(f).locals.get_unchecked(slot) }
                 };
                 self.write(f, i.a(), v);
             }
             Op::StoreLocal => {
                 let value = self.read(f, i.a());
-                self.frames[f].locals[i.imm() as usize] = value;
+                let slot = i.imm() as usize;
+                if self.frames[f].captured {
+                    let Some(Cell::Environment { slots, .. }) =
+                        self.heap.get_mut(self.frames[f].env)
+                    else {
+                        return Err(JsError("invalid local environment".into()));
+                    };
+                    *slots
+                        .get_mut(slot)
+                        .ok_or_else(|| JsError("invalid local slot".into()))? = value;
+                } else {
+                    self.frames[f].locals[slot] = value;
+                }
                 if i.b() != 0 {
                     self.write(f, i.b() - 1, value);
                 }

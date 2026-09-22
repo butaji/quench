@@ -8,13 +8,11 @@ impl<H: Host> Vm<H> {
             .and_then(|slots| slots.get(&atom).copied())
             .map(usize::from)
     }
-
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
     }
-
     #[inline(always)]
     pub(super) fn resolve_field_base(&self, frame: usize, base: FieldBase) -> Value {
         match base.register_index() {
@@ -363,7 +361,6 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
-
     pub(super) fn set_property_with_program(
         &mut self,
         p: &ResidualProgram,
@@ -390,7 +387,6 @@ impl<H: Host> Vm<H> {
         }
         self.set_property(object, atom, value)
     }
-
     pub(super) fn property_accessor(
         &self,
         mut object: Value,
