@@ -325,8 +325,6 @@ pub(crate) enum DirectConstructorSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ForwardValueSource {
-    Receiver,
-    ReceiverProperty(String),
     Argument(u16),
     Integer(i32),
     Capture(u16),

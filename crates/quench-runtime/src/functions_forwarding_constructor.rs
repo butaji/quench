@@ -5,13 +5,11 @@ const DIRECT_CONSTRUCTOR_SLOTS: usize = 64;
 fn forward_value(
     source: &crate::facts::ForwardValueSource,
     function: &crate::value::FunctionValue,
-    receiver: &crate::value::Value,
+    _receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Option<crate::value::Value> {
     use crate::facts::ForwardValueSource::*;
     match source {
-        Receiver => Some(receiver.clone()),
-        ReceiverProperty(property) => crate::execute::get_property_result(receiver, property).ok(),
         Argument(index) => arguments.get(usize::from(*index)).cloned(),
         Integer(value) => Some(crate::value::Value::Number(f64::from(*value))),
         Capture(slot) => Some(function.captures.get(*slot)),
