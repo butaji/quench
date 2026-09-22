@@ -1,4 +1,5 @@
 use super::activation::{Completion, Continuation, GeneratorRecord};
+use super::promise::PromiseState;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -48,9 +49,17 @@ impl<H: Host> Vm<H> {
         }
         unsafe { frame.registers.set_len(register_count) };
         let generator = self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.iterator_proto),
+            object: Self::empty_object(if function.is_async {
+                self.async_iterator_proto
+            } else {
+                self.iterator_proto
+            }),
             source: Value::NULL,
-            kind: IteratorKind::Generator,
+            kind: if function.is_async {
+                IteratorKind::AsyncGenerator
+            } else {
+                IteratorKind::Generator
+            },
             index: 0,
         });
         if let Some(Cell::Iterator { source, .. }) = self.heap.get_mut(generator) {
@@ -115,6 +124,11 @@ impl<H: Host> Vm<H> {
         };
         if let Some(register) = continuation.resume_register {
             if register as usize >= frame.registers.len() {
+                self.frame_pool.push(Self::recycle_frame(frame));
+                if let Some(record) = self.generators.get_mut(&generator) {
+                    record.running = false;
+                    record.done = true;
+                }
                 return Err(JsError("invalid generator resume register".into()));
             }
             frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -181,5 +195,169 @@ impl<H: Host> Vm<H> {
                 Err(JsError("generator frame retained unexpectedly".into()))
             }
         }
+    }
+
+    pub(super) fn async_generator_next(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let promise = self.promise_object();
+        let continuation = {
+            let Some(record) = self.generators.get_mut(&generator) else {
+                return Err(JsError("async generator receiver is invalid".into()));
+            };
+            if record.running {
+                let error = self
+                    .heap
+                    .alloc(Cell::Error("async generator is already running".into()));
+                self.promise_settle(p, promise, PromiseState::Rejected, error)?;
+                return Ok(promise);
+            }
+            if record.done {
+                let result = self.iterator_result(Value::UNDEFINED, true)?;
+                self.promise_resolve_value(p, promise, result)?;
+                return Ok(promise);
+            }
+            let Some(continuation) = record.continuation.take() else {
+                record.running = false;
+                return Err(JsError("async generator is suspended".into()));
+            };
+            record.running = true;
+            continuation
+        };
+        let mut frame = Frame {
+            function: continuation.function,
+            pc: continuation.pc,
+            env: continuation.env,
+            this: continuation.this,
+            locals: continuation.locals,
+            captured: continuation.captured,
+            registers: continuation.registers,
+        };
+        if let Some(register) = continuation.resume_register {
+            if register as usize >= frame.registers.len() {
+                self.fail_async_generator(
+                    p,
+                    generator,
+                    promise,
+                    JsError("invalid async generator resume register".into()),
+                )?;
+                return Ok(promise);
+            }
+            frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
+        }
+        self.frames.push(frame);
+        let result = self.run_frame_general(p, self.frames.len() - 1);
+        let frame = self.frames.pop().expect("async generator frame exists");
+        match result {
+            Err(error) => {
+                self.frame_pool.push(Self::recycle_frame(frame));
+                self.fail_async_generator(p, generator, promise, error)?;
+            }
+            Ok(FrameOutcome::Complete(value)) => {
+                self.frame_pool.push(Self::recycle_frame(frame));
+                self.finish_async_generator(p, generator, promise, value, true)?;
+            }
+            Ok(FrameOutcome::Yield {
+                value,
+                destination,
+                frame: None,
+            }) => self.async_generator_yield(p, generator, promise, frame, value, destination)?,
+            Ok(FrameOutcome::Await {
+                value,
+                destination,
+                frame: None,
+            }) => {
+                let continuation = Continuation {
+                    function: frame.function,
+                    pc: frame.pc,
+                    env: frame.env,
+                    this: frame.this,
+                    locals: frame.locals,
+                    registers: frame.registers,
+                    completion: Completion::Await(value),
+                    captured: frame.captured,
+                    resume_register: Some(destination),
+                    promise,
+                };
+                let id = self.suspend_continuation(continuation);
+                self.enqueue_async_resume(p, id, promise, Some(generator), value)?;
+            }
+            Ok(_) => {
+                self.frame_pool.push(Self::recycle_frame(frame));
+                self.fail_async_generator(
+                    p,
+                    generator,
+                    promise,
+                    JsError("async generator frame retained unexpectedly".into()),
+                )?;
+            }
+        }
+        Ok(promise)
+    }
+
+    pub(super) fn async_generator_yield(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        promise: Value,
+        frame: Frame,
+        value: Value,
+        destination: u16,
+    ) -> Result<(), JsError> {
+        if let Some(record) = self.generators.get_mut(&generator) {
+            record.running = false;
+            record.continuation = Some(Continuation {
+                function: frame.function,
+                pc: frame.pc,
+                env: frame.env,
+                this: frame.this,
+                locals: frame.locals,
+                registers: frame.registers,
+                completion: Completion::Yield(value),
+                captured: frame.captured,
+                resume_register: Some(destination),
+                promise: Value::UNDEFINED,
+            });
+        }
+        let result = self.iterator_result(value, false)?;
+        self.promise_resolve_value(p, promise, result)
+    }
+
+    pub(super) fn finish_async_generator(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        promise: Value,
+        value: Value,
+        done: bool,
+    ) -> Result<(), JsError> {
+        if let Some(record) = self.generators.get_mut(&generator) {
+            record.running = false;
+            record.done = done;
+            record.continuation = None;
+        }
+        let result = self.iterator_result(value, done)?;
+        self.promise_resolve_value(p, promise, result)
+    }
+
+    pub(super) fn fail_async_generator(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        promise: Value,
+        error: JsError,
+    ) -> Result<(), JsError> {
+        if let Some(record) = self.generators.get_mut(&generator) {
+            record.running = false;
+            record.done = true;
+            record.continuation = None;
+        }
+        let reason = error
+            .thrown_value()
+            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+        self.promise_settle(p, promise, PromiseState::Rejected, reason)
     }
 }

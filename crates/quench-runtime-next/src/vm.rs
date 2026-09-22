@@ -169,7 +169,6 @@ pub(super) enum StepResult {
     Await { value: Value, destination: Register },
     Yield { value: Value, destination: Register },
 }
-
 pub(super) enum FrameOutcome {
     Complete(Value),
     Await {
@@ -244,6 +243,7 @@ pub struct Vm<H> {
     weak_ref_proto: Value,
     finalization_registry_proto: Value,
     iterator_proto: Value,
+    async_iterator_proto: Value,
     regexp_proto: Value,
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,

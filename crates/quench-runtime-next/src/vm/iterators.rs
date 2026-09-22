@@ -22,9 +22,16 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn install_iterators(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.iterator_proto = self.object();
+        self.async_iterator_proto = self.object();
         self.set_named(
             program,
             self.iterator_proto,
+            "next",
+            self.native_value(Native::IteratorNext),
+        )?;
+        self.set_named(
+            program,
+            self.async_iterator_proto,
             "next",
             self.native_value(Native::IteratorNext),
         )
@@ -38,6 +45,15 @@ impl<H: Host> Vm<H> {
             p,
             self.iterator_proto,
             iterator,
+            self.native_value(Native::IteratorSelf),
+        )?;
+        let Some(async_iterator) = self.well_known_symbols.get("asyncIterator").copied() else {
+            return Ok(());
+        };
+        self.set_index(
+            p,
+            self.async_iterator_proto,
+            async_iterator,
             self.native_value(Native::IteratorSelf),
         )
     }
@@ -123,7 +139,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator = self.get_iterator(p, source)?;
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.iterator_proto),
+            object: Self::empty_object(self.async_iterator_proto),
             source: iterator,
             kind: IteratorKind::AsyncFromSync,
             index: 0,
@@ -194,6 +210,9 @@ impl<H: Host> Vm<H> {
         };
         if kind == IteratorKind::Generator {
             return self.generator_next(p, this, args);
+        }
+        if kind == IteratorKind::AsyncGenerator {
+            return self.async_generator_next(p, this, args);
         }
         if kind == IteratorKind::AsyncFromSync {
             let result = self.iterator_next_with_args(p, source, args)?;

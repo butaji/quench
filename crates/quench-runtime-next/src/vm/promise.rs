@@ -85,6 +85,7 @@ pub(super) struct AggregateJob {
 pub(super) struct AsyncResumeJob {
     pub(super) continuation: ContinuationId,
     pub(super) promise: Value,
+    pub(super) generator: Option<Value>,
     pub(super) rejected: bool,
 }
 

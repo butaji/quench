@@ -58,6 +58,7 @@ impl<H: Host> Vm<H> {
                     self.finalization_registry_proto,
                     self.promise.proto,
                     self.iterator_proto,
+                    self.async_iterator_proto,
                     self.regexp_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
@@ -124,7 +125,11 @@ impl<H: Host> Vm<H> {
                     self.promise
                         .async_resume_jobs
                         .iter()
-                        .flat_map(|(job, resume)| [*job, resume.promise]),
+                        .flat_map(|(job, resume)| {
+                            [Some(*job), Some(resume.promise), resume.generator]
+                                .into_iter()
+                                .flatten()
+                        }),
                 )
                 .chain(self.jobs.iter().flat_map(|job| {
                     std::iter::once(job.callback)
