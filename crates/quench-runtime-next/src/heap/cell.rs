@@ -15,7 +15,7 @@ pub(crate) enum Native {
     ReflectGetPrototypeOf,
     ReflectSetPrototypeOf,
     ReflectConstruct,
-    Proxy,
+    Proxy, ProxyRevocable, ProxyRevoke,
     JsonParse,
     JsonStringify,
     Array,
