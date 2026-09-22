@@ -359,36 +359,6 @@ fn update_empty_from(
     Ok(completion.update_empty(value))
 }
 
-fn loop_test(
-    test: crate::machine::CodeView<'_>,
-    owner: &crate::machine::FunctionCode,
-    registers: &mut crate::register_file::RegisterFile,
-) -> Result<bool, crate::execute::VmError> {
-    let result = match crate::vm::execute_code_completion_with_owner(test, owner, registers)? {
-        crate::completion::Completion::Return(value) => Ok(crate::execute::is_truthy(&value)),
-        crate::completion::Completion::Normal => Ok(false),
-        completion => completion
-            .into_vm_error()
-            .map(|value| crate::execute::is_truthy(&value)),
-    }?;
-    Ok(result)
-}
-
-fn run_fragment(
-    ops: crate::machine::CodeView<'_>,
-    owner: &crate::machine::FunctionCode,
-    registers: &mut crate::register_file::RegisterFile,
-) -> Result<(), crate::execute::VmError> {
-    crate::execution_trace::event(crate::execution_trace::Event::FragmentEntry);
-    if ops.is_empty() {
-        return Ok(());
-    }
-    match crate::vm::execute_code_completion_with_owner(ops, owner, registers)? {
-        crate::completion::Completion::Normal | crate::completion::Completion::Return(_) => Ok(()),
-        completion => completion.into_vm_error().map(|_| ()),
-    }
-}
-
 fn refresh_per_iteration(slots: &[u16]) {
     let environment = crate::locals::current();
     for &slot in slots {
