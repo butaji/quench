@@ -103,8 +103,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let source_atom = self.intern_atom("source");
         let flags_atom = self.intern_atom("flags");
-        let source = self.to_string(p, self.get_property(p, this, source_atom)?)?;
-        let flags = self.to_string(p, self.get_property(p, this, flags_atom)?)?;
+        let source_value = self.get_property(p, this, source_atom)?;
+        let flags_value = self.get_property(p, this, flags_atom)?;
+        let source = self.to_string(p, source_value)?;
+        let flags = self.to_string(p, flags_value)?;
         let regex = Self::compile_regexp(&source, &flags)?;
         let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let stateful = flags.contains('g') || flags.contains('y');

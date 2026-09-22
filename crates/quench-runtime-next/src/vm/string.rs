@@ -139,9 +139,11 @@ impl<H: Host> Vm<H> {
         let (source, flags) = if self.is_regexp(pattern) {
             let source_atom = self.intern_atom("source");
             let flags_atom = self.intern_atom("flags");
+            let source_value = self.get_property(p, pattern, source_atom)?;
+            let flags_value = self.get_property(p, pattern, flags_atom)?;
             (
-                self.to_string(p, self.get_property(p, pattern, source_atom)?)?,
-                self.to_string(p, self.get_property(p, pattern, flags_atom)?)?,
+                self.to_string(p, source_value)?,
+                self.to_string(p, flags_value)?,
             )
         } else {
             (regex::escape(&self.to_string(p, pattern)?), String::new())
@@ -211,8 +213,10 @@ impl<H: Host> Vm<H> {
         };
         let source_atom = self.intern_atom("source");
         let flags_atom = self.intern_atom("flags");
-        let source = self.to_string(p, self.get_property(p, separator, source_atom)?)?;
-        let flags = self.to_string(p, self.get_property(p, separator, flags_atom)?)?;
+        let source_value = self.get_property(p, separator, source_atom)?;
+        let flags_value = self.get_property(p, separator, flags_atom)?;
+        let source = self.to_string(p, source_value)?;
+        let flags = self.to_string(p, flags_value)?;
         let regex = Self::compile_regexp(&source, &flags)?;
         let mut values = Vec::new();
         let mut cursor = 0;
@@ -268,8 +272,10 @@ impl<H: Host> Vm<H> {
         if self.is_regexp(search_value) {
             let source_atom = self.intern_atom("source");
             let flags_atom = self.intern_atom("flags");
-            let source = self.to_string(p, self.get_property(p, search_value, source_atom)?)?;
-            let flags = self.to_string(p, self.get_property(p, search_value, flags_atom)?)?;
+            let source_value = self.get_property(p, search_value, source_atom)?;
+            let flags_value = self.get_property(p, search_value, flags_atom)?;
+            let source = self.to_string(p, source_value)?;
+            let flags = self.to_string(p, flags_value)?;
             let regex = Self::compile_regexp(&source, &flags)?;
             if replace_all && !flags.contains('g') {
                 return Err(JsError("replaceAll requires a global RegExp".into()));

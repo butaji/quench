@@ -48,7 +48,8 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&key);
                 Ok(
                     if self
-                        .set_property(
+                        .set_property_with_program(
+                            p,
                             target,
                             atom,
                             args.get(2).copied().unwrap_or(Value::UNDEFINED),

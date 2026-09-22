@@ -111,6 +111,9 @@ impl<H: Host> Vm<H> {
         {
             return self.get_property(p, object, atom);
         }
+        if self.property_accessor(object, atom).is_some() {
+            return self.get_property(p, object, atom);
+        }
         let Some(receiver) = self.object_data(object) else {
             return self.get_property(p, object, atom);
         };
@@ -144,16 +147,20 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         self.profile.field_cache(false);
-        self.get_field_miss(object, atom, site)
+        self.get_field_miss(p, object, atom, site)
     }
     #[cold]
     #[inline(never)]
     pub(super) fn get_field_miss(
         &mut self,
+        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        if self.property_accessor(object, atom).is_some() {
+            return self.get_property(p, object, atom);
+        }
         if let Some(value) = self.array_buffer_virtual_property(object, atom) {
             return Ok(value);
         }
@@ -205,103 +212,6 @@ impl<H: Host> Vm<H> {
             depth = depth.saturating_add(1);
         }
     }
-    pub(super) fn get_property(
-        &self,
-        _p: &ResidualProgram,
-        mut object: Value,
-        atom: Atom,
-    ) -> Result<Value, JsError> {
-        if object.as_number().is_some() {
-            return Ok(if atom == self.primitive_atoms[4] {
-                self.native_value(Native::NumberString)
-            } else if atom == self.to_fixed_atom {
-                self.native_value(Native::NumberFixed)
-            } else if atom == self.to_precision_atom {
-                self.native_value(Native::NumberPrecision)
-            } else {
-                Value::UNDEFINED
-            });
-        }
-        loop {
-            if let Some(v) = self.own_property(object, atom) {
-                return Ok(v);
-            }
-            if let Some(v) = self.indexed_view_property(object, atom) {
-                return Ok(v);
-            }
-            match self.heap.get(object) {
-                Some(Cell::ArrayBuffer { .. })
-                    if self.array_buffer_virtual_property(object, atom).is_some() =>
-                {
-                    return Ok(self.array_buffer_virtual_property(object, atom).unwrap());
-                }
-                Some(Cell::ArrayBuffer { bytes, shared, .. })
-                    if self.lookup_atom("byteLength") == Some(atom) =>
-                {
-                    let _shared = shared;
-                    return Ok(Value::number(if self.array_buffer_detached(object) {
-                        0.0
-                    } else {
-                        bytes.len() as f64
-                    }));
-                }
-                Some(Cell::Array { .. }) if atom == self.length_atom => {
-                    let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
-                        unreachable!()
-                    };
-                    let length = self.heap.sparse_length(object).unwrap_or(elements.len());
-                    return Ok(Value::number(length as f64));
-                }
-                Some(Cell::Map { entries, .. }) if atom == self.size_atom => {
-                    return Ok(Value::number(entries.len() as f64));
-                }
-                Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
-                Some(Cell::TypedArray { object: x, .. }) => object = x.proto,
-                Some(Cell::DataView { object: x, .. }) => object = x.proto,
-                Some(Cell::Set { entries, .. }) if atom == self.size_atom => {
-                    return Ok(Value::number(entries.len() as f64));
-                }
-                Some(Cell::String(v)) => {
-                    return Ok(if atom == self.length_atom {
-                        Value::number(v.encode_utf16().count() as f64)
-                    } else if atom == self.primitive_atoms[0] {
-                        self.native_value(Native::StringCharCodeAt)
-                    } else if atom == self.primitive_atoms[1] {
-                        self.native_value(Native::StringCharAt)
-                    } else if atom == self.primitive_atoms[2] {
-                        self.native_value(Native::StringSubstring)
-                    } else if atom == self.primitive_atoms[3] {
-                        self.native_value(Native::StringSubstr)
-                    } else if atom == self.primitive_atoms[5] {
-                        self.native_value(Native::StringIncludes)
-                    } else if atom == self.primitive_atoms[6] {
-                        self.native_value(Native::StringStartsWith)
-                    } else if atom == self.primitive_atoms[7] {
-                        self.native_value(Native::StringEndsWith)
-                    } else if let Some(native) = self.string_native_for_atom(atom) {
-                        self.native_value(native)
-                    } else {
-                        Value::UNDEFINED
-                    });
-                }
-                Some(Cell::Date(_)) => return Ok(self.date_property_native(atom)),
-                Some(Cell::Object(x)) | Some(Cell::Array { object: x, .. }) => object = x.proto,
-                Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
-                    object = x.proto
-                }
-                Some(Cell::WeakMap { object: x, .. }) | Some(Cell::WeakSet { object: x, .. }) => {
-                    object = x.proto
-                }
-                Some(Cell::WeakRef { object: x, .. }) => object = x.proto,
-                Some(Cell::Iterator { object: x, .. }) => object = x.proto,
-                Some(Cell::Function { object: x, .. }) => object = x.proto,
-                _ => return Ok(Value::UNDEFINED),
-            }
-            if object.is_null() {
-                return Ok(Value::UNDEFINED);
-            }
-        }
-    }
     pub(super) fn set_property(
         &mut self,
         object: Value,
@@ -344,13 +254,20 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn set_field_cached(
         &mut self,
+        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
         site: u16,
     ) -> Result<(), JsError> {
         if !self.specialized {
-            return self.set_property(object, atom, value);
+            return self.set_property_with_program(p, object, atom, value);
+        }
+        if let Some(attributes) = self.property_accessor(object, atom) {
+            if let Some(setter) = attributes.setter {
+                self.call_value(p, setter, object, &[value])?;
+            }
+            return Ok(());
         }
         let existing = self.object_data(object).and_then(|data| {
             self.shapes[data.shape() as usize]
@@ -412,6 +329,40 @@ impl<H: Host> Vm<H> {
             );
         }
         Ok(())
+    }
+
+    pub(super) fn set_property_with_program(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+    ) -> Result<(), JsError> {
+        if let Some(attributes) = self.property_accessor(object, atom) {
+            if let Some(setter) = attributes.setter {
+                self.call_value(p, setter, object, &[value])?;
+            }
+            return Ok(());
+        }
+        self.set_property(object, atom, value)
+    }
+
+    pub(super) fn property_accessor(
+        &self,
+        mut object: Value,
+        atom: Atom,
+    ) -> Option<PropertyAttributes> {
+        loop {
+            if let Some(attributes) = self.descriptors.get(&(object, atom)).copied()
+                && attributes.accessor
+            {
+                return Some(attributes);
+            }
+            object = self.object_data(object)?.proto;
+            if object.is_null() {
+                return None;
+            }
+        }
     }
     fn callable_write(&self, object: Value, slot: usize, value: Value) -> bool {
         self.is_function(value)

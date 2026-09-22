@@ -1,9 +1,23 @@
 use super::{CallTarget, JsError, MethodCache, Vm};
 use crate::{Engine, Host, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 struct SilentHost;
 impl Host for SilentHost {
     fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+}
+
+struct RecordingHost(Rc<RefCell<Vec<String>>>);
+
+impl Host for RecordingHost {
+    fn write_line(&mut self, line: &str) {
+        self.0.borrow_mut().push(line.into());
+    }
+
     fn clock_millis(&mut self) -> f64 {
         0.0
     }
@@ -33,6 +47,38 @@ fn repeated_string_concatenations_use_the_bounded_cache() {
     assert_eq!(
         vm.string_concats.as_ref().unwrap().len(),
         super::STRING_CONCAT_CACHE_SIZE
+    );
+}
+
+#[test]
+fn accessor_descriptors_share_get_and_set_property_semantics() {
+    let source = r#"
+      var object = {};
+      Object.defineProperty(object, "value", {
+        get: function() { return 3; },
+        set: function(next) { print(next); }
+      });
+      print(object.value);
+      object.value = 9;
+      var descriptor = Object.getOwnPropertyDescriptor(object, "value");
+      print(typeof descriptor.get);
+      print(typeof descriptor.set);
+      var prototype = {};
+      var receiver = Object.create(prototype);
+      Object.defineProperty(prototype, "inherited", {
+        get: function() { return this === receiver ? 7 : 0; },
+        set: function(next) { print(this === receiver); }
+      });
+      print(receiver.inherited);
+      receiver.inherited = 11;
+    "#;
+    let program = Engine::specialize(source, "accessor.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["3", "9", "function", "function", "7", "true"]
     );
 }
 

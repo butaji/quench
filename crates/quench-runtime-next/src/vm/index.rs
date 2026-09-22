@@ -167,7 +167,7 @@ impl<H: Host> Vm<H> {
         }
         let key = self.to_string(p, key)?;
         let atom = self.intern_atom(&key);
-        self.set_property(object, atom, value)
+        self.set_property_with_program(p, object, atom, value)
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {

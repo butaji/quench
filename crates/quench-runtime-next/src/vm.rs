@@ -8,6 +8,7 @@ use crate::host::Host;
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
+use numeric_site::NumericSite;
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -36,8 +37,11 @@ mod iterators;
 mod json;
 mod method_cache;
 mod number;
+mod numeric_site;
 mod object;
 mod object_builtins;
+mod object_descriptors;
+mod object_get;
 mod object_integrity;
 mod object_static;
 #[cfg(test)]
@@ -130,12 +134,6 @@ struct Frame {
     registers: Vec<Value>,
 }
 
-#[derive(Clone, Copy, Default)]
-struct NumericSite {
-    consistent_fast: u16,
-    slow_path: u16,
-    armed: bool,
-}
 enum NumericArguments<'a> {
     Values(&'a [Value]),
     Registers {
@@ -218,11 +216,17 @@ pub(super) struct PropertyAttributes {
     pub writable: bool,
     pub enumerable: bool,
     pub configurable: bool,
+    pub accessor: bool,
+    pub getter: Option<Value>,
+    pub setter: Option<Value>,
 }
 const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     writable: true,
     enumerable: true,
     configurable: true,
+    accessor: false,
+    getter: None,
+    setter: None,
 };
 pub struct Vm<H> {
     host: H,

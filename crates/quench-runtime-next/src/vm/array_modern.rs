@@ -85,7 +85,8 @@ impl<H: Host> Vm<H> {
             }
         } else {
             let length_atom = self.intern_atom("length");
-            let length = self.to_number(p, self.get_property(p, source, length_atom)?)?;
+            let length_value = self.get_property(p, source, length_atom)?;
+            let length = self.to_number(p, length_value)?;
             let length = if !length.is_finite() || length <= 0.0 {
                 if length.is_infinite() && length.is_sign_positive() {
                     return Err(JsError("Array.from length is too large".into()));
