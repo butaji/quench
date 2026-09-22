@@ -378,7 +378,7 @@ impl Memory {
         let old = self.pages();
         let new = old.checked_add(delta)?;
         if self.page >= 65536 {
-            let abs_max = if self.memory64 { 1u64 << 16 } else { 65536 };
+            let abs_max = 1u64 << 16;
             if new > abs_max {
                 return None;
             }

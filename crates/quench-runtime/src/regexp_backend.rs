@@ -851,7 +851,7 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         flags: Flags,
         output: &mut Vec<State>,
     ) {
-        if output.len() >= MAX_BACKTRACK_STATES {
+        if output.len() == MAX_BACKTRACK_STATES {
             return;
         }
         let Some(part) = parts.get(index) else {
@@ -860,7 +860,7 @@ fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) 
         };
         for candidate in match_options(part, input, state.clone(), flags) {
             visit(parts, index + 1, input, candidate, flags, output);
-            if output.len() >= MAX_BACKTRACK_STATES {
+            if output.len() == MAX_BACKTRACK_STATES {
                 return;
             }
         }
@@ -930,12 +930,12 @@ fn repeat_options(
         greedy: bool,
         output: &mut Vec<State>,
     ) {
-        if output.len() >= MAX_BACKTRACK_STATES {
+        if output.len() == MAX_BACKTRACK_STATES {
             return;
         }
         if !greedy && count >= min {
             output.push(state.clone());
-            if output.len() >= MAX_BACKTRACK_STATES {
+            if output.len() == MAX_BACKTRACK_STATES {
                 return;
             }
         }
@@ -961,7 +961,7 @@ fn repeat_options(
                         greedy,
                         output,
                     );
-                    if output.len() >= MAX_BACKTRACK_STATES {
+                    if output.len() == MAX_BACKTRACK_STATES {
                         return;
                     }
                 }
@@ -1231,7 +1231,7 @@ fn reverse_sequence_options(
         flags: Flags,
         output: &mut Vec<State>,
     ) {
-        if output.len() >= MAX_BACKTRACK_STATES {
+        if output.len() == MAX_BACKTRACK_STATES {
             return;
         }
         if index == 0 {
@@ -1289,12 +1289,12 @@ fn reverse_repeat_options(
         greedy: bool,
         output: &mut Vec<State>,
     ) {
-        if output.len() >= MAX_BACKTRACK_STATES {
+        if output.len() == MAX_BACKTRACK_STATES {
             return;
         }
         if !greedy && count >= min {
             output.push(state.clone());
-            if output.len() >= MAX_BACKTRACK_STATES {
+            if output.len() == MAX_BACKTRACK_STATES {
                 return;
             }
         }
@@ -1312,7 +1312,7 @@ fn reverse_repeat_options(
                         greedy,
                         output,
                     );
-                    if output.len() >= MAX_BACKTRACK_STATES {
+                    if output.len() == MAX_BACKTRACK_STATES {
                         return;
                     }
                 }

@@ -4,6 +4,9 @@ use crate::value::{PromiseData, Value};
 
 const INLINE_CALL_ARGUMENTS: usize = 4;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallArgumentError;
+
 /// Owned call arguments with a small inline representation and one spill
 /// representation. This is the single physical storage fact used by ordinary
 /// and tail continuations; consumers continue to see a `&[Value]`.
@@ -38,12 +41,14 @@ impl CallArguments {
     /// Fallible capacity reservation used by VM call boundaries. A spread or
     /// host-provided argument list is guest-observable input, so exhaustion
     /// must become a canonical VM error rather than a Rust allocation panic.
-    pub fn try_with_capacity(capacity: usize) -> Result<Self, ()> {
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, CallArgumentError> {
         if capacity <= INLINE_CALL_ARGUMENTS {
             Ok(Self::new())
         } else {
             let mut values = Vec::new();
-            values.try_reserve(capacity).map_err(|_| ())?;
+            values
+                .try_reserve(capacity)
+                .map_err(|_| CallArgumentError)?;
             Ok(Self {
                 storage: CallArgumentStorage::Heap(values),
             })
@@ -55,7 +60,7 @@ impl CallArguments {
             .expect("call argument storage allocation");
     }
 
-    pub fn try_push(&mut self, value: Value) -> Result<(), ()> {
+    pub fn try_push(&mut self, value: Value) -> Result<(), CallArgumentError> {
         match &mut self.storage {
             CallArgumentStorage::Inline { values, len } if *len < INLINE_CALL_ARGUMENTS => {
                 values[*len].write(value);
@@ -65,7 +70,7 @@ impl CallArguments {
             CallArgumentStorage::Inline { values, len } => {
                 let mut heap = Vec::new();
                 heap.try_reserve((*len + 1).max(INLINE_CALL_ARGUMENTS + 1))
-                    .map_err(|_| ())?;
+                    .map_err(|_| CallArgumentError)?;
                 for value in values.iter_mut().take(*len) {
                     heap.push(unsafe { value.assume_init_read() });
                 }
@@ -75,7 +80,7 @@ impl CallArguments {
             }
             CallArgumentStorage::Heap(values) => {
                 if values.len() == values.capacity() {
-                    values.try_reserve(1).map_err(|_| ())?;
+                    values.try_reserve(1).map_err(|_| CallArgumentError)?;
                 }
                 values.push(value);
                 Ok(())
@@ -88,7 +93,10 @@ impl CallArguments {
             .expect("call argument storage allocation");
     }
 
-    pub fn try_extend(&mut self, values: impl IntoIterator<Item = Value>) -> Result<(), ()> {
+    pub fn try_extend(
+        &mut self,
+        values: impl IntoIterator<Item = Value>,
+    ) -> Result<(), CallArgumentError> {
         for value in values {
             self.try_push(value)?;
         }

@@ -55,11 +55,9 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     // Property lookup must observe the latest physical object for this
     // semantic identity. Resolving only the result reads stale scalar fields
     // after an immutable object transition (for example `this.x++`).
-    let owner = if crate::vm::is_global_declaration_batch_active()
-        && crate::vm::is_global_object(value)
-    {
-        crate::vm::current_global_object()
-    } else if matches!(value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+    let owner = if (crate::vm::is_global_declaration_batch_active()
+        && crate::vm::is_global_object(value))
+        || matches!(value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
         || matches!(value, Value::ObjectAlias(alias) if alias
             .target()
             .is_some_and(|view| view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)))
