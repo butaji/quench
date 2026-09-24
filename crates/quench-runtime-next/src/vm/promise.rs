@@ -29,15 +29,23 @@ enum StaticModuleValue {
     },
 }
 
-type ActiveModuleExports = FxHashMap<String, Vec<(String, StaticModuleValue)>>;
+type ActiveModuleExports = FxHashMap<std::path::PathBuf, Vec<(String, StaticModuleValue)>>;
 
 enum StaticModuleGraph {
     Linked {
         name: String,
         exports: Vec<(String, StaticModuleValue)>,
+        incomplete: bool,
     },
     Unsupported,
     LinkError,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StaticModuleAdd {
+    Added,
+    Missing,
+    Conflict,
 }
 
 #[derive(Default)]
@@ -48,15 +56,17 @@ struct StaticModuleLinks {
 }
 
 impl StaticModuleLinks {
-    fn add_local(&mut self, name: String, value: StaticModuleValue) -> Result<(), ()> {
+    fn add_local(&mut self, name: String, value: StaticModuleValue) -> StaticModuleAdd {
         self.insert_explicit(name, value)
     }
 
-    fn add_locals(&mut self, locals: Vec<(String, StaticModuleValue)>) -> Result<(), ()> {
+    fn add_locals(&mut self, locals: Vec<(String, StaticModuleValue)>) -> StaticModuleAdd {
         for (name, value) in locals {
-            self.add_local(name, value)?;
+            if self.add_local(name, value) != StaticModuleAdd::Added {
+                return StaticModuleAdd::Conflict;
+            }
         }
-        Ok(())
+        StaticModuleAdd::Added
     }
 
     fn add(
@@ -64,15 +74,17 @@ impl StaticModuleLinks {
         reexport: crate::compile::StaticModuleReexport,
         dependency: String,
         exports: Vec<(String, StaticModuleValue)>,
-    ) -> Result<(), ()> {
+    ) -> StaticModuleAdd {
         match reexport {
             crate::compile::StaticModuleReexport::Named {
                 imported, exported, ..
             } => {
-                let value = exports
+                let Some(value) = exports
                     .into_iter()
                     .find_map(|(name, value)| (name == imported).then_some(value))
-                    .ok_or(())?;
+                else {
+                    return StaticModuleAdd::Missing;
+                };
                 self.insert_explicit(exported, value)
             }
             crate::compile::StaticModuleReexport::Namespace { exported, .. } => self
@@ -102,16 +114,16 @@ impl StaticModuleLinks {
                         }
                     }
                 }
-                Ok(())
+                StaticModuleAdd::Added
             }
         }
     }
 
-    fn insert_explicit(&mut self, name: String, value: StaticModuleValue) -> Result<(), ()> {
+    fn insert_explicit(&mut self, name: String, value: StaticModuleValue) -> StaticModuleAdd {
         if self.explicit.insert(name, value).is_some() {
-            Err(())
+            StaticModuleAdd::Conflict
         } else {
-            Ok(())
+            StaticModuleAdd::Added
         }
     }
 
@@ -123,9 +135,13 @@ impl StaticModuleLinks {
         exports
     }
 
-    fn finish(self, name: String) -> StaticModuleGraph {
+    fn finish(self, name: String, incomplete: bool) -> StaticModuleGraph {
         let exports = self.partial_exports();
-        StaticModuleGraph::Linked { name, exports }
+        StaticModuleGraph::Linked {
+            name,
+            exports,
+            incomplete,
+        }
     }
 }
 
@@ -830,7 +846,10 @@ impl<H: Host> Vm<H> {
             return Ok(None);
         };
         let mut active = ActiveModuleExports::default();
-        active.insert(module.name.clone(), locals.clone());
+        active.insert(
+            crate::module_identity::normalize(std::path::Path::new(&module.name)),
+            locals.clone(),
+        );
         match self.resolve_static_module_links(
             p,
             module,
@@ -838,10 +857,15 @@ impl<H: Host> Vm<H> {
             plan.reexports.clone(),
             &mut active,
         )? {
-            StaticModuleGraph::Linked { exports, .. } => {
-                self.module_namespace_from_static(exports).map(Some)
+            StaticModuleGraph::Linked {
+                exports,
+                incomplete: false,
+                ..
+            } => self.module_namespace_from_static(exports).map(Some),
+            StaticModuleGraph::Linked {
+                incomplete: true, ..
             }
-            StaticModuleGraph::LinkError => self
+            | StaticModuleGraph::LinkError => self
                 .syntax_error_result(p, "module export could not be resolved unambiguously")
                 .map(Some),
             StaticModuleGraph::Unsupported => Ok(None),
@@ -1195,7 +1219,10 @@ impl<H: Host> Vm<H> {
             && let Some(exports) = crate::Engine::module_export_names(&module.source, &module.name)
         {
             let mut active = ActiveModuleExports::default();
-            active.insert(module.name.clone(), Vec::new());
+            active.insert(
+                crate::module_identity::normalize(std::path::Path::new(&module.name)),
+                Vec::new(),
+            );
             let exports = self.evaluate_module_locals(p, module, exports, &mut active)?;
             return self.module_namespace_from_static(exports);
         }
@@ -1207,8 +1234,15 @@ impl<H: Host> Vm<H> {
         }
         let mut active = ActiveModuleExports::default();
         match self.resolve_static_module_graph(p, module.clone(), &mut active)? {
-            StaticModuleGraph::Linked { exports, .. } => self.module_namespace_from_static(exports),
-            StaticModuleGraph::LinkError => {
+            StaticModuleGraph::Linked {
+                exports,
+                incomplete: false,
+                ..
+            } => self.module_namespace_from_static(exports),
+            StaticModuleGraph::Linked {
+                incomplete: true, ..
+            }
+            | StaticModuleGraph::LinkError => {
                 self.syntax_error_result(p, "module export could not be resolved unambiguously")
             }
             StaticModuleGraph::Unsupported => {
@@ -1324,6 +1358,13 @@ impl<H: Host> Vm<H> {
                 }
             };
             let Some(namespace) = namespace else {
+                if let crate::bytecode::ModuleImportName::Named(name) = &import.imported
+                    && Self::static_module_declares_export(&module, name) == Some(false)
+                {
+                    return self
+                        .syntax_error_result(p, "module import binding could not be resolved")
+                        .map(|_| Vec::new());
+                }
                 return Err(self.type_error(p, "deferred module namespace is unavailable".into()));
             };
             let value = match (&import.phase, &import.imported) {
@@ -1367,6 +1408,11 @@ impl<H: Host> Vm<H> {
         Ok(values)
     }
 
+    fn static_module_declares_export(module: &ModuleSource, name: &str) -> Option<bool> {
+        crate::Engine::module_export_names(&module.source, &module.name)
+            .map(|exports| exports.iter().any(|(_, exported)| exported == name))
+    }
+
     fn resolve_self_import_namespace(
         &mut self,
         p: &ResidualProgram,
@@ -1374,10 +1420,15 @@ impl<H: Host> Vm<H> {
         active: &mut ActiveModuleExports,
     ) -> Result<Option<Value>, JsError> {
         match self.resolve_static_module_graph(p, module.clone(), active)? {
-            StaticModuleGraph::Linked { exports, .. } => {
-                self.module_namespace_from_static(exports).map(Some)
+            StaticModuleGraph::Linked {
+                exports,
+                incomplete: false,
+                ..
+            } => self.module_namespace_from_static(exports).map(Some),
+            StaticModuleGraph::Linked {
+                incomplete: true, ..
             }
-            StaticModuleGraph::LinkError => self
+            | StaticModuleGraph::LinkError => self
                 .syntax_error_result(p, "module export could not be resolved unambiguously")
                 .map(Some),
             StaticModuleGraph::Unsupported => Ok(None),
@@ -2030,10 +2081,12 @@ impl<H: Host> Vm<H> {
         module: ModuleSource,
         active: &mut ActiveModuleExports,
     ) -> Result<StaticModuleGraph, JsError> {
-        if let Some(exports) = active.get(&module.name) {
+        let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
+        if let Some(exports) = active.get(&identity) {
             return Ok(StaticModuleGraph::Linked {
                 name: module.name,
                 exports: exports.clone(),
+                incomplete: true,
             });
         }
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
@@ -2043,14 +2096,15 @@ impl<H: Host> Vm<H> {
                     .into_iter()
                     .map(|(name, value)| (name, StaticModuleValue::Constant(value)))
                     .collect(),
+                incomplete: false,
             });
         }
         if let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name)
             && !plan.reexports.is_empty()
         {
-            active.insert(module.name.clone(), Vec::new());
+            active.insert(identity.clone(), Vec::new());
             let result = self.resolve_static_module_plan(p, &module, plan, active);
-            active.remove(&module.name);
+            active.remove(&identity);
             return result;
         }
         let key = module_cache_key(&module.name, "javascript");
@@ -2072,6 +2126,7 @@ impl<H: Host> Vm<H> {
             return Ok(StaticModuleGraph::Linked {
                 name: module.name,
                 exports,
+                incomplete: false,
             });
         }
         Ok(StaticModuleGraph::Unsupported)
@@ -2101,47 +2156,58 @@ impl<H: Host> Vm<H> {
         active: &mut ActiveModuleExports,
     ) -> Result<StaticModuleGraph, JsError> {
         let mut links = StaticModuleLinks::default();
-        if links.add_locals(locals.clone()).is_err() {
+        if links.add_locals(locals.clone()) != StaticModuleAdd::Added {
             return Ok(StaticModuleGraph::LinkError);
         }
-        active.insert(module.name.clone(), locals.clone());
-        for reexport in reexports {
-            let source = match &reexport {
-                crate::compile::StaticModuleReexport::Named { source, .. }
-                | crate::compile::StaticModuleReexport::Star { source }
-                | crate::compile::StaticModuleReexport::Namespace { source, .. } => source,
-            };
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, source)
-                .map_err(|message| self.type_error(p, message))?;
-            let Some(dependency) = dependency else {
-                return Ok(StaticModuleGraph::LinkError);
-            };
-            let dependency_graph = if self_import_referrer(&module.name, &dependency.name) {
-                StaticModuleGraph::Linked {
-                    name: dependency.name,
-                    exports: locals.clone(),
+        let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
+        active.insert(identity.clone(), links.partial_exports());
+        let mut pending = reexports;
+        loop {
+            let mut remaining = Vec::new();
+            let mut changed = false;
+            for reexport in pending {
+                let source = match &reexport {
+                    crate::compile::StaticModuleReexport::Named { source, .. }
+                    | crate::compile::StaticModuleReexport::Star { source }
+                    | crate::compile::StaticModuleReexport::Namespace { source, .. } => source,
+                };
+                let dependency = self
+                    .host
+                    .resolve_dynamic_import(&module.name, source)
+                    .map_err(|message| self.type_error(p, message))?;
+                let Some(dependency) = dependency else {
+                    return Ok(StaticModuleGraph::LinkError);
+                };
+                let StaticModuleGraph::Linked {
+                    name: dependency_name,
+                    exports: dependency_exports,
+                    incomplete,
+                } = self.resolve_static_module_graph(p, dependency, active)?
+                else {
+                    return Ok(StaticModuleGraph::Unsupported);
+                };
+                match links.add(reexport.clone(), dependency_name, dependency_exports) {
+                    StaticModuleAdd::Added => changed = true,
+                    StaticModuleAdd::Missing if incomplete => {
+                        remaining.push(reexport);
+                        continue;
+                    }
+                    StaticModuleAdd::Missing => return Ok(StaticModuleGraph::LinkError),
+                    StaticModuleAdd::Conflict => return Ok(StaticModuleGraph::LinkError),
                 }
-            } else {
-                self.resolve_static_module_graph(p, dependency, active)?
-            };
-            let StaticModuleGraph::Linked {
-                name: dependency_name,
-                exports: dependency_exports,
-            } = dependency_graph
-            else {
-                return Ok(dependency_graph);
-            };
-            if links
-                .add(reexport, dependency_name, dependency_exports)
-                .is_err()
-            {
-                return Ok(StaticModuleGraph::LinkError);
+                active.insert(identity.clone(), links.partial_exports());
             }
-            active.insert(module.name.clone(), links.partial_exports());
+            if remaining.is_empty() {
+                active.remove(&identity);
+                return Ok(links.finish(module.name.clone(), false));
+            }
+            if !changed {
+                let result = links.finish(module.name.clone(), true);
+                active.remove(&identity);
+                return Ok(result);
+            }
+            pending = remaining;
         }
-        Ok(links.finish(module.name.clone()))
     }
 
     fn module_namespace_from_static(
