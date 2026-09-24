@@ -8,13 +8,48 @@ use std::{cell::RefCell, collections::VecDeque, ops::Range};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
+pub fn is_ecma_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'
+            | '\u{000A}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000D}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
+}
+
+pub fn validate_flags(flags: &str) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for flag in flags.chars() {
+        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') || !seen.insert(flag) {
+            return Err("invalid regular expression flags".into());
+        }
+    }
+    if seen.contains(&'u') && seen.contains(&'v') {
+        return Err("invalid regular expression flags".into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Flags {
-    pub(crate) ignore_case: bool,
-    pub(crate) multiline: bool,
-    pub(crate) dot_all: bool,
-    pub(crate) unicode: bool,
-    pub(crate) unicode_sets: bool,
+pub struct Flags {
+    pub ignore_case: bool,
+    pub multiline: bool,
+    pub dot_all: bool,
+    pub unicode: bool,
+    pub unicode_sets: bool,
     reverse: bool,
 }
 
@@ -32,14 +67,14 @@ impl From<&str> for Flags {
 }
 
 #[derive(Clone)]
-pub(crate) struct Match {
-    pub(crate) range: Range<usize>,
-    pub(crate) captures: Vec<Option<Range<usize>>>,
+pub struct Match {
+    pub range: Range<usize>,
+    pub captures: Vec<Option<Range<usize>>>,
     named: Vec<String>,
 }
 
 impl Match {
-    pub(crate) fn native(range: Range<usize>) -> Self {
+    pub fn native(range: Range<usize>) -> Self {
         Self {
             range,
             captures: Vec::new(),
@@ -47,16 +82,16 @@ impl Match {
         }
     }
 
-    pub(crate) fn start(&self) -> usize {
+    pub fn start(&self) -> usize {
         self.range.start
     }
-    pub(crate) fn end(&self) -> usize {
+    pub fn end(&self) -> usize {
         self.range.end
     }
-    pub(crate) fn groups(&self) -> impl Iterator<Item = Option<Range<usize>>> + '_ {
+    pub fn groups(&self) -> impl Iterator<Item = Option<Range<usize>>> + '_ {
         std::iter::once(Some(self.range.clone())).chain(self.captures.iter().cloned())
     }
-    pub(crate) fn named_groups(&self) -> impl Iterator<Item = (&str, Option<Range<usize>>)> + '_ {
+    pub fn named_groups(&self) -> impl Iterator<Item = (&str, Option<Range<usize>>)> + '_ {
         self.named
             .iter()
             .enumerate()
@@ -65,7 +100,7 @@ impl Match {
     }
 }
 
-pub(crate) struct Matches {
+pub struct Matches {
     item: Option<Match>,
 }
 impl Iterator for Matches {
@@ -180,7 +215,7 @@ struct State {
 // still be exponentially large); it is no longer silently result-changing.
 const MAX_BACKTRACK_STATES: usize = usize::MAX;
 
-pub(crate) struct Regex {
+pub struct Regex {
     program: Expr,
     flags: Flags,
     capture_names: Vec<String>,
@@ -198,9 +233,8 @@ pub(crate) struct Regex {
 }
 
 impl Regex {
-    pub(crate) fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {
+    pub fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {
         let allocator = oxc::allocator::Allocator::default();
-        crate::regexp::validate_pattern(source)?;
         let flags_text = flag_text(flags);
         let parsed = LiteralParser::new(&allocator, source, Some(&flags_text), Options::default())
             .parse()
@@ -255,7 +289,7 @@ impl Regex {
         }
     }
 
-    pub(crate) fn find_from(&self, text: &str, start: usize) -> Matches {
+    pub fn find_from(&self, text: &str, start: usize) -> Matches {
         if text.is_ascii() {
             if let Some(compiled) = &self.compiled {
                 // Most replace/test patterns have no captures. Use the
@@ -294,7 +328,7 @@ impl Regex {
         }
     }
 
-    pub(crate) fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
+    pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
         let units = units_from_utf16(input, self.flags.unicode || self.flags.unicode_sets);
         let first = units
             .iter()
@@ -1620,18 +1654,16 @@ fn escape_matches(
         ast::CharacterClassEscapeKind::NegativeD => {
             !(value <= 0x7f && (value as u8).is_ascii_digit())
         }
-        ast::CharacterClassEscapeKind::S => {
-            char::from_u32(value).is_some_and(crate::regexp::is_ecma_whitespace)
-        }
+        ast::CharacterClassEscapeKind::S => char::from_u32(value).is_some_and(is_ecma_whitespace),
         ast::CharacterClassEscapeKind::NegativeS => {
-            !char::from_u32(value).is_some_and(crate::regexp::is_ecma_whitespace)
+            !char::from_u32(value).is_some_and(is_ecma_whitespace)
         }
         ast::CharacterClassEscapeKind::W => is_word_mode(value, ignore_case && unicode),
         ast::CharacterClassEscapeKind::NegativeW => !is_word_mode(value, ignore_case && unicode),
     }
 }
 
-pub(crate) fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
+pub fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
     let Some(character) = char::from_u32(character) else {
         return false;
     };
@@ -1671,7 +1703,7 @@ pub(crate) fn property_matches(name: &str, value: Option<&str>, character: u32) 
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct PropertyMatcher {
+pub struct PropertyMatcher {
     kind: PropertyMatcherKind,
 }
 
@@ -1687,7 +1719,7 @@ enum PropertyMatcherKind {
 }
 
 impl PropertyMatcher {
-    pub(crate) fn matches(self, character: char) -> bool {
+    pub fn matches(self, character: char) -> bool {
         use icu_properties::{props, CodePointMapData};
         match self.kind {
             PropertyMatcherKind::Any => true,
@@ -1716,7 +1748,7 @@ fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: 
     icu_properties::CodePointSetData::new::<P>().contains(character)
 }
 
-pub(crate) fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<PropertyMatcher> {
+pub fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<PropertyMatcher> {
     use icu_properties::{props, PropertyParser};
     let kind = if name == "Any" {
         PropertyMatcherKind::Any
