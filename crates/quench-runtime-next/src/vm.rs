@@ -574,7 +574,12 @@ impl<H: Host> Vm<H> {
             self.report_memory("initialized");
         }
         let root = self.closure(program, 0, Value::NULL)?;
-        let result = self.call_value(program, root, self.realm.globals, &[]);
+        let this = if program.module {
+            Value::UNDEFINED
+        } else {
+            self.realm.globals
+        };
+        let result = self.call_value(program, root, this, &[]);
         self.finish_main_module(program, &result)?;
         let jobs = self.drain_jobs(program);
         self.profile.report(&self.heap, program);
