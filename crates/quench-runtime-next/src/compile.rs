@@ -83,6 +83,40 @@ pub(crate) enum StaticModuleReexport {
     },
 }
 impl Engine {
+    pub(crate) fn eval_var_declared_names(source: &str) -> Option<Vec<String>> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() {
+            return None;
+        }
+        let mut names = early::collect_var_names(&parsed.program.body);
+        names.extend(parsed.program.body.iter().filter_map(|statement| {
+            match statement {
+                Statement::FunctionDeclaration(function) => function
+                    .id
+                    .as_ref()
+                    .map(|identifier| identifier.name.to_string()),
+                _ => None,
+            }
+        }));
+        names.sort();
+        names.dedup();
+        Some(names)
+    }
+
+    pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
+            return None;
+        }
+        let Statement::ExpressionStatement(statement) = &parsed.program.body[0] else {
+            return None;
+        };
+        let span = statement.expression.span();
+        source.get(span.start as usize..span.end as usize)
+    }
+
     pub(crate) fn eval_block_completion(source: &str) -> Option<(&str, &str)> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();

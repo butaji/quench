@@ -18,6 +18,7 @@ pub(crate) struct ErrorMessage {
 struct ErrorPayload {
     text: String,
     thrown: Option<Value>,
+    eval_parser_diagnostic: bool,
 }
 
 impl From<&str> for ErrorMessage {
@@ -26,6 +27,7 @@ impl From<&str> for ErrorMessage {
             payload: Box::new(ErrorPayload {
                 text: value.into(),
                 thrown: None,
+                eval_parser_diagnostic: false,
             }),
         }
     }
@@ -37,6 +39,7 @@ impl From<String> for ErrorMessage {
             payload: Box::new(ErrorPayload {
                 text: value,
                 thrown: None,
+                eval_parser_diagnostic: false,
             }),
         }
     }
@@ -54,12 +57,22 @@ impl JsError {
             payload: Box::new(ErrorPayload {
                 text: message,
                 thrown: Some(value),
+                eval_parser_diagnostic: false,
             }),
         })
     }
 
     pub(crate) fn thrown_value(&self) -> Option<Value> {
         self.0.payload.thrown
+    }
+
+    pub(crate) fn is_eval_parser_diagnostic(&self) -> bool {
+        self.0.payload.eval_parser_diagnostic
+    }
+
+    pub(crate) fn mark_eval_parser_diagnostic(mut self) -> Self {
+        self.0.payload.eval_parser_diagnostic = true;
+        self
     }
 
     pub(crate) fn validation(message: String) -> Self {
@@ -75,10 +88,39 @@ impl JsError {
 
 impl<H: Host> Vm<H> {
     pub(crate) fn format_error(&mut self, program: &ResidualProgram, error: &JsError) -> String {
-        error
-            .thrown_value()
-            .and_then(|value| self.to_string(program, value).ok())
-            .unwrap_or_else(|| error.to_string())
+        let Some(value) = error.thrown_value() else {
+            return error.to_string();
+        };
+        let Ok(display) = self.to_string(program, value) else {
+            return error.to_string();
+        };
+        if display != "[object Object]" {
+            return display;
+        }
+        let name_atom = self.intern_atom("name");
+        let message_atom = self.intern_atom("message");
+        let name = self
+            .get_property(program, value, name_atom)
+            .ok()
+            .and_then(|value| match self.heap.get(value) {
+                Some(Cell::String(name)) => Some(name.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let message = self
+            .get_property(program, value, message_atom)
+            .ok()
+            .and_then(|value| match self.heap.get(value) {
+                Some(Cell::String(message)) => Some(message.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        match (name.is_empty(), message.is_empty()) {
+            (true, true) => display,
+            (true, false) => message,
+            (false, true) => name,
+            (false, false) => format!("{name}: {message}"),
+        }
     }
 
     pub(super) fn type_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
