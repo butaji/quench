@@ -1084,8 +1084,9 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "deferred module metadata is unavailable".into()));
         };
         let mut names = plan
-            .locals
+            .link_plan
             .into_iter()
+            .flat_map(|plan| plan.locals)
             .map(|(_, exported)| exported)
             .collect::<Vec<_>>();
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
@@ -1253,9 +1254,11 @@ impl<H: Host> Vm<H> {
         if let Some(reason) = crate::Engine::static_module_throw(&module.source) {
             return self.evaluate_static_module_throw(p, reason);
         }
-        if crate::Engine::static_module_plan(&module.source, &module.name)
-            .is_some_and(|plan| plan.reexports.is_empty())
-            && let Some(exports) = crate::Engine::module_export_names(&module.source, &module.name)
+        if crate::Engine::static_module_plan(&module.source, &module.name).is_some_and(|plan| {
+            plan.link_plan
+                .is_some_and(|link_plan| link_plan.reexports.is_empty())
+        }) && let Some(exports) =
+            crate::Engine::module_export_names(&module.source, &module.name)
         {
             let mut active = ActiveModuleExports::default();
             active.insert(
@@ -2147,6 +2150,9 @@ impl<H: Host> Vm<H> {
         let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
             return Ok(false);
         };
+        let Some(link_plan) = plan.link_plan else {
+            return Ok(false);
+        };
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
@@ -2164,13 +2170,13 @@ impl<H: Host> Vm<H> {
         if !residual.module_imports.is_empty() {
             return Ok(false);
         }
-        let locals = if plan.locals.is_empty() {
+        let locals = if link_plan.locals.is_empty() {
             Vec::new()
         } else {
             self.evaluate_module_locals(
                 p,
                 module,
-                plan.locals,
+                link_plan.locals,
                 &mut ActiveModuleExports::default(),
             )?
         };
@@ -2178,7 +2184,7 @@ impl<H: Host> Vm<H> {
             identity,
             StaticModuleNode::Planned {
                 locals,
-                reexports: plan.reexports,
+                reexports: link_plan.reexports,
             },
         );
         Ok(true)
@@ -2476,9 +2482,10 @@ impl<H: Host> Vm<H> {
                 incomplete: true,
             });
         }
-        if crate::Engine::static_module_plan(&module.source, &module.name)
-            .is_some_and(|plan| !plan.reexports.is_empty())
-            && let Some(graph) = self.resolve_static_module_plan_graph(p, module.clone())?
+        if crate::Engine::static_module_plan(&module.source, &module.name).is_some_and(|plan| {
+            plan.link_plan
+                .is_some_and(|link_plan| !link_plan.reexports.is_empty())
+        }) && let Some(graph) = self.resolve_static_module_plan_graph(p, module.clone())?
         {
             return Ok(graph);
         }
@@ -2522,7 +2529,10 @@ impl<H: Host> Vm<H> {
             });
         }
         if let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name)
-            && !plan.reexports.is_empty()
+            && plan
+                .link_plan
+                .as_ref()
+                .is_some_and(|link_plan| !link_plan.reexports.is_empty())
         {
             active.insert(identity.clone(), Vec::new());
             let result = self.resolve_static_module_plan(p, &module, plan, active);
@@ -2561,12 +2571,15 @@ impl<H: Host> Vm<H> {
         plan: crate::compile::StaticModulePlan,
         active: &mut ActiveModuleExports,
     ) -> Result<StaticModuleGraph, JsError> {
-        let locals = if plan.locals.is_empty() {
+        let Some(link_plan) = plan.link_plan else {
+            return Ok(StaticModuleGraph::Unsupported);
+        };
+        let locals = if link_plan.locals.is_empty() {
             Vec::new()
         } else {
-            self.evaluate_module_locals(p, module, plan.locals, active)?
+            self.evaluate_module_locals(p, module, link_plan.locals, active)?
         };
-        self.resolve_static_module_links(p, module, locals, plan.reexports, active)
+        self.resolve_static_module_links(p, module, locals, link_plan.reexports, active)
     }
 
     fn resolve_static_module_links(
