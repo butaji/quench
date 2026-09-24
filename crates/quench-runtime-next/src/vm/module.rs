@@ -7,6 +7,7 @@ pub(crate) enum ModulePhase {
     Deferred,
     Evaluating,
     EvaluatingAsync,
+    WaitingForDependencies,
     Evaluated,
     Errored,
 }
@@ -128,6 +129,14 @@ impl ModuleRecord {
     pub(crate) fn begin_async_evaluation(&mut self, namespace: Value) {
         self.outcome = ModuleOutcome::Pending(ModulePhase::EvaluatingAsync);
         self.pending_namespace = Some(namespace);
+    }
+
+    pub(crate) fn wait_for_dependencies(&mut self) -> bool {
+        self.transition(ModulePhase::Evaluating, ModulePhase::WaitingForDependencies)
+    }
+
+    pub(crate) fn begin_after_dependencies(&mut self) -> bool {
+        self.transition(ModulePhase::WaitingForDependencies, ModulePhase::Evaluating)
     }
 
     pub(crate) fn add_waiter(&mut self, import_promise: Value) -> bool {
