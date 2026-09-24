@@ -1099,7 +1099,11 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         match result {
-            Ok(value) if Self::main_module_has_top_level_await(p) => {
+            Ok(value)
+                if p.functions
+                    .first()
+                    .is_some_and(|function| function.is_async) =>
+            {
                 self.finish_async_main_module(p, &key, *value)
             }
             Ok(_) => self.complete_main_module(p, &key),
@@ -1110,19 +1114,6 @@ impl<H: Host> Vm<H> {
                 self.fail_main_module(p, &key, reason)
             }
         }
-    }
-
-    fn main_module_has_top_level_await(p: &ResidualProgram) -> bool {
-        p.functions.first().is_some_and(|function| {
-            function
-                .code
-                .iter()
-                .any(|instruction| instruction.op() == crate::bytecode::Op::Await)
-                || function
-                    .wide
-                    .iter()
-                    .any(|instruction| instruction.op() == crate::bytecode::Op::Await)
-        })
     }
 
     fn finish_async_main_module(
@@ -1568,8 +1559,7 @@ impl<H: Host> Vm<H> {
             &p.module_imports,
             &mut linking,
         )?;
-        self.programs
-            .set_module_import_values(ProgramId::MAIN, imports);
+        self.programs.set_module_imports(ProgramId::MAIN, imports);
         Ok(())
     }
 
@@ -1580,7 +1570,7 @@ impl<H: Host> Vm<H> {
         referrer: &str,
         imports: &[crate::bytecode::ModuleImportBinding],
         active: &mut ActiveModuleExports,
-    ) -> Result<Vec<(u16, Value)>, JsError> {
+    ) -> Result<Vec<(u16, crate::vm::program_store::ModuleImport)>, JsError> {
         let Some(root) = bindings.functions.first() else {
             return Ok(Vec::new());
         };
@@ -1601,7 +1591,12 @@ impl<H: Host> Vm<H> {
                 .and_then(|slot| u16::try_from(slot).ok())
                 .ok_or_else(|| self.type_error(p, "module import slot is unavailable".into()))?;
             if import.phase == crate::bytecode::ModuleRequestPhase::Source {
-                values.push((local, self.module_source_value(&module)));
+                values.push((
+                    local,
+                    crate::vm::program_store::ModuleImport::Value(
+                        self.module_source_value(&module),
+                    ),
+                ));
                 continue;
             }
             let module_type = import.module_type.as_deref().unwrap_or("javascript");
@@ -1688,7 +1683,19 @@ impl<H: Host> Vm<H> {
                     self.get_property(p, namespace, atom)?
                 }
             };
-            values.push((local, value));
+            let binding = match (&import.imported, module_type) {
+                (crate::bytecode::ModuleImportName::Named(name), "javascript") => {
+                    let atom = self.intern_atom(name);
+                    self.object_data(namespace)
+                        .and_then(|object| object.module_binding(atom))
+                        .map(|(program, slot)| {
+                            crate::vm::program_store::ModuleImport::Binding(program, slot)
+                        })
+                        .unwrap_or(crate::vm::program_store::ModuleImport::Value(value))
+                }
+                _ => crate::vm::program_store::ModuleImport::Value(value),
+            };
+            values.push((local, binding));
         }
         Ok(values)
     }
@@ -2312,11 +2319,19 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| self.type_error(p, "source import slot is unavailable".into()))?;
             let value = imports
                 .iter()
-                .find_map(|(import_slot, value)| (*import_slot == slot).then_some(*value))
+                .find_map(
+                    |(import_slot, import)| match (*import_slot == slot, import) {
+                        (true, crate::vm::program_store::ModuleImport::Value(value)) => {
+                            Some(*value)
+                        }
+                        (true, crate::vm::program_store::ModuleImport::Binding(_, _)) => None,
+                        (false, _) => None,
+                    },
+                )
                 .ok_or_else(|| self.type_error(p, "source import value is unavailable".into()))?;
             source_import_values.insert(import.local.clone(), value);
         }
-        self.programs.set_module_import_values(program_id, imports);
+        self.programs.set_module_imports(program_id, imports);
         let active_program = std::mem::replace(&mut self.active_program, program_id);
         let specialized = std::mem::replace(&mut self.specialized, false);
         let evaluated = (|| {
