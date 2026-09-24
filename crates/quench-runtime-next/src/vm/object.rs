@@ -409,6 +409,21 @@ impl<H: Host> Vm<H> {
             let _ = owner;
         }
 
+        if self
+            .object_data(receiver)
+            .is_some_and(Object::is_module_namespace)
+        {
+            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+            let descriptor = self.object_get_own_property_descriptor(p, &[receiver, key])?;
+            if descriptor.is_undefined() {
+                return Ok(false);
+            }
+            let current = self
+                .descriptor_field(p, descriptor, "value")?
+                .unwrap_or(Value::UNDEFINED);
+            return Ok(self.same_value(current, value));
+        }
+
         if self.object_data(receiver).is_none() {
             return Ok(false);
         }
