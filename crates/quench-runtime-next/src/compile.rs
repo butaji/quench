@@ -67,8 +67,7 @@ pub(crate) enum StaticModuleThrow {
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StaticModulePlan {
-    pub(crate) locals: Vec<(String, String)>,
-    pub(crate) reexports: Vec<StaticModuleReexport>,
+    pub(crate) link_plan: Option<ModuleLinkPlan>,
     pub(crate) requests: Vec<ModuleRequest>,
     pub(crate) has_top_level_await: bool,
 }
@@ -207,10 +206,9 @@ impl Engine {
         if !semantic.diagnostics.is_empty() {
             return None;
         }
-        let link_plan = Self::module_link_plan(&parsed.program.body, module_name)?;
+        let link_plan = Self::module_link_plan(&parsed.program.body, module_name);
         Some(StaticModulePlan {
-            locals: link_plan.locals,
-            reexports: link_plan.reexports,
+            link_plan,
             requests: module_requests(&parsed.program.body),
             has_top_level_await: has_top_level_await(&parsed.program.body),
         })
@@ -382,7 +380,8 @@ impl Engine {
         module_name: &str,
     ) -> Option<Vec<(String, String)>> {
         let plan = Self::static_module_plan(source, module_name)?;
-        plan.reexports.is_empty().then_some(plan.locals)
+        let link_plan = plan.link_plan?;
+        link_plan.reexports.is_empty().then_some(link_plan.locals)
     }
 
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
