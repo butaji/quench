@@ -1347,6 +1347,10 @@ impl<H: Host> Vm<H> {
             self.evaluate_module_requests(p, &p.source_name, &p.module_requests, &mut active);
         self.deferred_dependency_batch = outer_batch;
         requests?;
+        if !outer_batch {
+            self.drain_jobs(p)?;
+            self.advance_static_module_jobs(p)?;
+        }
         let mut linking = ActiveModuleExports::default();
         let imports = self.resolve_module_import_values(
             p,
@@ -1357,10 +1361,6 @@ impl<H: Host> Vm<H> {
         )?;
         self.programs
             .set_module_import_values(ProgramId::MAIN, imports);
-        if !outer_batch {
-            self.drain_jobs(p)?;
-            self.advance_static_module_jobs(p)?;
-        }
         Ok(())
     }
 
@@ -1818,6 +1818,9 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.to_string()))),
             ),
         };
+        if state == PromiseState::Fulfilled {
+            self.refresh_static_module_bindings(p, value)?;
+        }
         if state == PromiseState::Fulfilled
             && self
                 .promise
@@ -1868,6 +1871,37 @@ impl<H: Host> Vm<H> {
                 value,
                 "static module evaluation failed".into(),
             ));
+        }
+        Ok(())
+    }
+
+    fn refresh_static_module_bindings(
+        &mut self,
+        p: &ResidualProgram,
+        namespace: Value,
+    ) -> Result<(), JsError> {
+        let bindings = self
+            .object_data(namespace)
+            .map(|object| object.module_bindings.clone())
+            .unwrap_or_default();
+        for (atom, program, slot) in bindings {
+            let Some(environment) = self.programs.module_environment(program) else {
+                continue;
+            };
+            let Some(Cell::Environment { slots, .. }) = self.heap.get(environment) else {
+                return Err(self.type_error(p, "module environment is unavailable".into()));
+            };
+            let value = slots
+                .get(usize::from(slot))
+                .copied()
+                .ok_or_else(|| self.type_error(p, "module export slot is unavailable".into()))?;
+            let property = self
+                .object_data(namespace)
+                .and_then(|object| self.shape_slot(object.shape(), atom))
+                .ok_or_else(|| {
+                    self.type_error(p, "module export property is unavailable".into())
+                })?;
+            self.heap.property_set(namespace, property, value);
         }
         Ok(())
     }
