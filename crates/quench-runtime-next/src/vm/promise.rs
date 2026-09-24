@@ -9,9 +9,15 @@ fn module_cache_key(name: &str, module_type: &str) -> String {
     format!("{}:{module_type}", name.display())
 }
 
+fn self_import_referrer(referrer: &str, resolved: &str) -> bool {
+    crate::module_identity::normalize(std::path::Path::new(referrer))
+        == crate::module_identity::normalize(std::path::Path::new(resolved))
+}
+
 #[derive(Clone)]
 enum StaticModuleValue {
     Constant(Constant),
+    Cached(Value),
     Binding {
         program: ProgramId,
         slot: u16,
@@ -1139,7 +1145,9 @@ impl<H: Host> Vm<H> {
             return self.evaluate_static_module_throw(p, reason);
         }
         if let Some(exports) = crate::Engine::module_export_names(&module.source, &module.name) {
-            let exports = self.evaluate_module_locals(p, module, exports)?;
+            let mut active = FxHashSet::default();
+            active.insert(module.name.clone());
+            let exports = self.evaluate_module_locals(p, module, exports, &mut active)?;
             return self.module_namespace_from_static(exports);
         }
         if module.name.ends_with(".json") {
@@ -1176,7 +1184,15 @@ impl<H: Host> Vm<H> {
             self.evaluate_module_requests(p, &p.source_name, &p.module_requests, &mut active);
         self.deferred_dependency_batch = outer_batch;
         requests?;
-        let imports = self.resolve_module_import_values(p, p, &p.source_name, &p.module_imports)?;
+        let mut linking = FxHashSet::default();
+        linking.insert(p.source_name.clone());
+        let imports = self.resolve_module_import_values(
+            p,
+            p,
+            &p.source_name,
+            &p.module_imports,
+            &mut linking,
+        )?;
         self.programs
             .set_module_import_values(ProgramId::MAIN, imports);
         if !outer_batch {
@@ -1192,6 +1208,7 @@ impl<H: Host> Vm<H> {
         bindings: &ResidualProgram,
         referrer: &str,
         imports: &[crate::bytecode::ModuleImportBinding],
+        active: &mut FxHashSet<String>,
     ) -> Result<Vec<(u16, Value)>, JsError> {
         let Some(root) = bindings.functions.first() else {
             return Ok(Vec::new());
@@ -1225,6 +1242,9 @@ impl<H: Host> Vm<H> {
                     ) => Some(namespace),
                     Some(ModuleOutcome::Errored(reason)) => {
                         return Err(JsError::thrown(reason, "module import failed".into()));
+                    }
+                    None if self_import_referrer(referrer, &module.name) => {
+                        self.resolve_self_import_namespace(p, &module, active)?
                     }
                     Some(ModuleOutcome::Pending(_)) | None => {
                         return Err(self.type_error(p, "module import was not evaluated".into()));
@@ -1264,6 +1284,23 @@ impl<H: Host> Vm<H> {
             values.push((local, value));
         }
         Ok(values)
+    }
+
+    fn resolve_self_import_namespace(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        active: &mut FxHashSet<String>,
+    ) -> Result<Option<Value>, JsError> {
+        match self.resolve_static_module_graph(p, module.clone(), active)? {
+            StaticModuleGraph::Linked { exports, .. } => {
+                self.module_namespace_from_static(exports).map(Some)
+            }
+            StaticModuleGraph::LinkError => self
+                .syntax_error_result(p, "module export could not be resolved unambiguously")
+                .map(Some),
+            StaticModuleGraph::Unsupported => Ok(None),
+        }
     }
 
     fn evaluate_module_requests(
@@ -1711,6 +1748,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
         exports: Vec<(String, String)>,
+        active: &mut FxHashSet<String>,
     ) -> Result<Vec<(String, StaticModuleValue)>, JsError> {
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
@@ -1738,6 +1776,7 @@ impl<H: Host> Vm<H> {
             &residual,
             &module.name,
             &residual.module_imports,
+            active,
         )?;
         self.programs.set_module_import_values(program_id, imports);
         let active_program = std::mem::replace(&mut self.active_program, program_id);
@@ -1897,6 +1936,16 @@ impl<H: Host> Vm<H> {
                 exports: Vec::new(),
             });
         }
+        let key = module_cache_key(&module.name, "javascript");
+        if let Some(ModuleOutcome::Evaluated(namespace) | ModuleOutcome::Deferred(namespace)) =
+            self.promise.modules.get(&key).map(|record| record.outcome)
+            && let Some(exports) = self.cached_static_exports(namespace)
+        {
+            return Ok(StaticModuleGraph::Linked {
+                name: module.name,
+                exports,
+            });
+        }
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
             return Ok(StaticModuleGraph::Linked {
                 name: module.name,
@@ -1927,7 +1976,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<StaticModuleGraph, JsError> {
         let mut links = StaticModuleLinks::default();
         if !plan.locals.is_empty() {
-            let locals = self.evaluate_module_locals(p, module, plan.locals)?;
+            let locals = self.evaluate_module_locals(p, module, plan.locals, active)?;
             if links.add_locals(locals).is_err() {
                 return Ok(StaticModuleGraph::LinkError);
             }
@@ -1979,6 +2028,7 @@ impl<H: Host> Vm<H> {
         for (name, value) in exports {
             let value = match value {
                 StaticModuleValue::Constant(value) => self.module_static_value(value),
+                StaticModuleValue::Cached(value) => value,
                 StaticModuleValue::Binding {
                     program,
                     slot,
@@ -1999,6 +2049,37 @@ impl<H: Host> Vm<H> {
             object.module_bindings = bindings;
         }
         Ok(namespace)
+    }
+
+    fn cached_static_exports(&self, namespace: Value) -> Option<Vec<(String, StaticModuleValue)>> {
+        let object = self.object_data(namespace)?;
+        let bindings = object
+            .module_bindings
+            .iter()
+            .map(|(atom, program, slot)| (*atom, (*program, *slot)))
+            .collect::<FxHashMap<_, _>>();
+        Some(
+            self.shapes
+                .get(object.shape() as usize)?
+                .keys
+                .iter()
+                .filter_map(|key| {
+                    let crate::vm::property_key::PropertyKey::String(atom) = key else {
+                        return None;
+                    };
+                    let value = self.own_property(namespace, *atom)?;
+                    let export = match bindings.get(atom) {
+                        Some((program, slot)) => StaticModuleValue::Binding {
+                            program: *program,
+                            slot: *slot,
+                            value,
+                        },
+                        None => StaticModuleValue::Cached(value),
+                    };
+                    Some((self.atom_name(*atom).to_owned(), export))
+                })
+                .collect::<Vec<_>>(),
+        )
     }
 
     fn cached_static_namespace(
