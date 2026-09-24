@@ -16,7 +16,11 @@ fn self_import_referrer(referrer: &str, resolved: &str) -> bool {
 
 #[derive(Clone)]
 enum StaticModuleValue {
-    Constant(Constant),
+    Constant {
+        module: String,
+        export: String,
+        value: Constant,
+    },
     Cached(Value),
     Binding {
         program: ProgramId,
@@ -159,6 +163,22 @@ fn same_static_module_binding(left: &StaticModuleValue, right: &StaticModuleValu
                 ..
             },
         ) => left_program == right_program && left_slot == right_slot,
+        (
+            StaticModuleValue::Constant {
+                module: left_module,
+                export: left_export,
+                ..
+            },
+            StaticModuleValue::Constant {
+                module: right_module,
+                export: right_export,
+                ..
+            },
+        ) => {
+            left_export == right_export
+                && crate::module_identity::normalize(std::path::Path::new(left_module))
+                    == crate::module_identity::normalize(std::path::Path::new(right_module))
+        }
         (
             StaticModuleValue::Namespace { name: left, .. },
             StaticModuleValue::Namespace { name: right, .. },
@@ -2087,7 +2107,7 @@ impl<H: Host> Vm<H> {
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
         if let Some(exports) = active.get(&identity) {
             return Ok(StaticModuleGraph::Linked {
-                name: module.name,
+                name: module.name.clone(),
                 exports: exports.clone(),
                 incomplete: true,
             });
@@ -2106,7 +2126,7 @@ impl<H: Host> Vm<H> {
                 && let Some(exports) = self.cached_static_exports(namespace)
             {
                 return Ok(StaticModuleGraph::Linked {
-                    name: module.name,
+                    name: module.name.clone(),
                     exports,
                     incomplete: false,
                 });
@@ -2114,10 +2134,19 @@ impl<H: Host> Vm<H> {
         }
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
             return Ok(StaticModuleGraph::Linked {
-                name: module.name,
+                name: module.name.clone(),
                 exports: exports
                     .into_iter()
-                    .map(|(name, value)| (name, StaticModuleValue::Constant(value)))
+                    .map(|(name, value)| {
+                        (
+                            name.clone(),
+                            StaticModuleValue::Constant {
+                                module: module.name.clone(),
+                                export: name,
+                                value,
+                            },
+                        )
+                    })
                     .collect(),
                 incomplete: false,
             });
@@ -2241,7 +2270,7 @@ impl<H: Host> Vm<H> {
         let mut bindings = Vec::new();
         for (name, value) in exports {
             let value = match value {
-                StaticModuleValue::Constant(value) => self.module_static_value(value),
+                StaticModuleValue::Constant { value, .. } => self.module_static_value(value),
                 StaticModuleValue::Cached(value) => value,
                 StaticModuleValue::Binding {
                     program,
