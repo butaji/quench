@@ -1,6 +1,28 @@
 use super::*;
 use crate::heap::PrivateBrand;
 impl<H: Host> Vm<H> {
+    fn module_import_value(&self, f: usize, slot: usize) -> Option<Value> {
+        if self.frames[f].function != super::ROOT_FUNCTION_ID {
+            return None;
+        }
+        let slot = u16::try_from(slot).ok()?;
+        match self.programs.module_import(self.frames[f].program, slot)? {
+            ModuleImport::Value(value) => Some(value),
+            ModuleImport::Binding(program, binding) => {
+                let value = self
+                    .programs
+                    .module_environment(program)
+                    .and_then(|environment| match self.heap.get(environment) {
+                        Some(Cell::Environment { slots, .. }) => {
+                            slots.get(usize::from(binding)).copied()
+                        }
+                        _ => None,
+                    });
+                Some(value.unwrap_or(Value::DELETED))
+            }
+        }
+    }
+
     #[inline(always)]
     pub(super) fn step(
         &mut self,
@@ -26,7 +48,9 @@ impl<H: Host> Vm<H> {
             }
             Op::LoadLocal => {
                 let slot = i.imm() as usize;
-                let v = if self.frames[f].captured {
+                let v = if let Some(value) = self.module_import_value(f, slot) {
+                    value
+                } else if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) = self.heap.get(self.frames[f].env)
                     else {
                         return Err(JsError("invalid local environment".into()));
@@ -122,14 +146,17 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::LoadEnvLocal => {
-                let value = if self.frames[f].captured {
+                let slot = i.imm() as usize;
+                let value = if let Some(value) = self.module_import_value(f, slot) {
+                    value
+                } else if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) = self.heap.get(self.frames[f].env)
                     else {
                         return Err(JsError("invalid local environment".into()));
                     };
-                    slots[i.imm() as usize]
+                    slots[slot]
                 } else {
-                    self.frames[f].locals[i.imm() as usize]
+                    self.frames[f].locals[slot]
                 };
                 if value.is_deleted() {
                     let atom = p.functions[self.frames[f].function as usize]
@@ -145,7 +172,7 @@ impl<H: Host> Vm<H> {
                         ),
                     ));
                 }
-                let value = self.mapped_argument_load(p, f, i.imm() as usize, value);
+                let value = self.mapped_argument_load(p, f, slot, value);
                 self.write(f, i.a(), value);
             }
             Op::StoreEnvLocal => {

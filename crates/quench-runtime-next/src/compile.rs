@@ -990,6 +990,7 @@ impl<'a> Compiler<'a> {
                 .directives
                 .iter()
                 .any(|directive| directive.directive == "use strict");
+        let async_module = module_goal && has_top_level_await(&program.body);
         if self.root_strict && early::strict_arguments_early_error(self.text) {
             self.reject(
                 Span::default(),
@@ -1028,7 +1029,7 @@ impl<'a> Compiler<'a> {
             FunctionOptions {
                 defaults: None,
                 name_binding: None,
-                async_function: module_goal,
+                async_function: async_module,
                 generator: false,
                 class_constructor: false,
                 derived_constructor: false,

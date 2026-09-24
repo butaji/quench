@@ -241,10 +241,17 @@ impl<H: Host> Vm<H> {
             }
         }
         let atom = self.intern_js_atom(&key);
-        let Some(value) = self
-            .module_binding_value(target, atom)
-            .or_else(|| self.own_property(target, atom))
-        else {
+        let module_binding = self.module_binding_value(target, atom);
+        if module_binding.is_some_and(Value::is_deleted) {
+            return Err(self.reference_error(
+                p,
+                format!(
+                    "Cannot access '{}' before initialization",
+                    self.atom_name(atom)
+                ),
+            ));
+        }
+        let Some(value) = module_binding.or_else(|| self.own_property(target, atom)) else {
             return Ok(Value::UNDEFINED);
         };
         let attributes = self

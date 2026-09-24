@@ -8,8 +8,14 @@ struct ProgramEntry {
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
-    module_import_values: Vec<(u16, Value)>,
+    module_imports: Vec<(u16, ModuleImport)>,
     module: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ModuleImport {
+    Value(Value),
+    Binding(ProgramId, u16),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -63,7 +69,7 @@ impl ProgramStore {
             const_arrays: Vec::new(),
             module_environment: None,
             import_meta: None,
-            module_import_values: Vec::new(),
+            module_imports: Vec::new(),
             module: false,
         });
         Some(id)
@@ -105,16 +111,19 @@ impl ProgramStore {
         }
     }
 
-    pub(crate) fn set_module_import_values(&mut self, id: ProgramId, values: Vec<(u16, Value)>) {
+    pub(crate) fn set_module_imports(&mut self, id: ProgramId, imports: Vec<(u16, ModuleImport)>) {
         if let Some(entry) = self.programs.get_mut(id.index()) {
-            entry.module_import_values = values;
+            entry.module_imports = imports;
         }
     }
 
-    pub(crate) fn module_import_values(&self, id: ProgramId) -> &[(u16, Value)] {
-        self.programs
-            .get(id.index())
-            .map_or(&[], |entry| &entry.module_import_values)
+    pub(crate) fn module_import(&self, id: ProgramId, slot: u16) -> Option<ModuleImport> {
+        self.programs.get(id.index()).and_then(|entry| {
+            entry
+                .module_imports
+                .iter()
+                .find_map(|(local, import)| (*local == slot).then_some(*import))
+        })
     }
 
     pub(crate) fn get(&self, id: ProgramId) -> Option<Rc<ResidualProgram>> {
@@ -157,7 +166,15 @@ impl ProgramStore {
                 .copied()
                 .chain(entry.module_environment)
                 .chain(entry.import_meta)
-                .chain(entry.module_import_values.iter().map(|(_, value)| *value))
+                .chain(
+                    entry
+                        .module_imports
+                        .iter()
+                        .filter_map(|(_, import)| match import {
+                            ModuleImport::Value(value) => Some(*value),
+                            ModuleImport::Binding(_, _) => None,
+                        }),
+                )
         })
     }
 }
