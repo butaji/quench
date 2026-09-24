@@ -198,7 +198,9 @@ impl<H: Host> Vm<H> {
         // SAFETY: compiler-issued registers are defined before use; Value has no drop glue.
         unsafe { frame.registers.set_len(register_count) };
         self.frames.push(frame);
-        if id == 0 && self.programs.is_module(self.frames.last().unwrap().program) {
+        if id == super::ROOT_FUNCTION_ID
+            && self.programs.is_module(self.frames.last().unwrap().program)
+        {
             let frame_index = self.frames.len() - 1;
             let environment = self.promote_frame_environment(frame_index);
             self.programs
