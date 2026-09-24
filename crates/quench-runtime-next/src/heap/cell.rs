@@ -220,6 +220,8 @@ pub(crate) enum Native {
     Promise,
     PromiseResolve,
     PromiseReject,
+    PromiseWithResolvers,
+    PromiseCapabilityExecutor,
     PromiseThen,
     PromiseCatch,
     PromiseFinally,
@@ -370,6 +372,8 @@ impl Native {
             Self::Promise
                 | Self::PromiseResolve
                 | Self::PromiseReject
+                | Self::PromiseWithResolvers
+                | Self::PromiseCapabilityExecutor
                 | Self::PromiseThen
                 | Self::PromiseCatch
                 | Self::PromiseFinally

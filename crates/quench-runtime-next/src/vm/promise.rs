@@ -1,6 +1,10 @@
 use super::activation::ContinuationId;
 use super::module::{ModuleOutcome, ModulePhase, ModuleRecord};
 use super::*;
+
+const PROMISE_CAPABILITY_CALLED: &str = "\0rqj:promise-capability-called";
+const PROMISE_CAPABILITY_RESOLVE: &str = "\0rqj:promise-capability-resolve";
+const PROMISE_CAPABILITY_REJECT: &str = "\0rqj:promise-capability-reject";
 use crate::ModuleSource;
 use rustc_hash::FxHashSet;
 
@@ -220,6 +224,8 @@ fn native_length(kind: Native) -> Option<f64> {
     }
     Some(match kind {
         Native::AbstractModuleSource => 0.0,
+        Native::PromiseWithResolvers => 0.0,
+        Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
         Native::ObjectKeys
         | Native::ObjectValues
@@ -495,6 +501,23 @@ impl<H: Host> Vm<H> {
             "reject",
             self.native_value(Native::PromiseReject),
         )?;
+        let with_resolvers = self.native_value(Native::PromiseWithResolvers);
+        self.set_named(program, promise, "withResolvers", with_resolvers)?;
+        let name_atom = self.intern_atom("name");
+        let name = self.heap.alloc(Cell::String("withResolvers".into()));
+        self.set_named(program, with_resolvers, "name", name)?;
+        self.set_property_attributes(
+            with_resolvers,
+            property_key::PropertyKey::string(name_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_named(
             program,
             promise,
@@ -561,6 +584,71 @@ impl<H: Host> Vm<H> {
         Ok(promise)
     }
 
+    fn promise_with_resolvers(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+    ) -> Result<Value, JsError> {
+        if !self.is_constructable(p, constructor) {
+            return Err(self.type_error(
+                p,
+                "Promise.withResolvers receiver is not a constructor".into(),
+            ));
+        }
+        let state = self.object();
+        let called_atom = self.intern_atom(PROMISE_CAPABILITY_CALLED);
+        let resolve_atom = self.intern_atom(PROMISE_CAPABILITY_RESOLVE);
+        let reject_atom = self.intern_atom(PROMISE_CAPABILITY_REJECT);
+        self.set_property(state, called_atom, Value::FALSE)?;
+        let executor = self.native_with_env(Native::PromiseCapabilityExecutor, state);
+        let promise = self.construct_value(p, constructor, &[executor])?;
+        let resolve = self
+            .own_property(state, resolve_atom)
+            .filter(|value| self.is_function(*value))
+            .ok_or_else(|| {
+                self.type_error(p, "Promise capability resolve is not callable".into())
+            })?;
+        let reject = self
+            .own_property(state, reject_atom)
+            .filter(|value| self.is_function(*value))
+            .ok_or_else(|| {
+                self.type_error(p, "Promise capability reject is not callable".into())
+            })?;
+        let result = self.object();
+        self.set_named(p, result, "promise", promise)?;
+        self.set_named(p, result, "resolve", resolve)?;
+        self.set_named(p, result, "reject", reject)?;
+        Ok(result)
+    }
+
+    fn promise_capability_executor(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let state = self
+            .active_native_env()
+            .ok_or_else(|| self.type_error(p, "invalid Promise capability executor".into()))?;
+        let called_atom = self.intern_atom(PROMISE_CAPABILITY_CALLED);
+        let resolve_atom = self.intern_atom(PROMISE_CAPABILITY_RESOLVE);
+        let reject_atom = self.intern_atom(PROMISE_CAPABILITY_REJECT);
+        if self
+            .own_property(state, called_atom)
+            .is_some_and(|called| self.truthy(called))
+        {
+            return Err(self.type_error(p, "Promise capability executor was already called".into()));
+        }
+        let resolve = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let reject = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_function(resolve) || !self.is_function(reject) {
+            return Err(self.type_error(p, "Promise capability functions are not callable".into()));
+        }
+        self.set_property(state, called_atom, Value::TRUE)?;
+        self.set_property(state, resolve_atom, resolve)?;
+        self.set_property(state, reject_atom, reject)?;
+        Ok(Value::UNDEFINED)
+    }
+
     pub(super) fn call_promise_native(
         &mut self,
         p: &ResidualProgram,
@@ -576,6 +664,8 @@ impl<H: Host> Vm<H> {
             Native::Promise => Err(JsError(
                 "Promise constructor must be called with new".into(),
             )),
+            Native::PromiseWithResolvers => self.promise_with_resolvers(p, this),
+            Native::PromiseCapabilityExecutor => self.promise_capability_executor(p, args),
             Native::PromiseResolve => {
                 if let Some(promise) = self.active_native_env() {
                     self.promise_resolve_value(
