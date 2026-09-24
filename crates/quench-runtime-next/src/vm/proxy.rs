@@ -40,6 +40,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         proxy: Value,
+        new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
         let Some(Cell::Proxy {
@@ -51,26 +52,29 @@ impl<H: Host> Vm<H> {
         if handler.is_null() {
             return Err(JsError("cannot access a revoked proxy".into()));
         }
-        if !self.is_function(target) {
-            return Err(JsError("not a constructor".into()));
+        if !self.is_constructable(p, target) {
+            return Err(self.type_error(p, "proxy target is not a constructor".into()));
         }
         let trap_atom = self.intern_atom("construct");
         let trap = self.get_property(p, handler, trap_atom)?;
         if !trap.is_undefined() && !trap.is_null() {
             if !self.is_function(trap) {
-                return Err(JsError("proxy construct trap is not callable".into()));
+                return Err(self.type_error(p, "proxy construct trap is not callable".into()));
+            }
+            if !self.is_constructable(p, new_target) {
+                return Err(self.type_error(p, "newTarget is not a constructor".into()));
             }
             let arguments = self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.array_proto),
                 elements: Rc::new(args.to_vec()),
             });
-            let result = self.call_value(p, trap, handler, &[target, arguments, proxy])?;
-            if !self.object_data(result).is_some() {
-                return Err(JsError("proxy construct trap must return an object".into()));
+            let result = self.call_value(p, trap, handler, &[target, arguments, new_target])?;
+            if !self.is_object_like(result) {
+                return Err(self.type_error(p, "proxy construct trap must return an object".into()));
             }
             return Ok(result);
         }
-        self.construct_value(p, target, args)
+        self.construct_value_with_new_target(p, target, new_target, args)
     }
 
     pub(super) fn proxy_target(&self, mut value: Value) -> Value {
@@ -90,6 +94,7 @@ impl<H: Host> Vm<H> {
             object: Box::new(Self::empty_object(self.function_proto)),
             kind: FunctionKind::Native(Native::ProxyRevoke),
             env: proxy,
+            realm: self.realm.globals,
         });
         let result = self.object();
         let proxy_atom = self.intern_atom("proxy");

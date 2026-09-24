@@ -45,6 +45,7 @@ fn array_buffer_backing_is_accounted_until_owner_collection() {
         detached: false,
         max_byte_length: 16,
         resizable: false,
+        immutable: false,
     });
     assert_eq!(heap.stats().5, 16);
     heap.collect([buffer]);

@@ -15,16 +15,24 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn call_symbol_value_native(
         &mut self,
-        p: &ResidualProgram,
+        _p: &ResidualProgram,
         native: Native,
         this: Value,
     ) -> Result<Value, JsError> {
         match native {
             Native::SymbolToString => {
-                if !matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
-                    return Err(JsError("Symbol method receiver is not a symbol".into()));
-                }
-                let text = self.to_string(p, this)?;
+                let value = if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
+                    this
+                } else {
+                    let value_atom = self.intern_atom("\0rqj:symbol-value");
+                    self.own_property(this, value_atom)
+                        .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
+                        .ok_or_else(|| JsError("Symbol method receiver is not a symbol".into()))?
+                };
+                let Some(Cell::Symbol(description)) = self.heap.get(value) else {
+                    unreachable!("symbol value was checked above")
+                };
+                let text = format!("Symbol({})", description.as_deref().unwrap_or(""));
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::SymbolValueOf => {

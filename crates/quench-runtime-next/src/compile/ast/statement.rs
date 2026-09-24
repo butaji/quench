@@ -2,6 +2,18 @@ use super::*;
 
 const STRICT_EQUAL_OPERATOR: u32 = 2;
 
+fn is_anonymous_function_definition(mut expression: &Expression<'_>) -> bool {
+    while let Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    match expression {
+        Expression::FunctionExpression(function) => function.id.is_none(),
+        Expression::ArrowFunctionExpression(_) => true,
+        Expression::ClassExpression(class) => class.id.is_none(),
+        _ => false,
+    }
+}
+
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn statements(&mut self, body: &[Statement<'_>]) {
         for statement in body {
@@ -13,6 +25,68 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn statement(&mut self, statement: &Statement<'_>) {
         match statement {
             Statement::EmptyStatement(_) | Statement::FunctionDeclaration(_) => {}
+            Statement::ExportDeclaration(item) => match &item.declaration {
+                Declaration::VariableDeclaration(declaration) => self.variables(declaration),
+                Declaration::ClassDeclaration(declaration) => {
+                    self.class_declaration(declaration);
+                }
+                Declaration::FunctionDeclaration(_) => {}
+                _ => self.owner.reject(
+                    item.span,
+                    "export declaration is outside the supported subset",
+                ),
+            },
+            Statement::ExportNamedDeclaration(_)
+            | Statement::ExportFromDeclaration(_)
+            | Statement::ExportAllDeclaration(_) => {}
+            Statement::ImportDeclaration(item) if item.phase.is_none() => {}
+            Statement::ImportDeclaration(item)
+                if matches!(item.phase, Some(ImportPhase::Defer))
+                    && item.specifiers.as_ref().is_some_and(|specifiers| {
+                        specifiers.iter().all(|specifier| {
+                            matches!(
+                                specifier,
+                                ImportDeclarationSpecifier::ImportNamespaceSpecifier(_)
+                            )
+                        })
+                    }) => {}
+            Statement::ImportDeclaration(item) => self.owner.reject(
+                item.span,
+                "deferred and source imports are outside the supported subset",
+            ),
+            Statement::ExportDefaultDeclaration(item) => match &item.declaration {
+                oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(_) => {}
+                oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                    let value = self.class_expression(class);
+                    if class.id.is_none() {
+                        let name = self.owner.atom("default");
+                        self.emit(Op::SetFunctionName, value, 0, 0, name);
+                    } else if let Some(identifier) = &class.id {
+                        let atom = self.owner.atom(identifier.name.as_str());
+                        self.store_atom(atom, value);
+                    }
+                    let binding = super::super::module_default_binding(self.owner.source);
+                    let atom = self.owner.atom(&binding);
+                    self.store_atom(atom, value);
+                }
+                _ => {
+                    if let Some(expression) = item.declaration.as_expression() {
+                        let value = self.expression(expression);
+                        if is_anonymous_function_definition(expression) {
+                            let name = self.owner.atom("default");
+                            self.emit(Op::SetFunctionName, value, 0, 0, name);
+                        }
+                        let binding = super::super::module_default_binding(self.owner.source);
+                        let atom = self.owner.atom(&binding);
+                        self.store_atom(atom, value);
+                    } else {
+                        self.owner.reject(
+                            item.span,
+                            "default class exports are outside the supported subset",
+                        );
+                    }
+                }
+            },
             Statement::ClassDeclaration(item) => {
                 self.class_declaration(item);
             }
@@ -71,7 +145,13 @@ impl FunctionCompiler<'_, '_> {
         let argument = self.reg();
         self.emit(Op::Move, argument, object, 0, 0);
         let ignored = self.reg();
-        self.emit(Op::Call, ignored, enter, enter, (u32::from(argument) << 16) | 1);
+        self.emit(
+            Op::Call,
+            ignored,
+            enter,
+            enter,
+            crate::bytecode::ImmediateLayout::call_immediate(argument, 1, false, false),
+        );
         self.with_depth = self.with_depth.saturating_add(1);
         self.statement(&item.body);
         self.with_depth = self.with_depth.saturating_sub(1);
@@ -137,6 +217,22 @@ impl FunctionCompiler<'_, '_> {
 
     fn return_logical(&mut self, value: &LogicalExpression<'_>) {
         let left = self.expression(&value.left);
+        if value.operator.is_coalesce() {
+            let null = self.literal(Constant::Null);
+            let is_null = self.emit_binary(0, Operand::register(left), Operand::register(null));
+            let check_undefined = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
+            self.return_expression(&value.right);
+            self.patch(check_undefined);
+
+            let undefined = self.literal(Constant::Undefined);
+            let is_undefined =
+                self.emit_binary(0, Operand::register(left), Operand::register(undefined));
+            let return_left = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
+            self.return_expression(&value.right);
+            self.patch(return_left);
+            self.emit_return(left);
+            return;
+        }
         let false_edge = self.emit(Op::JumpFalse, left, 0, 0, 0);
         if value.operator.is_or() {
             self.emit_return(left);
@@ -178,7 +274,28 @@ impl FunctionCompiler<'_, '_> {
         }
         for item in &declaration.declarations {
             if let Some(init) = &item.init {
-                let value = self.expression(init);
+                let value = match (init, &item.id) {
+                    (
+                        Expression::ClassExpression(class),
+                        BindingPattern::BindingIdentifier(identifier),
+                    ) if class.id.is_none() => {
+                        self.named_class_expression(class, identifier.name.as_str())
+                    }
+                    _ => self.expression(init),
+                };
+                if Self::anonymous_function_definition(init)
+                    && let BindingPattern::BindingIdentifier(identifier) = &item.id
+                {
+                    let name = self.owner.atom(identifier.name.as_str());
+                    self.emit(Op::SetFunctionName, value, 0, 0, name);
+                }
+                self.bind_pattern(&item.id, value);
+            } else if declaration.kind == VariableDeclarationKind::Let {
+                // `let x;` initializes the binding to undefined at this point.
+                // Leaving the slot in its hoisted TDZ state makes later
+                // expressions (including computed class keys) observe a
+                // spurious ReferenceError.
+                let value = self.literal(Constant::Undefined);
                 self.bind_pattern(&item.id, value);
             }
         }
@@ -248,7 +365,7 @@ impl FunctionCompiler<'_, '_> {
                 for item in &declaration.declarations {
                     self.map_pattern_lexicals(&item.id, &mut scope);
                 }
-                self.lexical_scopes.push(scope);
+                self.push_lexical_bindings(scope);
                 true
             }
             _ => false,
@@ -286,6 +403,10 @@ impl FunctionCompiler<'_, '_> {
 
     fn switch_statement(&mut self, item: &SwitchStatement<'_>) {
         let discriminant = self.expression(&item.discriminant);
+        self.push_switch_lexical_scope(&item.cases);
+        for case in &item.cases {
+            self.emit_hoisted(&case.consequent);
+        }
         let mut case_edges = Vec::with_capacity(item.cases.len());
         for case in &item.cases {
             case_edges.push(case.test.as_ref().map(|test| {
@@ -322,6 +443,7 @@ impl FunctionCompiler<'_, '_> {
             .map_or(end, |index| targets[index]);
         self.patch_to(no_match, fallback);
         self.patch_edges(&control.breaks, end);
+        self.pop_lexical_scope();
     }
 
     fn break_statement(&mut self, item: &BreakStatement<'_>) {

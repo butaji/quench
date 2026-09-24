@@ -13,6 +13,19 @@ impl<H: Host> Vm<H> {
         self.megamorphic_methods.clear();
     }
 
+    pub(super) fn invalidate_method_caches_for_atom(&mut self, atom: Atom) {
+        #[cfg(feature = "profile-aggregate")]
+        self.snapshot_method_caches_for_atom(atom, 1);
+        for entries in &mut self.method_caches {
+            let len = entries.len();
+            retain_other_atom(entries, len, atom);
+        }
+        for set in &mut self.megamorphic_methods {
+            set.len = retain_other_atom(&mut set.entries, usize::from(set.len), atom) as u8;
+        }
+        self.megamorphic_methods.retain(|set| set.len != 0);
+    }
+
     pub(super) fn is_function(&self, value: Value) -> bool {
         match self.heap.get(value) {
             Some(Cell::Function { .. }) => true,
@@ -57,13 +70,54 @@ impl<H: Host> Vm<H> {
     }
 
     #[cfg(feature = "profile-aggregate")]
+    fn snapshot_method_caches_for_atom(&mut self, atom: Atom, reason: usize) {
+        let mut records = Vec::new();
+        for (site, entries) in self.method_caches.iter().enumerate() {
+            records.extend(entries.iter().filter_map(|entry| {
+                (entry.atom == atom)
+                    .then(|| {
+                        entry
+                            .target
+                            .map(|target| (site, entry.shape, entry.proto, target))
+                    })
+                    .flatten()
+            }));
+        }
+        for set in &self.megamorphic_methods {
+            records.extend(
+                set.entries[..usize::from(set.len)]
+                    .iter()
+                    .filter_map(|entry| {
+                        (entry.atom == atom)
+                            .then(|| {
+                                entry.target.map(|target| {
+                                    (usize::from(set.site), entry.shape, entry.proto, target)
+                                })
+                            })
+                            .flatten()
+                    }),
+            );
+        }
+        self.profile.method_cache_clear(reason, records.len());
+        for (site, shape, proto, target) in records {
+            self.invalidated_methods.insert(
+                MethodCacheKey { site, shape, proto },
+                InvalidatedMethod {
+                    target,
+                    reason: reason as u8,
+                },
+            );
+        }
+    }
+
+    #[cfg(feature = "profile-aggregate")]
     pub(super) fn retain_live_gc_method_snapshots(&mut self) {
         let heap = &self.heap;
         let before = self.invalidated_methods.len();
         self.invalidated_methods.retain(|key, entry| {
             let proto_live = !key.proto.is_heap() || heap.get(key.proto).is_some();
             let env = match entry.target {
-                CallTarget::User(_, env) | CallTarget::NumericUser(_, env) => Some(env),
+                CallTarget::User(_, _, env) | CallTarget::NumericUser(_, _, env) => Some(env),
                 CallTarget::Native(_) => None,
             };
             proto_live && env.is_none_or(|value| !value.is_heap() || heap.get(value).is_some())
@@ -132,6 +186,19 @@ impl<H: Host> Vm<H> {
     }
 }
 
+fn retain_other_atom(entries: &mut [MethodCache], len: usize, atom: Atom) -> usize {
+    let mut retained = 0;
+    for index in 0..len {
+        let entry = entries[index];
+        if entry.atom != atom {
+            entries[retained] = entry;
+            retained += 1;
+        }
+    }
+    entries[retained..].fill(EMPTY_METHOD_CACHE);
+    retained
+}
+
 fn retain_entries(heap: &crate::heap::Heap, entries: &mut [MethodCache], len: usize) -> usize {
     let mut retained = 0;
     for index in 0..len {
@@ -148,7 +215,7 @@ fn retain_entries(heap: &crate::heap::Heap, entries: &mut [MethodCache], len: us
 fn method_cache_live(heap: &crate::heap::Heap, entry: MethodCache) -> bool {
     let key_live = !entry.proto.is_heap() || heap.get(entry.proto).is_some();
     let env = match entry.target {
-        Some(CallTarget::User(_, env) | CallTarget::NumericUser(_, env)) => Some(env),
+        Some(CallTarget::User(_, _, env) | CallTarget::NumericUser(_, _, env)) => Some(env),
         _ => None,
     };
     key_live && env.is_none_or(|value| !value.is_heap() || heap.get(value).is_some())
@@ -237,19 +304,26 @@ impl<H: Host> Vm<H> {
             let cache_proto = if own_callee.is_some() { this } else { proto };
             let target = match self.heap.get(callee) {
                 Some(Cell::Function {
-                    kind: FunctionKind::User(id),
+                    kind: FunctionKind::User(program, id),
                     env,
                     ..
-                }) => CallTarget::User(*id, *env),
+                }) => CallTarget::User(*program, *id, *env),
                 Some(Cell::Function {
-                    kind: FunctionKind::NumericUser(id),
+                    kind: FunctionKind::NumericUser(program, id),
                     env,
                     ..
-                }) => CallTarget::NumericUser(*id, *env),
+                }) => CallTarget::NumericUser(*program, *id, *env),
                 Some(Cell::Function {
                     kind: FunctionKind::Native(native),
                     ..
                 }) => CallTarget::Native(*native),
+                _ if self.is_function(callee) => {
+                    let values = args
+                        .iter()
+                        .map(|register| self.read(frame, *register))
+                        .collect::<Vec<_>>();
+                    return self.call_value(p, callee, this, &values);
+                }
                 _ => return Err(self.type_error(p, "value is not callable".into())),
             };
             if self.specialized {
@@ -259,6 +333,7 @@ impl<H: Host> Vm<H> {
                     site,
                     MethodCache {
                         shape,
+                        atom: metadata.atom,
                         proto: cache_proto,
                         target: Some(target),
                     },
@@ -272,9 +347,13 @@ impl<H: Host> Vm<H> {
             CallTarget::NumericUser(..) => 2,
         };
         self.profile.call_target(target_kind, args.len());
-        if let CallTarget::NumericUser(id, env) = target {
-            return self.call_user_numeric(
-                p,
+        if let CallTarget::NumericUser(program_id, id, env) = target {
+            let Some(program) = self.programs.get(program_id) else {
+                return Err(self.type_error(p, "function belongs to an unavailable program".into()));
+            };
+            let active_program = std::mem::replace(&mut self.active_program, program_id);
+            let result = self.call_user_numeric(
+                &program,
                 id,
                 env,
                 this,
@@ -283,12 +362,23 @@ impl<H: Host> Vm<H> {
                     values: args,
                 },
             );
+            self.active_program = active_program;
+            return result;
         }
         let arguments =
             CallArguments::from_values(args.iter().map(|register| self.read(frame, *register)));
         match target {
-            CallTarget::User(id, env) => {
-                self.call_user_maybe_async(p, id, env, this, arguments.as_slice())
+            CallTarget::User(program_id, id, env) => {
+                let Some(program) = self.programs.get(program_id) else {
+                    return Err(
+                        self.type_error(p, "function belongs to an unavailable program".into())
+                    );
+                };
+                let active_program = std::mem::replace(&mut self.active_program, program_id);
+                let result =
+                    self.call_user_maybe_async(&program, id, env, this, arguments.as_slice());
+                self.active_program = active_program;
+                result
             }
             CallTarget::NumericUser(..) => unreachable!(),
             CallTarget::Native(native) => self.call_native(p, native, this, arguments.as_slice()),

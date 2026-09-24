@@ -117,6 +117,9 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    if let Err(error) = required_timeout_ms() {
+        return fail(&error);
+    }
     let args = match parse_args(env::args_os()) {
         Ok(args) => args,
         Err(error) => return fail(&error),
@@ -162,6 +165,16 @@ fn main() -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+fn required_timeout_ms() -> Result<u64, String> {
+    env::var("TEST262_TEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|timeout_ms| *timeout_ms > 0)
+        .ok_or_else(|| {
+            "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".into()
+        })
 }
 
 /// Emit a machine-readable JSON report consumable by

@@ -22,6 +22,10 @@ Quench implements JavaScript semantics and Node-compatible APIs.
 8. Keep effects explicit and at the boundaries.
 9. Deduplicate knowledge, not merely similar syntax.
 10. Prefer shallow, named composition over frameworks.
+11. Zero magic numbers: every representation bit, spec boundary, protocol
+    value, sentinel, threshold, and non-obvious numeric rule has a named owner
+    or is derived from a named layout. Keep literal zero/one where they are
+    ordinary indices or arithmetic identities, not hidden semantic policy.
 
 Functions and modules should be cohesive and reviewable. There are no mandatory
 line-count or complexity caps. There is no architectural ceiling on region size,

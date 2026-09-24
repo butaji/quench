@@ -1,5 +1,37 @@
 use super::*;
 
+const STRING_METHODS: &[(&str, Native)] = &[
+    ("charAt", Native::StringCharAt),
+    ("charCodeAt", Native::StringCharCodeAt),
+    ("codePointAt", Native::StringCodePointAt),
+    ("concat", Native::StringConcat),
+    ("endsWith", Native::StringEndsWith),
+    ("includes", Native::StringIncludes),
+    ("indexOf", Native::StringIndexOf),
+    ("lastIndexOf", Native::StringLastIndexOf),
+    ("match", Native::StringMatch),
+    ("normalize", Native::StringNormalize),
+    ("padEnd", Native::StringPadEnd),
+    ("padStart", Native::StringPadStart),
+    ("repeat", Native::StringRepeat),
+    ("replace", Native::StringReplace),
+    ("replaceAll", Native::StringReplaceAll),
+    ("search", Native::StringSearch),
+    ("slice", Native::StringSlice),
+    ("split", Native::StringSplit),
+    ("startsWith", Native::StringStartsWith),
+    ("substr", Native::StringSubstr),
+    ("substring", Native::StringSubstring),
+    ("toLowerCase", Native::StringToLowerCase),
+    ("toString", Native::StringToString),
+    ("toUpperCase", Native::StringToUpperCase),
+    ("trim", Native::StringTrim),
+    ("trimEnd", Native::StringTrimEnd),
+    ("trimStart", Native::StringTrimStart),
+    ("valueOf", Native::StringValueOf),
+    ("at", Native::StringAt),
+];
+
 fn utf16_index(text: &str, byte_index: usize) -> usize {
     text[..byte_index].encode_utf16().count()
 }
@@ -14,6 +46,46 @@ pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Opti
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn string_method_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        let converts_receiver = STRING_METHODS.iter().any(|(_, method)| {
+            *method == native && !matches!(native, Native::StringToString | Native::StringValueOf)
+        });
+        if !converts_receiver {
+            return Ok(receiver);
+        }
+        self.require_object_coercible(p, receiver)?;
+        if matches!(self.heap.get(receiver), Some(Cell::String(_))) {
+            return Ok(receiver);
+        }
+        let text = self.to_string(p, receiver)?;
+        Ok(self.heap.alloc(Cell::String(text.into())))
+    }
+
+    pub(super) fn install_string(
+        &mut self,
+        program: &ResidualProgram,
+        constructor: Value,
+    ) -> Result<(), JsError> {
+        let empty = self.heap.alloc(Cell::String(JsString::from_str("")));
+        self.string_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        let value_atom = self.intern_atom("\0rqj:string-value");
+        self.set_property(self.string_proto, value_atom, empty)?;
+        self.set_named_constant(program, self.string_proto, "length", Value::number(0.0))?;
+        self.set_builtin_named(program, self.string_proto, "constructor", Native::String)?;
+        self.set_named(program, constructor, "prototype", self.string_proto)?;
+        for (name, native) in STRING_METHODS {
+            self.set_builtin_named(program, self.string_proto, name, *native)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn string_basic_native(
         &mut self,
         p: &ResidualProgram,
@@ -45,17 +117,10 @@ impl<H: Host> Vm<H> {
                     return self.string_from_units(&units[index..index + 1]);
                 }
                 let first = units[index];
-                let code_point = if (0xD800..=0xDBFF).contains(&first)
-                    && units
-                        .get(index + 1)
-                        .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
-                {
-                    0x10000
-                        + ((u32::from(first) - 0xD800) << 10)
-                        + (u32::from(units[index + 1]) - 0xDC00)
-                } else {
-                    u32::from(first)
-                };
+                let code_point = units
+                    .get(index + 1)
+                    .and_then(|low| crate::unicode::decode_surrogate_pair(first, *low))
+                    .unwrap_or_else(|| u32::from(first));
                 Ok(Value::number(code_point as f64))
             }
             Native::StringToUpperCase | Native::StringToLowerCase => {
@@ -89,33 +154,26 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn string_native_for_atom(&self, atom: Atom) -> Option<Native> {
-        [
-            ("replace", Native::StringReplace),
-            ("split", Native::StringSplit),
-            ("trim", Native::StringTrim),
-            ("trimStart", Native::StringTrimStart),
-            ("trimEnd", Native::StringTrimEnd),
-            ("repeat", Native::StringRepeat),
-            ("padStart", Native::StringPadStart),
-            ("padEnd", Native::StringPadEnd),
-            ("match", Native::StringMatch),
-            ("search", Native::StringSearch),
-            ("replaceAll", Native::StringReplaceAll),
-            ("at", Native::StringAt),
-            ("codePointAt", Native::StringCodePointAt),
-            ("toUpperCase", Native::StringToUpperCase),
-            ("toLowerCase", Native::StringToLowerCase),
-            ("concat", Native::StringConcat),
-            ("normalize", Native::StringNormalize),
-            ("indexOf", Native::StringIndexOf),
-            ("lastIndexOf", Native::StringLastIndexOf),
-            ("slice", Native::StringSlice),
-            ("toString", Native::StringToString),
-            ("valueOf", Native::StringValueOf),
-        ]
-        .into_iter()
-        .find_map(|(name, native)| (self.lookup_atom(name) == Some(atom)).then_some(native))
+    pub(super) fn string_iterator_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        self.require_object_coercible(p, this)?;
+        let source = match self.heap.get(this) {
+            Some(Cell::String(_)) => this,
+            _ => {
+                let text = self.to_string(p, this)?;
+                self.heap.alloc(Cell::String(text.into()))
+            }
+        };
+        Ok(self.heap.alloc(Cell::Iterator {
+            object: Self::empty_object(self.iterator_proto),
+            source,
+            kind: IteratorKind::String,
+            index: 0,
+            generator: None,
+        }))
     }
 
     pub(super) fn string_match_or_search_native(

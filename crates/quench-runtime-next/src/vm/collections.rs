@@ -128,7 +128,7 @@ impl<H: Host> Vm<H> {
             ("entries", Native::MapEntries),
             ("forEach", Native::MapForEach),
         ] {
-            self.set_named(program, self.map_proto, name, self.native_value(native))?;
+            self.set_builtin_named(program, self.map_proto, name, native)?;
         }
         self.set_named(program, map, "prototype", self.map_proto)?;
         self.global(program, "Map", map)?;
@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
             ("entries", Native::SetEntries),
             ("forEach", Native::SetForEach),
         ] {
-            self.set_named(program, self.set_proto, name, self.native_value(native))?;
+            self.set_builtin_named(program, self.set_proto, name, native)?;
         }
         self.set_named(program, set, "prototype", self.set_proto)?;
         self.global(program, "Set", set)
@@ -158,29 +158,29 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let entries = args
             .first()
-            .and_then(|value| self.heap.get(*value))
-            .and_then(|cell| match cell {
-                Cell::Array { elements, .. } => Some(elements.as_ref()),
-                _ => None,
-            });
+            .copied()
+            .filter(|value| self.array_length(*value).is_some());
         let cell = match native {
             Native::Map => {
                 let mut pairs = Vec::new();
-                if let Some(elements) = entries {
-                    for entry in elements {
-                        let Some(Cell::Array { elements: pair, .. }) = self.heap.get(*entry) else {
+                if let Some(entries) = entries {
+                    for index in 0..self.array_length(entries).unwrap_or(0) {
+                        let entry = self.array_value_at(entries, index);
+                        let Some(pair_length) = self.array_length(entry) else {
                             return Err(JsError("Map constructor entries must be arrays".into()));
                         };
-                        let Some(value) = pair.get(1).copied() else {
+                        if pair_length < 2 {
                             return Err(JsError("Map constructor entries need two values".into()));
-                        };
+                        }
+                        let key = self.array_value_at(entry, 0);
+                        let value = self.array_value_at(entry, 1);
                         if let Some(index) = pairs
                             .iter()
-                            .position(|(candidate, _)| self.same_value_zero(*candidate, pair[0]))
+                            .position(|(candidate, _)| self.same_value_zero(*candidate, key))
                         {
                             pairs[index].1 = value;
                         } else {
-                            pairs.push((pair[0], value));
+                            pairs.push((key, value));
                         }
                     }
                 }
@@ -191,13 +191,14 @@ impl<H: Host> Vm<H> {
             }
             Native::Set => {
                 let mut values = Vec::new();
-                if let Some(elements) = entries {
-                    for value in elements {
+                if let Some(entries) = entries {
+                    for index in 0..self.array_length(entries).unwrap_or(0) {
+                        let value = self.array_value_at(entries, index);
                         if !values
                             .iter()
-                            .any(|candidate| self.same_value_zero(*candidate, *value))
+                            .any(|candidate| self.same_value_zero(*candidate, value))
                         {
-                            values.push(*value);
+                            values.push(value);
                         }
                     }
                 }

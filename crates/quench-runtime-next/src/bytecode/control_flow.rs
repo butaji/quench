@@ -12,12 +12,10 @@ pub(super) fn is_bounded(function: &Function) -> bool {
     let code = &function.code;
     let mut reachable = vec![false; code.len()];
     let mut work = vec![0usize];
-    work.extend(
-        function
-            .handlers
-            .iter()
-            .map(|handler| handler.target as usize),
-    );
+    work.extend(function.handlers.iter().flat_map(|handler| {
+        std::iter::once(handler.target as usize)
+            .chain(handler.return_target.map(|target| target as usize))
+    }));
     while let Some(pc) = work.pop() {
         if pc >= code.len() || reachable[pc] {
             if pc >= code.len() {
@@ -36,18 +34,7 @@ pub(super) fn is_bounded(function: &Function) -> bool {
                 work.push(instruction.imm() as usize);
                 work.push(pc + 1);
             }
-            Op::Binary
-            | Op::NumericAdd
-            | Op::NumericMultiply
-            | Op::GetField
-            | Op::MakeObject2
-            | Op::SuperConstArrayObject2
-            | Op::Call
-            | Op::CallKnown
-            | Op::CallMethod
-            | Op::CallThisMethod
-            | Op::Construct
-                if instruction.a() & super::RETURN_REGISTER != 0 => {}
+            _ if instruction.returns_from_frame() => {}
             _ => work.push(pc + 1),
         }
     }

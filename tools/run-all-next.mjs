@@ -9,6 +9,11 @@ if (!root || root === "--help" || root === "-h") {
   console.error("usage: run-all-next.mjs DIRECTORY");
   process.exit(root ? 0 : 2);
 }
+const timeout = Number(process.env.DIFF_TIMEOUT_MS);
+if (!Number.isSafeInteger(timeout) || timeout <= 0) {
+  console.error("DIFF_TIMEOUT_MS must be set to a positive timeout in milliseconds");
+  process.exit(2);
+}
 
 const directory = path.resolve(root);
 if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) {
@@ -36,7 +41,6 @@ if (!sources.length) {
 }
 
 const runner = path.resolve("tools/diff-next.mjs");
-const timeout = Number(process.env.DIFF_TIMEOUT_MS ?? 30_000);
 const records = [];
 for (const source of sources) {
   const result = spawnSync(process.execPath, [runner, source], {

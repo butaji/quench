@@ -2,6 +2,36 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn spread_to_array(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+    ) -> Result<Value, JsError> {
+        let iterator = self.get_iterator(p, source)?;
+        let done_atom = self.intern_atom("done");
+        let value_atom = self.intern_atom("value");
+        let mut values = Vec::new();
+        loop {
+            let step = match self.iterator_next(p, iterator) {
+                Ok(step) => step,
+                Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+            };
+            let done = match self.get_property(p, step, done_atom) {
+                Ok(done) => done,
+                Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+            };
+            if self.truthy(done) {
+                break;
+            }
+            let value = match self.get_property(p, step, value_atom) {
+                Ok(value) => value,
+                Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+            };
+            values.push(value);
+        }
+        Ok(self.new_array(values))
+    }
+
     pub(super) fn iterator_close(
         &mut self,
         p: &ResidualProgram,
@@ -24,6 +54,51 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_iterators(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.iterator_proto = self.object();
         self.async_iterator_proto = self.object();
+        let generator_function_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+        let async_generator_function_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+        let async_function_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+        self.set_named(
+            program,
+            generator_function_proto,
+            "prototype",
+            self.iterator_proto,
+        )?;
+        self.set_named(
+            program,
+            async_generator_function_proto,
+            "prototype",
+            self.async_iterator_proto,
+        )?;
+        self.set_named(
+            program,
+            async_function_proto,
+            "constructor",
+            self.native_value(Native::AsyncFunction),
+        )?;
+        self.set_named(
+            program,
+            self.native_value(Native::AsyncFunction),
+            "prototype",
+            async_function_proto,
+        )?;
+        self.set_named(
+            program,
+            self.native_value(Native::GeneratorFunction),
+            "prototype",
+            generator_function_proto,
+        )?;
+        self.set_named(
+            program,
+            self.native_value(Native::AsyncGeneratorFunction),
+            "prototype",
+            async_generator_function_proto,
+        )?;
         self.set_named(
             program,
             self.iterator_proto,
@@ -54,8 +129,43 @@ impl<H: Host> Vm<H> {
             iterator,
             self.native_value(Native::ArrayValues),
         )?;
-        self.descriptors.insert(
-            (self.array_proto, PropertyKey::symbol(iterator)),
+        self.set_symbol_property(
+            self.string_proto,
+            iterator,
+            self.native_value(Native::StringValues),
+        )?;
+        self.set_symbol_property(
+            self.uint8_array_proto,
+            iterator,
+            self.native_value(Native::Uint8ArrayValues),
+        )?;
+        self.set_property_attributes(
+            self.uint8_array_proto,
+            PropertyKey::symbol(iterator),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_property_attributes(
+            self.array_proto,
+            PropertyKey::symbol(iterator),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_property_attributes(
+            self.string_proto,
+            PropertyKey::symbol(iterator),
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -110,23 +220,24 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
             let method = self.get_index(p, source, symbol)?;
-            if !method.is_undefined() {
-                if !self.is_function(method) {
-                    return Err(JsError("iterator method is not callable".into()));
-                }
-                let iterator = self.call_value(p, method, source, &[])?;
-                if !self.is_object_like(iterator) {
-                    return Err(JsError("iterator method did not return an object".into()));
-                }
-                return Ok(iterator);
+            if method.is_undefined() || method.is_null() {
+                return Err(self.type_error(p, "value is not iterable".into()));
             }
+            if !self.is_function(method) {
+                return Err(self.type_error(p, "iterator method is not callable".into()));
+            }
+            let iterator = self.call_value(p, method, source, &[])?;
+            if !self.is_object_like(iterator) {
+                return Err(self.type_error(p, "iterator method did not return an object".into()));
+            }
+            return Ok(iterator);
         }
         let kind = match self.heap.get(source) {
             Some(Cell::Array { .. }) | Some(Cell::TypedArray { .. }) => IteratorKind::Array,
             Some(Cell::String(_)) => IteratorKind::String,
             Some(Cell::Map { .. }) => IteratorKind::MapEntries,
             Some(Cell::Set { .. }) => IteratorKind::SetValues,
-            _ => return Err(JsError("value is not iterable".into())),
+            _ => return Err(self.type_error(p, "value is not iterable".into())),
         };
         Ok(self.heap.alloc(Cell::Iterator {
             object: Self::empty_object(self.iterator_proto),
@@ -144,15 +255,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if let Some(symbol) = self.well_known_symbols.get("asyncIterator").copied() {
             let method = self.get_index(p, source, symbol)?;
-            if !method.is_undefined() {
+            if !method.is_undefined() && !method.is_null() {
                 if !self.is_function(method) {
-                    return Err(JsError("async iterator method is not callable".into()));
+                    return Err(self.type_error(p, "async iterator method is not callable".into()));
                 }
                 let iterator = self.call_value(p, method, source, &[])?;
                 if !self.is_object_like(iterator) {
-                    return Err(JsError(
-                        "async iterator method did not return an object".into(),
-                    ));
+                    return Err(
+                        self.type_error(p, "async iterator method did not return an object".into())
+                    );
                 }
                 return Ok(iterator);
             }
@@ -204,6 +315,61 @@ impl<H: Host> Vm<H> {
         self.iterator_next_with_args(p, this, &[])
     }
 
+    pub(super) fn iterator_next_with_cached_method(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+        method: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (receiver, async_from_sync) = match self.heap.get(iterator) {
+            Some(Cell::Iterator {
+                source,
+                kind: IteratorKind::AsyncFromSync,
+                ..
+            }) => (*source, true),
+            _ => (iterator, false),
+        };
+        let result = self.call_value(p, method, receiver, args)?;
+        if !self.is_object_like(result) {
+            return Err(self.type_error(p, "iterator next result is not an object".into()));
+        }
+        if !async_from_sync {
+            return Ok(result);
+        }
+        self.async_from_sync_result(p, result)
+    }
+
+    pub(super) fn async_from_sync_result(
+        &mut self,
+        p: &ResidualProgram,
+        result: Value,
+    ) -> Result<Value, JsError> {
+        let value_atom = self.intern_atom("value");
+        let done_atom = self.intern_atom("done");
+        let done = self.get_property(p, result, done_atom)?;
+        let value = self.get_property(p, result, value_atom)?;
+        let value_promise = self.promise_object();
+        self.promise_resolve_value(p, value_promise, value)?;
+        let continuation = self.native_with_env(
+            Native::AsyncFromSyncValue,
+            if self.truthy(done) {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            },
+        );
+        self.promise_then(p, value_promise, continuation, Value::UNDEFINED)
+    }
+
+    pub(super) fn async_from_sync_value(&mut self, args: &[Value]) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let done = self
+            .active_native_env()
+            .is_some_and(|done| self.truthy(done));
+        self.iterator_result(value, done)
+    }
+
     pub(super) fn iterator_next_with_args(
         &mut self,
         p: &ResidualProgram,
@@ -221,11 +387,11 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom("next");
                 let method = self.get_property(p, this, atom)?;
                 if !self.is_function(method) {
-                    return Err(JsError("iterator next method is not callable".into()));
+                    return Err(self.type_error(p, "iterator next method is not callable".into()));
                 }
-                let result = self.call_value(p, method, this, &[])?;
+                let result = self.call_value(p, method, this, args)?;
                 if !self.is_object_like(result) {
-                    return Err(JsError("iterator next result is not an object".into()));
+                    return Err(self.type_error(p, "iterator next result is not an object".into()));
                 }
                 return Ok(result);
             }
@@ -238,9 +404,10 @@ impl<H: Host> Vm<H> {
         }
         if kind == IteratorKind::AsyncFromSync {
             let result = self.iterator_next_with_args(p, source, args)?;
-            let promise = self.promise_object();
-            self.promise_resolve_value(p, promise, result)?;
-            return Ok(promise);
+            if !self.is_object_like(result) {
+                return Err(self.type_error(p, "iterator next result is not an object".into()));
+            }
+            return self.async_from_sync_result(p, result);
         }
         let selected = match kind {
             IteratorKind::Array
@@ -255,11 +422,9 @@ impl<H: Host> Vm<H> {
                         let mut offset = 0;
                         let mut selected = None;
                         while offset < units.len() {
-                            let end = if (0xD800..=0xDBFF).contains(&units[offset])
-                                && units
-                                    .get(offset + 1)
-                                    .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
-                            {
+                            let end = if units.get(offset + 1).is_some_and(|low| {
+                                crate::unicode::decode_surrogate_pair(units[offset], *low).is_some()
+                            }) {
                                 offset + 2
                             } else {
                                 offset + 1
@@ -376,29 +541,5 @@ impl<H: Host> Vm<H> {
             if done { Value::TRUE } else { Value::FALSE },
         )?;
         Ok(result)
-    }
-
-    fn is_object_like(&self, value: Value) -> bool {
-        matches!(
-            self.heap.get(value),
-            Some(
-                Cell::Object(_)
-                    | Cell::Array { .. }
-                    | Cell::ArrayBuffer { .. }
-                    | Cell::TypedArray { .. }
-                    | Cell::DataView { .. }
-                    | Cell::Map { .. }
-                    | Cell::Set { .. }
-                    | Cell::WeakMap { .. }
-                    | Cell::WeakSet { .. }
-                    | Cell::WeakRef { .. }
-                    | Cell::FinalizationRegistry { .. }
-                    | Cell::Iterator { .. }
-                    | Cell::Proxy { .. }
-                    | Cell::Function { .. }
-                    | Cell::Date { .. }
-                    | Cell::Error(_)
-            )
-        )
     }
 }

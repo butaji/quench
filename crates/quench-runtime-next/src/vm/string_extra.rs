@@ -1,5 +1,6 @@
 pub(super) fn encode_uri(value: &str, component: bool) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    const HEX_NIBBLE_MASK: u8 = 0x0f;
     let mut output = String::with_capacity(value.len());
     for byte in value.as_bytes() {
         let unescaped = byte.is_ascii_alphanumeric()
@@ -10,7 +11,7 @@ pub(super) fn encode_uri(value: &str, component: bool) -> String {
         } else {
             output.push('%');
             output.push(HEX[(byte >> 4) as usize] as char);
-            output.push(HEX[(byte & 0xf) as usize] as char);
+            output.push(HEX[(byte & HEX_NIBBLE_MASK) as usize] as char);
         }
     }
     output

@@ -26,6 +26,8 @@ impl FunctionCompiler<'_, '_> {
             end,
             target,
             slot,
+            return_target: None,
+            return_slot: None,
         });
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
@@ -68,6 +70,8 @@ impl FunctionCompiler<'_, '_> {
             end,
             target: exceptional_target,
             slot: self.local_slot(error_atom),
+            return_target: Some(return_target),
+            return_slot: self.local_slot(return_atom),
         });
     }
 
@@ -90,11 +94,14 @@ impl FunctionCompiler<'_, '_> {
         let end = self.code.len() as u32;
         let body_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let catch_target = self.code.len() as u32;
+        let body_handler = self.handlers.len();
         self.handlers.push(crate::bytecode::Handler {
             start,
             end,
             target: catch_target,
             slot: catch_slot,
+            return_target: None,
+            return_slot: None,
         });
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
@@ -118,6 +125,8 @@ impl FunctionCompiler<'_, '_> {
         self.scoped_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
+        self.handlers[body_handler].return_target = Some(return_target);
+        self.handlers[body_handler].return_slot = self.local_slot(return_atom);
         self.patch_to(body_exit, finalizer_target);
         self.patch_to(catch_exit, finalizer_target);
         self.patch_edges(&context.return_edges, return_target);
@@ -129,6 +138,8 @@ impl FunctionCompiler<'_, '_> {
             end: catch_end,
             target: exceptional_target,
             slot: self.local_slot(error_atom),
+            return_target: Some(return_target),
+            return_slot: self.local_slot(return_atom),
         });
     }
 
@@ -183,7 +194,7 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    fn local_slot(&self, atom: Atom) -> Option<u16> {
+    pub(super) fn local_slot(&self, atom: Atom) -> Option<u16> {
         self.locals
             .iter()
             .position(|value| *value == atom)

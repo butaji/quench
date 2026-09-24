@@ -1,16 +1,19 @@
 use crate::Value;
 use crate::bytecode::{
-    Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, NUMERIC_LOCAL_TARGET, Op, Operand,
-    REGISTER_MASK, RETURN_REGISTER, Register, ResidualProgram, SET_THIS_REGISTER, WideInstruction,
+    Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, Op, Operand, REGISTER_MASK,
+    RETURN_REGISTER, Register, ResidualProgram, WideInstruction,
 };
 use crate::heap::{Cell, FunctionKind, Heap, IteratorKind, Native, Object, RootId, TypedArrayKind};
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+
+const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
+pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 pub(crate) mod activation;
 mod activation_lifecycle;
 mod arguments;
@@ -46,6 +49,7 @@ mod index;
 mod iterators;
 mod json;
 mod method_cache;
+mod module;
 mod number;
 mod numeric_site;
 mod object;
@@ -63,10 +67,13 @@ mod property_key;
 use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use numeric_site::NumericSite;
+use program_store::{ProgramId, ProgramStore};
 use promise::PromiseRuntime;
+use property_key::PropertyKey;
 mod operations;
 mod primitives;
 mod profile_edges;
+pub(crate) mod program_store;
 mod promise;
 mod promise_aggregate;
 mod promise_async;
@@ -95,6 +102,7 @@ use wtf16::JsString;
 #[cfg(test)]
 mod tests;
 pub(super) struct Frame {
+    program: ProgramId,
     function: u32,
     pc: usize,
     env: Value,
@@ -103,7 +111,13 @@ pub(super) struct Frame {
     dynamic_bindings: Vec<(Atom, Value)>,
     captured: bool,
     registers: Vec<Value>,
+    active_iterators: Vec<ActiveIterator>,
     with_base: usize,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveIterator {
+    pub(crate) iterator: u16,
+    pub(crate) done: u16,
 }
 struct PendingJob {
     callback: Value,
@@ -112,7 +126,11 @@ struct PendingJob {
 }
 struct Realm {
     globals: Value,
+    global_lexical_declarations: FxHashSet<Atom>,
+    global_lexical_bindings: FxHashMap<Atom, Value>,
+    immutable_global_lexical_bindings: FxHashSet<Atom>,
     jobs: Vec<PendingJob>,
+    template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
 }
 enum NumericArguments<'a> {
     Values(&'a [Value]),
@@ -124,6 +142,7 @@ enum NumericArguments<'a> {
 #[derive(Clone, Copy)]
 struct FieldCache {
     receiver: u32,
+    atom: Atom,
     owner: Value,
     owner_shape: u32,
     slot: u16,
@@ -131,6 +150,7 @@ struct FieldCache {
 }
 const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: u32::MAX,
+    atom: u32::MAX,
     owner: Value::NULL,
     owner_shape: u32::MAX,
     slot: 0,
@@ -146,6 +166,7 @@ struct FieldCacheSet {
 #[derive(Clone, Copy)]
 struct MethodCache {
     shape: u32,
+    atom: Atom,
     proto: Value,
     target: Option<CallTarget>,
 }
@@ -164,13 +185,10 @@ struct StringConcatCache {
 }
 #[derive(Clone)]
 struct Shape {
-    keys: Vec<Atom>,
-    slots: FxHashMap<Atom, u16>,
-    // Descriptor attributes are part of the immutable shape authority for
-    // ordinary string properties. Symbol and indexed-exotic descriptors stay
-    // in their keyed side tables until those exotic cells are folded into the
-    // same representation.
+    keys: Vec<property_key::PropertyKey>,
+    slots: FxHashMap<property_key::PropertyKey, u32>,
     descriptors: Vec<PropertyAttributes>,
+    storage_len: usize,
 }
 const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
     left: Value::UNDEFINED,
@@ -179,19 +197,31 @@ const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
 };
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
-    User(u32, Value),
-    NumericUser(u32, Value),
+    User(ProgramId, u32, Value),
+    NumericUser(ProgramId, u32, Value),
     Native(Native),
 }
 pub(super) enum StepResult {
     Continue,
     TailCall,
     Return(Value),
-    Await { value: Value, destination: Register },
-    Yield { value: Value, destination: Register },
+    Await {
+        value: Value,
+        destination: Register,
+    },
+    Yield {
+        value: Value,
+        destination: Register,
+        delegated_result: Option<Value>,
+    },
 }
 pub(super) enum FrameOutcome {
     Complete(Value),
+    ConstructComplete {
+        value: Value,
+        this: Value,
+    },
+    ParameterInitializationComplete,
     Await {
         value: Value,
         destination: Register,
@@ -200,6 +230,7 @@ pub(super) enum FrameOutcome {
     Yield {
         value: Value,
         destination: Register,
+        delegated_result: Option<Value>,
         frame: Option<Frame>,
     },
 }
@@ -218,6 +249,7 @@ struct InvalidatedMethod {
 }
 const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     shape: u32::MAX,
+    atom: u32::MAX,
     proto: Value::UNDEFINED,
     target: None,
 };
@@ -246,6 +278,7 @@ pub struct Vm<H> {
     object_proto: Value,
     function_proto: Value,
     array_proto: Value,
+    string_proto: Value,
     array_buffer_proto: Value,
     uint8_array_proto: Value,
     uint8_clamped_array_proto: Value,
@@ -268,8 +301,6 @@ pub struct Vm<H> {
     iterator_proto: Value,
     async_iterator_proto: Value,
     regexp_proto: Value,
-    constants: Vec<Value>,
-    const_arrays: Vec<Option<Rc<Vec<Value>>>>,
     natives: Vec<(Native, Value)>,
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
@@ -277,10 +308,12 @@ pub struct Vm<H> {
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     promise: PromiseRuntime,
+    programs: ProgramStore,
+    active_program: ProgramId,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Shape>,
-    transitions: FxHashMap<(u32, Atom), u32>,
+    transitions: FxHashMap<(u32, property_key::PropertyKey), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
@@ -294,22 +327,24 @@ pub struct Vm<H> {
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
     size_atom: Atom,
+    byte_length_atom: Atom,
+    byte_offset_atom: Atom,
+    buffer_atom: Atom,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
-    primitive_atoms: [Atom; 8],
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
-    symbol_properties: FxHashMap<(Value, property_key::PropertyKey), Value>,
-    symbol_property_order: FxHashMap<Value, Vec<property_key::PropertyKey>>,
     // Closure identity cache is indexed by function id; each function keeps
     // the small set of captured environments it has materialized.
-    function_values: Vec<Vec<(Value, Value)>>,
+    function_values: FxHashMap<(ProgramId, u32), Vec<(Value, Value)>>,
     direct_eval: bool,
     parameter_eval: bool,
+    eval_script_context: bool,
+    deferred_dependency_batch: bool,
     construct_target: Option<Value>,
     random_state: u64,
 }
@@ -333,14 +368,214 @@ impl<H: Host> Vm<H> {
     pub fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
     }
+    pub(super) fn instantiate_global_declarations(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        if program.module {
+            return Ok(());
+        }
+        let Some(root) = program.functions.first() else {
+            return Ok(());
+        };
+        for atom in root.global_lexical_atoms.iter().copied() {
+            if self.realm.global_lexical_declarations.contains(&atom) {
+                return self
+                    .syntax_error_result(program, "global lexical declaration already exists")
+                    .map(|_| ());
+            }
+            let key = PropertyKey::string(atom);
+            if self.own_property(self.realm.globals, atom).is_some()
+                && self
+                    .property_attributes(self.realm.globals, key)
+                    .is_some_and(|attributes| !attributes.configurable)
+            {
+                return self
+                    .syntax_error_result(
+                        program,
+                        "global lexical declaration conflicts with restricted property",
+                    )
+                    .map(|_| ());
+            }
+            if self.eval_script_context {
+                self.realm
+                    .global_lexical_bindings
+                    .insert(atom, Value::DELETED);
+            }
+        }
+        self.realm
+            .global_lexical_declarations
+            .extend(root.global_lexical_atoms.iter().copied());
+        if self.eval_script_context {
+            self.realm.immutable_global_lexical_bindings.extend(
+                root.global_immutable_atoms
+                    .iter()
+                    .copied()
+                    .filter(|atom| root.global_lexical_atoms.contains(atom)),
+            );
+        }
+        if root
+            .global_var_atoms
+            .iter()
+            .any(|atom| self.realm.global_lexical_declarations.contains(atom))
+        {
+            return self
+                .syntax_error_result(
+                    program,
+                    "global var declaration conflicts with lexical binding",
+                )
+                .map(|_| ());
+        }
+        for atom in root.global_function_atoms.iter().copied() {
+            let key = PropertyKey::string(atom);
+            let Some(attributes) = self.property_attributes(self.realm.globals, key) else {
+                if self
+                    .object_data(self.realm.globals)
+                    .is_some_and(|object| !object.is_extensible())
+                {
+                    return Err(self.type_error(program, "cannot declare global function".into()));
+                }
+                self.set_property(self.realm.globals, atom, Value::UNDEFINED)?;
+                self.set_property_attributes(
+                    self.realm.globals,
+                    key,
+                    PropertyAttributes {
+                        writable: true,
+                        enumerable: true,
+                        configurable: false,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    },
+                );
+                continue;
+            };
+            if attributes.configurable {
+                self.set_property_attributes(
+                    self.realm.globals,
+                    key,
+                    PropertyAttributes {
+                        writable: true,
+                        enumerable: true,
+                        configurable: false,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    },
+                );
+            } else if attributes.accessor || !attributes.writable || !attributes.enumerable {
+                return Err(self.type_error(program, "cannot declare global function".into()));
+            }
+        }
+        for atom in root.global_var_atoms.iter().copied() {
+            if self.own_property(self.realm.globals, atom).is_some() {
+                continue;
+            }
+            if self
+                .object_data(self.realm.globals)
+                .is_some_and(|object| !object.is_extensible())
+            {
+                return Err(self.type_error(program, "cannot declare global var".into()));
+            }
+            self.set_property(self.realm.globals, atom, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                self.realm.globals,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        Ok(())
+    }
+    pub(super) fn mirror_global_lexical_binding(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+        slot: usize,
+        value: Value,
+    ) {
+        if !self.eval_script_context {
+            return;
+        }
+        let Some(current) = self.frames.get(frame) else {
+            return;
+        };
+        if current.function != ROOT_FUNCTION_ID {
+            return;
+        }
+        let Some(atom) = program.functions[ROOT_FUNCTION_ID as usize]
+            .local_atoms
+            .get(slot)
+            .copied()
+        else {
+            return;
+        };
+        if program.functions[ROOT_FUNCTION_ID as usize]
+            .global_lexical_atoms
+            .contains(&atom)
+        {
+            self.realm.global_lexical_bindings.insert(atom, value);
+        }
+    }
+    pub(super) fn persist_global_lexical_bindings(
+        &mut self,
+        program: &ResidualProgram,
+        frame: &Frame,
+    ) {
+        if !self.eval_script_context || frame.function != ROOT_FUNCTION_ID {
+            return;
+        }
+        let metadata = &program.functions[ROOT_FUNCTION_ID as usize];
+        let bindings = metadata
+            .global_lexical_atoms
+            .iter()
+            .map(|atom| {
+                let value = metadata
+                    .local_atoms
+                    .iter()
+                    .position(|candidate| candidate == atom)
+                    .and_then(|slot| {
+                        if frame.captured {
+                            match self.heap.get(frame.env) {
+                                Some(Cell::Environment { slots, .. }) => slots.get(slot).copied(),
+                                _ => None,
+                            }
+                        } else {
+                            frame.locals.get(slot).copied()
+                        }
+                    })
+                    .unwrap_or(Value::DELETED);
+                (
+                    *atom,
+                    if value.is_deleted() {
+                        Value::UNDEFINED
+                    } else {
+                        value
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        self.realm.global_lexical_bindings.extend(bindings);
+    }
     pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.initialize(program)?;
+        if program.module {
+            self.evaluate_program_module_requests(program)?;
+        }
+        self.instantiate_global_declarations(program)?;
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
             self.report_memory("initialized");
         }
         let root = self.closure(program, 0, Value::NULL)?;
         let result = self.call_value(program, root, self.realm.globals, &[]);
+        self.finish_main_module(program, &result)?;
         let jobs = self.drain_jobs(program);
         self.profile.report(&self.heap, program);
         #[cfg(feature = "profile-memory")]
@@ -364,7 +599,7 @@ impl<H: Host> Vm<H> {
         let shape_bytes: usize = self
             .shapes
             .iter()
-            .map(|shape| shape.keys.capacity() * size_of::<Atom>())
+            .map(|shape| shape.keys.capacity() * size_of::<property_key::PropertyKey>())
             .sum();
         let max_shape_width = self
             .shapes
@@ -412,17 +647,19 @@ impl<H: Host> Vm<H> {
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.specialized = program.specialized;
         self.heap.reset();
-        self.constants.clear();
-        self.const_arrays.clear();
         self.natives.clear();
         self.frames.clear();
         self.frame_pool.clear();
         self.realm.jobs.clear();
+        self.realm.global_lexical_declarations.clear();
+        self.realm.global_lexical_bindings.clear();
+        self.realm.immutable_global_lexical_bindings.clear();
         self.with_stack.clear();
         self.suspended.clear();
         self.suspended_free.clear();
         self.direct_eval = false;
         self.parameter_eval = false;
+        self.eval_script_context = false;
         self.construct_target = None;
         self.promise = Default::default();
         self.numeric_sites.clear();
@@ -445,32 +682,28 @@ impl<H: Host> Vm<H> {
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
         self.size_atom = self.intern_atom("size");
+        self.byte_length_atom = self.intern_atom("byteLength");
+        self.byte_offset_atom = self.intern_atom("byteOffset");
+        self.buffer_atom = self.intern_atom("buffer");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
-        self.primitive_atoms = [
-            self.intern_atom("charCodeAt"),
-            self.intern_atom("charAt"),
-            self.intern_atom("substring"),
-            self.intern_atom("substr"),
-            self.intern_atom("toString"),
-            self.intern_atom("includes"),
-            self.intern_atom("startsWith"),
-            self.intern_atom("endsWith"),
-        ];
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
         self.megamorphic_methods.clear();
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
         self.descriptors.clear();
-        self.symbol_properties.clear();
-        self.symbol_property_order.clear();
         self.function_values.clear();
-        self.function_values
-            .resize_with(program.functions.len(), Vec::new);
+        self.programs.reset(program);
+        self.active_program = ProgramId::MAIN;
         self.finalization_registry_proto = Value::NULL;
-        self.random_state = 0x4d59_5df4_d0f3_3173;
+        self.random_state = DEFAULT_RANDOM_SEED;
         self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        self.materialize_program_constants(ProgramId::MAIN, program);
+        self.install_builtins(program)
+    }
+    fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
+        let mut constants = Vec::with_capacity(program.constants.len());
         for constant in &program.constants {
             let value = match constant {
                 Constant::Number(v) => Value::number(*v),
@@ -482,10 +715,30 @@ impl<H: Host> Vm<H> {
                 Constant::Null => Value::NULL,
                 Constant::Undefined => Value::UNDEFINED,
             };
-            self.constants.push(value);
+            constants.push(value);
         }
-        self.const_arrays.resize(self.constants.len(), None);
-        self.install_builtins(program)
+        self.programs.set_constants(id, constants);
+    }
+    pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
+        self.intern_program_atoms(&program);
+        let id = self.programs.insert_module(program)?;
+        let residual = self.programs.get(id)?;
+        self.materialize_program_constants(id, &residual);
+        Some(id)
+    }
+    pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
+        self.intern_program_atoms(&program);
+        let id = self.programs.insert(program)?;
+        let residual = self.programs.get(id)?;
+        self.materialize_program_constants(id, &residual);
+        Some(id)
+    }
+    fn intern_program_atoms(&mut self, program: &ResidualProgram) {
+        let first_new_atom = self.atom_text.len() + self.dynamic_atoms.len();
+        for (index, name) in program.atoms.iter().enumerate().skip(first_new_atom) {
+            let atom = self.intern_atom(name);
+            debug_assert_eq!(atom as usize, index);
+        }
     }
     fn call_value(
         &mut self,
@@ -508,14 +761,70 @@ impl<H: Host> Vm<H> {
                 }
                 self.call_native_guarded(p, native, this, args, callee)
             }
-            CallTarget::User(id, env) => {
+            CallTarget::User(program_id, id, env) => {
                 self.profile.call_target(1, args.len());
-                self.call_user_maybe_async(p, id, env, this, args)
+                let program = self.programs.get(program_id).ok_or_else(|| {
+                    self.type_error(p, "function belongs to an unavailable program".into())
+                })?;
+                let active_program = std::mem::replace(&mut self.active_program, program_id);
+                let realm = match self.heap.get(callee) {
+                    Some(Cell::Function { realm, .. }) => *realm,
+                    _ => self.realm.globals,
+                };
+                let current_global = std::mem::replace(&mut self.realm.globals, realm);
+                let result = self.call_user_maybe_async(&program, id, env, this, args);
+                self.active_program = active_program;
+                self.realm.globals = current_global;
+                result
             }
-            CallTarget::NumericUser(id, env) => {
+            CallTarget::NumericUser(program_id, id, env) => {
                 self.profile.call_target(2, args.len());
-                self.call_user_numeric(p, id, env, this, NumericArguments::Values(args))
+                let program = self.programs.get(program_id).ok_or_else(|| {
+                    self.type_error(p, "function belongs to an unavailable program".into())
+                })?;
+                let active_program = std::mem::replace(&mut self.active_program, program_id);
+                let realm = match self.heap.get(callee) {
+                    Some(Cell::Function { realm, .. }) => *realm,
+                    _ => self.realm.globals,
+                };
+                let current_global = std::mem::replace(&mut self.realm.globals, realm);
+                let result =
+                    self.call_user_numeric(&program, id, env, this, NumericArguments::Values(args));
+                self.active_program = active_program;
+                self.realm.globals = current_global;
+                result
             }
+        }
+    }
+
+    pub(super) fn call_user_for_construct(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        args: &[Value],
+    ) -> Result<(Value, Value), JsError> {
+        let (program_id, id, env, realm) = match self.heap.get(callee) {
+            Some(Cell::Function {
+                kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
+                env,
+                realm,
+                ..
+            }) => (*program_id, *id, *env, *realm),
+            _ => return Err(self.type_error(p, "constructor is not a user function".into())),
+        };
+        let program = self.programs.get(program_id).ok_or_else(|| {
+            self.type_error(p, "function belongs to an unavailable program".into())
+        })?;
+        let previous_program = std::mem::replace(&mut self.active_program, program_id);
+        let previous_global = std::mem::replace(&mut self.realm.globals, realm);
+        let outcome = self.call_user_construct_frame(&program, id, env, args);
+        self.active_program = previous_program;
+        self.realm.globals = previous_global;
+        match outcome? {
+            FrameOutcome::ConstructComplete { value, this } => Ok((value, this)),
+            _ => Err(JsError(
+                "constructor activation did not complete synchronously".into(),
+            )),
         }
     }
 }

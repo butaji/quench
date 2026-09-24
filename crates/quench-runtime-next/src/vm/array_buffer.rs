@@ -8,6 +8,7 @@ impl<H: Host> Vm<H> {
             detached,
             max_byte_length,
             resizable,
+            immutable,
             ..
         }) = self.heap.get(object)
         else {
@@ -16,6 +17,7 @@ impl<H: Host> Vm<H> {
         let max_atom = self.lookup_atom("maxByteLength");
         let resizable_atom = self.lookup_atom("resizable");
         let growable_atom = self.lookup_atom("growable");
+        let immutable_atom = self.lookup_atom("immutable");
         let length = if *detached { 0 } else { bytes.len() };
         if max_atom == Some(atom) {
             return Some(Value::number(if *detached {
@@ -35,6 +37,13 @@ impl<H: Host> Vm<H> {
         }
         if growable_atom == Some(atom) {
             return Some(if *shared && *resizable && !*detached {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            });
+        }
+        if immutable_atom == Some(atom) {
+            return Some(if *immutable {
                 Value::TRUE
             } else {
                 Value::FALSE
@@ -159,6 +168,7 @@ impl<H: Host> Vm<H> {
             detached: false,
             max_byte_length,
             resizable,
+            immutable: false,
         });
         self.intern_atom("byteLength");
         Ok(buffer)
@@ -210,20 +220,22 @@ impl<H: Host> Vm<H> {
             detached: false,
             max_byte_length: end.saturating_sub(start),
             resizable: false,
+            immutable: false,
         }))
     }
 
     pub(super) fn array_buffer_transfer_native(&mut self, this: Value) -> Result<Value, JsError> {
-        let (bytes, shared, detached) = match self.heap.get(this) {
+        let (bytes, shared, detached, immutable) = match self.heap.get(this) {
             Some(Cell::ArrayBuffer {
                 bytes,
                 shared,
                 detached,
+                immutable,
                 ..
-            }) => (Rc::clone(bytes), *shared, *detached),
+            }) => (Rc::clone(bytes), *shared, *detached, *immutable),
             _ => return Err(JsError("ArrayBuffer.transfer receiver is invalid".into())),
         };
-        if shared || detached {
+        if shared || detached || immutable {
             return Err(JsError("ArrayBuffer cannot be transferred".into()));
         }
         let length = bytes.len();
@@ -234,6 +246,7 @@ impl<H: Host> Vm<H> {
             detached: false,
             max_byte_length: length,
             resizable: false,
+            immutable: false,
         });
         let released = if let Some(Cell::ArrayBuffer {
             bytes, detached, ..
@@ -268,12 +281,13 @@ impl<H: Host> Vm<H> {
                 detached,
                 max_byte_length,
                 resizable,
+                immutable,
                 ..
             }) = self.heap.get_mut(this)
             else {
                 return Err(JsError("ArrayBuffer.resize receiver is invalid".into()));
             };
-            if *shared || *detached || !*resizable || requested > *max_byte_length {
+            if *shared || *detached || *immutable || !*resizable || requested > *max_byte_length {
                 return Err(JsError("ArrayBuffer is not resizable".into()));
             }
             let before = bytes.capacity();
@@ -327,20 +341,21 @@ impl<H: Host> Vm<H> {
         &mut self,
         this: Value,
     ) -> Result<Value, JsError> {
-        let (bytes, shared, detached) = match self.heap.get(this) {
+        let (bytes, shared, detached, immutable) = match self.heap.get(this) {
             Some(Cell::ArrayBuffer {
                 bytes,
                 shared,
                 detached,
+                immutable,
                 ..
-            }) => (Rc::clone(bytes), *shared, *detached),
+            }) => (Rc::clone(bytes), *shared, *detached, *immutable),
             _ => {
                 return Err(JsError(
                     "ArrayBuffer.transferToFixedLength receiver is invalid".into(),
                 ));
             }
         };
-        if shared || detached {
+        if shared || detached || immutable {
             return Err(JsError("ArrayBuffer cannot be transferred".into()));
         }
         let length = bytes.len();
@@ -351,6 +366,7 @@ impl<H: Host> Vm<H> {
             detached: false,
             max_byte_length: length,
             resizable: false,
+            immutable: false,
         });
         let released = if let Some(Cell::ArrayBuffer {
             bytes,

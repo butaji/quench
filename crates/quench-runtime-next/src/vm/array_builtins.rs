@@ -1,5 +1,7 @@
 use super::*;
 
+const ARRAY_CONSTRUCTOR_LENGTH: f64 = 1.0;
+
 impl<H: Host> Vm<H> {
     pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
@@ -46,17 +48,19 @@ impl<H: Host> Vm<H> {
             ("values", Native::ArrayValues),
             ("entries", Native::ArrayEntries),
         ] {
-            self.set_named(program, self.array_proto, name, self.native_value(native))?;
+            self.set_builtin_named(program, self.array_proto, name, native)?;
         }
-        self.set_named(program, array, "prototype", self.array_proto)?;
-        self.set_named(program, array, "from", self.native_value(Native::ArrayFrom))?;
-        self.set_named(program, array, "of", self.native_value(Native::ArrayOf))?;
+        self.set_builtin_named(program, self.array_proto, "constructor", Native::Array)?;
         self.set_named(
             program,
             array,
-            "isArray",
-            self.native_value(Native::ArrayIsArray),
+            "length",
+            Value::number(ARRAY_CONSTRUCTOR_LENGTH),
         )?;
+        self.set_named(program, array, "prototype", self.array_proto)?;
+        self.set_builtin_named(program, array, "from", Native::ArrayFrom)?;
+        self.set_builtin_named(program, array, "of", Native::ArrayOf)?;
+        self.set_builtin_named(program, array, "isArray", Native::ArrayIsArray)?;
         self.global(program, "Array", array)
     }
 }

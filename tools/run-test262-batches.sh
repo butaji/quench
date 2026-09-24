@@ -4,6 +4,10 @@ set -euo pipefail
 # Run the complete sorted Test262 discovery list in restartable, sequential
 # batches. Stage metadata is intentionally not used: it does not cover every
 # runnable file in the pinned checkout.
+if [[ ! "${TEST262_TEST_TIMEOUT_MS:-}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds" >&2
+  exit 2
+fi
 batch_size="${TEST262_BATCH_SIZE:-1000}"
 batch_count="${TEST262_BATCH_COUNT:-54}"
 runner="${TEST262_RUNNER:-target/release/run-all}"

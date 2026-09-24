@@ -183,24 +183,43 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_integrity_atoms(&mut self, target: Value) -> Vec<Atom> {
-        self.array_present_indices(target)
+        let mut atoms = self
+            .array_present_indices(target)
             .into_iter()
             .map(|index| self.intern_atom(&index.to_string()))
-            .collect()
+            .collect::<Vec<_>>();
+        if matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+            atoms.push(self.length_atom);
+        }
+        atoms
     }
 
     pub(super) fn array_is_integrity_level(&self, target: Value, freeze: bool) -> bool {
-        self.array_present_indices(target).into_iter().all(|index| {
-            let Some(atom) = self.lookup_atom(&index.to_string()) else {
-                return false;
-            };
-            let attributes = self
-                .descriptors
-                .get(&(target, PropertyKey::string(atom)))
-                .copied()
-                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            !attributes.configurable && (!freeze || !attributes.writable)
-        })
+        let length_attributes = self
+            .descriptors
+            .get(&(target, PropertyKey::string(self.length_atom)))
+            .copied()
+            .unwrap_or(PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            });
+        !length_attributes.configurable
+            && (!freeze || !length_attributes.writable)
+            && self.array_present_indices(target).into_iter().all(|index| {
+                let Some(atom) = self.lookup_atom(&index.to_string()) else {
+                    return false;
+                };
+                let attributes = self
+                    .descriptors
+                    .get(&(target, PropertyKey::string(atom)))
+                    .copied()
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                !attributes.configurable && (!freeze || !attributes.writable)
+            })
     }
 
     pub(super) fn define_array_property(
@@ -419,6 +438,7 @@ impl<H: Host> Vm<H> {
         if !attributes.configurable {
             return Value::FALSE;
         }
+        self.unmap_argument_index(target, index);
         if present {
             if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target)
                 && index < elements.len()
