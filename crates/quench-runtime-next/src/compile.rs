@@ -21,6 +21,7 @@ mod early;
 mod liveness;
 mod locals;
 mod numeric;
+mod regexp;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 mod rewrite;
@@ -909,6 +910,9 @@ impl<'a> Compiler<'a> {
                 Span::default(),
                 "SyntaxError: assignment to eval is not allowed in strict mode",
             );
+        }
+        if let Some(error) = early::regexp_early_error(program) {
+            self.reject(Span::default(), error);
         }
         if let Some(error) = early::block_early_error(program) {
             self.reject(Span::default(), error);
