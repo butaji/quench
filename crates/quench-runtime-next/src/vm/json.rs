@@ -1,6 +1,25 @@
+use super::property_key::PropertyKey;
 use super::wtf16::JsString;
 use super::*;
+use crate::unicode;
 use std::fmt::Write as _;
+
+const JSON_NULL_INITIAL: u16 = b'n' as u16;
+const JSON_TRUE_INITIAL: u16 = b't' as u16;
+const JSON_FALSE_INITIAL: u16 = b'f' as u16;
+const JSON_QUOTE: u16 = b'"' as u16;
+const JSON_ESCAPE: u16 = b'\\' as u16;
+const JSON_ARRAY_START: u16 = b'[' as u16;
+const JSON_OBJECT_START: u16 = b'{' as u16;
+const JSON_MINUS: u16 = b'-' as u16;
+const JSON_DIGIT_START: u16 = b'0' as u16;
+const JSON_DIGIT_END: u16 = b'9' as u16;
+const JSON_UNESCAPED_START: u16 = b' ' as u16;
+const JSON_HEX_ESCAPE_DIGITS: usize = 4;
+const JSON_HEX_LETTER_VALUE_START: u16 = 10;
+const JSON_BACKSPACE: u16 = b'\x08' as u16;
+const JSON_FORM_FEED: u16 = b'\x0C' as u16;
+const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r' as u16];
 
 enum JsonValue {
     Null,
@@ -17,15 +36,12 @@ fn write_json_string(value: &JsString, output: &mut String) {
     let mut index = 0;
     while index < units.len() {
         let unit = units[index];
-        let scalar = if (0xD800..=0xDBFF).contains(&unit)
-            && units
-                .get(index + 1)
-                .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
+        let scalar = if let Some(code_point) = units
+            .get(index + 1)
+            .and_then(|low| unicode::decode_surrogate_pair(unit, *low))
         {
-            let high = u32::from(unit) - 0xD800;
-            let low = u32::from(units[index + 1]) - 0xDC00;
             index += 2;
-            Some(char::from_u32(0x1_0000 + (high << 10) + low).expect("valid surrogate pair"))
+            Some(char::from_u32(code_point).expect("valid surrogate pair"))
         } else {
             index += 1;
             char::from_u32(u32::from(unit))
@@ -103,13 +119,13 @@ impl<'a> JsonParser<'a> {
     fn value(&mut self) -> Result<JsonValue, String> {
         self.whitespace();
         match self.peek() {
-            Some(110) => self.literal(b"null", JsonValue::Null),
-            Some(116) => self.literal(b"true", JsonValue::Bool(true)),
-            Some(102) => self.literal(b"false", JsonValue::Bool(false)),
-            Some(34) => self.string().map(JsonValue::String),
-            Some(91) => self.array(),
-            Some(123) => self.object(),
-            Some(45 | 48..=57) => self.number(),
+            Some(JSON_NULL_INITIAL) => self.literal(b"null", JsonValue::Null),
+            Some(JSON_TRUE_INITIAL) => self.literal(b"true", JsonValue::Bool(true)),
+            Some(JSON_FALSE_INITIAL) => self.literal(b"false", JsonValue::Bool(false)),
+            Some(JSON_QUOTE) => self.string().map(JsonValue::String),
+            Some(JSON_ARRAY_START) => self.array(),
+            Some(JSON_OBJECT_START) => self.object(),
+            Some(JSON_MINUS | JSON_DIGIT_START..=JSON_DIGIT_END) => self.number(),
             _ => Err("expected JSON value".into()),
         }
     }
@@ -127,13 +143,13 @@ impl<'a> JsonParser<'a> {
     }
 
     fn string(&mut self) -> Result<JsString, String> {
-        self.expect(b'"')?;
+        self.expect(JSON_QUOTE as u8)?;
         let mut units = Vec::new();
         loop {
             match self.take() {
-                Some(34) => return Ok(JsString::from_units(&units)),
-                Some(92) => self.escape(&mut units)?,
-                Some(unit) if unit >= 0x20 => units.push(unit),
+                Some(JSON_QUOTE) => return Ok(JsString::from_units(&units)),
+                Some(JSON_ESCAPE) => self.escape(&mut units)?,
+                Some(unit) if unit >= JSON_UNESCAPED_START => units.push(unit),
                 _ => return Err("unterminated JSON string".into()),
             }
         }
@@ -144,13 +160,15 @@ impl<'a> JsonParser<'a> {
             .take()
             .ok_or_else(|| "unterminated escape".to_owned())?;
         match unit {
-            34 | 92 | 47 => output.push(unit),
-            98 => output.push(0x08),
-            102 => output.push(0x0c),
-            110 => output.push(b'\n' as u16),
-            114 => output.push(b'\r' as u16),
-            116 => output.push(b'\t' as u16),
-            117 => output.push(self.hex_escape()?),
+            value if value == JSON_QUOTE || value == JSON_ESCAPE || value == b'/' as u16 => {
+                output.push(value)
+            }
+            value if value == b'b' as u16 => output.push(JSON_BACKSPACE),
+            value if value == b'f' as u16 => output.push(JSON_FORM_FEED),
+            value if value == b'n' as u16 => output.push(b'\n' as u16),
+            value if value == b'r' as u16 => output.push(b'\r' as u16),
+            value if value == b't' as u16 => output.push(b'\t' as u16),
+            value if value == b'u' as u16 => output.push(self.hex_escape()?),
             _ => return Err("invalid JSON escape".into()),
         }
         Ok(())
@@ -158,7 +176,7 @@ impl<'a> JsonParser<'a> {
 
     fn hex_escape(&mut self) -> Result<u16, String> {
         let mut value = 0;
-        for _ in 0..4 {
+        for _ in 0..JSON_HEX_ESCAPE_DIGITS {
             let digit = self
                 .take()
                 .and_then(hex_digit)
@@ -214,16 +232,21 @@ impl<'a> JsonParser<'a> {
             Some(49..=57) => self.digits(),
             _ => return Err("invalid number".into()),
         }
-        if self.take_if(b'.') && !self.digit() {
-            return Err("invalid number".into());
-        }
-        if self.peek().is_some_and(|unit| unit == 69 || unit == 101) {
-            self.index += 1;
-            self.take_if(b'+');
-            self.take_if(b'-');
+        if self.take_if(b'.') {
             if !self.digit() {
                 return Err("invalid number".into());
             }
+            self.digits();
+        }
+        if self.peek().is_some_and(|unit| unit == 69 || unit == 101) {
+            self.index += 1;
+            if !self.take_if(b'+') {
+                self.take_if(b'-');
+            }
+            if !self.digit() {
+                return Err("invalid number".into());
+            }
+            self.digits();
         }
         let text = String::from_utf16(&self.units[start..self.index])
             .map_err(|_| "invalid number".to_owned())?;
@@ -240,7 +263,10 @@ impl<'a> JsonParser<'a> {
     }
 
     fn digit(&mut self) -> bool {
-        if self.peek().is_some_and(|unit| (48..=57).contains(&unit)) {
+        if self
+            .peek()
+            .is_some_and(|unit| (JSON_DIGIT_START..=JSON_DIGIT_END).contains(&unit))
+        {
             self.index += 1;
             true
         } else {
@@ -251,7 +277,7 @@ impl<'a> JsonParser<'a> {
     fn whitespace(&mut self) {
         while self
             .peek()
-            .is_some_and(|unit| matches!(unit, 0x20 | 0x09 | 0x0a | 0x0d))
+            .is_some_and(|unit| JSON_WHITESPACE.contains(&unit))
         {
             self.index += 1;
         }
@@ -285,9 +311,13 @@ impl<'a> JsonParser<'a> {
 
 fn hex_digit(unit: u16) -> Option<u16> {
     match unit {
-        48..=57 => Some(unit - 48),
-        97..=102 => Some(unit - 97 + 10),
-        65..=70 => Some(unit - 65 + 10),
+        value if (b'0' as u16..=b'9' as u16).contains(&value) => Some(value - b'0' as u16),
+        value if (b'a' as u16..=b'f' as u16).contains(&value) => {
+            Some(value - b'a' as u16 + JSON_HEX_LETTER_VALUE_START)
+        }
+        value if (b'A' as u16..=b'F' as u16).contains(&value) => {
+            Some(value - b'A' as u16 + JSON_HEX_LETTER_VALUE_START)
+        }
         _ => None,
     }
 }
@@ -299,9 +329,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let parsed = JsonParser::new(text.units())
-            .parse()
-            .map_err(|error| JsError(format!("JSON parse: {error}").into()))?;
+        let parsed = match JsonParser::new(text.units()).parse() {
+            Ok(parsed) => parsed,
+            Err(error) => return self.syntax_error_result(p, &error),
+        };
         self.parse_json_value(&parsed)
     }
 
@@ -425,10 +456,20 @@ impl<H: Host> Vm<H> {
                 }
                 ancestors.push(value);
                 let shape = object.shape();
-                let keys = self.shapes[shape as usize].keys.clone();
+                let keys = self.shapes[shape as usize]
+                    .keys
+                    .iter()
+                    .filter_map(|key| match key {
+                        PropertyKey::String(atom) => self.shapes[shape as usize]
+                            .slots
+                            .get(key)
+                            .map(|slot| (*atom, *slot as usize)),
+                        PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
+                    })
+                    .collect::<Vec<_>>();
                 let mut output = Vec::new();
                 let result = (|| {
-                    for (slot, atom) in keys.into_iter().enumerate() {
+                    for (atom, slot) in keys {
                         let Some(value) = self.heap.property_get(&object, slot) else {
                             continue;
                         };

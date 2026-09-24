@@ -1,4 +1,26 @@
-use super::{Effect, Op, RETURN_REGISTER, Register, SET_THIS_REGISTER};
+use super::{
+    Effect, ImmediateLayout, Op, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout,
+    SET_THIS_REGISTER,
+};
+
+const PACKED_PAIR_LOW_BITS: u32 = 8;
+const PACKED_PAIR_HIGH_BITS: u32 = 7;
+const PACKED_PAIR_SOURCE_SHIFT: u32 = u16::BITS;
+const PACKED_PAIR_SOURCE_MASK: u32 = u16::MAX as u32;
+const PACKED_PAIR_LOW_MASK: u32 = (1 << PACKED_PAIR_LOW_BITS) - 1;
+const PACKED_PAIR_HIGH_MASK: u32 = (1 << PACKED_PAIR_HIGH_BITS) - 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegisterWindow {
+    pub(crate) base: Register,
+    pub(crate) count: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ConstructArguments {
+    Registers(RegisterWindow),
+    Array(Register),
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WideInstruction {
@@ -43,6 +65,98 @@ impl WideInstruction {
     }
 }
 
+macro_rules! layout_accessors {
+    ($instruction:ty) => {
+        impl $instruction {
+            pub(crate) fn result_register(self) -> Register {
+                self.a() & REGISTER_MASK
+            }
+
+            pub(crate) fn returns_from_frame(self) -> bool {
+                self.op().result_layout().allows_return() && self.a() & RETURN_REGISTER != 0
+            }
+
+            pub(crate) fn writes_current_this(self) -> bool {
+                self.op().result_layout().allows_this_write() && self.a() & SET_THIS_REGISTER != 0
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn writes_numeric_local(self) -> bool {
+                self.op().result_layout().allows_numeric_local()
+                    && self.a() & super::NUMERIC_LOCAL_TARGET != 0
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn result_flags_valid(self) -> bool {
+                let layout: ResultLayout = self.op().result_layout();
+                self.a() & !REGISTER_MASK & !layout.allowed_flags() == 0
+            }
+
+            pub(crate) fn call_window(self) -> RegisterWindow {
+                debug_assert!(matches!(
+                    self.op().immediate_layout(),
+                    ImmediateLayout::CallWindow | ImmediateLayout::CallWindowWithEvalFlags
+                ));
+                let immediate = self.imm();
+                RegisterWindow {
+                    base: ImmediateLayout::call_window_base(immediate),
+                    count: ImmediateLayout::argument_count(immediate),
+                }
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn capture_depth(self) -> u16 {
+                debug_assert_eq!(
+                    self.op().immediate_layout(),
+                    ImmediateLayout::CaptureDepthAndSlot
+                );
+                ImmediateLayout::capture_depth(self.imm())
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn capture_slot(self) -> u16 {
+                debug_assert_eq!(
+                    self.op().immediate_layout(),
+                    ImmediateLayout::CaptureDepthAndSlot
+                );
+                ImmediateLayout::capture_slot(self.imm())
+            }
+
+            pub(crate) fn register_pair(self) -> (Register, Register) {
+                debug_assert_eq!(self.op().immediate_layout(), ImmediateLayout::RegisterPair);
+                ImmediateLayout::register_pair(self.imm())
+            }
+
+            pub(crate) fn construct_arguments(self) -> ConstructArguments {
+                debug_assert_eq!(
+                    self.op().immediate_layout(),
+                    ImmediateLayout::ConstructCountAndFlags
+                );
+                let base = self.c();
+                if ImmediateLayout::construct_array_arguments(self.imm()) {
+                    ConstructArguments::Array(base)
+                } else {
+                    ConstructArguments::Registers(RegisterWindow {
+                        base,
+                        count: ImmediateLayout::argument_count(self.imm()),
+                    })
+                }
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn is_super_construct(self) -> bool {
+                debug_assert_eq!(
+                    self.op().immediate_layout(),
+                    ImmediateLayout::ConstructCountAndFlags
+                );
+                ImmediateLayout::super_construct(self.imm())
+            }
+        }
+    };
+}
+
+layout_accessors!(WideInstruction);
+
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Instr(u64);
@@ -64,13 +178,38 @@ const _: () = assert!(std::mem::size_of::<Instr>() == 8);
 const _: () = assert!(Op::COUNT <= 1 << Instr::OP_BITS);
 
 impl Instr {
-    const OP_BITS: u32 = 6;
+    // Keep the packed instruction at 64 bits while allowing the opcode set to
+    // grow. The explicit Wide form carries full-width operands when this
+    // slightly smaller narrow immediate is insufficient.
+    const OP_BITS: u32 = 7;
     const FIELD_BITS: u32 = 14;
     const FIELD_MASK: u64 = (1 << Self::FIELD_BITS) - 1;
+    const FIELD_TAG_BITS: u32 = 2;
+    const FIELD_PAYLOAD_BITS: u32 = Self::FIELD_BITS - Self::FIELD_TAG_BITS;
+    const FIELD_TAG_SHIFT: u32 = Self::FIELD_BITS - Self::FIELD_TAG_BITS;
+    const FIELD_RESERVED_TAG_MASK: u16 = ((1 << Self::FIELD_TAG_BITS) - 1) << Self::FIELD_TAG_SHIFT;
+    const FIELD_PAYLOAD_MASK: u16 = (1 << Self::FIELD_PAYLOAD_BITS) - 1;
+    const FIELD_SOURCE_HIGH_SHIFT: u32 = Self::FIELD_BITS;
+    const FIELD_PACKED_HIGH_SHIFT: u32 = Self::FIELD_PAYLOAD_BITS;
+    const FIELD_SENTINEL: u16 = Self::FIELD_MASK as u16 - 1;
+    const FIELD_SENTINEL_NEXT: u16 = Self::FIELD_SENTINEL + 1;
+    const FIELD_SENTINEL_START: u16 = u16::MAX - 1;
     const A_SHIFT: u32 = Self::OP_BITS;
     const B_SHIFT: u32 = Self::A_SHIFT + Self::FIELD_BITS;
     const C_SHIFT: u32 = Self::B_SHIFT + Self::FIELD_BITS;
     const IMM_SHIFT: u32 = Self::C_SHIFT + Self::FIELD_BITS;
+    const NARROW_IMMEDIATE_BITS: u32 = u64::BITS - Self::IMM_SHIFT;
+    const NARROW_IMMEDIATE_MASK: u32 = (1 << Self::NARROW_IMMEDIATE_BITS) - 1;
+
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) const fn field_fits(op: Op, position: usize, value: u16) -> bool {
+        Self::pack_field(op, position, value).is_some()
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) const fn immediate_fits(op: Op, value: u32) -> bool {
+        Self::pack_immediate(op, value).is_some()
+    }
 
     pub(crate) fn new(op: Op, a: Register, b: Register, c: Register, imm: u32) -> Self {
         Self::try_new(op, a, b, c, imm).expect("instruction exceeds packed domain")
@@ -92,7 +231,7 @@ impl Instr {
 
     pub(crate) fn wide(index: usize) -> Option<Self> {
         let index = u64::try_from(index).ok()?;
-        let max = (1_u64 << (Self::FIELD_BITS * 3 + 16)) - 1;
+        let max = (1_u64 << (Self::FIELD_BITS * 3 + (64 - Self::IMM_SHIFT))) - 1;
         (index <= max).then_some(Self(
             Op::Wide as u64
                 | ((index & Self::FIELD_MASK) << Self::A_SHIFT)
@@ -100,6 +239,17 @@ impl Instr {
                 | (((index >> (Self::FIELD_BITS * 2)) & Self::FIELD_MASK) << Self::C_SHIFT)
                 | ((index >> (Self::FIELD_BITS * 3)) << Self::IMM_SHIFT),
         ))
+    }
+
+    pub(crate) fn wide_from_fields(a: u16, b: u16, c: u16, imm: u32) -> Option<Self> {
+        if imm > Self::NARROW_IMMEDIATE_MASK {
+            return None;
+        }
+        let index = u64::from(a)
+            | (u64::from(b) << Self::FIELD_BITS)
+            | (u64::from(c) << (Self::FIELD_BITS * 2))
+            | (u64::from(imm) << (Self::FIELD_BITS * 3));
+        Self::wide(usize::try_from(index).ok()?)
     }
 
     pub(crate) const fn is_wide(self) -> bool {
@@ -160,6 +310,16 @@ impl Instr {
         *self = Self::new(self.op(), value, self.b(), self.c(), self.imm());
     }
 
+    pub(crate) fn set_returns_from_frame(&mut self) {
+        debug_assert!(self.op().result_layout().allows_return());
+        self.set_a(self.a() | RETURN_REGISTER);
+    }
+
+    pub(crate) fn set_this_result(&mut self) {
+        debug_assert!(self.op().result_layout().allows_this_write());
+        self.set_a(self.a() | SET_THIS_REGISTER);
+    }
+
     pub(crate) fn set_b(&mut self, value: u16) {
         *self = Self::new(self.op(), self.a(), value, self.c(), self.imm());
     }
@@ -172,40 +332,45 @@ impl Instr {
         *self = Self::new(self.op(), self.a(), self.b(), self.c(), value);
     }
 
-    const fn compound(op: Op) -> bool {
-        matches!(
-            op,
-            Op::LoadCapture | Op::StoreCapture | Op::Call | Op::CallKnown
-        )
-    }
-
     const fn pack_field(op: Op, position: usize, value: u16) -> Option<u16> {
-        if matches!(op, Op::GetField) && position == 1 && value >= u16::MAX - 1 {
-            return Some(0x3ffe + (value == u16::MAX) as u16);
+        if matches!(op, Op::GetField) && position == 1 && value >= Self::FIELD_SENTINEL_START {
+            return Some(if value == u16::MAX {
+                Self::FIELD_SENTINEL_NEXT
+            } else {
+                Self::FIELD_SENTINEL
+            });
         }
-        if value & 0x3000 != 0 {
+        if value & Self::FIELD_RESERVED_TAG_MASK != 0 {
             return None;
         }
-        Some((value & 0x0fff) | ((value >> 14) << 12))
+        Some(
+            (value & Self::FIELD_PAYLOAD_MASK)
+                | ((value >> Self::FIELD_SOURCE_HIGH_SHIFT) << Self::FIELD_PACKED_HIGH_SHIFT),
+        )
     }
 
     const fn unpack_field(op: Op, position: usize, packed: u16) -> u16 {
         let packed = packed & Self::FIELD_MASK as u16;
-        if matches!(op, Op::GetField) && position == 1 && packed >= 0x3ffe {
-            return u16::MAX - (packed == 0x3ffe) as u16;
+        if matches!(op, Op::GetField) && position == 1 && packed >= Self::FIELD_SENTINEL {
+            return if packed == Self::FIELD_SENTINEL {
+                Self::FIELD_SENTINEL_START
+            } else {
+                u16::MAX
+            };
         }
-        (packed & 0x0fff) | ((packed >> 12) << 14)
+        (packed & Self::FIELD_PAYLOAD_MASK)
+            | ((packed >> Self::FIELD_PACKED_HIGH_SHIFT) << Self::FIELD_SOURCE_HIGH_SHIFT)
     }
 
     const fn pack_immediate(op: Op, value: u32) -> Option<u16> {
-        if Self::compound(op) {
-            let high = value >> 16;
-            let low = value & u16::MAX as u32;
-            if high > u8::MAX as u32 || low > u8::MAX as u32 {
+        if op.immediate_layout().uses_packed_pair() {
+            let high = value >> PACKED_PAIR_SOURCE_SHIFT;
+            let low = value & PACKED_PAIR_SOURCE_MASK;
+            if high > PACKED_PAIR_HIGH_MASK || low > PACKED_PAIR_LOW_MASK {
                 return None;
             }
-            Some(((high as u16) << 8) | low as u16)
-        } else if value <= u16::MAX as u32 {
+            Some(((high as u16) << PACKED_PAIR_LOW_BITS) | low as u16)
+        } else if value <= Self::NARROW_IMMEDIATE_MASK {
             Some(value as u16)
         } else {
             None
@@ -213,40 +378,27 @@ impl Instr {
     }
 
     const fn unpack_immediate(op: Op, packed: u16) -> u32 {
-        if Self::compound(op) {
-            (((packed >> 8) as u32) << 16) | ((packed & 0xff) as u32)
+        if op.immediate_layout().uses_packed_pair() {
+            (((packed >> PACKED_PAIR_LOW_BITS) as u32) << PACKED_PAIR_SOURCE_SHIFT)
+                | ((packed as u32) & PACKED_PAIR_LOW_MASK)
         } else {
             packed as u32
         }
     }
 
-    pub(crate) const fn effect(self) -> Effect {
+    pub(crate) fn effect(self) -> Effect {
         let mut effect = self.op().effect();
-        if matches!(self.op(), Op::GetField) && self.a() & SET_THIS_REGISTER != 0 {
+        if self.writes_current_this() {
             effect = effect.union(Effect::WRITES_HEAP);
         }
-        if matches!(
-            self.op(),
-            Op::Binary
-                | Op::NumericAdd
-                | Op::NumericMultiply
-                | Op::GetIterator
-                | Op::GetAsyncIterator
-                | Op::GetField
-                | Op::Call
-                | Op::CallKnown
-                | Op::CallMethod
-                | Op::CallThisMethod
-                | Op::Construct
-                | Op::MakeObject2
-                | Op::SuperConstArrayObject2
-        ) && self.a() & RETURN_REGISTER != 0
-        {
+        if self.returns_from_frame() {
             effect = effect.union(Effect::CONTROL);
         }
         effect
     }
 }
+
+layout_accessors!(Instr);
 
 #[cfg(test)]
 mod tests {
@@ -279,7 +431,7 @@ mod tests {
     fn packed_word_rejects_every_overflow_axis() {
         assert!(Instr::try_new(Op::Binary, 0x1000, 0, 0, 0).is_none());
         assert!(Instr::try_new(Op::Binary, 0, 0x2000, 0, 0).is_none());
-        assert!(Instr::try_new(Op::Binary, 0, 0, 0x3000, 0).is_none());
+        assert!(Instr::try_new(Op::Binary, 0, 0, Instr::FIELD_RESERVED_TAG_MASK, 0).is_none());
         assert!(Instr::try_new(Op::Binary, 0, 0, 0, 65536).is_none());
         assert!(Instr::try_new(Op::Call, 0, 0, 0, 256 << 16).is_none());
         assert!(Instr::try_new(Op::Call, 0, 0, 0, 256).is_none());

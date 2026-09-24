@@ -1,17 +1,20 @@
+use super::property_key::PropertyKey;
 use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object,
-    Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object,
+    Native::ObjectKeys, Native::ForInKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
     Native::ObjectSetPrototypeOf, Native::ObjectHasOwn, Native::ObjectPreventExtensions,
     Native::ObjectIsExtensible, Native::ObjectSeal, Native::ObjectIsSealed,
     Native::ObjectFreeze, Native::ObjectIsFrozen,
-    Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf,
-    Native::ReflectGet, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty, Native::ReflectDeleteProperty, Native::ReflectPreventExtensions, Native::ReflectIsExtensible,
+    Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf, Native::ObjectPrototypeLookupGetter, Native::ObjectPrototypeLookupSetter, Native::ObjectPrototypeToString, Native::ObjectPrototypeValueOf,
+    Native::ReflectGet, Native::ReflectHas, Native::ReflectApply, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty, Native::ReflectDeleteProperty, Native::ReflectPreventExtensions, Native::ReflectIsExtensible,
     Native::ReflectSet,
+    Native::SuperSet,
+    Native::ObjectLiteralPrototype,
     Native::ReflectOwnKeys,
     Native::ReflectGetPrototypeOf,
     Native::ReflectSetPrototypeOf,
@@ -160,13 +163,26 @@ const NATIVES: &[Native] = &[
     Native::FinalizationRegistryUnregister,
     Native::DisposableStack, Native::DisposableStackUse, Native::DisposableStackAdopt, Native::DisposableStackDefer, Native::DisposableStackDispose,
     Native::DisposableStackUseAsync, Native::DisposableStackDisposeAsync,
-    Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall, Native::AsyncFunction, Native::GeneratorFunction, Native::AsyncGeneratorFunction,
-    Native::Date, Native::DateNow, Native::DateGetTime, Native::DateValueOf, Native::DateGetTimezoneOffset, Native::DateToISOString, Native::DateToJSON, Native::DateParse, Native::DateUTC,
-    Native::Error, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
+    Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall, Native::FunctionToString, Native::FunctionCaller, Native::AsyncFunction, Native::GeneratorFunction, Native::AsyncGeneratorFunction,
+    Native::Date, Native::DateNow, Native::DateGetTime, Native::DateGetFullYear,
+    Native::DateGetMonth, Native::DateGetDate, Native::DateGetDay, Native::DateGetHours,
+    Native::DateGetMinutes, Native::DateGetSeconds, Native::DateGetMilliseconds,
+    Native::DateGetTimezoneOffset, Native::DateGetUTCFullYear, Native::DateGetUTCMonth,
+    Native::DateGetUTCDate, Native::DateGetUTCDay, Native::DateGetUTCHours,
+    Native::DateGetUTCMinutes, Native::DateGetUTCSeconds, Native::DateGetUTCMilliseconds,
+    Native::DateGetYear, Native::DateSetTime, Native::DateSetFullYear, Native::DateSetMonth,
+    Native::DateSetUTCMonth, Native::DateSetDate, Native::DateSetUTCDate,
+    Native::DateSetUTCFullYear, Native::DateSetHours, Native::DateSetMinutes,
+    Native::DateSetSeconds, Native::DateSetMilliseconds, Native::DateSetUTCHours,
+    Native::DateSetUTCMinutes, Native::DateSetUTCSeconds, Native::DateSetUTCMilliseconds,
+    Native::DateSetYear, Native::DateValueOf, Native::DateToString, Native::DateToUTCString,
+    Native::DateToLocaleString, Native::DateToISOString,
+    Native::DateToJSON, Native::DateParse, Native::DateUTC,
+    Native::Error, Native::AggregateError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
     Native::RegExpExec,
     Native::RegExpTest,
-    Native::String, Native::Boolean, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf,
+    Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf,
     Native::Symbol, Native::SymbolToString, Native::SymbolValueOf,
     Native::SymbolFor,
     Native::SymbolKeyFor,
@@ -186,7 +202,7 @@ const NATIVES: &[Native] = &[
     Native::StringMatch,
     Native::StringSearch,
     Native::StringReplaceAll,
-    Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringConcat, Native::StringNormalize,
+    Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringConcat, Native::StringNormalize, Native::StringValues,
     Native::EncodeUri,
     Native::EncodeUriComponent,
     Native::DecodeUri,
@@ -200,10 +216,12 @@ const NATIVES: &[Native] = &[
     Native::MathMax,
     Native::MathRandom,
     Native::MathAbs, Native::MathCeil, Native::MathRound, Native::MathTrunc,
-    Native::MathSqrt, Native::MathSign,
+    Native::MathSqrt, Native::MathSign, Native::MathAcos, Native::MathAsin,
+    Native::MathAtan, Native::MathCos, Native::MathExp, Native::MathSin,
+    Native::MathTan, Native::MathAtan2,
     Native::NumberString,
     Native::Number, Native::NumberValueOf,
-    Native::GlobalIsNaN, Native::NumberIsNaN,
+    Native::GlobalIsNaN, Native::GlobalIsFinite, Native::NumberIsNaN,
     Native::NumberIsFinite,
     Native::NumberIsInteger,
     Native::NumberIsSafeInteger,
@@ -218,7 +236,8 @@ const NATIVES: &[Native] = &[
     Native::PromiseFinally, Native::PromiseAll, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAny,
     Native::PromiseReactionJob, Native::PromiseThenableJob,
     Native::PromiseFinallyJob, Native::PromiseFinallyContinuationJob, Native::PromiseAggregateJob,
-    Native::PromiseAsyncResumeJob, ];
+    Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncGeneratorDelegateFulfilled,
+    Native::AsyncGeneratorDelegateRejected, ];
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.install_prototypes();
@@ -307,9 +326,9 @@ impl<H: Host> Vm<H> {
             self.set_named(program, symbol, name, value)?;
         }
         self.global(program, "Symbol", symbol)?;
-        self.install_iterator_self(program)?;
         self.install_disposal(program)?;
         let string = self.native_value(Native::String);
+        self.install_string(program, string)?;
         self.set_named(
             program,
             string,
@@ -323,8 +342,19 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::StringFromCodePoint),
         )?;
         self.global(program, "String", string)?;
+        self.install_iterator_self(program)?;
         self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
+        self.global(
+            program,
+            "parseFloat",
+            self.native_value(Native::NumberParseFloat),
+        )?;
         self.global(program, "isNaN", self.native_value(Native::GlobalIsNaN))?;
+        self.global(
+            program,
+            "isFinite",
+            self.native_value(Native::GlobalIsFinite),
+        )?;
         self.install_number(program)?;
         self.global(program, "encodeURI", self.native_value(Native::EncodeUri))?;
         self.global(
@@ -372,6 +402,8 @@ impl<H: Host> Vm<H> {
         let reflect = self.object();
         for (name, native) in [
             ("get", Native::ReflectGet),
+            ("has", Native::ReflectHas),
+            ("apply", Native::ReflectApply),
             (
                 "getOwnPropertyDescriptor",
                 Native::ReflectGetOwnPropertyDescriptor,
@@ -417,10 +449,32 @@ impl<H: Host> Vm<H> {
     }
     fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let math = self.object();
-        self.set_named(program, math, "E", Value::number(std::f64::consts::E))?;
-        self.set_named(program, math, "LN2", Value::number(std::f64::consts::LN_2))?;
+        for (name, value) in [
+            ("E", std::f64::consts::E),
+            ("LN10", std::f64::consts::LN_10),
+            ("LN2", std::f64::consts::LN_2),
+            ("LOG10E", std::f64::consts::LOG10_E),
+            ("LOG2E", std::f64::consts::LOG2_E),
+            ("PI", std::f64::consts::PI),
+            ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
+            ("SQRT2", std::f64::consts::SQRT_2),
+        ] {
+            self.set_named_constant(program, math, name, Value::number(value))?;
+        }
         self.set_named(program, math, "log", self.native_value(Native::MathLog))?;
         self.set_named(program, math, "pow", self.native_value(Native::MathPow))?;
+        self.set_named(program, math, "acos", self.native_value(Native::MathAcos))?;
+        self.set_named(program, math, "asin", self.native_value(Native::MathAsin))?;
+        for (name, native) in [
+            ("atan", Native::MathAtan),
+            ("cos", Native::MathCos),
+            ("exp", Native::MathExp),
+            ("sin", Native::MathSin),
+            ("tan", Native::MathTan),
+            ("atan2", Native::MathAtan2),
+        ] {
+            self.set_named(program, math, name, self.native_value(native))?;
+        }
         self.set_named(program, math, "floor", self.native_value(Native::MathFloor))?;
         self.set_named(program, math, "min", self.native_value(Native::MathMin))?;
         self.set_named(program, math, "max", self.native_value(Native::MathMax))?;
@@ -448,6 +502,10 @@ impl<H: Host> Vm<H> {
             properties: ValueVec::new(),
             arguments_map: None,
             arguments_object: false,
+            module_namespace: false,
+            module_bindings: Vec::new(),
+            deferred_module: None,
+            private_names: Vec::new(),
         }
     }
     fn native(&mut self, kind: Native) -> Value {
@@ -515,7 +573,20 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
-        self.set_property(self.realm.globals, atom, value)
+        self.set_property(self.realm.globals, atom, value)?;
+        self.set_property_attributes(
+            self.realm.globals,
+            PropertyKey::string(atom),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
     }
     pub(super) fn set_named(
         &mut self,
@@ -526,5 +597,52 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
         self.set_property(object, atom, value)
+    }
+    pub(super) fn set_named_constant(
+        &mut self,
+        program: &ResidualProgram,
+        object: Value,
+        name: &str,
+        value: Value,
+    ) -> Result<(), JsError> {
+        self.set_named(program, object, name, value)?;
+        let atom = self.intern_atom(name);
+        self.set_property_attributes(
+            object,
+            PropertyKey::string(atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+
+    pub(super) fn set_builtin_named(
+        &mut self,
+        program: &ResidualProgram,
+        object: Value,
+        name: &str,
+        native: Native,
+    ) -> Result<(), JsError> {
+        self.set_named(program, object, name, self.native_value(native))?;
+        let atom = self.intern_atom(name);
+        self.set_property_attributes(
+            object,
+            property_key::PropertyKey::string(atom),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
     }
 }

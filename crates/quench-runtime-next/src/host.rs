@@ -17,6 +17,15 @@ pub struct HostGlobal {
     pub capability: CapabilityId,
 }
 
+/// A host-resolved source unit. The VM owns parsing, module semantics, and
+/// execution; the host supplies only source identity and bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleSource {
+    pub name: String,
+    pub source: String,
+    pub bytes: Vec<u8>,
+}
+
 pub trait Host {
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
@@ -26,6 +35,16 @@ pub trait Host {
     /// free of conformance or embedding-specific names.
     fn globals(&self) -> &'static [HostGlobal] {
         &[]
+    }
+
+    /// Resolve one dynamic-import request relative to its active source unit.
+    /// `Ok(None)` means this host does not provide module loading.
+    fn resolve_dynamic_import(
+        &mut self,
+        _referrer: &str,
+        _specifier: &str,
+    ) -> Result<Option<ModuleSource>, String> {
+        Ok(None)
     }
 
     fn done(&mut self, _text: Option<&str>) {}

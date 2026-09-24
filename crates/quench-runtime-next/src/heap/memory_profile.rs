@@ -179,7 +179,11 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::WeakRef { .. } => 0,
         Cell::FinalizationRegistry { .. } => 0,
         Cell::Iterator { .. } | Cell::Proxy { .. } => 0,
-        Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
+        Cell::Environment {
+            slots,
+            with_objects,
+            ..
+        } => (slots.len() + with_objects.capacity()) * size_of::<Value>(),
         Cell::String(value) => value.capacity(),
         Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
         Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),

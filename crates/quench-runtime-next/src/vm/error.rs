@@ -1,4 +1,7 @@
+use super::property_key::PropertyKey;
 use super::*;
+
+const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;
 use crate::Value;
 use crate::host::{CapabilityId, HostContext};
 use std::fmt;
@@ -84,7 +87,7 @@ impl<H: Host> Vm<H> {
         let object = self
             .construct_error_native(program, Native::ReferenceError, &[message])
             .unwrap_or(Value::UNDEFINED);
-        JsError::thrown(object, text)
+        JsError::thrown(object, format!("ReferenceError: {text}"))
     }
 
     pub(super) fn range_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
@@ -100,12 +103,29 @@ impl<H: Host> Vm<H> {
             return value;
         }
         let text = error.into_message();
-        let native = if text.starts_with("cannot ")
-            || text.contains("not callable")
-            || text.contains("must be ")
-            || text.contains("requires ")
+        let normalized = text.to_ascii_lowercase();
+        let native = if normalized.contains("typeerror")
+            || normalized.contains("cannot ")
+            || normalized.contains("not callable")
+            || normalized.contains("not a constructor")
+            || normalized.contains("not an object")
+            || normalized.contains("must be ")
+            || normalized.contains("requires ")
+            || normalized.contains("not iterable")
         {
             Native::TypeError
+        } else if normalized.contains("referenceerror")
+            || normalized.contains("not defined")
+            || normalized.contains("before initialization")
+        {
+            Native::ReferenceError
+        } else if normalized.contains("rangeerror")
+            || normalized.contains("out of range")
+            || normalized.contains("invalid array length")
+        {
+            Native::RangeError
+        } else if normalized.contains("syntaxerror") {
+            Native::SyntaxError
         } else {
             Native::Error
         };
@@ -135,7 +155,33 @@ impl<H: Host> Vm<H> {
                     .heap
                     .alloc(Cell::String(super::wtf16::JsString::from_units(&[unit])));
                 self.set_property(object, key, character)?;
+                self.set_property_attributes(
+                    object,
+                    PropertyKey::string(key),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: true,
+                        configurable: false,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    },
+                );
             }
+            let length = self.intern_atom("length");
+            self.set_property(object, length, Value::number(text.units().len() as f64))?;
+            self.set_property_attributes(
+                object,
+                PropertyKey::string(length),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
         }
         let marker_atom = self.intern_atom(marker);
         self.set_property(object, marker_atom, value)?;
@@ -162,6 +208,27 @@ impl<H: Host> Vm<H> {
         self.global(program, "globalThis", self.realm.globals)?;
         let function = self.native_value(Native::Function);
         self.set_named(program, function, "prototype", self.function_proto)?;
+        self.set_named(program, self.function_proto, "constructor", function)?;
+        self.set_named(
+            program,
+            self.function_proto,
+            "length",
+            Value::number(FUNCTION_PROTOTYPE_LENGTH),
+        )?;
+        let length = self.intern_atom("length");
+        self.set_named(program, function, "length", Value::number(1.0))?;
+        self.set_property_attributes(
+            function,
+            PropertyKey::string(length),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.global(program, "Function", function)?;
         let symbol = self.native_value(Native::Symbol);
         let symbol_prototype = self.object();
@@ -192,6 +259,12 @@ impl<H: Host> Vm<H> {
         self.set_named(
             program,
             boolean_prototype,
+            "toString",
+            self.native_value(Native::BooleanToString),
+        )?;
+        self.set_named(
+            program,
+            boolean_prototype,
             "valueOf",
             self.native_value(Native::BooleanValueOf),
         )?;
@@ -217,6 +290,12 @@ impl<H: Host> Vm<H> {
                         realm,
                         "createRealm",
                         self.native_value(Native::CreateRealm),
+                    )?;
+                    self.set_named(
+                        program,
+                        realm,
+                        "evalScript",
+                        self.native_value(Native::EvalScript),
                     )?;
                     self.global(program, global.name, realm)?;
                     continue;
@@ -248,6 +327,11 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let function_realm = self
+            .active_native_env()
+            .filter(|global| self.object_data(*global).is_some())
+            .unwrap_or(self.realm.globals);
+        let mut argument_strings = Vec::with_capacity(args.len());
         for argument in args {
             let text = self.to_string(program, *argument)?;
             if text.trim().starts_with("#!") {
@@ -261,36 +345,70 @@ impl<H: Host> Vm<H> {
                     "SyntaxError: hashbang is not allowed in Function source".into(),
                 ));
             }
+            argument_strings.push(text);
         }
-        let source = args.last().copied().unwrap_or(Value::UNDEFINED);
-        let source = self.to_string(program, source)?;
+        let source = argument_strings.pop().unwrap_or_default();
         let source = source.trim();
         if let Some(base_name) = dynamic_class_base(source) {
             let base_atom = self.intern_atom(base_name);
-            let base = self.load_name(program, base_atom, 0)?;
+            let base_key = self.heap.alloc(Cell::String(JsString::from_str(base_name)));
+            if !self.has_property(program, function_realm, base_key)? {
+                return Err(self.reference_error(program, format!("{base_name} is not defined")));
+            }
+            let base = self.get_property(program, function_realm, base_atom)?;
             if !self.is_constructable(program, base) {
                 return Err(JsError("dynamic class base is not a constructor".into()));
             }
             return Ok(self.native_with_env(Native::FunctionReturnClass, base));
         }
         if source == "return this;" {
-            return Ok(self.native_with_env(Native::FunctionReturnThis, Value::NULL));
+            return Ok(self.native_with_env(Native::FunctionReturnThis, function_realm));
         }
-        let Some(name) = source
-            .strip_prefix("return ")
-            .map(|name| name.trim().trim_end_matches(';').trim())
-            .filter(|name| {
-                !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-            })
-        else {
-            let body = self.heap.alloc(Cell::String(JsString::from_str(source)));
-            return Ok(self.native_with_env(Native::DynamicFunction, body));
+        let parameters = argument_strings.join(",");
+        let source_name = format!("<Function:{}>", self.programs.len());
+        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
+            .map(|atom| self.atom_name(atom as u32).to_owned())
+            .collect::<Vec<_>>();
+        let residual = crate::Engine::specialize_dynamic_function(
+            &parameters,
+            source,
+            &source_name,
+            &atom_prefix,
+        )
+        .map_err(|diagnostics| {
+            let message = diagnostics
+                .first()
+                .map_or("invalid Function source".to_owned(), ToString::to_string);
+            self.syntax_error_result(program, &message)
+                .expect_err("dynamic Function syntax errors must throw")
+        })?;
+        let Some(program_id) = self.store_dynamic_program(residual) else {
+            return Err(self.type_error(program, "dynamic program store is full".into()));
         };
-        let name = self.heap.alloc(Cell::String(JsString::from_str(name)));
-        Ok(self.native_with_env(Native::FunctionReturnName, name))
+        let residual = self
+            .programs
+            .get(program_id)
+            .ok_or_else(|| self.type_error(program, "dynamic program is unavailable".into()))?;
+        let active_program = std::mem::replace(&mut self.active_program, program_id);
+        let result = (|| {
+            let function = residual
+                .functions
+                .iter()
+                .enumerate()
+                .find(|(_, function)| {
+                    function.parent == Some(0)
+                        && function
+                            .name
+                            .is_some_and(|name| &residual.atoms[name as usize] == "anonymous")
+                })
+                .map(|(id, _)| id as u32)
+                .ok_or_else(|| {
+                    self.type_error(program, "dynamic Function body is unavailable".into())
+                })?;
+            self.closure_in_realm(&residual, function, Value::NULL, function_realm)
+        })();
+        self.active_program = active_program;
+        result
     }
 
     pub(super) fn dynamic_class_native(&mut self, base: Value) -> Result<Value, JsError> {
@@ -319,7 +437,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::FunctionReturnThis => Ok(self.realm.globals),
+            Native::FunctionReturnThis => {
+                Ok(self.active_native_env().unwrap_or(self.realm.globals))
+            }
             Native::FunctionReturnClass => {
                 let base = self
                     .active_native_env()
@@ -338,13 +458,15 @@ impl<H: Host> Vm<H> {
                 self.get_property(program, self.realm.globals, atom)
             }
             Native::DynamicFunction => {
-                let source = self
-                    .active_native_env()
-                    .and_then(|value| match self.heap.get(value) {
-                        Some(Cell::String(source)) => Some(source.host_string().to_owned()),
-                        _ => None,
-                    })
-                    .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
+                let environment = self.active_native_env().unwrap_or(Value::NULL);
+                if let Some(result) = self.call_eval_super_arrow(program, environment)? {
+                    return Ok(result);
+                }
+                let source = match self.heap.get(environment) {
+                    Some(Cell::String(source)) => Some(source.host_string().to_owned()),
+                    _ => None,
+                }
+                .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
                 let source = source.trim();
                 let body_strict =
                     source.starts_with("'use strict';") || source.starts_with("\"use strict\";");
@@ -405,14 +527,47 @@ impl<H: Host> Vm<H> {
 
     fn create_realm(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         let global = self.object();
-        self.set_named(
-            program,
-            global,
-            "TypeError",
-            self.native_value(Native::RealmTypeError),
-        )?;
-        let eval = self.native_with_env(Native::Eval, global);
+        let type_error = self.native_with_realm(Native::RealmTypeError, global, global);
+        let error_prototype = self
+            .lookup_atom("prototype")
+            .and_then(|atom| self.own_property(self.native_value(Native::TypeError), atom))
+            .unwrap_or(Value::NULL);
+        let type_error_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(error_prototype)));
+        self.set_named(program, type_error, "prototype", type_error_prototype)?;
+        self.set_named(program, type_error_prototype, "constructor", type_error)?;
+        let type_error_name = self.heap.alloc(Cell::String("TypeError".into()));
+        self.set_named(program, type_error_prototype, "name", type_error_name)?;
+        self.set_named(program, global, "TypeError", type_error)?;
+        let eval = self.native_with_realm(Native::Eval, global, global);
         self.set_named(program, global, "eval", eval)?;
+        let function = self.native_with_realm(Native::Function, global, global);
+        self.set_named(program, global, "Function", function)?;
+        let object = self.native_with_realm(Native::Object, global, global);
+        let object_prototype = self.object();
+        self.set_named(program, object, "prototype", object_prototype)?;
+        self.set_named(program, object_prototype, "constructor", object)?;
+        for (name, native) in [
+            ("defineProperty", Native::ObjectDefineProperty),
+            ("setPrototypeOf", Native::ObjectSetPrototypeOf),
+            ("create", Native::ObjectCreate),
+            (
+                "getOwnPropertyDescriptor",
+                Native::ObjectGetOwnPropertyDescriptor,
+            ),
+        ] {
+            let method = self.native_with_realm(native, global, global);
+            self.set_named(program, object, name, method)?;
+        }
+        self.set_named(program, global, "Object", object)?;
+        for (name, native) in [
+            ("parseFloat", Native::NumberParseFloat),
+            ("parseInt", Native::ParseInt),
+        ] {
+            let intrinsic = self.native_with_realm(native, global, global);
+            self.set_named(program, global, name, intrinsic)?;
+        }
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
         Ok(realm)
@@ -421,6 +576,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_errors(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let constructors = [
             ("Error", Native::Error),
+            ("AggregateError", Native::AggregateError),
             ("EvalError", Native::EvalError),
             ("RangeError", Native::RangeError),
             ("ReferenceError", Native::ReferenceError),
@@ -462,8 +618,14 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let constructor = self.native_value(native);
         let prototype_atom = self.intern_atom("prototype");
+        let constructor = if matches!(native, Native::TypeError | Native::RealmTypeError) {
+            self.lookup_atom("TypeError")
+                .and_then(|atom| self.own_property(self.realm.globals, atom))
+                .unwrap_or_else(|| self.native_value(native))
+        } else {
+            self.native_value(native)
+        };
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);

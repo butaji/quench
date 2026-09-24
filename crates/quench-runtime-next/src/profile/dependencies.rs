@@ -32,12 +32,12 @@ pub(super) fn binary_pairs(
 }
 
 fn binary_output(instruction: crate::bytecode::Instr) -> Option<Operand> {
-    if instruction.a() & RETURN_REGISTER != 0 {
+    if instruction.returns_from_frame() {
         None
-    } else if instruction.a() & NUMERIC_LOCAL_TARGET != 0 {
-        Some(Operand::local(instruction.a() & REGISTER_MASK))
+    } else if instruction.writes_numeric_local() {
+        Some(Operand::local(instruction.result_register()))
     } else {
-        Some(Operand::register(instruction.a()))
+        Some(Operand::register(instruction.result_register()))
     }
 }
 

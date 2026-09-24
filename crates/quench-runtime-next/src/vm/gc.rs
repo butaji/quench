@@ -1,3 +1,5 @@
+use super::module::ModuleRecord;
+use super::promise::PromiseState;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -31,9 +33,8 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_method_caches(0);
         let roots =
-            self.constants
-                .iter()
-                .copied()
+            self.programs
+                .roots()
                 .chain([
                     self.realm.globals,
                     self.object_proto,
@@ -65,6 +66,7 @@ impl<H: Host> Vm<H> {
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(self.promise.active_native.iter().copied())
+                .chain(self.promise.modules.values().flat_map(ModuleRecord::roots))
                 .chain(self.promise.records.iter().flat_map(|(promise, record)| {
                     std::iter::once(*promise)
                         .chain(std::iter::once(record.result))
@@ -138,6 +140,7 @@ impl<H: Host> Vm<H> {
                         .chain(std::iter::once(job.this))
                         .chain(job.args.iter().copied())
                 }))
+                .chain(self.realm.template_objects.values().copied())
                 .chain(self.with_stack.iter().copied())
                 .chain(
                     self.suspended
@@ -148,13 +151,9 @@ impl<H: Host> Vm<H> {
                 .chain(self.symbol_registry.values().copied())
                 .chain(self.well_known_symbols.values().copied())
                 .chain(
-                    self.symbol_properties
+                    self.shapes
                         .iter()
-                        .flat_map(|((object, key), value)| {
-                            [Some(*object), key.symbol_value(), Some(*value)]
-                                .into_iter()
-                                .flatten()
-                        }),
+                        .flat_map(|shape| shape.keys.iter().filter_map(|key| key.symbol_value())),
                 )
                 .chain(
                     self.descriptors
@@ -194,23 +193,6 @@ impl<H: Host> Vm<H> {
         self.invalidate_field_caches();
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
-        self.symbol_properties.retain(|(object, key), value| {
-            self.heap.get(*object).is_some()
-                && key
-                    .symbol_value()
-                    .is_some_and(|key| self.heap.get(key).is_some())
-                && (!value.is_heap() || self.heap.get(*value).is_some())
-        });
-        self.symbol_property_order.retain(|object, keys| {
-            if self.heap.get(*object).is_none() {
-                return false;
-            }
-            keys.retain(|key| {
-                key.symbol_value()
-                    .is_some_and(|key| self.heap.get(key).is_some())
-            });
-            !keys.is_empty()
-        });
         self.promise
             .records
             .retain(|promise, _| self.heap.get(*promise).is_some());
@@ -258,5 +240,29 @@ impl<H: Host> Vm<H> {
         }
         self.realm.jobs.drain(..index);
         Ok(Value::UNDEFINED)
+    }
+
+    pub(crate) fn drain_jobs_until_promise(
+        &mut self,
+        program: &ResidualProgram,
+        promise: Value,
+    ) -> Result<(), JsError> {
+        let mut index = 0;
+        while self
+            .promise
+            .records
+            .get(&promise)
+            .is_some_and(|record| record.state == PromiseState::Pending)
+            && index < self.realm.jobs.len()
+        {
+            let job = &self.realm.jobs[index];
+            let callback = job.callback;
+            let this = job.this;
+            let args = job.args.clone();
+            self.call_value(program, callback, this, &args)?;
+            index += 1;
+        }
+        self.realm.jobs.drain(..index);
+        Ok(())
     }
 }

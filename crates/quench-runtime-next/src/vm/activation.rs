@@ -1,4 +1,7 @@
+use super::ActiveIterator;
+use super::program_store::ProgramId;
 use crate::Value;
+use std::collections::VecDeque;
 
 /// The only state that crosses an activation boundary. The value is kept as a
 /// heap root while the continuation is suspended and is consumed by the
@@ -16,12 +19,14 @@ pub(crate) enum Completion {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Continuation {
+    pub program: ProgramId,
     pub function: u32,
     pub pc: usize,
     pub env: Value,
     pub this: Value,
     pub locals: Vec<Value>,
     pub registers: Vec<Value>,
+    pub active_iterators: Vec<ActiveIterator>,
     pub completion: Completion,
     pub captured: bool,
     pub resume_register: Option<u16>,
@@ -33,6 +38,13 @@ pub(crate) struct GeneratorRecord {
     pub(crate) continuation: Option<Continuation>,
     pub(crate) done: bool,
     pub(crate) running: bool,
+    pub(crate) requests: VecDeque<AsyncGeneratorRequest>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AsyncGeneratorRequest {
+    pub(crate) promise: Value,
+    pub(crate) value: Value,
 }
 
 /// A generation-checked slot for a suspended activation. Resumption consumes
@@ -71,12 +83,14 @@ mod tests {
     #[test]
     fn continuation_roots_include_frame_and_completion_values() {
         let continuation = Continuation {
+            program: ProgramId::MAIN,
             function: 3,
             pc: 7,
             env: Value::heap(1),
             this: Value::heap(2),
             locals: vec![Value::heap(4)],
             registers: vec![Value::heap(5)],
+            active_iterators: vec![],
             completion: Completion::Await(Value::heap(6)),
             captured: false,
             resume_register: Some(1),

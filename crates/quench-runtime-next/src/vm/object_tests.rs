@@ -18,6 +18,7 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
             0,
             FieldCache {
                 receiver,
+                atom: 0,
                 owner: Value::number(f64::from(receiver)),
                 owner_shape: receiver,
                 slot: 0,

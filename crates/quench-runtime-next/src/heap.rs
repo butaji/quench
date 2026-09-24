@@ -128,6 +128,10 @@ impl Heap {
             properties,
             arguments_map: None,
             arguments_object: false,
+            module_namespace: false,
+            module_bindings: Vec::new(),
+            deferred_module: None,
+            private_names: Vec::new(),
         }))
     }
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
@@ -355,6 +359,7 @@ impl Heap {
     fn children(cell: &Cell, properties: &ValueArena, work: &mut Vec<Value>) {
         let mut object = |object: &Object| {
             work.push(object.proto);
+            work.extend(object.private_names.iter().map(|brand| brand.home));
             work.extend(
                 properties
                     .values(object.properties)
@@ -425,6 +430,12 @@ impl Heap {
                     if let Some(continuation) = record.continuation.as_ref() {
                         work.extend(continuation.roots());
                     }
+                    work.extend(
+                        record
+                            .requests
+                            .iter()
+                            .flat_map(|request| [request.promise, request.value]),
+                    );
                 }
             }
             Cell::Proxy {
@@ -436,19 +447,25 @@ impl Heap {
                 work.extend([*target, *handler]);
             }
             Cell::Function {
-                object: value, env, ..
+                object: value,
+                env,
+                realm,
+                ..
             } => {
                 object(value);
-                work.push(*env);
+                work.extend([*env, *realm]);
             }
             Cell::Environment {
                 parent,
                 slots,
                 dynamic_bindings,
+                with_objects,
+                ..
             } => {
                 work.push(*parent);
                 work.extend(slots.iter().copied());
                 work.extend(dynamic_bindings.iter().map(|(_, value)| *value));
+                work.extend(with_objects.iter().copied());
             }
             Cell::Date { object: value, .. } => object(value),
             Cell::String(_) | Cell::BigInt(_) | Cell::Symbol(_) | Cell::Error(_) => {}
@@ -495,7 +512,11 @@ impl Heap {
             Cell::WeakRef { .. } => 0,
             Cell::FinalizationRegistry { .. } => 0,
             Cell::Function { .. } => size_of::<Object>(),
-            Cell::Environment { slots, .. } => slots.len() * size_of::<Value>(),
+            Cell::Environment {
+                slots,
+                with_objects,
+                ..
+            } => (slots.len() + with_objects.capacity()) * size_of::<Value>(),
             Cell::String(value) => value.capacity(),
             Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
             Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),

@@ -3,10 +3,14 @@ use super::*;
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn shape_slot(&self, shape: u32, atom: Atom) -> Option<usize> {
+        self.property_shape_slot(shape, PropertyKey::string(atom))
+    }
+    #[inline(always)]
+    pub(super) fn property_shape_slot(&self, shape: u32, key: PropertyKey) -> Option<usize> {
         self.shapes
             .get(shape as usize)
-            .and_then(|shape| shape.slots.get(&atom).copied())
-            .map(usize::from)
+            .and_then(|shape| shape.slots.get(&key).copied())
+            .map(|slot| slot as usize)
     }
     #[inline(always)]
     pub(super) fn property_attributes(
@@ -14,9 +18,8 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: PropertyKey,
     ) -> Option<PropertyAttributes> {
-        if let PropertyKey::String(atom) = key
-            && let Some(data) = self.object_data(object)
-            && let Some(slot) = self.shape_slot(data.shape(), atom)
+        if let Some(data) = self.object_data(object)
+            && let Some(slot) = self.property_shape_slot(data.shape(), key)
             && let Some(attributes) = self
                 .shapes
                 .get(data.shape() as usize)
@@ -32,9 +35,8 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         attributes: PropertyAttributes,
     ) {
-        if let PropertyKey::String(atom) = key
-            && let Some(data) = self.object_data(object)
-            && let Some(slot) = self.shape_slot(data.shape(), atom)
+        if let Some(data) = self.object_data(object)
+            && let Some(slot) = self.property_shape_slot(data.shape(), key)
         {
             let shape = data.shape();
             let mut next = self.shapes[shape as usize].clone();
@@ -42,20 +44,21 @@ impl<H: Host> Vm<H> {
             let next_id = self.shapes.len() as u32;
             self.shapes.push(next);
             self.heap
-                .register_property_shape(next_id, self.shapes[next_id as usize].keys.len());
+                .register_property_shape(next_id, self.shapes[next_id as usize].storage_len);
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
             self.invalidate_field_caches();
-            self.invalidate_method_caches();
+            self.invalidate_method_caches_for_key(key);
             return;
         }
         self.descriptors.insert((object, key), attributes);
+        self.invalidate_field_caches();
+        self.invalidate_method_caches_for_key(key);
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
-        if let PropertyKey::String(atom) = key
-            && let Some(data) = self.object_data(object)
-            && let Some(slot) = self.shape_slot(data.shape(), atom)
+        if let Some(data) = self.object_data(object)
+            && let Some(slot) = self.property_shape_slot(data.shape(), key)
         {
             let shape = data.shape();
             let mut next = self.shapes[shape as usize].clone();
@@ -63,20 +66,31 @@ impl<H: Host> Vm<H> {
             let next_id = self.shapes.len() as u32;
             self.shapes.push(next);
             self.heap
-                .register_property_shape(next_id, self.shapes[next_id as usize].keys.len());
+                .register_property_shape(next_id, self.shapes[next_id as usize].storage_len);
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
             self.invalidate_field_caches();
-            self.invalidate_method_caches();
+            self.invalidate_method_caches_for_key(key);
             return;
         }
-        self.descriptors.remove(&(object, key));
+        if self.descriptors.remove(&(object, key)).is_some() {
+            self.invalidate_field_caches();
+            self.invalidate_method_caches_for_key(key);
+        }
     }
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
+    }
+    fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
+        match key {
+            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
+                self.invalidate_method_caches_for_atom(atom);
+            }
+            PropertyKey::Symbol(_) => {}
+        }
     }
     #[inline(always)]
     pub(super) fn resolve_field_base(&self, frame: usize, base: FieldBase) -> Value {
@@ -145,6 +159,14 @@ impl<H: Host> Vm<H> {
         first: Value,
         second: Value,
     ) -> Value {
+        if !self.specialized {
+            let [first_atom, second_atom] = program.object_sites[site].atoms;
+            let one = self.transition_shape(0, first_atom);
+            let two = self.transition_shape(one, second_atom);
+            return self
+                .heap
+                .alloc_object_pair(self.object_proto, two, first, second);
+        }
         let shape = if self.object_shapes[site] != u32::MAX {
             self.object_shapes[site]
         } else {
@@ -168,6 +190,29 @@ impl<H: Host> Vm<H> {
     pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
         self.heap.get_mut(value)?.object_mut()
     }
+    pub(super) fn is_object_like(&self, value: Value) -> bool {
+        matches!(
+            self.heap.get(value),
+            Some(
+                Cell::Object(_)
+                    | Cell::Array { .. }
+                    | Cell::ArrayBuffer { .. }
+                    | Cell::TypedArray { .. }
+                    | Cell::DataView { .. }
+                    | Cell::Map { .. }
+                    | Cell::Set { .. }
+                    | Cell::WeakMap { .. }
+                    | Cell::WeakSet { .. }
+                    | Cell::WeakRef { .. }
+                    | Cell::FinalizationRegistry { .. }
+                    | Cell::Iterator { .. }
+                    | Cell::Proxy { .. }
+                    | Cell::Function { .. }
+                    | Cell::Date { .. }
+                    | Cell::Error(_)
+            )
+        )
+    }
     pub(super) fn get_field_cached(
         &mut self,
         p: &ResidualProgram,
@@ -184,13 +229,10 @@ impl<H: Host> Vm<H> {
         if !object.is_heap()
             || atom == self.length_atom
             || atom == self.size_atom
-            || self.lookup_atom("byteLength") == Some(atom)
-            || self.lookup_atom("byteOffset") == Some(atom)
-            || self.lookup_atom("buffer") == Some(atom)
+            || atom == self.byte_length_atom
+            || atom == self.byte_offset_atom
+            || atom == self.buffer_atom
         {
-            return self.get_property(p, object, atom);
-        }
-        if self.property_accessor(object, atom).is_some() {
             return self.get_property(p, object, atom);
         }
         let Some(receiver) = self.object_data(object) else {
@@ -251,7 +293,7 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.array_buffer_virtual_property(object, atom) {
             return Ok(value);
         }
-        if self.lookup_atom("byteLength") == Some(atom)
+        if atom == self.byte_length_atom
             && let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(object)
         {
             return Ok(Value::number(if self.array_buffer_detached(object) {
@@ -266,6 +308,9 @@ impl<H: Host> Vm<H> {
         let mut owner = object;
         let mut depth = 0u16;
         loop {
+            if matches!(self.heap.get(owner), Some(Cell::Proxy { .. })) {
+                return self.get_property(p, object, atom);
+            }
             let Some(current) = self.object_data(owner) else {
                 return Ok(Value::UNDEFINED);
             };
@@ -281,6 +326,7 @@ impl<H: Host> Vm<H> {
                         site,
                         FieldCache {
                             receiver,
+                            atom,
                             owner,
                             owner_shape: current.shape(),
                             slot: slot as u16,
@@ -303,43 +349,131 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
-        let (slot, shape, invalidates_method) = {
+        self.set_shape_property(object, PropertyKey::string(atom), value)
+    }
+
+    /// ECMAScript `OrdinarySet` with an explicit receiver. This is the shared
+    /// write authority used by `Reflect.set` and `super` references: lookup is
+    /// performed on `target`, while a writable data property is created or
+    /// updated on `receiver`.
+    pub(super) fn set_property_with_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        atom: Atom,
+        value: Value,
+        receiver: Value,
+    ) -> Result<bool, JsError> {
+        if self.atom_name(atom).starts_with("\0rqj:private:") {
+            self.check_private_brand(p, target, atom)?;
+        }
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(target).cloned()
+        {
+            return self
+                .proxy_set(p, target, handler, receiver, atom, value)
+                .map(|()| true);
+        }
+
+        let mut current = target;
+        let mut found = None;
+        loop {
+            if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom))
+                && (self.own_property(current, atom).is_some() || attributes.accessor)
+            {
+                found = Some((current, attributes));
+                break;
+            }
+            let Some(data) = self.object_data(current) else {
+                break;
+            };
+            current = data.proto;
+            if current.is_null() {
+                break;
+            }
+        }
+
+        if let Some((owner, attributes)) = found {
+            if attributes.accessor {
+                let Some(setter) = attributes.setter else {
+                    return Ok(false);
+                };
+                self.call_value(p, setter, receiver, &[value])?;
+                return Ok(true);
+            }
+            if !attributes.writable {
+                return Ok(false);
+            }
+            let _ = owner;
+        }
+
+        if self.object_data(receiver).is_none() {
+            return Ok(false);
+        }
+        if self.own_property(receiver, atom).is_some() {
+            if let Some(attributes) = self.property_attributes(receiver, PropertyKey::string(atom))
+            {
+                if attributes.accessor || !attributes.writable {
+                    return Ok(false);
+                }
+            }
+            self.set_property_with_program(p, receiver, atom, value)?;
+            return Ok(true);
+        }
+        if !self
+            .object_data(receiver)
+            .is_some_and(Object::is_extensible)
+        {
+            return Ok(false);
+        }
+        self.set_property_with_program(p, receiver, atom, value)?;
+        Ok(true)
+    }
+    pub(super) fn set_shape_property(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let (slot, shape, exists) = {
             let data = self
                 .object_data(object)
                 .ok_or_else(|| JsError("property write on non-object".into()))?;
-            let slot = self.shape_slot(data.shape(), atom);
+            let slot = self.property_shape_slot(data.shape(), key);
             let exists = slot.is_some_and(|slot| self.heap.property_get(data, slot).is_some());
-            self.check_property_write(object, atom, exists)?;
-            let old_is_function = slot
-                .and_then(|slot| self.heap.property_get(data, slot))
-                .is_some_and(|old| self.is_function(old));
-            (
-                slot,
-                data.shape(),
-                old_is_function || self.is_function(value),
-            )
+            (slot, data.shape(), exists)
         };
-        let next_shape = slot
-            .map(|_| shape)
-            .unwrap_or_else(|| self.transition_shape(shape, atom));
+        self.check_property_key_write(object, key, exists)?;
         if let Some(slot) = slot {
             self.heap.property_set(object, slot, value);
         } else {
+            let next_shape = self.transition_property_shape(shape, key);
             self.heap.property_push(object, value);
             self.object_data_mut(object).unwrap().set_shape(next_shape);
         }
-        // New ordinary properties receive the default descriptor in the
-        // transition shape; exotic/indexed properties retain their keyed
-        // descriptor path.
-        // A property write can replace a callable observed through any
-        // receiver/prototype cache. Until mutation epochs are part of the
-        // cache key, clear the derived method view at this single mutation
-        // boundary; correctness takes precedence over a stale fast path.
-        let _ = invalidates_method;
-        self.invalidate_field_caches();
-        self.invalidate_method_caches();
+        self.invalidate_method_caches_for_key(key);
         Ok(())
     }
+
+    pub(super) fn define_object_literal_data_property(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let key = PropertyKey::string(atom);
+        if self
+            .property_attributes(object, key)
+            .is_some_and(|attributes| attributes.accessor)
+        {
+            self.remove_property_attributes(object, key);
+        }
+        self.set_shape_property(object, key, value)?;
+        self.set_property_attributes(object, key, DEFAULT_PROPERTY_ATTRIBUTES);
+        Ok(())
+    }
+
     pub(super) fn set_field_cached(
         &mut self,
         p: &ResidualProgram,
@@ -347,26 +481,68 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        strict: bool,
     ) -> Result<(), JsError> {
+        // Assignment to a nullish base is an abrupt completion regardless of
+        // strictness. Keep it on the canonical realm-owned TypeError path;
+        // the generic object mutator's fallback error is not an ECMAScript
+        // error object and loses constructor identity at the Test262 boundary.
+        if object.is_null() || object.is_undefined() {
+            return Err(self.type_error(
+                p,
+                if object.is_null() {
+                    "cannot set properties of null".into()
+                } else {
+                    "cannot set properties of undefined".into()
+                },
+            ));
+        }
         if let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(object).cloned()
         {
             return self.proxy_set(p, target, handler, object, atom, value);
         }
-        if !self.specialized {
-            return self.set_property_with_program(p, object, atom, value);
-        }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
                 self.call_value(p, setter, object, &[value])?;
+            } else if strict || self.atom_name(atom).starts_with("\0rqj:private:") {
+                return Err(self.type_error(p, "property has no setter".into()));
             }
             return Ok(());
         }
-        if self.own_property(object, atom).is_none() && self.inherited_write_blocked(object, atom) {
-            return Err(JsError(
-                "cannot write inherited non-writable property".into(),
-            ));
+        let own = self.own_property(object, atom).is_some();
+        if own
+            && self
+                .property_attributes(object, PropertyKey::string(atom))
+                .is_some_and(|attributes| !attributes.writable)
+        {
+            return if strict || self.atom_name(atom).starts_with("\0rqj:private:") {
+                Err(self.type_error(p, "cannot write non-writable property".into()))
+            } else {
+                Ok(())
+            };
+        }
+        if !own && self.inherited_write_blocked(object, atom) {
+            return if strict || self.atom_name(atom).starts_with("\0rqj:private:") {
+                Err(self.type_error(p, "cannot write inherited non-writable property".into()))
+            } else {
+                Ok(())
+            };
+        }
+        if !own
+            && self
+                .object_data(object)
+                .is_some_and(|object| !object.is_extensible())
+        {
+            return if strict {
+                Err(self.type_error(p, "cannot add property to non-extensible object".into()))
+            } else {
+                Ok(())
+            };
+        }
+        if !self.specialized {
+            return self.set_property_with_program(p, object, atom, value);
         }
         let existing = self
             .object_data(object)
@@ -384,9 +560,9 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .property_set_unchecked(object, cache.slot as usize, value);
             }
-            let _ = invalidates_method;
-            self.invalidate_field_caches();
-            self.invalidate_method_caches();
+            if invalidates_method {
+                self.invalidate_method_caches_for_atom(atom);
+            }
             self.profile.field_cache_hit(0, 0);
             return Ok(());
         }
@@ -399,9 +575,9 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .property_set_unchecked(object, cache.slot as usize, value);
             }
-            let _ = invalidates_method;
-            self.invalidate_field_caches();
-            self.invalidate_method_caches();
+            if invalidates_method {
+                self.invalidate_method_caches_for_atom(atom);
+            }
             self.profile.field_cache_hit(2, 0);
             return Ok(());
         }
@@ -417,6 +593,7 @@ impl<H: Host> Vm<H> {
                 site,
                 FieldCache {
                     receiver: data_shape,
+                    atom,
                     owner: object,
                     owner_shape: data_shape,
                     slot: slot as u16,
@@ -433,7 +610,12 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
-        if atom == self.length_atom && matches!(self.heap.get(object), Some(Cell::Array { .. })) {
+        if atom == self.length_atom
+            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && !self
+                .object_data(object)
+                .is_some_and(Object::is_arguments_object)
+        {
             let descriptor = self.object();
             let value_atom = self.intern_atom("value");
             self.set_property(descriptor, value_atom, value)?;
@@ -537,7 +719,10 @@ impl<H: Host> Vm<H> {
         }
     }
     pub(super) fn transition_shape(&mut self, shape: u32, atom: Atom) -> u32 {
-        if let Some(next) = self.transitions.get(&(shape, atom)).copied() {
+        self.transition_property_shape(shape, PropertyKey::string(atom))
+    }
+    pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
+        if let Some(next) = self.transitions.get(&(shape, key)).copied() {
             self.profile.shape_transition(true);
             return next;
         }
@@ -545,18 +730,39 @@ impl<H: Host> Vm<H> {
         let mut fields = self.shapes[shape as usize].keys.clone();
         let mut slots = self.shapes[shape as usize].slots.clone();
         let mut descriptors = self.shapes[shape as usize].descriptors.clone();
-        slots.insert(atom, fields.len() as u16);
-        fields.push(atom);
+        let storage_len = self.shapes[shape as usize].storage_len;
+        let slot = u32::try_from(storage_len).expect("object property index exceeds u32");
+        slots.insert(key, slot);
+        fields.push(key);
         descriptors.push(DEFAULT_PROPERTY_ATTRIBUTES);
         let next = self.shapes.len() as u32;
         self.shapes.push(Shape {
             keys: fields,
             slots,
             descriptors,
+            storage_len: storage_len + 1,
         });
-        self.heap
-            .register_property_shape(next, self.shapes[next as usize].keys.len());
-        self.transitions.insert((shape, atom), next);
+        self.heap.register_property_shape(next, storage_len + 1);
+        self.transitions.insert((shape, key), next);
         next
+    }
+    pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
+        let Some(shape) = self.object_data(object).map(Object::shape) else {
+            return;
+        };
+        let Some(slot) = self.property_shape_slot(shape, key) else {
+            return;
+        };
+        let mut next = self.shapes[shape as usize].clone();
+        next.keys.retain(|candidate| *candidate != key);
+        next.slots.remove(&key);
+        next.descriptors[slot] = DEFAULT_PROPERTY_ATTRIBUTES;
+        let next_id = self.shapes.len() as u32;
+        self.heap.register_property_shape(next_id, next.storage_len);
+        self.shapes.push(next);
+        self.object_data_mut(object)
+            .expect("object survived property deletion")
+            .set_shape(next_id);
+        self.invalidate_method_caches_for_key(key);
     }
 }

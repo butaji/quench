@@ -21,6 +21,30 @@ fn detach_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn primitive_prototype(&self, value: Value) -> Option<Value> {
+        let constructor = match self.heap.get(value) {
+            Some(Cell::String(_)) => return Some(self.string_proto),
+            Some(Cell::Symbol(_)) => Native::Symbol,
+            Some(Cell::BigInt(_)) => Native::BigInt,
+            _ if value.as_bool().is_some() => Native::Boolean,
+            _ if value.as_number().is_some() => Native::Number,
+            _ => return None,
+        };
+        self.lookup_atom("prototype")
+            .and_then(|atom| self.own_property(self.native_value(constructor), atom))
+    }
+
+    pub(super) fn require_object_coercible(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<(), JsError> {
+        if value.is_null() || value.is_undefined() {
+            return Err(self.type_error(p, "cannot convert null or undefined to object".into()));
+        }
+        Ok(())
+    }
+
     #[inline(always)]
     pub(super) fn get_index(
         &mut self,
@@ -68,6 +92,10 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<Value, JsError> {
+        if object.is_null() || object.is_undefined() {
+            let atom = self.intern_atom("");
+            return self.get_property(p, object, atom);
+        }
         if self.typed_array_out_of_bounds(object) {
             return Err(self.type_error(
                 p,
@@ -81,13 +109,11 @@ impl<H: Host> Vm<H> {
             {
                 return self.proxy_get_symbol(p, target, handler, object, key);
             }
-            let mut owner = object;
+            let mut owner = self.primitive_prototype(object).unwrap_or(object);
             loop {
                 if let Some(value) = self.symbol_property(owner, key) {
                     let attributes = self
-                        .descriptors
-                        .get(&(owner, PropertyKey::symbol(key)))
-                        .copied()
+                        .property_attributes(owner, PropertyKey::symbol(key))
                         .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                     if attributes.accessor {
                         return attributes
@@ -161,12 +187,35 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> Result<(), JsError> {
+        self.set_index_mode(p, object, key, value, false)
+    }
+
+    pub(super) fn set_index_mode(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        key: Value,
+        value: Value,
+        strict: bool,
+    ) -> Result<(), JsError> {
+        if object.is_null() || object.is_undefined() {
+            return Err(self.type_error(
+                p,
+                if object.is_null() {
+                    "cannot set properties of null".into()
+                } else {
+                    "cannot set properties of undefined".into()
+                },
+            ));
+        }
         if let Some(index) = key.as_int().filter(|index| *index >= 0) {
             let index = index as usize;
-            if self
-                .array_descriptor(object, index)
-                .is_some_and(|attributes| attributes.accessor)
+            if let Some(attributes) = self.array_descriptor(object, index)
+                && attributes.accessor
             {
+                if strict && attributes.setter.is_none() {
+                    return Err(self.type_error(p, "array index has no setter".into()));
+                }
                 let atom = self.intern_atom(&index.to_string());
                 return self.set_property_with_program(p, object, atom, value);
             }
@@ -174,7 +223,11 @@ impl<H: Host> Vm<H> {
                 .array_descriptor(object, index)
                 .is_some_and(|attributes| !attributes.writable)
             {
-                return Ok(());
+                return if strict {
+                    Err(self.type_error(p, "array index is not writable".into()))
+                } else {
+                    Ok(())
+                };
             }
             if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
                 let existing = index < elements.len()
@@ -212,7 +265,7 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
-        self.set_index_slow(p, object, key, value)
+        self.set_index_slow(p, object, key, value, strict)
     }
 
     #[inline(never)]
@@ -222,6 +275,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
         value: Value,
+        strict: bool,
     ) -> Result<(), JsError> {
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             if let Some(Cell::Proxy {
@@ -230,11 +284,13 @@ impl<H: Host> Vm<H> {
             {
                 return self.proxy_set_symbol(p, target, handler, object, key, value);
             }
-            if let Some(attributes) = self.descriptors.get(&(object, PropertyKey::symbol(key)))
+            if let Some(attributes) = self.property_attributes(object, PropertyKey::symbol(key))
                 && attributes.accessor
             {
                 if let Some(setter) = attributes.setter {
                     self.call_value(p, setter, object, &[value])?;
+                } else if strict {
+                    return Err(self.type_error(p, "symbol property has no setter".into()));
                 }
                 return Ok(());
             }
@@ -276,6 +332,13 @@ impl<H: Host> Vm<H> {
                 .array_descriptor(object, index as usize)
                 .is_some_and(|attributes| attributes.accessor)
             {
+                if strict
+                    && self
+                        .array_descriptor(object, index as usize)
+                        .is_some_and(|attributes| attributes.setter.is_none())
+                {
+                    return Err(self.type_error(p, "array index has no setter".into()));
+                }
                 let atom = self.intern_js_atom(&key);
                 return self.set_property_with_program(p, object, atom, value);
             }
@@ -283,7 +346,11 @@ impl<H: Host> Vm<H> {
                 .array_descriptor(object, index as usize)
                 .is_some_and(|attributes| !attributes.writable)
             {
-                return Ok(());
+                return if strict {
+                    Err(self.type_error(p, "array index is not writable".into()))
+                } else {
+                    Ok(())
+                };
             }
             if self.set_array_element(object, index as usize, value) {
                 return Ok(());

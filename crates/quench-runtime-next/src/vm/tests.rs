@@ -149,6 +149,7 @@ fn third_method_receiver_promotes_site_to_megamorphic() {
             0,
             MethodCache {
                 shape,
+                atom: 0,
                 proto: crate::Value::NULL,
                 target: Some(CallTarget::User(shape, crate::Value::NULL)),
             },
@@ -162,20 +163,32 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     let mut vm = Vm::new(SilentHost);
     let live = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
+        program: None,
+        root_eval_scope: false,
+        function: u32::MAX,
         slots: Box::new([]),
+        dynamic_bindings: vec![],
+        with_objects: vec![],
     });
     let dead = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
+        program: None,
+        root_eval_scope: false,
+        function: u32::MAX,
         slots: Box::new([]),
+        dynamic_bindings: vec![],
+        with_objects: vec![],
     });
     vm.method_caches.push([
         MethodCache {
             shape: 1,
+            atom: 0,
             proto: crate::Value::NULL,
             target: Some(CallTarget::User(1, live)),
         },
         MethodCache {
             shape: 2,
+            atom: 0,
             proto: crate::Value::NULL,
             target: Some(CallTarget::User(2, dead)),
         },
@@ -190,7 +203,12 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 
     let reused = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
+        program: None,
+        root_eval_scope: false,
+        function: u32::MAX,
         slots: Box::new([]),
+        dynamic_bindings: vec![],
+        with_objects: vec![],
     });
     assert_eq!(reused, dead);
     assert!(vm.method_caches[0][1].target.is_none());
@@ -220,7 +238,12 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     vm.initialize(&program).unwrap();
     let live = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: Value::NULL,
+        program: None,
+        root_eval_scope: false,
+        function: u32::MAX,
         slots: Box::new([]),
+        dynamic_bindings: vec![],
+        with_objects: vec![],
     });
     let id = vm.suspend_continuation(Continuation {
         function: 0,

@@ -1,4 +1,4 @@
-use crate::bytecode::{Op, ResidualProgram};
+use crate::bytecode::{Instr, Op, ResidualProgram};
 
 #[derive(Clone, Copy, Default)]
 struct Domain {
@@ -11,31 +11,12 @@ struct Domain {
     immediate_overflow: u64,
 }
 
-const COMPOUND_IMMEDIATE_OPS: [Op; 4] =
-    [Op::LoadCapture, Op::StoreCapture, Op::Call, Op::CallKnown];
-const FIELD_BASE_FIELDS: [(Op, usize); 1] = [(Op::GetField, 1)];
-
 fn field_fits(op: Op, position: usize, value: u16) -> bool {
-    let field_base = FIELD_BASE_FIELDS.contains(&(op, position));
-    value & 0x3000 == 0 || field_base && value >= u16::MAX - 1
-}
-
-fn compound_immediate(op: Op) -> bool {
-    COMPOUND_IMMEDIATE_OPS.contains(&op)
-}
-
-fn compound_opcode(opcode: usize) -> bool {
-    COMPOUND_IMMEDIATE_OPS
-        .into_iter()
-        .any(|op| op as usize == opcode)
+    Instr::field_fits(op, position, value)
 }
 
 fn immediate_fits(op: Op, value: u32) -> bool {
-    if compound_immediate(op) {
-        value >> 16 <= u32::from(u8::MAX) && value & u32::from(u16::MAX) <= u32::from(u8::MAX)
-    } else {
-        value <= u32::from(u16::MAX)
-    }
+    Instr::immediate_fits(op, value)
 }
 
 pub(crate) fn fits(program: &ResidualProgram) -> bool {
@@ -86,7 +67,7 @@ pub(super) fn report(program: &ResidualProgram) {
             domain.max_b,
             domain.max_c,
             domain.max_imm,
-            compound_opcode(opcode),
+            Op::from_index(opcode).is_some_and(|op| op.immediate_layout().uses_packed_pair()),
             domain.field_overflow,
             domain.immediate_overflow
         );

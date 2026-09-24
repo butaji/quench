@@ -2,18 +2,21 @@ use super::root::WeakHandle;
 use crate::bytecode::Atom;
 use crate::value::Value;
 use crate::value_vec::ValueVec;
+use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use std::rc::Rc;
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, RealmTypeError, Eval, Function, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, DynamicFunction, DynamicDerivedClass,
+    Print, HostDone, CreateRealm, EvalScript, RealmTypeError, Eval, Function, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, FunctionCaller, DynamicFunction, DynamicDerivedClass, DynamicImport,
     Object,
-    ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
+    ObjectKeys, ForInKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen,
-    ObjectSetPrototypeOf, ObjectHasOwn, ObjectPrototypeHasOwnProperty, ObjectPrototypePropertyIsEnumerable, ObjectPrototypeIsPrototypeOf,
-    ReflectGet, ReflectGetOwnPropertyDescriptor, ReflectDefineProperty, ReflectDeleteProperty, ReflectPreventExtensions, ReflectIsExtensible,
+    ObjectSetPrototypeOf, ObjectHasOwn, ObjectPrototypeHasOwnProperty, ObjectPrototypePropertyIsEnumerable, ObjectPrototypeIsPrototypeOf, ObjectPrototypeLookupGetter, ObjectPrototypeLookupSetter, ObjectPrototypeToString, ObjectPrototypeValueOf,
+    ReflectGet, ReflectHas, ReflectApply, ReflectGetOwnPropertyDescriptor, ReflectDefineProperty, ReflectDeleteProperty, ReflectPreventExtensions, ReflectIsExtensible,
     ReflectSet,
+    SuperSet,
+    ObjectLiteralPrototype,
     ReflectOwnKeys,
     ReflectGetPrototypeOf,
     ReflectSetPrototypeOf,
@@ -164,15 +167,22 @@ pub(crate) enum Native {
     DisposableStackDispose,
     DisposableStackUseAsync,
     DisposableStackDisposeAsync,
-    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction,
+    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, FunctionToString, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction,
     Date,
     DateNow,
-    DateGetTime, DateValueOf, DateGetTimezoneOffset, DateToISOString, DateToJSON, DateParse, DateUTC,
-    Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
+    DateGetTime, DateValueOf, DateGetTimezoneOffset, DateGetFullYear, DateGetMonth, DateGetDate, DateGetDay,
+    DateGetHours, DateGetMinutes, DateGetSeconds, DateGetMilliseconds, DateGetUTCFullYear,
+    DateGetUTCMonth, DateGetUTCDate, DateGetUTCDay, DateGetUTCHours, DateGetUTCMinutes,
+    DateGetUTCSeconds, DateGetUTCMilliseconds, DateGetYear,
+    DateSetTime, DateSetFullYear, DateSetMonth, DateSetUTCMonth, DateSetDate, DateSetUTCDate,
+    DateSetUTCFullYear, DateSetHours, DateSetMinutes, DateSetSeconds, DateSetMilliseconds,
+    DateSetUTCHours, DateSetUTCMinutes, DateSetUTCSeconds, DateSetUTCMilliseconds, DateSetYear,
+    DateToString, DateToUTCString, DateToLocaleString, DateToISOString, DateToJSON, DateParse, DateUTC,
+    Error, AggregateError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
     RegExp,
     RegExpExec,
     RegExpTest,
-    String, Boolean, BooleanValueOf,
+    String, Boolean, BooleanToString, BooleanValueOf,
     Symbol, SymbolToString, SymbolValueOf,
     BigInt, BigIntValueOf,
     SymbolFor,
@@ -188,13 +198,13 @@ pub(crate) enum Native {
     StringToString, StringValueOf,
     StringReplace, StringSplit, StringTrim, StringTrimStart, StringTrimEnd,
     StringRepeat, StringPadStart, StringPadEnd, StringMatch, StringSearch,
-    StringReplaceAll, StringAt, StringCodePointAt, StringToUpperCase, StringToLowerCase, StringConcat, StringNormalize,
+    StringReplaceAll, StringAt, StringCodePointAt, StringToUpperCase, StringToLowerCase, StringConcat, StringNormalize, StringValues,
     EncodeUri, EncodeUriComponent,
     DecodeUri, DecodeUriComponent,
     StringFromCharCode, StringFromCodePoint, ParseInt,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
-    MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, NumberString, Number, NumberValueOf,
-    NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat, GlobalIsNaN,
+    MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, MathAcos, MathAsin, MathAtan, MathCos, MathExp, MathSin, MathTan, MathAtan2, NumberString, Number, NumberValueOf,
+    NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat, GlobalIsNaN, GlobalIsFinite,
     NumberFixed,
     NumberPrecision,
     Promise,
@@ -212,7 +222,8 @@ pub(crate) enum Native {
     PromiseFinallyJob,
     PromiseFinallyContinuationJob,
     PromiseAggregateJob,
-    PromiseAsyncResumeJob, WithEnter, WithExit,
+    PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
+    WithEnter, WithExit,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -271,6 +282,7 @@ impl Native {
         matches!(
             self,
             Self::Error
+                | Self::AggregateError
                 | Self::EvalError
                 | Self::RangeError
                 | Self::ReferenceError
@@ -282,7 +294,7 @@ impl Native {
     }
 
     #[rustfmt::skip]
-    pub(crate) fn is_object_static(self) -> bool { matches!(self, Native::Object | Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries | Native::ObjectGetOwnPropertyNames | Native::ObjectGetOwnPropertySymbols | Native::ObjectGetOwnPropertyDescriptor | Native::ObjectGetOwnPropertyDescriptors | Native::ObjectFromEntries | Native::ObjectIs | Native::ObjectCreate | Native::ObjectAssign | Native::ObjectDefineProperty | Native::ObjectDefineProperties | Native::ObjectGetPrototypeOf | Native::ObjectSetPrototypeOf | Native::ObjectHasOwn | Native::ObjectPreventExtensions | Native::ObjectIsExtensible | Native::ObjectSeal | Native::ObjectIsSealed | Native::ObjectFreeze | Native::ObjectIsFrozen) }
+    pub(crate) fn is_object_static(self) -> bool { matches!(self, Native::Object | Native::ObjectKeys | Native::ForInKeys | Native::ObjectValues | Native::ObjectEntries | Native::ObjectGetOwnPropertyNames | Native::ObjectGetOwnPropertySymbols | Native::ObjectGetOwnPropertyDescriptor | Native::ObjectGetOwnPropertyDescriptors | Native::ObjectFromEntries | Native::ObjectIs | Native::ObjectCreate | Native::ObjectAssign | Native::ObjectDefineProperty | Native::ObjectDefineProperties | Native::ObjectGetPrototypeOf | Native::ObjectSetPrototypeOf | Native::ObjectHasOwn | Native::ObjectPreventExtensions | Native::ObjectIsExtensible | Native::ObjectSeal | Native::ObjectIsSealed | Native::ObjectFreeze | Native::ObjectIsFrozen) }
     pub(crate) fn is_typed_array_method(self) -> bool {
         matches!(
             self,
@@ -361,13 +373,16 @@ impl Native {
                 | Self::PromiseFinallyContinuationJob
                 | Self::PromiseAggregateJob
                 | Self::PromiseAsyncResumeJob
+                | Self::DynamicImport
+                | Self::AsyncGeneratorDelegateFulfilled
+                | Self::AsyncGeneratorDelegateRejected
         )
     }
 }
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum FunctionKind {
-    User(u32),
-    NumericUser(u32),
+    User(ProgramId, u32),
+    NumericUser(ProgramId, u32),
     Native(Native),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -394,6 +409,15 @@ pub(crate) struct Object {
     pub properties: ValueVec,
     pub arguments_map: Option<Vec<u16>>,
     pub arguments_object: bool,
+    pub module_namespace: bool,
+    pub module_bindings: Vec<(Atom, ProgramId, u16)>,
+    pub deferred_module: Option<crate::ModuleSource>,
+    pub private_names: Vec<PrivateBrand>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PrivateBrand {
+    pub home: Value,
+    pub name: Atom,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct FinalizationEntry {
@@ -437,6 +461,15 @@ impl Object {
     pub(crate) fn is_arguments_object(&self) -> bool {
         self.arguments_object
     }
+    pub(crate) fn is_module_namespace(&self) -> bool {
+        self.module_namespace
+    }
+
+    pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
+        self.module_bindings
+            .iter()
+            .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
+    }
 }
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
@@ -453,6 +486,7 @@ pub(crate) enum Cell {
         detached: bool,
         max_byte_length: usize,
         resizable: bool,
+        immutable: bool,
     },
     TypedArray {
         kind: TypedArrayKind,
@@ -510,11 +544,16 @@ pub(crate) enum Cell {
         object: Box<Object>,
         kind: FunctionKind,
         env: Value,
+        realm: Value,
     },
     Environment {
         parent: Value,
+        program: Option<u32>,
+        root_eval_scope: bool,
+        function: u32,
         slots: Box<[Value]>,
         dynamic_bindings: Vec<(Atom, Value)>,
+        with_objects: Vec<Value>,
     },
     String(JsString), BigInt(String),
     Symbol(Option<String>),

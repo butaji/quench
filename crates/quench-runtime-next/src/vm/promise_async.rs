@@ -29,7 +29,8 @@ impl<H: Host> Vm<H> {
             }
         };
         match outcome {
-            super::FrameOutcome::Complete(value) => {
+            super::FrameOutcome::Complete(value)
+            | super::FrameOutcome::ConstructComplete { value, .. } => {
                 self.promise_resolve_value(p, promise, value)?
             }
             super::FrameOutcome::Await {
@@ -38,25 +39,32 @@ impl<H: Host> Vm<H> {
                 frame: Some(frame),
             } => {
                 let continuation = Continuation {
+                    program: frame.program,
                     function: frame.function,
                     pc: frame.pc,
                     env: frame.env,
                     this: frame.this,
                     locals: frame.locals,
                     registers: frame.registers,
+                    active_iterators: frame.active_iterators,
                     completion: Completion::Await(value),
                     captured: frame.captured,
                     resume_register: Some(destination),
                     promise,
                 };
                 let id = self.suspend_continuation(continuation);
-                self.enqueue_async_resume(p, id, promise, None, value)?;
+                self.enqueue_async_resume(p, id, promise, None, value, false)?;
             }
             super::FrameOutcome::Await { frame: None, .. } => {
                 return Err(JsError("async frame lost at suspension".into()));
             }
             super::FrameOutcome::Yield { .. } => {
                 return Err(JsError("yield is not valid in an async function".into()));
+            }
+            super::FrameOutcome::ParameterInitializationComplete => {
+                return Err(JsError(
+                    "unexpected generator parameter initialization boundary".into(),
+                ));
             }
         }
         Ok(promise)
@@ -69,6 +77,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
         generator: Option<Value>,
         awaited: Value,
+        yielded: bool,
     ) -> Result<(), JsError> {
         let source = self.promise_for_value(p, awaited)?;
         let fulfilled = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
@@ -80,6 +89,7 @@ impl<H: Host> Vm<H> {
                 promise,
                 generator,
                 rejected: false,
+                yielded,
             },
         );
         self.promise.async_resume_jobs.insert(
@@ -89,6 +99,7 @@ impl<H: Host> Vm<H> {
                 promise,
                 generator,
                 rejected: true,
+                yielded,
             },
         );
         let record = self
@@ -134,6 +145,9 @@ impl<H: Host> Vm<H> {
             .async_resume_jobs
             .retain(|_, candidate| candidate.continuation != resume.continuation);
         self.resume_async_continuation(p, resume, value)?;
+        if let Some(generator) = resume.generator {
+            self.resume_async_generator_queue(p, generator)?;
+        }
         Ok(Value::UNDEFINED)
     }
 
@@ -155,7 +169,25 @@ impl<H: Host> Vm<H> {
             }
             return Err(JsError("stale async continuation".into()));
         };
+        if resume.yielded && !resume.rejected {
+            if let Some(generator) = resume.generator
+                && let Some(record) = self.generator_record_mut(generator)
+            {
+                record.running = false;
+            }
+            let result = self.iterator_result(value, false)?;
+            self.promise_resolve_value(p, resume.promise, result)?;
+            return Ok(());
+        }
+        if resume.yielded
+            && let Some(generator) = resume.generator
+            && let Some(record) = self.generator_record_mut(generator)
+        {
+            record.continuation = None;
+            record.running = true;
+        }
         let mut frame = super::Frame {
+            program: continuation.program,
             function: continuation.function,
             pc: continuation.pc,
             env: continuation.env,
@@ -164,6 +196,7 @@ impl<H: Host> Vm<H> {
             dynamic_bindings: vec![],
             captured: continuation.captured,
             registers: continuation.registers,
+            active_iterators: continuation.active_iterators,
             with_base: self.with_stack.len(),
         };
         if !resume.rejected
@@ -196,7 +229,8 @@ impl<H: Host> Vm<H> {
             }
         };
         match result {
-            super::FrameOutcome::Complete(value) => {
+            super::FrameOutcome::Complete(value)
+            | super::FrameOutcome::ConstructComplete { value, .. } => {
                 self.frame_pool.push(Self::recycle_frame(frame));
                 if let Some(generator) = resume.generator {
                     self.finish_async_generator(p, generator, resume.promise, value, true)?;
@@ -210,19 +244,21 @@ impl<H: Host> Vm<H> {
                 frame: None,
             } => {
                 let continuation = Continuation {
+                    program: frame.program,
                     function: frame.function,
                     pc: frame.pc,
                     env: frame.env,
                     this: frame.this,
                     locals: frame.locals,
                     registers: frame.registers,
+                    active_iterators: frame.active_iterators,
                     completion: Completion::Await(value),
                     captured: frame.captured,
                     resume_register: Some(destination),
                     promise: resume.promise,
                 };
                 let id = self.suspend_continuation(continuation);
-                self.enqueue_async_resume(p, id, resume.promise, resume.generator, value)?;
+                self.enqueue_async_resume(p, id, resume.promise, resume.generator, value, false)?;
             }
             super::FrameOutcome::Await {
                 frame: Some(frame), ..
@@ -254,10 +290,17 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("yield is not valid in an async function".into()));
                 }
             }
+            super::FrameOutcome::ParameterInitializationComplete => {
+                self.frame_pool.push(Self::recycle_frame(frame));
+                return Err(JsError(
+                    "unexpected generator parameter initialization boundary".into(),
+                ));
+            }
             super::FrameOutcome::Yield {
                 value,
                 destination,
                 frame: None,
+                ..
             } => {
                 if let Some(generator) = resume.generator {
                     self.async_generator_yield(

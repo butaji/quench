@@ -37,6 +37,18 @@ pub trait Test262Host: Send {
         strict: bool,
     ) -> Result<(), String>;
 
+    /// Execute a harnessed script with its source location available to
+    /// filesystem-aware hosts (for example, as a dynamic-import referrer).
+    fn run_harnessed_script_at(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        strict: bool,
+        _path: &Path,
+    ) -> Result<(), String> {
+        self.run_harnessed_script(harness, source, strict)
+    }
+
     /// Execute harness scripts, then one module in the same realm.
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String>;
 
@@ -623,11 +635,14 @@ impl<H: Test262Host> Test262Runner<H> {
             }
             return runner_support::outcome(self.host.run_harnessed_module(harness, source));
         }
-        runner_support::outcome(self.host.run_harnessed_script(
-            harness,
-            source,
-            metadata.only_strict,
-        ))
+        let result = if let Some(path) = path {
+            self.host
+                .run_harnessed_script_at(harness, source, metadata.only_strict, path)
+        } else {
+            self.host
+                .run_harnessed_script(harness, source, metadata.only_strict)
+        };
+        runner_support::outcome(result)
     }
 }
 

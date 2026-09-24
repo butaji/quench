@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn array_values(&self, this: Value) -> Result<Vec<Value>, JsError> {
+    pub(super) fn array_values(&self, this: Value) -> Result<Vec<Value>, JsError> {
         let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
             return Err(JsError("modern array method receiver is not array".into()));
         };
@@ -30,7 +30,7 @@ impl<H: Host> Vm<H> {
             .collect())
     }
 
-    fn new_array(&mut self, values: Vec<Value>) -> Value {
+    pub(super) fn new_array(&mut self, values: Vec<Value>) -> Value {
         self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),
@@ -120,7 +120,12 @@ impl<H: Host> Vm<H> {
         Ok(self.new_array(values))
     }
 
-    fn iterator_abrupt(&mut self, p: &ResidualProgram, iterator: Value, error: JsError) -> JsError {
+    pub(super) fn iterator_abrupt(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+        error: JsError,
+    ) -> JsError {
         self.iterator_close(p, iterator).err().unwrap_or(error)
     }
 

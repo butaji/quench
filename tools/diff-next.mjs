@@ -41,6 +41,7 @@ function semanticObservable(result) {
 
 const source = process.argv[2];
 const selfTest = source === "--self-test";
+const timeoutMs = Number(process.env.DIFF_TIMEOUT_MS);
 if (selfTest) {
   const assert = (condition, message) => {
     if (!condition) throw new Error(`self-test failed: ${message}`);
@@ -77,6 +78,10 @@ if (selfTest) {
 }
 if (!source) {
   console.error("usage: diff-next.mjs SCRIPT | --self-test");
+  process.exit(2);
+}
+if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+  console.error("DIFF_TIMEOUT_MS must be set to a positive timeout in milliseconds");
   process.exit(2);
 }
 
@@ -116,7 +121,7 @@ function execute(
   label,
   command,
   args,
-  timeout = Number(process.env.DIFF_TIMEOUT_MS ?? 30_000),
+  timeout = timeoutMs,
 ) {
   const started = performance.now();
   const result = spawnSync(command, args, {
@@ -153,7 +158,7 @@ console.log(
       schema: 2,
       source: absoluteSource,
       source_sha256: sourceSha256,
-      timeout_ms: Number(process.env.DIFF_TIMEOUT_MS ?? 30_000),
+      timeout_ms: timeoutMs,
       results,
       matches_node: results.slice(0, 3).map((result) =>
         semanticObservable(result) === reference

@@ -60,7 +60,7 @@ fn decode_units(raw: &str) -> Vec<u16> {
                 } else {
                     read_hex(&mut chars, 4)
                 };
-                if value <= 0xFFFF {
+                if value <= crate::unicode::UTF16_MAX_CODE_UNIT {
                     units.push(value as u16);
                 } else if let Some(ch) = char::from_u32(value) {
                     push_char(&mut units, ch);

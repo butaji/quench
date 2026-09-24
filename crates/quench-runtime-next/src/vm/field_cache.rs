@@ -9,6 +9,12 @@ impl<H: Host> Vm<H> {
                 return (owner == cache.owner && current.shape() == cache.owner_shape)
                     .then_some(owner);
             }
+            if self
+                .shape_slot(current.shape(), cache.atom)
+                .is_some_and(|slot| self.heap.property_get(current, slot).is_some())
+            {
+                return None;
+            }
             owner = current.proto;
             if owner.is_null() {
                 return None;

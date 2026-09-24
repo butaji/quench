@@ -11,10 +11,18 @@ impl FunctionCompiler<'_, '_> {
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
             Expression::NullLiteral(_) => self.literal(Constant::Null),
             Expression::Identifier(value) => self.load_name(value.name.as_str()),
-            Expression::ThisExpression(_) => {
-                let dst = self.reg();
-                self.emit(Op::LoadThis, dst, 0, 0, 0);
-                dst
+            Expression::ThisExpression(_) => self.load_this_value(),
+            Expression::NewTarget(_) => self.load_name("\0rqj:new-target"),
+            Expression::ImportMeta(_) => {
+                if !self.owner.module_goal {
+                    self.owner.reject(
+                        expression.span(),
+                        "SyntaxError: import.meta is only valid in modules",
+                    );
+                }
+                let result = self.reg();
+                self.emit(Op::LoadImportMeta, result, 0, 0, 0);
+                result
             }
             Expression::Super(_) => self.super_base(),
             Expression::FunctionExpression(value) => self.function_expression(value),
@@ -24,7 +32,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::ObjectExpression(value) => self.object_expression(value),
             Expression::StaticMemberExpression(value) => self.static_member(value),
             Expression::PrivateFieldExpression(value) => {
-                let name = format!("#{}", value.field.name);
+                let name = self.owner.private_name_text(value.field.span);
                 self.static_get(&value.object, &name)
             }
             Expression::ComputedMemberExpression(value) => self.computed_member(value),
@@ -32,11 +40,52 @@ impl FunctionCompiler<'_, '_> {
             Expression::AssignmentExpression(value) => self.assignment(value),
             Expression::UpdateExpression(value) => self.update(value),
             Expression::BinaryExpression(value) => self.binary(value),
+            Expression::PrivateInExpression(value) => {
+                let atom = self.owner.private_name_atom(value.left.span);
+                let object = self.expression(&value.right);
+                let result = self.reg();
+                self.emit(Op::PrivateIn, result, object, 0, atom);
+                result
+            }
             Expression::UnaryExpression(value) => self.unary(value),
             Expression::LogicalExpression(value) => self.logical(value),
             Expression::ConditionalExpression(value) => self.conditional(value),
             Expression::CallExpression(value) if value.optional => self.optional_call(value),
             Expression::CallExpression(value) => self.call(value),
+            Expression::ImportExpression(value) => {
+                let specifier = self.expression(&value.source);
+                let options = if let Some(options) = value.options.as_ref() {
+                    self.expression(options)
+                } else {
+                    self.literal(Constant::Undefined)
+                };
+                let phase = match value.phase {
+                    Some(oxc_ast::ast::ImportPhase::Source) => {
+                        crate::bytecode::ModuleRequestPhase::Source
+                    }
+                    Some(oxc_ast::ast::ImportPhase::Defer) => {
+                        crate::bytecode::ModuleRequestPhase::Defer
+                    }
+                    None => crate::bytecode::ModuleRequestPhase::Evaluation,
+                };
+                let phase = self.literal(Constant::Number(phase.runtime_value()));
+                let callee = self.load_name("\0rqj:dynamic-import");
+                let this = self.literal(Constant::Undefined);
+                let base = self.next_reg;
+                for argument in [specifier, options, phase] {
+                    let slot = self.reg();
+                    self.emit(Op::Move, slot, argument, 0, 0);
+                }
+                let result = self.reg();
+                self.emit(
+                    Op::Call,
+                    result,
+                    callee,
+                    this,
+                    crate::bytecode::ImmediateLayout::call_immediate(base, 3, false, false),
+                );
+                result
+            }
             Expression::NewExpression(value) => self.construct(value),
             Expression::SequenceExpression(value) => self.sequence_expression(value),
             Expression::ParenthesizedExpression(value) => self.expression(&value.expression),
@@ -46,7 +95,29 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::Await, destination, source, 0, 0);
                 destination
             }
-            Expression::YieldExpression(value) if self.generator && !value.delegate => {
+            Expression::YieldExpression(value) if self.generator && value.delegate => {
+                let source = if let Some(argument) = value.argument.as_ref() {
+                    self.expression(argument)
+                } else {
+                    self.literal(Constant::Undefined)
+                };
+                let destination = self.reg();
+                let undefined = self.literal(Constant::Undefined);
+                self.emit(Op::Move, destination, undefined, 0, 0);
+                let iterator = self.reg();
+                self.emit(Op::Move, iterator, undefined, 0, 0);
+                let awaited_result = self.reg();
+                self.emit(Op::Move, awaited_result, undefined, 0, 0);
+                let next_method = self.reg();
+                self.emit(Op::Move, next_method, undefined, 0, 0);
+                let state = crate::bytecode::ImmediateLayout::register_pair_immediate(
+                    awaited_result,
+                    next_method,
+                );
+                self.emit(Op::YieldStar, destination, source, iterator, state);
+                destination
+            }
+            Expression::YieldExpression(value) if self.generator => {
                 let source = if let Some(argument) = value.argument.as_ref() {
                     self.expression(argument)
                 } else {
@@ -96,23 +167,32 @@ impl FunctionCompiler<'_, '_> {
         let _ = flags;
         destination
     }
-    pub(super) fn load_atom(&mut self, atom: Atom) -> Register {
+    pub(crate) fn load_atom(&mut self, atom: Atom) -> Register {
         let atom = self.resolve_lexical(atom);
         let dst = self.reg();
-        if self.with_depth == 0 && let Some(slot) = self.local_slots.get(&atom).copied() {
+        if self.parameter_context
+            && atom == self.owner.atom("arguments")
+            && let Some(slot) = self.parameter_arguments_slot
+        {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
-        } else if self.with_depth == 0 && let Some((depth, slot)) = self
-            .scopes
-            .iter()
-            .enumerate()
-            .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
+        } else if self.with_depth == 0
+            && let Some(slot) = self.local_slots.get(&atom).copied()
+        {
+            self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
+        } else if self.with_depth == 0
+            && !self.dynamic_eval
+            && let Some((depth, slot)) = self
+                .scopes
+                .iter()
+                .enumerate()
+                .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
         {
             self.emit(
                 Op::LoadCapture,
                 dst,
                 0,
                 0,
-                ((depth as u32) << 16) | u32::from(slot),
+                crate::bytecode::ImmediateLayout::capture_immediate(depth, slot),
             );
         } else {
             let cache = self.owner.cache_site();
@@ -122,31 +202,73 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
+        self.store_atom_with_initialization(atom, value, false);
+    }
+
+    pub(crate) fn initialize_atom(&mut self, atom: Atom, value: Register) {
+        self.store_atom_with_initialization(atom, value, true);
+    }
+
+    fn store_atom_with_initialization(&mut self, atom: Atom, value: Register, initializing: bool) {
         let atom = self.resolve_lexical(atom);
-        if self.with_depth == 0 && let Some(slot) = self.local_slots.get(&atom).copied() {
-            self.emit(Op::StoreLocal, value, 0, 0, u32::from(slot));
+        if self.owner.atoms[atom as usize]
+            .as_ref()
+            .contains("\0rqj:class-binding:")
+            || (self.with_depth == 0
+                && !self.local_slots.contains_key(&atom)
+                && self.has_immutable_capture(atom))
+        {
+            self.throw_immutable_binding(atom);
+            return;
+        }
+        if self.with_depth == 0
+            && let Some(slot) = self.local_slots.get(&atom).copied()
+        {
+            self.emit(
+                Op::StoreLocal,
+                value,
+                0,
+                u16::from(initializing),
+                u32::from(slot),
+            );
             if self.function_id == 0 {
                 let cache = self.owner.cache_site();
                 self.emit(Op::StoreName, value, 0, cache, atom);
             }
-        } else if self.with_depth == 0 && let Some((depth, slot)) = self
-            .scopes
-            .iter()
-            .enumerate()
-            .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
+        } else if self.with_depth == 0
+            && let Some((depth, slot)) = self
+                .scopes
+                .iter()
+                .enumerate()
+                .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
         {
             self.emit(
                 Op::StoreCapture,
                 value,
                 0,
                 0,
-                ((depth as u32) << 16) | u32::from(slot),
+                crate::bytecode::ImmediateLayout::capture_immediate(depth, slot),
             );
         } else {
             let cache = self.owner.cache_site();
             self.emit(Op::StoreName, value, 0, cache, atom);
         }
     }
+
+    pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {
+        let name = self.owner.atoms[atom as usize].clone();
+        let marker = self.owner.atom(&format!("\0rqj:immutable-capture:{name}"));
+        self.scopes.iter().any(|scope| scope.contains_key(&marker))
+    }
+
+    fn throw_immutable_binding(&mut self, atom: Atom) {
+        let _ = self.load_atom(atom);
+        let constructor = self.load_name("TypeError");
+        let error = self.reg();
+        self.emit(Op::Construct, error, constructor, 0, 0);
+        self.emit(Op::Throw, error, 0, 0, 0);
+    }
+
     pub(super) fn function_expression(&mut self, value: &oxc_ast::ast::Function<'_>) -> Register {
         let params = Self::params(value, self.owner);
         let body = value
@@ -154,6 +276,10 @@ impl FunctionCompiler<'_, '_> {
             .as_ref()
             .map_or(&[][..], |body| body.statements.as_slice());
         let name = value.id.as_ref().map(|id| id.name.as_str());
+        let name_binding = value
+            .id
+            .as_ref()
+            .map(|id| self.owner.atom(id.name.as_str()));
         let scopes = self.capture_scopes();
         let function = self.owner.compile_function(
             name,
@@ -163,8 +289,10 @@ impl FunctionCompiler<'_, '_> {
             Some(self.function_id),
             FunctionOptions {
                 defaults: Some(&value.params),
+                name_binding,
                 async_function: value.r#async,
                 generator: value.generator,
+                with_depth: self.with_depth,
                 strict: self.strict
                     || value.body.as_ref().is_some_and(|body| {
                         body.directives
@@ -182,17 +310,37 @@ impl FunctionCompiler<'_, '_> {
         &mut self,
         value: &oxc_ast::ast::ArrowFunctionExpression<'_>,
     ) -> Register {
+        let lexical_this_atom = self.this_override.map(|this| {
+            let atom = self.hidden_local("\0rqj:lexical-this-override");
+            self.store_atom(atom, this);
+            atom
+        });
         let scopes = self.capture_scopes();
-        let function = self
-            .owner
-            .compile_arrow_function(value, &scopes, Some(self.function_id));
+        let function = self.owner.compile_arrow_function(
+            value,
+            &scopes,
+            Some(self.function_id),
+            self.super_static,
+            self.super_home,
+            self.super_home_atom,
+            self.strict,
+            self.class_field_initializer,
+            lexical_this_atom,
+            self.super_call_binds_this,
+            self.with_depth,
+        );
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
     }
     pub(super) fn static_get(&mut self, object: &Expression<'_>, key: &str) -> Register {
+        if matches!(object, Expression::Super(_)) {
+            let receiver = self.reg();
+            self.emit(Op::LoadThis, receiver, 0, 0, 0);
+        }
         if let Expression::StaticMemberExpression(inner) = object
             && matches!(&inner.object, Expression::ThisExpression(_))
+            && self.this_override.is_none()
         {
             let dst = self.reg();
             let first = self.owner.atom(inner.property.name.as_str());
@@ -208,7 +356,9 @@ impl FunctionCompiler<'_, '_> {
         let atom = self.owner.atom(key);
         let cache = self.owner.cache_site();
         let base = if matches!(object, Expression::ThisExpression(_)) {
-            FieldBase::THIS
+            self.this_override
+                .map(FieldBase::register)
+                .unwrap_or(FieldBase::THIS)
         } else {
             FieldBase::register(self.expression(object))
         };
@@ -242,22 +392,27 @@ impl FunctionCompiler<'_, '_> {
         object: &Expression<'_>,
         key: &Expression<'_>,
     ) -> Register {
-        let object = if matches!(object, Expression::Super(_)) && !self.super_static && !self.super_home {
-            let base = self.expression(object);
-            let prototype = self.reg();
-            let atom = self.owner.atom("prototype");
-            let cache = self.owner.cache_site();
-            self.emit(
-                Op::GetField,
-                prototype,
-                FieldBase::register(base).0,
-                cache,
-                atom,
-            );
-            prototype
-        } else {
-            self.expression(object)
-        };
+        if matches!(object, Expression::Super(_)) {
+            let receiver = self.reg();
+            self.emit(Op::LoadThis, receiver, 0, 0, 0);
+        }
+        let object =
+            if matches!(object, Expression::Super(_)) && !self.super_static && !self.super_home {
+                let base = self.expression(object);
+                let prototype = self.reg();
+                let atom = self.owner.atom("prototype");
+                let cache = self.owner.cache_site();
+                self.emit(
+                    Op::GetField,
+                    prototype,
+                    FieldBase::register(base).0,
+                    cache,
+                    atom,
+                );
+                prototype
+            } else {
+                self.expression(object)
+            };
         if let Expression::StringLiteral(value) = key
             && !matches!(
                 super::super::string::constant(value),
@@ -316,9 +471,24 @@ impl FunctionCompiler<'_, '_> {
                 }
                 value
             }
+            SimpleAssignmentTarget::PrivateFieldExpression(item) => {
+                let atom = self.owner.private_name_atom(item.field.span);
+                let object = self.expression(&item.object);
+                let value = self.compound_field(object, atom, right, operator);
+                let site = self.owner.cache_site();
+                self.emit(Op::SetField, value, object, site, atom);
+                value
+            }
             SimpleAssignmentTarget::ComputedMemberExpression(item) => {
                 let object = self.expression(&item.object);
-                let key = self.expression(&item.expression);
+                if matches!(&item.object, Expression::Super(_)) {
+                    let receiver = self.reg();
+                    self.emit(Op::LoadThis, receiver, 0, 0, 0);
+                }
+                let raw_key = self.expression(&item.expression);
+                self.emit(Op::RequireObjectCoercible, 0, object, 0, 0);
+                let key = self.reg();
+                self.emit(Op::ToPropertyKey, key, raw_key, 0, 0);
                 let value = self.compound_index(object, key, right, operator);
                 self.emit(Op::SetIndex, value, object, key, 0);
                 value
@@ -383,7 +553,22 @@ impl FunctionCompiler<'_, '_> {
         let (old, target) = match &value.argument {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => {
                 let atom = self.owner.atom(id.name.as_str());
-                (self.load_atom(atom), UpdateTarget::Name(atom))
+                let capture_global_reference = self.needs_strict_global_reference_capture(atom);
+                let environment = if self.with_depth != 0 || capture_global_reference {
+                    let environment = self.reg();
+                    let cache = self.owner.cache_site();
+                    self.emit(
+                        Op::ResolveName,
+                        environment,
+                        u16::from(capture_global_reference),
+                        cache,
+                        atom,
+                    );
+                    Some(environment)
+                } else {
+                    None
+                };
+                (self.load_atom(atom), UpdateTarget::Name(atom, environment))
             }
             SimpleAssignmentTarget::StaticMemberExpression(item) => {
                 let object = self.expression(&item.object);
@@ -401,7 +586,14 @@ impl FunctionCompiler<'_, '_> {
             }
             SimpleAssignmentTarget::ComputedMemberExpression(item) => {
                 let object = self.expression(&item.object);
-                let key = self.expression(&item.expression);
+                if matches!(&item.object, Expression::Super(_)) {
+                    let receiver = self.reg();
+                    self.emit(Op::LoadThis, receiver, 0, 0, 0);
+                }
+                let raw_key = self.expression(&item.expression);
+                self.emit(Op::RequireObjectCoercible, 0, object, 0, 0);
+                let key = self.reg();
+                self.emit(Op::ToPropertyKey, key, raw_key, 0, 0);
                 let old = self.reg();
                 self.emit(Op::GetIndex, old, object, key, 0);
                 (old, UpdateTarget::Index(object, key))
@@ -411,10 +603,27 @@ impl FunctionCompiler<'_, '_> {
                 return self.literal(Constant::Undefined);
             }
         };
+        let numeric_old = self.reg();
+        self.emit(Op::ToNumeric, numeric_old, old, 0, 0);
         let next = self.reg();
-        self.emit(Op::IncDec, next, old, 0, u32::from(value.operator as u8));
+        self.emit(
+            Op::IncDec,
+            next,
+            numeric_old,
+            0,
+            u32::from(value.operator as u8),
+        );
         match target {
-            UpdateTarget::Name(atom) => self.store_atom(atom, next),
+            UpdateTarget::Name(atom, Some(environment)) => {
+                self.emit(
+                    Op::StoreResolvedName,
+                    next,
+                    environment,
+                    u16::from(self.strict),
+                    atom,
+                );
+            }
+            UpdateTarget::Name(atom, None) => self.store_atom(atom, next),
             UpdateTarget::Field(atom, object) => {
                 let cache = self.owner.cache_site();
                 self.emit(Op::SetField, next, object, cache, atom);
@@ -423,22 +632,12 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::SetIndex, next, object, key, 0);
             }
         }
-        if value.prefix { next } else { old }
+        if value.prefix { next } else { numeric_old }
     }
 
     pub(super) fn binary(&mut self, value: &BinaryExpression<'_>) -> Register {
         let left = if let Some(constant) = binding_time::expression(&value.left).static_value() {
             Operand::constant(self.owner.constant(constant))
-        } else if let Expression::Identifier(identifier) = &value.left
-            && let Some(operand) = self.local_operand(identifier.name.as_str())
-        {
-            operand
-        } else if let Expression::StaticMemberExpression(field) = &value.left
-            && matches!(&field.object, Expression::ThisExpression(_))
-        {
-            let atom = self.owner.atom(field.property.name.as_str());
-            let cache = self.owner.cache_site();
-            Operand::field(self.field_site(FieldBase::THIS, (atom, cache), None))
         } else {
             Operand::register(self.expression(&value.left))
         };
@@ -464,16 +663,6 @@ impl FunctionCompiler<'_, '_> {
             let left = if let Some(constant) = binding_time::expression(&binary.left).static_value()
             {
                 Operand::constant(self.owner.constant(constant))
-            } else if let Expression::Identifier(identifier) = &binary.left
-                && let Some(operand) = self.local_operand(identifier.name.as_str())
-            {
-                operand
-            } else if let Expression::StaticMemberExpression(field) = &binary.left
-                && matches!(&field.object, Expression::ThisExpression(_))
-            {
-                let atom = self.owner.atom(field.property.name.as_str());
-                let cache = self.owner.cache_site();
-                Operand::field(self.field_site(FieldBase::THIS, (atom, cache), None))
             } else {
                 Operand::register(self.expression(&binary.left))
             };
@@ -497,5 +686,15 @@ impl FunctionCompiler<'_, '_> {
         }
         let test = self.expression(value);
         self.emit(Op::JumpFalse, test, 0, 0, 0)
+    }
+
+    pub(crate) fn load_this_value(&mut self) -> Register {
+        let dst = self.reg();
+        if let Some(this) = self.this_override {
+            self.emit(Op::Move, dst, this, 0, 0);
+        } else {
+            self.emit(Op::LoadThis, dst, 0, 0, 0);
+        }
+        dst
     }
 }

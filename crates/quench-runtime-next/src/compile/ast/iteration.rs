@@ -34,23 +34,19 @@ impl FunctionCompiler<'_, '_> {
     ) {
         let scoped = self.push_iteration_scope(&item.left);
         let object = self.expression(&item.right);
-        let constructor = self.load_name("Object");
-        let atom = self.owner.atom("keys");
-        let cache = self.owner.cache_site();
-        let keys = self.reg();
-        self.emit(
-            Op::GetField,
-            keys,
-            FieldBase::register(constructor).0,
-            cache,
-            atom,
-        );
+        let keys = self.load_name("\0rqj:for-in-keys");
         let this = self.literal(Constant::Undefined);
         let base = self.next_reg;
         let argument = self.reg();
         self.emit(Op::Move, argument, object, 0, 0);
         let source = self.reg();
-        self.emit(Op::Call, source, keys, this, (u32::from(base) << 16) | 1);
+        self.emit(
+            Op::Call,
+            source,
+            keys,
+            this,
+            crate::bytecode::ImmediateLayout::call_immediate(base, 1, false, false),
+        );
         self.for_iterable(&item.left, &item.body, source, false, label);
         if scoped {
             self.lexical_scopes.pop();
@@ -154,7 +150,7 @@ impl FunctionCompiler<'_, '_> {
         for item in &declaration.declarations {
             self.map_pattern_lexicals(&item.id, &mut scope);
         }
-        self.lexical_scopes.push(scope);
+        self.push_lexical_bindings(scope);
         true
     }
 

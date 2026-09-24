@@ -60,22 +60,8 @@ impl FunctionCompiler<'_, '_> {
         for item in &value.elements {
             if let ArrayExpressionElement::SpreadElement(spread) = item {
                 let source = self.expression(&spread.argument);
-                let array = self.load_name("Array");
-                let from = self.reg();
-                let from_atom = self.owner.atom("from");
-                let from_cache = self.owner.cache_site();
-                self.emit(
-                    Op::GetField,
-                    from,
-                    FieldBase::register(array).0,
-                    from_cache,
-                    from_atom,
-                );
-                let base = self.next_reg;
-                let source_arg = self.reg();
-                self.emit(Op::Move, source_arg, source, 0, 0);
                 let expanded = self.reg();
-                self.emit(Op::Call, expanded, from, array, (u32::from(base) << 16) | 1);
+                self.emit(Op::SpreadToArray, expanded, source, 0, 0);
                 let apply = self.reg();
                 let apply_atom = self.owner.atom("apply");
                 let apply_cache = self.owner.cache_site();
@@ -97,7 +83,7 @@ impl FunctionCompiler<'_, '_> {
                     ignored,
                     apply,
                     push,
-                    (u32::from(args_base) << 16) | 2,
+                    crate::bytecode::ImmediateLayout::call_immediate(args_base, 2, false, false),
                 );
             } else if let Some(expression) = item.as_expression() {
                 let element = self.expression(expression);
@@ -105,7 +91,13 @@ impl FunctionCompiler<'_, '_> {
                 let element_arg = self.reg();
                 self.emit(Op::Move, element_arg, element, 0, 0);
                 let ignored = self.reg();
-                self.emit(Op::Call, ignored, push, dst, (u32::from(base) << 16) | 1);
+                self.emit(
+                    Op::Call,
+                    ignored,
+                    push,
+                    dst,
+                    crate::bytecode::ImmediateLayout::call_immediate(base, 1, false, false),
+                );
             }
         }
         dst

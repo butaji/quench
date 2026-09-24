@@ -15,7 +15,7 @@ impl<H: Host> Vm<H> {
             ("compareExchange", Native::AtomicsCompareExchange),
             ("isLockFree", Native::AtomicsIsLockFree),
         ] {
-            self.set_named(program, atomics, name, self.native_value(native))?;
+            self.set_builtin_named(program, atomics, name, native)?;
         }
         self.global(program, "Atomics", atomics)
     }

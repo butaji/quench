@@ -102,9 +102,16 @@ mod tests {
             parent: None,
             name: None,
             params: 0,
+            length: 0,
+            parameter_end_pc: 0,
+            parameter_atoms: vec![],
             rest: false,
             is_async: false,
             is_generator: false,
+            is_class_constructor: false,
+            derived_constructor: false,
+            super_home_atom: None,
+            class_field_initializer: false,
             locals: 0,
             code: ops.iter().map(|op| Instr::new(*op, 0, 0, 0, 0)).collect(),
             wide: Vec::new(),
@@ -119,6 +126,8 @@ mod tests {
     fn partitions_pairs_and_nonsequential_boundaries_by_dispatch_class() {
         let program = ResidualProgram {
             specialized: true,
+            module: false,
+            source_name: String::new(),
             atoms: AtomTable::default(),
             constants: Vec::new(),
             functions: vec![

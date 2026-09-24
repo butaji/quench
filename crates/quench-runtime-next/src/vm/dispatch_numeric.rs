@@ -67,14 +67,14 @@ macro_rules! execute_specialized_numeric {
         let left = $vm.resolve_operand($program, $frame, Operand($ins.b()))?;
         let right = $vm.resolve_operand($program, $frame, Operand($ins.c()))?;
         let value = specialized_numeric_value!($vm, $program, $operator, $semantic, left, right);
-        if $ins.a() & RETURN_REGISTER != 0 {
+        if $ins.returns_from_frame() {
             return Ok(StepResult::Return(value));
         }
-        if $ins.a() & NUMERIC_LOCAL_TARGET != 0 {
-            $vm.frames[$frame].locals[($ins.a() & REGISTER_MASK) as usize] = value;
+        if $ins.writes_numeric_local() {
+            $vm.frames[$frame].locals[$ins.result_register() as usize] = value;
             $vm.profile.virtual_opcode(Op::StoreLocal as usize);
         } else {
-            $vm.write($frame, $ins.a(), value);
+            $vm.write($frame, $ins.result_register(), value);
         }
     }};
 }
@@ -94,6 +94,7 @@ impl<H: Host> Vm<H> {
         self.profile.function(id as usize);
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
+            program: self.active_program,
             function: 0,
             pc: 0,
             env: Value::NULL,
@@ -102,6 +103,7 @@ impl<H: Host> Vm<H> {
             dynamic_bindings: vec![],
             captured: false,
             registers: vec![],
+            active_iterators: vec![],
             with_base: self.with_stack.len(),
         });
         frame
@@ -137,15 +139,10 @@ impl<H: Host> Vm<H> {
             });
         }
         frame.function = id;
+        frame.program = self.active_program;
         frame.pc = 0;
         frame.env = parent;
-        frame.this = if function.strict {
-            this
-        } else if this.is_null() || this.is_undefined() {
-            self.realm.globals
-        } else {
-            self.box_object(this)?
-        };
+        frame.this = self.call_this_value(this, function.strict)?;
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         let register_count = function.registers as usize;
@@ -202,6 +199,7 @@ impl<H: Host> Vm<H> {
                     Op::StoreLocal => {
                         let value = self.read(frame, ins.a());
                         self.frames[frame].locals[ins.imm() as usize] = value;
+                        self.mirror_global_lexical_binding(p, frame, ins.imm() as usize, value);
                         if ins.b() != 0 {
                             self.write(frame, ins.b() - 1, value);
                         }
@@ -211,10 +209,10 @@ impl<H: Host> Vm<H> {
                         self.profile.index_dispatch(false, true);
                         let base = self.numeric_index_source(frame, ins.b());
                         let index = self.numeric_index_source(frame, ins.c());
-                        if Operand(ins.b()).tag() == 3 {
+                        if Operand(ins.b()).kind() == Some(crate::bytecode::OperandKind::Local) {
                             self.profile.virtual_opcode(Op::LoadLocal as usize);
                         }
-                        if Operand(ins.c()).tag() == 3 {
+                        if Operand(ins.c()).kind() == Some(crate::bytecode::OperandKind::Local) {
                             self.profile.virtual_opcode(Op::LoadLocal as usize);
                         }
                         let value = self.get_index(p, base, index)?;
@@ -223,11 +221,12 @@ impl<H: Host> Vm<H> {
                     Op::SetIndex => {
                         #[cfg(feature = "profile-aggregate")]
                         self.profile.index_dispatch(true, true);
-                        self.set_index(
+                        self.set_index_mode(
                             p,
                             self.read(frame, ins.b()),
                             self.read(frame, ins.c()),
                             self.read(frame, ins.a()),
+                            p.functions[self.frames[frame].function as usize].strict,
                         )?
                     }
                     Op::Binary => {
@@ -245,14 +244,14 @@ impl<H: Host> Vm<H> {
                             Some(value) => value,
                             None => self.binary(p, ins.imm(), left, right)?,
                         };
-                        if ins.a() & RETURN_REGISTER != 0 {
+                        if ins.returns_from_frame() {
                             return Ok(StepResult::Return(value));
                         }
-                        if ins.a() & NUMERIC_LOCAL_TARGET != 0 {
-                            self.frames[frame].locals[(ins.a() & REGISTER_MASK) as usize] = value;
+                        if ins.writes_numeric_local() {
+                            self.frames[frame].locals[ins.result_register() as usize] = value;
                             self.profile.virtual_opcode(Op::StoreLocal as usize);
                         } else {
-                            self.write(frame, ins.a(), value);
+                            self.write(frame, ins.result_register(), value);
                         }
                     }
                     Op::NumericAdd => {
@@ -397,9 +396,11 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn numeric_index_source(&self, frame: usize, raw: u16) -> Value {
         let operand = Operand(raw);
-        match operand.tag() {
-            0 => self.read(frame, operand.payload()),
-            3 => self.frames[frame].locals[operand.payload() as usize],
+        match operand.kind() {
+            Some(crate::bytecode::OperandKind::Register) => self.read(frame, operand.payload()),
+            Some(crate::bytecode::OperandKind::Local) => {
+                self.frames[frame].locals[operand.payload() as usize]
+            }
             _ => unreachable!("numeric indexed source is a register or local"),
         }
     }

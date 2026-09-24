@@ -1383,6 +1383,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1678,7 +1687,7 @@ dependencies = [
  "oxc_diagnostics 0.47.1",
  "oxc_parser 0.47.1",
  "oxc_regular_expression 0.47.1",
- "oxc_semantic",
+ "oxc_semantic 0.47.1",
  "oxc_span 0.47.1",
  "oxc_syntax 0.47.1",
 ]
@@ -1861,13 +1870,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxc_ast_visit"
+version = "0.150.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0cf0a82e610e199a916833a98b6fac20aebd18a5a98a5ac0ec93c23dd600a74"
+dependencies = [
+ "oxc_allocator 0.150.0",
+ "oxc_ast 0.150.0",
+ "oxc_span 0.150.0",
+ "oxc_syntax 0.150.0",
+]
+
+[[package]]
 name = "oxc_cfg"
 version = "0.47.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bc62e52879170ba6e818ec93f8ed2c32e38afa3de0aee64fb28555e91615843"
 dependencies = [
  "bitflags",
- "itertools",
+ "itertools 0.14.0",
  "nonmax",
  "oxc_index 2.0.0",
  "oxc_syntax 0.47.1",
@@ -2167,7 +2188,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f93df6d4abf46480c5479eba2a367e9fb837aece6f908d4d4271c2e5ae1bf126"
 dependencies = [
  "assert-unchecked",
- "itertools",
+ "itertools 0.14.0",
  "oxc_allocator 0.47.1",
  "oxc_ast 0.47.1",
  "oxc_cfg",
@@ -2180,6 +2201,29 @@ dependencies = [
  "phf 0.11.3",
  "rustc-hash",
  "self_cell",
+]
+
+[[package]]
+name = "oxc_semantic"
+version = "0.150.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb42b29a8296620e5343a802038d323fde50707b2502ccaa82e10bdf0fd904e4"
+dependencies = [
+ "itertools 0.15.0",
+ "memchr",
+ "oxc_allocator 0.150.0",
+ "oxc_ast 0.150.0",
+ "oxc_ast_visit",
+ "oxc_data_structures 0.150.0",
+ "oxc_diagnostics 0.150.0",
+ "oxc_ecmascript 0.150.0",
+ "oxc_index 5.0.0",
+ "oxc_span 0.150.0",
+ "oxc_str",
+ "oxc_syntax 0.150.0",
+ "rustc-hash",
+ "self_cell",
+ "smallvec",
 ]
 
 [[package]]
@@ -2763,8 +2807,11 @@ dependencies = [
  "num-bigint 0.4.8",
  "oxc_allocator 0.150.0",
  "oxc_ast 0.150.0",
+ "oxc_ast_visit",
  "oxc_parser 0.150.0",
+ "oxc_semantic 0.150.0",
  "oxc_span 0.150.0",
+ "oxc_syntax 0.150.0",
  "regex",
  "rustc-hash",
  "serde_json",
@@ -2780,6 +2827,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "wait-timeout",
 ]
 
 [[package]]
@@ -3609,6 +3657,15 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "walkdir"

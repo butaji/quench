@@ -1,6 +1,48 @@
 use super::property_key::PropertyKey;
 use super::*;
 impl<H: Host> Vm<H> {
+    pub(super) fn delete_name(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+    ) -> Result<Value, JsError> {
+        if self.atom_name(atom).starts_with('\0') {
+            return Ok(Value::TRUE);
+        }
+        let frame = self.frames.len().saturating_sub(1);
+        if self.dynamic_binding(frame, atom).is_some()
+            || self
+                .frames
+                .get(frame)
+                .is_some_and(|frame| self.local_binding_slot(p, frame.function, atom).is_some())
+            || self
+                .outer_environment_binding(self.captured_parent_environment(frame), atom)
+                .is_some()
+        {
+            return Ok(Value::FALSE);
+        }
+        if p.functions
+            .first()
+            .is_some_and(|root| root.global_lexical_atoms.contains(&atom))
+            || self.realm.global_lexical_bindings.contains_key(&atom)
+        {
+            return Ok(Value::FALSE);
+        }
+        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let with_base = self
+            .frames
+            .get(frame)
+            .map_or(self.with_stack.len(), |frame| frame.with_base)
+            .min(self.with_stack.len());
+        let with_objects = self.with_stack[with_base..].to_vec();
+        for object in with_objects.into_iter().rev() {
+            if self.with_binding(p, object, key, atom)? {
+                return self.object_delete_property(p, &[object, key]);
+            }
+        }
+        self.object_delete_property(p, &[self.realm.globals, key])
+    }
+
     pub(super) fn object_delete_property(
         &mut self,
         p: &ResidualProgram,
@@ -47,22 +89,37 @@ impl<H: Host> Vm<H> {
             if self.symbol_property(target, key_value).is_none() {
                 return Ok(Value::TRUE);
             }
+            let property_key = PropertyKey::symbol(key_value);
+            let Some(slot) = self
+                .object_data(target)
+                .and_then(|data| self.property_shape_slot(data.shape(), property_key))
+                .filter(|slot| {
+                    self.heap
+                        .property_get(self.object_data(target).unwrap(), *slot)
+                        .is_some()
+                })
+            else {
+                return Ok(Value::TRUE);
+            };
             if self
-                .descriptors
-                .get(&(target, PropertyKey::symbol(key_value)))
+                .property_attributes(target, property_key)
                 .is_some_and(|attributes| !attributes.configurable)
             {
                 return Ok(Value::FALSE);
             }
-            let property_key = PropertyKey::symbol(key_value);
-            self.symbol_properties.remove(&(target, property_key));
-            self.descriptors.remove(&(target, property_key));
-            if let Some(keys) = self.symbol_property_order.get_mut(&target) {
-                keys.retain(|candidate| *candidate != property_key);
-            }
+            self.heap.property_set(target, slot, Value::DELETED);
+            self.delete_shape_property(target, property_key);
             return Ok(Value::TRUE);
         }
         let key = self.coerce_js_string(p, key_value)?;
+        if key.host_string() == "length"
+            && matches!(self.heap.get(target), Some(Cell::Array { .. }))
+            && !self
+                .object_data(target)
+                .is_some_and(Object::is_arguments_object)
+        {
+            return Ok(Value::FALSE);
+        }
         if let Some(index) =
             super::object_static::array_index(key.host_string()).map(|index| index as usize)
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))
@@ -84,9 +141,22 @@ impl<H: Host> Vm<H> {
             return Ok(Value::FALSE);
         }
         self.heap.property_set(target, slot, Value::DELETED);
-        self.remove_property_attributes(target, PropertyKey::string(atom));
+        self.delete_shape_property(target, PropertyKey::string(atom));
         self.invalidate_method_caches();
         Ok(Value::TRUE)
+    }
+
+    pub(super) fn delete_reference_property(
+        &mut self,
+        p: &ResidualProgram,
+        base: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        if base.is_null() || base.is_undefined() {
+            return Err(self.type_error(p, "Cannot convert undefined or null to object".into()));
+        }
+        let target = self.box_object(base)?;
+        self.object_delete_property(p, &[target, key])
     }
 
     pub(super) fn object_get_prototype_of(
@@ -206,6 +276,15 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         exists: bool,
     ) -> Result<(), JsError> {
+        self.check_property_key_write(object, PropertyKey::string(atom), exists)
+    }
+
+    pub(super) fn check_property_key_write(
+        &self,
+        object: Value,
+        key: PropertyKey,
+        exists: bool,
+    ) -> Result<(), JsError> {
         if !exists
             && self
                 .object_data(object)
@@ -217,7 +296,7 @@ impl<H: Host> Vm<H> {
         }
         if exists
             && self
-                .property_attributes(object, PropertyKey::string(atom))
+                .property_attributes(object, key)
                 .is_some_and(|attributes| !attributes.writable)
         {
             return Err(JsError("cannot write non-writable property".into()));
@@ -360,19 +439,21 @@ impl<H: Host> Vm<H> {
             self.set_property_attributes(target, PropertyKey::string(atom), attributes);
         }
         let symbols = self
-            .symbol_property_order
-            .get(&target)
-            .cloned()
-            .unwrap_or_default();
+            .object_data(target)
+            .map(|data| self.shapes[data.shape() as usize].keys.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|key| matches!(key, PropertyKey::Symbol(_)))
+            .collect::<Vec<_>>();
         for symbol in symbols {
-            let attributes = self
-                .descriptors
-                .entry((target, symbol))
-                .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
+            let mut attributes = self
+                .property_attributes(target, symbol)
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             attributes.configurable = false;
             if freeze {
                 attributes.writable = false;
             }
+            self.set_property_attributes(target, symbol, attributes);
         }
         Ok(target)
     }
@@ -396,16 +477,13 @@ impl<H: Host> Vm<H> {
                 !attributes.configurable && (!freeze || !attributes.writable)
             });
         let arrays_ok = self.array_is_integrity_level(target, freeze);
-        let symbols_ok = self
-            .symbol_property_order
-            .get(&target)
-            .into_iter()
-            .flatten()
+        let symbols_ok = self.shapes[data.shape() as usize]
+            .keys
+            .iter()
+            .filter(|key| matches!(key, PropertyKey::Symbol(_)))
             .all(|symbol| {
                 let attributes = self
-                    .descriptors
-                    .get(&(target, *symbol))
-                    .copied()
+                    .property_attributes(target, *symbol)
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 !attributes.configurable && (!freeze || !attributes.writable)
             });

@@ -83,6 +83,7 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
             Op::StoreCapture
             | Op::StoreName
             | Op::SetField
+            | Op::DefineField
             | Op::SetThisField
             | Op::SetIndex
             | Op::Jump
@@ -111,8 +112,8 @@ fn invalidate_captured(functions: &[Function], bindings: &mut [BindingTime<Stati
         .filter(|function| function.parent == Some(0) && function.wide.is_empty())
     {
         for instruction in &function.code {
-            if instruction.op() == Op::StoreCapture && instruction.imm() >> 16 == 0 {
-                bindings[instruction.imm() as u16 as usize] = BindingTime::Dynamic;
+            if instruction.op() == Op::StoreCapture && instruction.capture_depth() == 0 {
+                bindings[instruction.capture_slot() as usize] = BindingTime::Dynamic;
             }
         }
     }
@@ -122,9 +123,9 @@ fn materialize_constants(functions: &mut [Function], bindings: &[BindingTime<Sta
     for function in direct_children(functions) {
         for instruction in &mut function.code {
             if instruction.op() == Op::LoadCapture
-                && instruction.imm() >> 16 == 0
+                && instruction.capture_depth() == 0
                 && let BindingTime::Static(StaticValue::Constant(constant)) =
-                    bindings[instruction.imm() as u16 as usize]
+                    bindings[instruction.capture_slot() as usize]
             {
                 *instruction = Instr::new(
                     Op::LoadConst,
@@ -152,7 +153,7 @@ fn materialize_calls(functions: &mut [Function], bindings: &[BindingTime<StaticV
                 origins.fill(None);
             }
             if instruction.op() == Op::Call
-                && instruction.imm() & 0x8000_0000 == 0
+                && !crate::bytecode::ImmediateLayout::direct_eval(instruction.imm())
                 && let Some((target, callee_origin)) = known[instruction.b() as usize]
             {
                 dead.push(callee_origin);
@@ -170,9 +171,9 @@ fn materialize_calls(functions: &mut [Function], bindings: &[BindingTime<StaticV
             let output = instruction.a() & REGISTER_MASK;
             if output < function.registers {
                 known[output as usize] = if instruction.op() == Op::LoadCapture
-                    && instruction.imm() >> 16 == 0
+                    && instruction.capture_depth() == 0
                     && let BindingTime::Static(StaticValue::Function(target)) =
-                        bindings[instruction.imm() as u16 as usize]
+                        bindings[instruction.capture_slot() as usize]
                 {
                     Some((target, index))
                 } else {

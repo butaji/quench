@@ -20,10 +20,10 @@ pub(super) fn report(functions: &[Function]) {
                 Op::LoadCapture | Op::StoreCapture => {
                     capture_loads += usize::from(instruction.op() == Op::LoadCapture);
                     capture_stores += usize::from(instruction.op() == Op::StoreCapture);
-                    let depth = (instruction.imm() >> 16) as usize;
+                    let depth = usize::from(instruction.capture_depth());
                     max_depth = max_depth.max(depth);
                     if let Some(owner) = ancestor(functions, id, depth + 1) {
-                        let slot = instruction.imm() as u16 as usize;
+                        let slot = usize::from(instruction.capture_slot());
                         if slot < captured[owner].len() {
                             captured[owner][slot] = true;
                         }

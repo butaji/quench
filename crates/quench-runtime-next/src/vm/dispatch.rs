@@ -1,4 +1,5 @@
 use super::*;
+use crate::heap::PrivateBrand;
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn step(
@@ -14,7 +15,15 @@ impl<H: Host> Vm<H> {
                 self.clone_frame_environment(f);
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
-            Op::LoadConst => self.write(f, i.a(), self.constants[i.imm() as usize]),
+            Op::LoadConst => {
+                let value = self
+                    .programs
+                    .constant(self.frames[f].program, i.imm() as usize)
+                    .ok_or_else(|| {
+                        JsError::validation("constant index is outside program".into())
+                    })?;
+                self.write(f, i.a(), value);
+            }
             Op::LoadLocal => {
                 let slot = i.imm() as usize;
                 let v = if self.frames[f].captured {
@@ -30,12 +39,70 @@ impl<H: Host> Vm<H> {
                     // the frame-local bound before interpretation.
                     unsafe { *self.frames.get_unchecked(f).locals.get_unchecked(slot) }
                 };
+                if v.is_deleted() {
+                    let atom = p.functions[self.frames[f].function as usize]
+                        .local_atoms
+                        .get(slot)
+                        .copied()
+                        .unwrap_or_default();
+                    return Err(self.reference_error(
+                        p,
+                        format!(
+                            "Cannot access '{}' before initialization",
+                            self.atom_name(atom)
+                        ),
+                    ));
+                }
                 let v = self.mapped_argument_load(p, f, slot, v);
                 self.write(f, i.a(), v);
             }
             Op::StoreLocal => {
                 let value = self.read(f, i.a());
                 let slot = i.imm() as usize;
+                let function = &p.functions[self.frames[f].function as usize];
+                if function
+                    .local_atoms
+                    .get(slot)
+                    .is_some_and(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
+                {
+                    if function.strict {
+                        return Err(
+                            self.type_error(p, "assignment to function name binding".into())
+                        );
+                    }
+                    if i.b() != 0 {
+                        self.write(f, i.b() - 1, value);
+                    }
+                    return Ok(StepResult::Continue);
+                }
+                if self.frames[f].function == 0 {
+                    let current = if self.frames[f].captured {
+                        match self.heap.get(self.frames[f].env) {
+                            Some(Cell::Environment { slots, .. }) => slots.get(slot).copied(),
+                            _ => None,
+                        }
+                    } else {
+                        self.frames[f].locals.get(slot).copied()
+                    };
+                    if current.is_some_and(Value::is_deleted) && i.c() == 0 {
+                        let atom = function.local_atoms.get(slot).copied().unwrap_or_default();
+                        return Err(self.reference_error(
+                            p,
+                            format!(
+                                "Cannot access '{}' before initialization",
+                                self.atom_name(atom)
+                            ),
+                        ));
+                    }
+                    if function
+                        .local_atoms
+                        .get(slot)
+                        .is_some_and(|atom| function.global_immutable_atoms.contains(atom))
+                        && i.c() == 0
+                    {
+                        return Err(self.type_error(p, "assignment to constant binding".into()));
+                    }
+                }
                 if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) =
                         self.heap.get_mut(self.frames[f].env)
@@ -48,6 +115,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.frames[f].locals[slot] = value;
                 }
+                self.mirror_global_lexical_binding(p, f, slot, value);
                 self.mapped_argument_store(p, f, slot, value);
                 if i.b() != 0 {
                     self.write(f, i.b() - 1, value);
@@ -63,11 +131,38 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.frames[f].locals[i.imm() as usize]
                 };
+                if value.is_deleted() {
+                    let atom = p.functions[self.frames[f].function as usize]
+                        .local_atoms
+                        .get(i.imm() as usize)
+                        .copied()
+                        .unwrap_or_default();
+                    return Err(self.reference_error(
+                        p,
+                        format!(
+                            "Cannot access '{}' before initialization",
+                            self.atom_name(atom)
+                        ),
+                    ));
+                }
                 let value = self.mapped_argument_load(p, f, i.imm() as usize, value);
                 self.write(f, i.a(), value);
             }
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.a());
+                let function = &p.functions[self.frames[f].function as usize];
+                if function
+                    .local_atoms
+                    .get(i.imm() as usize)
+                    .is_some_and(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
+                {
+                    if function.strict {
+                        return Err(
+                            self.type_error(p, "assignment to function name binding".into())
+                        );
+                    }
+                    return Ok(StepResult::Continue);
+                }
                 if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) =
                         self.heap.get_mut(self.frames[f].env)
@@ -81,10 +176,10 @@ impl<H: Host> Vm<H> {
                 self.mapped_argument_store(p, f, i.imm() as usize, value);
             }
             Op::LoadCapture => {
-                let v = self.capture(f, i.imm())?;
+                let v = self.capture(p, f, i.imm())?;
                 self.write(f, i.a(), v);
             }
-            Op::StoreCapture => self.store_capture(f, i.imm(), self.read(f, i.a()))?,
+            Op::StoreCapture => self.store_capture(p, f, i.imm(), self.read(f, i.a()))?,
             Op::LoadName => {
                 let v = self.load_name(p, i.imm(), i.c())?;
                 self.write(f, i.a(), v);
@@ -94,7 +189,53 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), v);
             }
             Op::StoreName => self.store_name(p, i.imm(), self.read(f, i.a()), i.c())?,
-            Op::LoadThis => self.write(f, i.a(), self.frames[f].this),
+            Op::LoadThis => {
+                if self.frames[f].this.is_deleted() {
+                    return Err(self.reference_error(
+                        p,
+                        "Must call super constructor before accessing 'this'".into(),
+                    ));
+                }
+                self.write(f, i.a(), self.frames[f].this);
+            }
+            Op::LoadImportMeta => {
+                let program = self.frames[f].program;
+                let import_meta = if let Some(value) = self.programs.import_meta(program) {
+                    value
+                } else {
+                    let value = self
+                        .heap
+                        .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                    self.programs.set_import_meta(program, value);
+                    value
+                };
+                self.write(f, i.a(), import_meta);
+            }
+            Op::InitializeThis => {
+                let value = self.read(f, i.a());
+                self.initialize_this_binding(f, value);
+            }
+            Op::CacheTemplateObject => {
+                let key = (self.frames[f].program, self.frames[f].function, i.imm());
+                let value = if let Some(value) = self.realm.template_objects.get(&key).copied() {
+                    value
+                } else {
+                    let value = self.read(f, i.a());
+                    self.realm.template_objects.insert(key, value);
+                    value
+                };
+                self.write(f, i.a(), value);
+            }
+            Op::LoadCachedTemplateObject => {
+                let key = (self.frames[f].program, self.frames[f].function, i.imm());
+                let value = self
+                    .realm
+                    .template_objects
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED);
+                self.write(f, i.a(), value);
+            }
             Op::MakeClosure => {
                 let env = self.promote_frame_environment(f);
                 let v = self.closure(p, i.imm(), env)?;
@@ -111,13 +252,13 @@ impl<H: Host> Vm<H> {
                     self.read(f, i.b()),
                     self.read(f, i.c()),
                 );
-                if i.a() & RETURN_REGISTER != 0 {
+                if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
-                self.write(f, i.a() & REGISTER_MASK, v);
+                self.write(f, i.result_register(), v);
             }
             Op::SuperConstArrayObject2 => {
-                if let Some(value) = self.execute_const_array_object2(p, f, i.a(), i.imm())? {
+                if let Some(value) = self.execute_const_array_object2(p, f, i)? {
                     return Ok(StepResult::Return(value));
                 }
             }
@@ -131,9 +272,12 @@ impl<H: Host> Vm<H> {
             Op::MakeConstArray => {
                 let start = i.imm() as usize;
                 let end = start + i.b() as usize;
-                let elements = self.const_arrays[start]
-                    .get_or_insert_with(|| Rc::new(self.constants[start..end].to_vec()))
-                    .clone();
+                let elements = self
+                    .programs
+                    .const_array(self.frames[f].program, start, end - start)
+                    .ok_or_else(|| {
+                        JsError::validation("constant array is outside program".into())
+                    })?;
                 let v = self.heap.alloc(Cell::Array {
                     object: Self::empty_object(self.array_proto),
                     elements,
@@ -147,42 +291,142 @@ impl<H: Host> Vm<H> {
                     let base = self.resolve_field_base(f, FieldBase(i.b()));
                     self.get_field_cached(p, base, i.imm(), i.c())?
                 };
-                if i.a() & SET_THIS_REGISTER != 0 {
+                if i.writes_current_this() {
                     let sink = p.field_sites[i.imm() as usize]
                         .sink
                         .expect("fused field sink");
-                    self.set_field_cached(p, self.frames[f].this, sink.0, v, sink.1)?;
+                    self.set_field_cached(
+                        p,
+                        self.frames[f].this,
+                        sink.0,
+                        v,
+                        sink.1,
+                        p.functions[self.frames[f].function as usize].strict,
+                    )?;
                 }
-                if i.a() & RETURN_REGISTER != 0 {
+                if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
-                self.write(f, i.a() & REGISTER_MASK, v);
+                self.write(f, i.result_register(), v);
             }
             Op::GetIndex => {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.index_dispatch(false, false);
-                let v = self.get_index(p, self.read(f, i.b()), self.read(f, i.c()))?;
+                let base = self.read(f, i.b());
+                let key = self.read(f, i.c());
+                let v = self.get_index(p, base, key)?;
                 self.write(f, i.a(), v);
             }
+            Op::CheckPrivate => {
+                let object = self.read(f, i.a());
+                let atom = i.imm();
+                self.check_private_brand(p, object, atom)?;
+                if self.own_property(object, atom).is_none()
+                    && self.property_accessor(object, atom).is_none()
+                {
+                    return Err(
+                        self.type_error(p, "private member is not present on this object".into())
+                    );
+                }
+            }
+            Op::PrivateIn => {
+                let object = self.read(f, i.b());
+                if !self.is_object_like(object) {
+                    return Err(
+                        self.type_error(p, "right-hand side of 'in' is not an object".into())
+                    );
+                }
+                let result = self.has_private_brand(p, object, i.imm());
+                self.write(f, i.a(), if result { Value::TRUE } else { Value::FALSE });
+            }
+            Op::MarkPrivateName => {
+                let object = self.read(f, i.b());
+                let home = self.read(f, i.c());
+                let atom = i.imm();
+                if let Some(object) = self.object_data_mut(object)
+                    && !object
+                        .private_names
+                        .contains(&PrivateBrand { home, name: atom })
+                {
+                    object.private_names.push(PrivateBrand { home, name: atom });
+                }
+            }
             Op::ResolveName => {
-                let value = self.resolve_name(p, i.imm(), i.c())?;
+                let value = self.resolve_name(p, i.imm(), i.b() != 0)?;
+                self.write(f, i.a(), value);
+            }
+            Op::ResolveNameThis => {
+                let value = self.resolve_name_this(p, i.imm())?;
+                self.write(f, i.a(), value);
+            }
+            Op::DeleteName => {
+                let value = self.delete_name(p, i.imm())?;
                 self.write(f, i.a(), value);
             }
             Op::StoreResolvedName => {
-                self.set_property_with_program(
-                    p,
-                    self.read(f, i.b()),
-                    i.imm(),
-                    self.read(f, i.a()),
-                )?;
+                let object = self.read(f, i.b());
+                let atom = i.imm();
+                self.store_resolved_name(p, object, atom, self.read(f, i.a()), i.c() != 0)?;
             }
             Op::ToPropertyKey => {
                 let value = self.to_property_key(p, self.read(f, i.b()))?;
                 self.write(f, i.a(), value);
             }
+            Op::ToNumeric => {
+                let value = self.to_numeric(p, self.read(f, i.b()))?;
+                self.write(f, i.a(), value);
+            }
+            Op::CopyDataProperties => self.copy_data_properties(
+                p,
+                self.read(f, i.a()),
+                self.read(f, i.b()),
+                self.read(f, i.c()),
+            )?,
             Op::GetIterator => {
                 let value = self.get_iterator(p, self.read(f, i.b()))?;
                 self.write(f, i.a(), value);
+            }
+            Op::SpreadToArray => {
+                let array = self.spread_to_array(p, self.read(f, i.b()))?;
+                self.write(f, i.a(), array);
+            }
+            Op::RequireObjectCoercible => {
+                self.require_object_coercible(p, self.read(f, i.b()))?;
+            }
+            Op::SuperCallCheck => self.check_super_call(p)?,
+            Op::IteratorClose => {
+                self.iterator_close(p, self.read(f, i.b()))?;
+            }
+            Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
+                iterator: i.a(),
+                done: i.b(),
+            }),
+            Op::IteratorCleanupPop => {
+                self.frames[f]
+                    .active_iterators
+                    .pop()
+                    .ok_or_else(|| JsError("iterator cleanup stack underflow".into()))?;
+            }
+            Op::SetFunctionName => {
+                self.set_function_name(p, self.read(f, i.a()), i.imm())?;
+            }
+            Op::SetFunctionNameKey => {
+                self.set_function_name_key(self.read(f, i.a()), self.read(f, i.b()), i.imm());
+            }
+            Op::InitializeTdz => {
+                let slot = i.imm() as usize;
+                if self.frames[f].captured {
+                    let Some(Cell::Environment { slots, .. }) =
+                        self.heap.get_mut(self.frames[f].env)
+                    else {
+                        return Err(JsError("invalid local environment".into()));
+                    };
+                    *slots
+                        .get_mut(slot)
+                        .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
+                } else {
+                    self.frames[f].locals[slot] = Value::DELETED;
+                }
             }
             Op::GetAsyncIterator => {
                 let value = self.get_async_iterator(p, self.read(f, i.b()))?;
@@ -198,22 +442,123 @@ impl<H: Host> Vm<H> {
                 return Ok(StepResult::Yield {
                     value: self.read(f, i.b()),
                     destination: i.a(),
+                    delegated_result: None,
                 });
             }
+            Op::YieldStar => {
+                let iterator = self.read(f, i.c());
+                let iterator = if iterator.is_undefined() {
+                    let source = self.read(f, i.b());
+                    let asynchronous = p.functions[self.frames[f].function as usize].is_async;
+                    let iterator = if asynchronous {
+                        self.get_async_iterator(p, source)?
+                    } else {
+                        self.get_iterator(p, source)?
+                    };
+                    self.write(f, i.c(), iterator);
+                    iterator
+                } else {
+                    iterator
+                };
+                let (state_register, next_method_register) = i.register_pair();
+                let next_method = self.read(f, next_method_register);
+                let next_method = if next_method.is_undefined() {
+                    let receiver = match self.heap.get(iterator) {
+                        Some(Cell::Iterator {
+                            source,
+                            kind: IteratorKind::AsyncFromSync,
+                            ..
+                        }) => *source,
+                        _ => iterator,
+                    };
+                    let atom = self.intern_atom("next");
+                    let method = self.get_property(p, receiver, atom)?;
+                    if !self.is_function(method) {
+                        return Err(
+                            self.type_error(p, "iterator next method is not callable".into())
+                        );
+                    }
+                    self.write(f, next_method_register, method);
+                    method
+                } else {
+                    next_method
+                };
+                let awaited_result = self.read(f, state_register);
+                let asynchronous = p.functions[self.frames[f].function as usize].is_async;
+                let result = if asynchronous && !awaited_result.is_undefined() {
+                    self.write(f, state_register, Value::UNDEFINED);
+                    awaited_result
+                } else {
+                    let input = self.read(f, i.a());
+                    let result =
+                        self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
+                    if asynchronous {
+                        *pc -= 1;
+                        return Ok(StepResult::Await {
+                            value: result,
+                            destination: state_register,
+                        });
+                    }
+                    result
+                };
+                let done_atom = self.intern_atom("done");
+                let done = self.get_property(p, result, done_atom)?;
+                if self.truthy(done) {
+                    let value_atom = self.intern_atom("value");
+                    let value = self.get_property(p, result, value_atom)?;
+                    self.write(f, i.a(), value);
+                } else {
+                    *pc -= 1;
+                    if asynchronous {
+                        self.write(f, state_register, Value::UNDEFINED);
+                    }
+                    let value = if asynchronous {
+                        let value_atom = self.intern_atom("value");
+                        self.get_property(p, result, value_atom)?
+                    } else {
+                        Value::UNDEFINED
+                    };
+                    return Ok(StepResult::Yield {
+                        value,
+                        destination: i.a(),
+                        delegated_result: (!asynchronous).then_some(result),
+                    });
+                }
+            }
             Op::SetField => {
-                self.set_field_cached(p, self.read(f, i.b()), i.imm(), self.read(f, i.a()), i.c())?
+                let object = self.read(f, i.b());
+                let value = self.read(f, i.a());
+                self.set_field_cached(
+                    p,
+                    object,
+                    i.imm(),
+                    value,
+                    i.c(),
+                    p.functions[self.frames[f].function as usize].strict,
+                )?;
             }
-            Op::SetThisField => {
-                self.set_field_cached(p, self.frames[f].this, i.imm(), self.read(f, i.a()), i.c())?
+            Op::DefineField => {
+                let object = self.read(f, i.b());
+                let value = self.read(f, i.a());
+                self.define_object_literal_data_property(object, i.imm(), value)?;
             }
+            Op::SetThisField => self.set_field_cached(
+                p,
+                self.frames[f].this,
+                i.imm(),
+                self.read(f, i.a()),
+                i.c(),
+                p.functions[self.frames[f].function as usize].strict,
+            )?,
             Op::SetIndex => {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.index_dispatch(true, false);
-                self.set_index(
+                self.set_index_mode(
                     p,
                     self.read(f, i.b()),
                     self.read(f, i.c()),
                     self.read(f, i.a()),
+                    p.functions[self.frames[f].function as usize].strict || i.imm() != 0,
                 )?
             }
             Op::Move => self.write(f, i.a(), self.read(f, i.b())),
@@ -234,15 +579,18 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.binary(p, i.imm(), left, right)?
                 };
-                if i.a() & RETURN_REGISTER != 0 {
+                if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
-                self.write(f, i.a() & REGISTER_MASK, v);
+                self.write(f, i.result_register(), v);
             }
             Op::IncDec => {
                 let input = self.read(f, i.b());
                 let delta = if i.imm() == 0 { 1.0 } else { -1.0 };
-                let value = if let Some(integer) = input.as_int() {
+                let value = if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
+                    let one = self.heap.alloc(Cell::BigInt("1".into()));
+                    self.binary(p, if i.imm() == 0 { 8 } else { 9 }, input, one)?
+                } else if let Some(integer) = input.as_int() {
                     let next = if i.imm() == 0 {
                         integer.checked_add(1)
                     } else {
@@ -261,16 +609,9 @@ impl<H: Host> Vm<H> {
             }
             Op::Delete => {
                 let result =
-                    self.object_delete_property(p, &[self.read(f, i.b()), self.read(f, i.c())])?;
-                if !self.truthy(result) {
-                    let message = self
-                        .heap
-                        .alloc(Cell::String("Cannot delete property in strict mode".into()));
-                    let error = self.construct_error_native(p, Native::TypeError, &[message])?;
-                    return Err(JsError::thrown(
-                        error,
-                        "TypeError: Cannot delete property in strict mode".into(),
-                    ));
+                    self.delete_reference_property(p, self.read(f, i.b()), self.read(f, i.c()))?;
+                if !self.truthy(result) && i.imm() != 0 {
+                    return Err(self.type_error(p, "Cannot delete property in strict mode".into()));
                 }
                 self.write(f, i.a(), result);
             }
@@ -296,22 +637,32 @@ impl<H: Host> Vm<H> {
                     *pc = i.imm() as usize;
                 }
             }
-            Op::Call => {
+            Op::Call | Op::CallDirectEvalArray => {
                 self.profile.call_source(0);
-                let base = ((i.imm() & 0x3fff_ffff) >> 16) as u16;
-                let n = (i.imm() & 0xffff) as u16;
-                let arguments = CallArguments::from_values((0..n).map(|x| self.read(f, base + x)));
+                let window = i.call_window();
+                let arguments = if i.op() == Op::CallDirectEvalArray {
+                    let array = self.read(f, window.base);
+                    CallArguments::from_values(self.array_values(array)?)
+                } else {
+                    CallArguments::from_values(
+                        (0..window.count).map(|x| self.read(f, window.base + x)),
+                    )
+                };
                 let this = self.read(f, i.c());
                 let callee = self.read(f, i.b());
                 let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
-                let direct_eval = i.imm() & 0x8000_0000 != 0;
-                let parameter_eval = i.imm() & 0x4000_0000 != 0;
+                let direct_eval = crate::bytecode::ImmediateLayout::direct_eval(i.imm())
+                    && callee == self.native_value(Native::Eval);
+                let parameter_eval =
+                    direct_eval && crate::bytecode::ImmediateLayout::parameter_eval(i.imm());
                 let previous_direct_eval = self.direct_eval;
                 let previous_parameter_eval = self.parameter_eval;
                 self.direct_eval = direct_eval;
                 self.parameter_eval = parameter_eval;
-                let terminal = i.a() & RETURN_REGISTER != 0
+                let previous_this = (direct_eval && !this.is_undefined())
+                    .then(|| std::mem::replace(&mut self.frames[f].this, this));
+                let terminal = i.returns_from_frame()
                     || p.functions[self.frames[f].function as usize]
                         .code
                         .get(*pc)
@@ -325,7 +676,13 @@ impl<H: Host> Vm<H> {
                                 packed.op() == Op::Return
                             }
                         });
-                if terminal && let Some(CallTarget::User(id, env)) = self.call_target(callee).ok() {
+                if terminal
+                    && let Some(CallTarget::User(program_id, id, env)) =
+                        self.call_target(callee).ok()
+                    && program_id == self.frames[f].program
+                    && !p.functions[id as usize].is_async
+                    && !p.functions[id as usize].is_generator
+                {
                     self.prepare_user_tail(p, f, id, env, this, args)?;
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
@@ -335,29 +692,36 @@ impl<H: Host> Vm<H> {
                 let value = match self.call_value(p, callee, this, args) {
                     Ok(value) => value,
                     Err(error) => {
+                        if let Some(previous_this) = previous_this {
+                            self.frames[f].this = previous_this;
+                        }
                         self.direct_eval = previous_direct_eval;
                         self.parameter_eval = previous_parameter_eval;
                         return Err(error);
                     }
                 };
+                if let Some(previous_this) = previous_this {
+                    self.frames[f].this = previous_this;
+                }
                 self.direct_eval = previous_direct_eval;
                 self.parameter_eval = previous_parameter_eval;
-                if i.a() & RETURN_REGISTER != 0 {
+                if i.returns_from_frame() {
                     self.profile.terminal_call(0);
                     return Ok(StepResult::Return(value));
                 }
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::CallKnown => {
                 self.profile.call_source(1);
-                let base = (i.imm() >> 16) as u16;
-                let n = i.imm() as u16;
-                let arguments = CallArguments::from_values((0..n).map(|x| self.read(f, base + x)));
+                let window = i.call_window();
+                let n = window.count;
+                let arguments =
+                    CallArguments::from_values((0..n).map(|x| self.read(f, window.base + x)));
                 let args = arguments.as_slice();
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, n as usize);
                 self.frames[f].pc = *pc;
-                let terminal = i.a() & RETURN_REGISTER != 0
+                let terminal = i.returns_from_frame()
                     || p.functions[self.frames[f].function as usize]
                         .code
                         .get(*pc)
@@ -371,7 +735,10 @@ impl<H: Host> Vm<H> {
                                 packed.op() == Op::Return
                             }
                         });
-                if terminal {
+                if terminal
+                    && !p.functions[i.b() as usize].is_async
+                    && !p.functions[i.b() as usize].is_generator
+                {
                     self.prepare_user_tail(p, f, u32::from(i.b()), parent, Value::UNDEFINED, args)?;
                     self.profile.terminal_call(0);
                     return Ok(StepResult::TailCall);
@@ -383,22 +750,22 @@ impl<H: Host> Vm<H> {
                     Value::UNDEFINED,
                     args,
                 )?;
-                if i.a() & RETURN_REGISTER != 0 {
+                if i.returns_from_frame() {
                     self.profile.terminal_call(0);
                     return Ok(StepResult::Return(value));
                 }
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::CallMethod => {
                 self.profile.call_source(2);
                 let this = self.read(f, i.b());
                 self.frames[f].pc = *pc;
                 let value = self.call_method_site_safe(p, f, i.imm() as usize, this)?;
-                if i.a() & RETURN_REGISTER != 0 {
+                if i.returns_from_frame() {
                     self.profile.terminal_call(1);
                     return Ok(StepResult::Return(value));
                 }
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::CallThisMethod => {
                 self.profile.call_source(3);
@@ -410,23 +777,42 @@ impl<H: Host> Vm<H> {
                 };
                 self.frames[f].pc = *pc;
                 let value = self.call_method_site_safe(p, f, i.imm() as usize, this)?;
-                if i.a() & RETURN_REGISTER != 0 {
+                if i.returns_from_frame() {
                     self.profile.terminal_call(2);
                     return Ok(StepResult::Return(value));
                 }
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::Construct => {
                 self.profile.call_source(4);
-                let n = i.imm() as u16;
-                let arguments = CallArguments::from_values((0..n).map(|x| self.read(f, i.c() + x)));
-                let args = arguments.as_slice();
+                let args = match i.construct_arguments() {
+                    crate::bytecode::ConstructArguments::Array(register) => {
+                        let array = self.read(f, register);
+                        let Some(Cell::Array { elements, .. }) = self.heap.get(array) else {
+                            return Err(JsError(
+                                "super constructor arguments are not an array".into(),
+                            ));
+                        };
+                        elements.as_ref().clone()
+                    }
+                    crate::bytecode::ConstructArguments::Registers(window) => {
+                        let arguments = CallArguments::from_values(
+                            (0..window.count).map(|x| self.read(f, window.base + x)),
+                        );
+                        arguments.as_slice().to_vec()
+                    }
+                };
                 self.frames[f].pc = *pc;
-                let v = self.construct_value(p, self.read(f, i.b()), args)?;
-                if i.a() & RETURN_REGISTER != 0 {
+                let callee = self.read(f, i.b());
+                let v = if i.is_super_construct() {
+                    self.construct_super_value(p, callee, &args)?
+                } else {
+                    self.construct_value(p, callee, &args)?
+                };
+                if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
-                self.write(f, i.a(), v);
+                self.write(f, i.result_register(), v);
             }
             Op::Return => return Ok(StepResult::Return(self.read(f, i.a()))),
             Op::Throw => {
@@ -456,11 +842,18 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let tag = operand.tag();
         self.profile.operand(tag as usize);
-        match tag {
-            0 => Ok(self.read(frame, operand.payload() as Register)),
-            1 => Ok(self.constants[operand.payload() as usize]),
-            2 => self.resolve_field(p, frame, u32::from(operand.payload())),
-            3 => {
+        match operand.kind() {
+            Some(crate::bytecode::OperandKind::Register) => {
+                Ok(self.read(frame, operand.payload() as Register))
+            }
+            Some(crate::bytecode::OperandKind::Constant) => self
+                .programs
+                .constant(self.frames[frame].program, operand.payload() as usize)
+                .ok_or_else(|| JsError::validation("constant operand is outside program".into())),
+            Some(crate::bytecode::OperandKind::Field) => {
+                self.resolve_field(p, frame, u32::from(operand.payload()))
+            }
+            Some(crate::bytecode::OperandKind::Local) => {
                 let slot = operand.payload() as usize;
                 if self.frames[frame].captured {
                     let Some(Cell::Environment { slots, .. }) =
@@ -473,7 +866,7 @@ impl<H: Host> Vm<H> {
                     Ok(self.frames[frame].locals[slot])
                 }
             }
-            _ => unreachable!("two-bit operand tag"),
+            None => unreachable!("two-bit operand tag"),
         }
     }
     #[inline(always)]

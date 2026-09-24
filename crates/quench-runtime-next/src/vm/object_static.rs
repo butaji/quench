@@ -2,6 +2,70 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn object_prototype_to_string(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let brand = if value.is_undefined() || value.is_deleted() {
+            "Undefined"
+        } else if value.is_null() {
+            "Null"
+        } else if value.as_bool().is_some() {
+            "Boolean"
+        } else if value.as_number().is_some() {
+            "Number"
+        } else {
+            match self.heap.get(value) {
+                Some(Cell::String(_)) => "String",
+                Some(Cell::BigInt(_)) => "BigInt",
+                Some(Cell::Symbol(_)) => "Symbol",
+                Some(Cell::Array { .. }) => "Array",
+                Some(Cell::Date { .. }) => "Date",
+                Some(Cell::Map { .. }) => "Map",
+                Some(Cell::Set { .. }) => "Set",
+                Some(Cell::WeakMap { .. }) => "WeakMap",
+                Some(Cell::WeakSet { .. }) => "WeakSet",
+                Some(Cell::Function { .. }) => "Function",
+                Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
+                Some(Cell::DataView { .. }) => "DataView",
+                Some(Cell::TypedArray { kind, .. }) => match kind {
+                    TypedArrayKind::Uint8 => "Uint8Array",
+                    TypedArrayKind::Uint8Clamped => "Uint8ClampedArray",
+                    TypedArrayKind::Uint16 => "Uint16Array",
+                    TypedArrayKind::Uint32 => "Uint32Array",
+                    TypedArrayKind::Int8 => "Int8Array",
+                    TypedArrayKind::Int16 => "Int16Array",
+                    TypedArrayKind::Int32 => "Int32Array",
+                    TypedArrayKind::BigInt64 => "BigInt64Array",
+                    TypedArrayKind::BigUint64 => "BigUint64Array",
+                    TypedArrayKind::Float32 => "Float32Array",
+                    TypedArrayKind::Float64 => "Float64Array",
+                },
+                Some(Cell::Iterator { .. }) => "Iterator",
+                Some(Cell::WeakRef { .. }) => "WeakRef",
+                Some(Cell::FinalizationRegistry { .. }) => "FinalizationRegistry",
+                Some(Cell::Error(_)) => "Error",
+                _ => "Object",
+            }
+        };
+        let tag = self
+            .well_known_symbols
+            .get("toStringTag")
+            .copied()
+            .map(|symbol| self.get_index(p, value, symbol))
+            .transpose()?;
+        let brand = tag
+            .and_then(|tag| match self.heap.get(tag) {
+                Some(Cell::String(text)) => Some(text.to_string()),
+                _ => None,
+            })
+            .unwrap_or_else(|| brand.to_owned());
+        Ok(self
+            .heap
+            .alloc(Cell::String(format!("[object {brand}]").into())))
+    }
+
     pub(super) fn descriptor_field(
         &mut self,
         p: &ResidualProgram,
@@ -55,84 +119,87 @@ impl<H: Host> Vm<H> {
         Ok(target)
     }
 
+    pub(super) fn object_for_in_keys(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+    ) -> Result<Value, JsError> {
+        if source.is_null() || source.is_undefined() {
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(Vec::new()),
+            }));
+        }
+        let mut current = self.box_object(source)?;
+        let mut visited_objects = std::collections::HashSet::new();
+        let mut visited_names = std::collections::HashSet::new();
+        let mut keys = Vec::new();
+        while !current.is_null() && visited_objects.insert(current) {
+            for key in self.object_own_key_values(p, current)? {
+                let Some(Cell::String(name)) = self.heap.get(key) else {
+                    continue;
+                };
+                let name = name.clone();
+                if visited_names.contains(&name) {
+                    continue;
+                }
+                let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
+                if descriptor.is_undefined() {
+                    continue;
+                }
+                visited_names.insert(name);
+                if self.descriptor_flag(descriptor, "enumerable") {
+                    keys.push(key);
+                }
+            }
+            current = self.object_get_prototype_of(p, current)?;
+        }
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(keys),
+        }))
+    }
+
     pub(super) fn install_object_extra(
         &mut self,
         program: &ResidualProgram,
         object: Value,
     ) -> Result<(), JsError> {
-        self.set_named(
-            program,
-            self.object_proto,
-            "hasOwnProperty",
-            self.native_value(Native::ObjectPrototypeHasOwnProperty),
-        )?;
-        self.set_named(
-            program,
-            self.object_proto,
-            "propertyIsEnumerable",
-            self.native_value(Native::ObjectPrototypePropertyIsEnumerable),
-        )?;
-        self.set_named(
-            program,
-            self.object_proto,
-            "isPrototypeOf",
-            self.native_value(Native::ObjectPrototypeIsPrototypeOf),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "getOwnPropertyNames",
-            self.native_value(Native::ObjectGetOwnPropertyNames),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "getOwnPropertyDescriptor",
-            self.native_value(Native::ObjectGetOwnPropertyDescriptor),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "getOwnPropertySymbols",
-            self.native_value(Native::ObjectGetOwnPropertySymbols),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "getOwnPropertyDescriptors",
-            self.native_value(Native::ObjectGetOwnPropertyDescriptors),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "defineProperty",
-            self.native_value(Native::ObjectDefineProperty),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "defineProperties",
-            self.native_value(Native::ObjectDefineProperties),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "values",
-            self.native_value(Native::ObjectValues),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "entries",
-            self.native_value(Native::ObjectEntries),
-        )?;
-        self.set_named(
-            program,
-            object,
-            "fromEntries",
-            self.native_value(Native::ObjectFromEntries),
-        )?;
-        self.set_named(program, object, "is", self.native_value(Native::ObjectIs))
+        for (name, native) in [
+            ("toString", Native::ObjectPrototypeToString),
+            ("valueOf", Native::ObjectPrototypeValueOf),
+            ("hasOwnProperty", Native::ObjectPrototypeHasOwnProperty),
+            (
+                "propertyIsEnumerable",
+                Native::ObjectPrototypePropertyIsEnumerable,
+            ),
+            ("__lookupGetter__", Native::ObjectPrototypeLookupGetter),
+            ("__lookupSetter__", Native::ObjectPrototypeLookupSetter),
+            ("isPrototypeOf", Native::ObjectPrototypeIsPrototypeOf),
+        ] {
+            self.set_builtin_named(program, self.object_proto, name, native)?;
+        }
+        for (name, native) in [
+            ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
+            (
+                "getOwnPropertyDescriptor",
+                Native::ObjectGetOwnPropertyDescriptor,
+            ),
+            ("getOwnPropertySymbols", Native::ObjectGetOwnPropertySymbols),
+            (
+                "getOwnPropertyDescriptors",
+                Native::ObjectGetOwnPropertyDescriptors,
+            ),
+            ("defineProperty", Native::ObjectDefineProperty),
+            ("defineProperties", Native::ObjectDefineProperties),
+            ("values", Native::ObjectValues),
+            ("entries", Native::ObjectEntries),
+            ("fromEntries", Native::ObjectFromEntries),
+            ("is", Native::ObjectIs),
+        ] {
+            self.set_builtin_named(program, object, name, native)?;
+        }
+        Ok(())
     }
 
     pub(super) fn call_object_native(
@@ -154,6 +221,9 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectKeys => {
                 self.object_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
+            }
+            Native::ForInKeys => {
+                self.object_for_in_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectGetOwnPropertyNames => {
                 self.object_names(p, args.first().copied().unwrap_or(Value::UNDEFINED))
@@ -271,8 +341,14 @@ impl<H: Host> Vm<H> {
             .keys
             .iter()
             .copied()
-            .enumerate()
-            .map(|(slot, atom)| (atom, slot))
+            .filter_map(|key| match key {
+                PropertyKey::String(atom) => self.shapes[data.shape() as usize]
+                    .slots
+                    .get(&key)
+                    .copied()
+                    .map(|slot| (atom, slot as usize)),
+                PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
+            })
             .collect::<Vec<_>>();
         entries.sort_by(|(left, _), (right, _)| {
             match (
@@ -286,21 +362,6 @@ impl<H: Host> Vm<H> {
             }
         });
         entries
-    }
-
-    pub(super) fn is_enumerable(&self, object: Value, atom: Atom) -> bool {
-        let Some(data) = self.object_data(object) else {
-            return false;
-        };
-        let Some(slot) = self.shape_slot(data.shape(), atom) else {
-            return false;
-        };
-        if self.heap.property_get(data, slot).is_none() {
-            return false;
-        }
-        self.property_attributes(object, PropertyKey::string(atom))
-            .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
-            .enumerable
     }
 
     pub(super) fn box_object(&mut self, value: Value) -> Result<Value, JsError> {
@@ -361,7 +422,12 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "property descriptor is not an object".into()));
         }
         if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-            return self.define_symbol_property(target, key_value, descriptor);
+            return self.define_ordinary_property_key(
+                p,
+                target,
+                PropertyKey::symbol(key_value),
+                descriptor,
+            );
         }
         let key = self.coerce_js_string(p, key_value)?;
         if key.host_string() == "length"
@@ -375,9 +441,50 @@ impl<H: Host> Vm<H> {
             return self.define_array_property(p, target, index, descriptor);
         }
         let atom = self.intern_js_atom(&key);
-        let existing = self.own_property(target, atom);
+        if self
+            .object_data(target)
+            .is_some_and(Object::is_module_namespace)
+        {
+            let Some(current) = self.own_property(target, atom) else {
+                return Err(
+                    self.type_error(p, "cannot define a non-export on a module namespace".into())
+                );
+            };
+            let configurable = self.descriptor_field(p, descriptor, "configurable")?;
+            let enumerable = self.descriptor_field(p, descriptor, "enumerable")?;
+            let writable = self.descriptor_field(p, descriptor, "writable")?;
+            let value = self.descriptor_field(p, descriptor, "value")?;
+            let getter = self.descriptor_field(p, descriptor, "get")?;
+            let setter = self.descriptor_field(p, descriptor, "set")?;
+            let compatible = !configurable.is_some_and(|value| self.truthy(value))
+                && !enumerable.is_some_and(|value| !self.truthy(value))
+                && !writable.is_some_and(|value| !self.truthy(value))
+                && getter.is_none()
+                && setter.is_none()
+                && value.is_none_or(|value| self.same_value(current, value));
+            return if compatible {
+                Ok(target)
+            } else {
+                Err(self.type_error(p, "cannot redefine module namespace export".into()))
+            };
+        }
+        self.define_ordinary_property_key(p, target, PropertyKey::string(atom), descriptor)
+    }
+
+    fn define_ordinary_property_key(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: PropertyKey,
+        descriptor: Value,
+    ) -> Result<Value, JsError> {
+        let existing = match key {
+            PropertyKey::String(atom) => self.own_property(target, atom),
+            PropertyKey::Symbol(symbol) => self.symbol_property(target, symbol),
+            PropertyKey::Private(_) => None,
+        };
         let current = self
-            .property_attributes(target, PropertyKey::string(atom))
+            .property_attributes(target, key)
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let is_new = existing.is_none();
         let mut attributes = if is_new {
@@ -467,11 +574,11 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
             }
             if is_new {
-                self.set_property(target, atom, Value::UNDEFINED)?;
+                self.set_shape_property(target, key, Value::UNDEFINED)?;
             }
             self.set_property_attributes(
                 target,
-                PropertyKey::string(atom),
+                key,
                 PropertyAttributes {
                     writable: false,
                     enumerable: attributes.enumerable,
@@ -498,11 +605,11 @@ impl<H: Host> Vm<H> {
         }
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
             if (current.accessor || !current.writable && current.configurable) && descriptor_data {
-                self.remove_property_attributes(target, PropertyKey::string(atom));
+                self.remove_property_attributes(target, key);
             }
-            self.set_property(target, atom, value)?;
+            self.set_shape_property(target, key, value)?;
         }
-        self.set_property_attributes(target, PropertyKey::string(atom), attributes);
+        self.set_property_attributes(target, key, attributes);
         Ok(target)
     }
 }

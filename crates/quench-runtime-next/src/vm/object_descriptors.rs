@@ -2,6 +2,31 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn own_data_descriptor(
+        &mut self,
+        value: Value,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Result<Value, JsError> {
+        let descriptor = self.object();
+        for (name, value) in [
+            ("value", value),
+            ("writable", Self::integrity_bool(writable)),
+            ("enumerable", Self::integrity_bool(enumerable)),
+            ("configurable", Self::integrity_bool(configurable)),
+        ] {
+            let atom = self.intern_atom(name);
+            self.set_property(descriptor, atom, value)?;
+        }
+        Ok(descriptor)
+    }
+
+    fn canonical_typed_array_index(key: &str) -> Option<usize> {
+        let index = key.parse::<usize>().ok()?;
+        (index.to_string() == key).then_some(index)
+    }
+
     pub(super) fn object_get_own_property_descriptor(
         &mut self,
         p: &ResidualProgram,
@@ -85,9 +110,7 @@ impl<H: Host> Vm<H> {
                 return Ok(Value::UNDEFINED);
             };
             let attributes = self
-                .descriptors
-                .get(&(target, PropertyKey::symbol(key_value)))
-                .copied()
+                .property_attributes(target, PropertyKey::symbol(key_value))
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             let descriptor = self.object();
             if attributes.accessor {
@@ -122,12 +145,9 @@ impl<H: Host> Vm<H> {
         let key = self.coerce_js_string(p, key_value)?;
         if key.host_string() == "length"
             && let Some(Cell::Array { elements, .. }) = self.heap.get(target)
-            && (!self
+            && !self
                 .object_data(target)
                 .is_some_and(Object::is_arguments_object)
-                || self
-                    .descriptors
-                    .contains_key(&(target, PropertyKey::string(self.length_atom))))
         {
             let length = self.heap.sparse_length(target).unwrap_or(elements.len());
             let length_attributes = self
@@ -156,6 +176,17 @@ impl<H: Host> Vm<H> {
                 self.set_property(descriptor, atom, value)?;
             }
             return Ok(descriptor);
+        }
+        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. }))
+            && let Some(index) = Self::canonical_typed_array_index(key.host_string())
+            && self
+                .typed_array_length(target)
+                .is_some_and(|length| index < length)
+        {
+            let value = self
+                .typed_array_get(target, index)
+                .unwrap_or(Value::UNDEFINED);
+            return self.own_data_descriptor(value, true, true, true);
         }
         if let Some(index) =
             super::object_static::array_index(key.host_string()).map(|index| index as usize)
@@ -210,12 +241,19 @@ impl<H: Host> Vm<H> {
             }
         }
         let atom = self.intern_js_atom(&key);
-        let Some(value) = self.own_property(target, atom) else {
+        let Some(value) = self
+            .module_binding_value(target, atom)
+            .or_else(|| self.own_property(target, atom))
+        else {
             return Ok(Value::UNDEFINED);
         };
         let attributes = self
             .property_attributes(target, PropertyKey::string(atom))
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+        let writable = self
+            .object_data(target)
+            .is_some_and(Object::is_module_namespace)
+            || attributes.writable;
         let descriptor = self.object();
         if attributes.accessor {
             for (name, value) in [
@@ -234,7 +272,7 @@ impl<H: Host> Vm<H> {
         }
         for (name, value) in [
             ("value", value),
-            ("writable", Self::integrity_bool(attributes.writable)),
+            ("writable", Self::integrity_bool(writable)),
             ("enumerable", Self::integrity_bool(attributes.enumerable)),
             (
                 "configurable",

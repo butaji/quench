@@ -45,6 +45,19 @@ impl FunctionCompiler<'_, '_> {
 
     fn delete_expression(&mut self, argument: &Expression<'_>) -> Register {
         let (target, key) = match argument {
+            Expression::ParenthesizedExpression(parenthesized) => {
+                return self.delete_expression(&parenthesized.expression);
+            }
+            Expression::StaticMemberExpression(member)
+                if matches!(&member.object, Expression::Super(_)) =>
+            {
+                return self.throw_super_delete(None);
+            }
+            Expression::ComputedMemberExpression(member)
+                if matches!(&member.object, Expression::Super(_)) =>
+            {
+                return self.throw_super_delete(Some(&member.expression));
+            }
             Expression::StaticMemberExpression(member) => {
                 let target = self.expression(&member.object);
                 let key = self.literal(Constant::String(member.property.name.to_string()));
@@ -58,42 +71,38 @@ impl FunctionCompiler<'_, '_> {
             Expression::Identifier(identifier) if identifier.name == "arguments" => {
                 return self.literal(Constant::Boolean(false));
             }
+            Expression::Identifier(identifier) => {
+                if self.strict {
+                    self.owner
+                        .reject(identifier.span, "delete of an unqualified identifier");
+                    return self.literal(Constant::Undefined);
+                }
+                let atom = self.owner.atom(identifier.name.as_str());
+                let result = self.reg();
+                self.emit(Op::DeleteName, result, 0, 0, atom);
+                return result;
+            }
             other => {
                 let _ = self.expression(other);
                 return self.literal(Constant::Boolean(true));
             }
         };
-        if self.strict {
-            let dst = self.reg();
-            self.emit(Op::Delete, dst, target, key, 0);
-            return dst;
-        }
-        let reflect = self.load_name("Reflect");
-        let delete_property = self.reg();
-        let atom = self.owner.atom("deleteProperty");
-        let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            delete_property,
-            FieldBase::register(reflect).0,
-            cache,
-            atom,
-        );
-        let this = self.literal(Constant::Undefined);
-        let base = self.next_reg;
-        let target_arg = self.reg();
-        self.emit(Op::Move, target_arg, target, 0, 0);
-        let key_arg = self.reg();
-        self.emit(Op::Move, key_arg, key, 0, 0);
         let dst = self.reg();
-        self.emit(
-            Op::Call,
-            dst,
-            delete_property,
-            this,
-            (u32::from(base) << 16) | 2,
-        );
+        self.emit(Op::Delete, dst, target, key, u32::from(self.strict));
         dst
+    }
+
+    fn throw_super_delete(&mut self, key: Option<&Expression<'_>>) -> Register {
+        let receiver = self.reg();
+        self.emit(Op::LoadThis, receiver, 0, 0, 0);
+        if let Some(key) = key {
+            self.expression(key);
+        }
+        let constructor = self.load_name("ReferenceError");
+        let error = self.reg();
+        self.emit(Op::Construct, error, constructor, constructor, 0);
+        self.emit(Op::Throw, error, 0, 0, 0);
+        self.literal(Constant::Undefined)
     }
 
     pub(super) fn logical(&mut self, value: &LogicalExpression<'_>) -> Register {
@@ -134,45 +143,31 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn call(&mut self, value: &CallExpression<'_>) -> Register {
         if Self::has_spread(&value.arguments) {
-            let (callee, this) = self.callee(&value.callee);
-            return self.spread_call(callee, this, &value.arguments);
-        }
-        if let Expression::StaticMemberExpression(item) = &value.callee
-            && !matches!(&item.object, Expression::Super(_))
-        {
-            let (receiver, receiver_path) = match &item.object {
-                Expression::ThisExpression(_) => (None, None),
-                Expression::StaticMemberExpression(inner)
-                    if matches!(&inner.object, Expression::ThisExpression(_)) =>
-                {
-                    let atom = self.owner.atom(inner.property.name.as_str());
-                    let cache = self.owner.cache_site();
-                    (None, Some((atom, cache)))
-                }
-                other => (Some(self.expression(other)), None),
-            };
-            let atom = self.owner.atom(item.property.name.as_str());
-            let cache = self.owner.cache_site();
-            let args = self.argument_registers(&value.arguments);
-            let meta = self.owner.method_sites.len() as u32;
-            self.owner
-                .method_sites
-                .push((atom, cache, args, receiver_path));
-            let dst = self.reg();
-            if let Some(receiver) = receiver {
-                self.emit(Op::CallMethod, dst, receiver, 0, meta);
-            } else {
-                self.emit(Op::CallThisMethod, dst, 0, 0, meta);
+            if self.is_direct_eval_reference(&value.callee) {
+                return self.direct_eval_spread_call(value);
             }
-            return dst;
+            if matches!(&value.callee, Expression::Super(_)) {
+                let arguments = self.spread_arguments(&value.arguments);
+                let superclass = self.load_name("\0rqj:super");
+                let result = self.reg();
+                self.emit(
+                    Op::Construct,
+                    result,
+                    superclass,
+                    arguments,
+                    crate::bytecode::ImmediateLayout::construct_immediate(1, true, true),
+                );
+                self.after_super_call(result);
+                return result;
+            }
+            let (callee, this) = self.callee(&value.callee);
+            let result = self.spread_call(callee, this, &value.arguments);
+            return result;
         }
         let (callee, this) = self.callee(&value.callee);
         let (base, count) = self.arguments(&value.arguments);
         let dst = self.reg();
-        let direct_eval = matches!(&value.callee, Expression::Identifier(identifier)
-            if identifier.name == "eval"
-                && !self.local_slots.contains_key(&self.owner.atom("eval"))
-                && !self.scopes.iter().any(|scope| scope.contains_key(&self.owner.atom("eval"))));
+        let direct_eval = self.is_direct_eval_reference(&value.callee);
         if direct_eval
             && self.parameter_context
             && value.arguments.first().is_some_and(|argument| {
@@ -182,19 +177,73 @@ impl FunctionCompiler<'_, '_> {
             self.parameter_eval_arguments_error = true;
         }
         self.dynamic_eval |= direct_eval;
+        let this = if direct_eval {
+            self.this_override.unwrap_or(this)
+        } else {
+            this
+        };
+        if matches!(&value.callee, Expression::Super(_)) {
+            self.emit(
+                Op::Construct,
+                dst,
+                callee,
+                base,
+                crate::bytecode::ImmediateLayout::construct_immediate(count, true, false),
+            );
+            self.after_super_call(dst);
+        } else {
+            self.emit(
+                Op::Call,
+                dst,
+                callee,
+                this,
+                crate::bytecode::ImmediateLayout::call_immediate(
+                    base,
+                    count,
+                    direct_eval,
+                    direct_eval && self.parameter_context,
+                ),
+            );
+        }
+        dst
+    }
+
+    fn is_direct_eval_reference(&mut self, callee: &Expression<'_>) -> bool {
+        matches!(callee, Expression::Identifier(identifier)
+            if identifier.name == "eval"
+                && !self.local_slots.contains_key(&self.owner.atom("eval"))
+                && !self.scopes.iter().any(|scope| scope.contains_key(&self.owner.atom("eval"))))
+    }
+
+    fn direct_eval_spread_call(&mut self, value: &CallExpression<'_>) -> Register {
+        let (callee, this) = self.callee(&value.callee);
+        let expanded_arguments = self.spread_arguments(&value.arguments);
+        let base = self.next_reg;
+        let argument_array = self.reg();
+        self.emit(Op::Move, argument_array, expanded_arguments, 0, 0);
+        let result = self.reg();
+        let parameter_eval = self.parameter_context;
+        self.dynamic_eval = true;
         self.emit(
-            Op::Call,
-            dst,
+            Op::CallDirectEvalArray,
+            result,
             callee,
             this,
-            ((u32::from(base) << 16) | u32::from(count))
-                | if direct_eval {
-                    0x8000_0000 | if self.parameter_context { 0x4000_0000 } else { 0 }
-                } else {
-                    0
-                },
+            crate::bytecode::ImmediateLayout::call_immediate(base, 1, true, parameter_eval),
         );
-        dst
+        result
+    }
+
+    fn after_super_call(&mut self, result: Register) {
+        self.emit(Op::SuperCallCheck, 0, 0, 0, 0);
+        if self.defer_instance_fields {
+            self.emit(Op::InitializeThis, result, 0, 0, 0);
+            let edge = self.emit(Op::Jump, 0, 0, 0, 0);
+            self.deferred_instance_field_edges
+                .push((edge, self.code.len() as u32));
+        } else if self.super_call_binds_this {
+            self.emit(Op::InitializeThis, result, 0, 0, 0);
+        }
     }
 
     pub(super) fn construct(&mut self, value: &NewExpression<'_>) -> Register {
@@ -223,7 +272,7 @@ impl FunctionCompiler<'_, '_> {
                 dst,
                 construct,
                 reflect,
-                (u32::from(base) << 16) | 2,
+                crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
             );
             return dst;
         }
@@ -233,12 +282,11 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    pub(super) fn callee(&mut self, value: &Expression<'_>) -> (Register, Register) {
+    pub(crate) fn callee(&mut self, value: &Expression<'_>) -> (Register, Register) {
         match value {
             Expression::Super(_) => {
-                let callee = self.expression(value);
-                let this = self.reg();
-                self.emit(Op::LoadThis, this, 0, 0, 0);
+                let callee = self.load_name("\0rqj:super");
+                let this = self.literal(Constant::Undefined);
                 (callee, this)
             }
             Expression::StaticMemberExpression(item) => {
@@ -269,8 +317,7 @@ impl FunctionCompiler<'_, '_> {
                         method_cache,
                         method_atom,
                     );
-                    let this = self.reg();
-                    self.emit(Op::LoadThis, this, 0, 0, 0);
+                    let this = self.load_this_value();
                     return (callee, this);
                 }
                 let this = self.expression(&item.object);
@@ -280,6 +327,62 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::GetField, dst, FieldBase::register(this).0, cache, atom);
                 (dst, this)
             }
+            Expression::PrivateFieldExpression(item) => {
+                let this = self.expression(&item.object);
+                let atom = self.owner.private_name_atom(item.field.span);
+                let dst = self.reg();
+                let cache = self.owner.cache_site();
+                self.emit(Op::GetField, dst, FieldBase::register(this).0, cache, atom);
+                (dst, this)
+            }
+            Expression::ChainExpression(item) => match &item.expression {
+                ChainElement::StaticMemberExpression(member) => {
+                    let this = self.expression(&member.object);
+                    let callee = if member.optional {
+                        let (dst, end, jump) = self.emit_optional_prefix(this);
+                        let atom = self.owner.atom(member.property.name.as_str());
+                        let cache = self.owner.cache_site();
+                        self.patch_instruction(jump, self.code.len() as u32);
+                        self.emit(Op::GetField, dst, FieldBase::register(this).0, cache, atom);
+                        if let Some(end) = end {
+                            self.patch(end);
+                        }
+                        dst
+                    } else {
+                        let dst = self.reg();
+                        let atom = self.owner.atom(member.property.name.as_str());
+                        let cache = self.owner.cache_site();
+                        self.emit(Op::GetField, dst, FieldBase::register(this).0, cache, atom);
+                        dst
+                    };
+                    (callee, this)
+                }
+                ChainElement::ComputedMemberExpression(member) => {
+                    let this = self.expression(&member.object);
+                    let callee = if member.optional {
+                        let (dst, end, jump) = self.emit_optional_prefix(this);
+                        self.patch_instruction(jump, self.code.len() as u32);
+                        let key = self.expression_outside_optional_chain(&member.expression);
+                        self.emit(Op::GetIndex, dst, this, key, 0);
+                        if let Some(end) = end {
+                            self.patch(end);
+                        }
+                        dst
+                    } else {
+                        let key = self.expression_outside_optional_chain(&member.expression);
+                        let dst = self.reg();
+                        self.emit(Op::GetIndex, dst, this, key, 0);
+                        dst
+                    };
+                    (callee, this)
+                }
+                _ => {
+                    let callee = self.expression(value);
+                    let this = self.literal(Constant::Undefined);
+                    (callee, this)
+                }
+            },
+            Expression::ParenthesizedExpression(item) => self.callee(&item.expression),
             Expression::ComputedMemberExpression(item) => {
                 let this = if matches!(&item.object, Expression::Super(_))
                     && !self.super_static
@@ -304,12 +407,19 @@ impl FunctionCompiler<'_, '_> {
                 let dst = self.reg();
                 self.emit(Op::GetIndex, dst, this, key, 0);
                 if matches!(&item.object, Expression::Super(_)) {
-                    let receiver = self.reg();
-                    self.emit(Op::LoadThis, receiver, 0, 0, 0);
+                    let receiver = self.load_this_value();
                     (dst, receiver)
                 } else {
                     (dst, this)
                 }
+            }
+            Expression::Identifier(identifier) if self.with_depth != 0 => {
+                let callee = self.expression(value);
+                let this = self.reg();
+                let atom = self.owner.atom(identifier.name.as_str());
+                let cache = self.owner.cache_site();
+                self.emit(Op::ResolveNameThis, this, 0, cache, atom);
+                (callee, this)
             }
             _ => {
                 let callee = self.expression(value);
@@ -373,7 +483,13 @@ impl FunctionCompiler<'_, '_> {
         let values_arg = self.reg();
         self.emit(Op::Move, values_arg, arguments, 0, 0);
         let result = self.reg();
-        self.emit(Op::Call, result, apply, callee, (u32::from(base) << 16) | 2);
+        self.emit(
+            Op::Call,
+            result,
+            apply,
+            callee,
+            crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
+        );
         result
     }
 
@@ -395,22 +511,8 @@ impl FunctionCompiler<'_, '_> {
             let (method, receiver, first, second) = match argument {
                 Argument::SpreadElement(spread) => {
                     let value = self.expression(&spread.argument);
-                    let array = self.load_name("Array");
-                    let from = self.reg();
-                    let from_atom = self.owner.atom("from");
-                    let from_cache = self.owner.cache_site();
-                    self.emit(
-                        Op::GetField,
-                        from,
-                        FieldBase::register(array).0,
-                        from_cache,
-                        from_atom,
-                    );
-                    let base = self.next_reg;
-                    let value_arg = self.reg();
-                    self.emit(Op::Move, value_arg, value, 0, 0);
                     let expanded = self.reg();
-                    self.emit(Op::Call, expanded, from, array, (u32::from(base) << 16) | 1);
+                    self.emit(Op::SpreadToArray, expanded, value, 0, 0);
                     let apply = self.reg();
                     let apply_atom = self.owner.atom("apply");
                     let apply_cache = self.owner.cache_site();
@@ -444,7 +546,7 @@ impl FunctionCompiler<'_, '_> {
                 result,
                 method,
                 receiver,
-                (u32::from(base) << 16) | count,
+                crate::bytecode::ImmediateLayout::call_immediate(base, count, false, false),
             );
         }
 

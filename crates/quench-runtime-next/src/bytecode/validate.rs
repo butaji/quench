@@ -1,8 +1,5 @@
 use super::control_flow::instruction_at;
-use super::{
-    FieldBase, Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, ResidualProgram,
-    SET_THIS_REGISTER,
-};
+use super::{FieldBase, Op, Operand, OperandKind, REGISTER_MASK, Register, ResidualProgram};
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
     register & !(REGISTER_MASK | flags) == 0 && register & REGISTER_MASK < limit
@@ -20,12 +17,12 @@ fn operand_in_bounds(
     fields: usize,
 ) -> bool {
     let operand = Operand(operand);
-    match operand.tag() {
-        0 => register_in_bounds(operand.payload(), registers, 0),
-        1 => usize::from(operand.payload()) < constants,
-        2 => usize::from(operand.payload()) < fields,
-        3 => operand.payload() < locals,
-        _ => false,
+    match operand.kind() {
+        Some(OperandKind::Register) => register_in_bounds(operand.payload(), registers, 0),
+        Some(OperandKind::Constant) => usize::from(operand.payload()) < constants,
+        Some(OperandKind::Field) => usize::from(operand.payload()) < fields,
+        Some(OperandKind::Local) => operand.payload() < locals,
+        None => false,
     }
 }
 
@@ -36,6 +33,13 @@ fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
 fn cache_in_bounds(cache: u16, caches: u16) -> bool {
     cache < caches
 }
+
+fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
+    u32::from(base)
+        .checked_add(count)
+        .is_some_and(|end| end <= u32::from(registers))
+}
+
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
     pub(crate) fn validate(&self) -> Result<(), String> {
@@ -53,12 +57,26 @@ impl ResidualProgram {
                 return Err(format!("function {index} has too many registers"));
             }
             if function
+                .global_var_atoms
+                .iter()
+                .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
+            {
+                return Err(format!("function {index} has an invalid global var atom"));
+            }
+            if function
                 .parent
                 .is_some_and(|p| p as usize >= self.functions.len())
             {
                 return Err(format!("function {index} has an invalid parent"));
             }
             let code_len = function.code.len() as u32;
+            if function.parameter_end_pc > code_len
+                || function.parameter_end_pc != 0 && !function.is_generator
+            {
+                return Err(format!(
+                    "function {index} has an invalid parameter boundary"
+                ));
+            }
             if function.register_root_offset != u32::MAX {
                 let root_end = function
                     .register_root_offset
@@ -90,14 +108,12 @@ impl ResidualProgram {
                 if instruction.op() == Op::Wide {
                     return Err(format!("function {index} contains nested wide instruction"));
                 }
+                if !instruction.result_flags_valid() {
+                    return Err(format!("function {index} result flags are invalid"));
+                }
                 let register = |value: u16| register_in_bounds(value, function.registers, 0);
-                let destination = |value: u16| {
-                    register_in_bounds(
-                        value,
-                        function.registers,
-                        RETURN_REGISTER | SET_THIS_REGISTER,
-                    )
-                };
+                let destination =
+                    |value: u16| register_in_bounds(value & REGISTER_MASK, function.registers, 0);
                 let cache = |value: u16| cache_in_bounds(value, self.cache_sites);
                 let atom = |value: u32| atom_in_bounds(value, self.atoms.len());
                 match instruction.op() {
@@ -109,17 +125,21 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} local access is invalid"));
                     }
-                    Op::StoreLocal | Op::StoreEnvLocal
+                    Op::StoreLocal | Op::StoreEnvLocal | Op::InitializeTdz
                         if instruction.imm() >= u32::from(function.locals) =>
                     {
                         return Err(format!("function {index} local store is invalid"));
                     }
                     Op::LoadCapture | Op::StoreCapture
-                        if instruction.imm() >> 16 >= self.functions.len() as u32 =>
+                        if usize::from(instruction.capture_depth()) >= self.functions.len() =>
                     {
                         return Err(format!("function {index} capture depth is invalid"));
                     }
-                    Op::LoadName | Op::LoadNameTypeof | Op::StoreName
+                    Op::LoadName
+                    | Op::LoadNameTypeof
+                    | Op::ResolveNameThis
+                    | Op::StoreName
+                    | Op::DeleteName
                         if !atom(instruction.imm()) || !cache(instruction.c()) =>
                     {
                         return Err(format!("function {index} name site is invalid"));
@@ -163,12 +183,29 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} field store is invalid"));
                     }
+                    Op::DefineField
+                        if !register(instruction.a())
+                            || !register(instruction.b())
+                            || !atom(instruction.imm()) =>
+                    {
+                        return Err(format!("function {index} field definition is invalid"));
+                    }
                     Op::SetThisField
                         if !register(instruction.a())
                             || !atom(instruction.imm())
                             || !cache(instruction.c()) =>
                     {
                         return Err(format!("function {index} this-field store is invalid"));
+                    }
+                    Op::CheckPrivate if !register(instruction.a()) || !atom(instruction.imm()) => {
+                        return Err(format!("function {index} private check is invalid"));
+                    }
+                    Op::PrivateIn
+                        if !destination(instruction.a())
+                            || !register(instruction.b())
+                            || !atom(instruction.imm()) =>
+                    {
+                        return Err(format!("function {index} private-in operation is invalid"));
                     }
                     Op::GetIndex
                         if !register(instruction.a())
@@ -218,10 +255,44 @@ impl ResidualProgram {
                     Op::Move if !register(instruction.a()) || !register(instruction.b()) => {
                         return Err(format!("function {index} move operand is invalid"));
                     }
-                    Op::GetIterator | Op::GetAsyncIterator | Op::Return | Op::Throw
+                    Op::LoadImportMeta if !destination(instruction.a()) => {
+                        return Err(format!("function {index} import-meta load is invalid"));
+                    }
+                    Op::CopyDataProperties
+                        if !register(instruction.a())
+                            || !register(instruction.b())
+                            || !register(instruction.c()) =>
+                    {
+                        return Err(format!(
+                            "function {index} copy-data-properties operand is invalid"
+                        ));
+                    }
+                    Op::InitializeThis if !register(instruction.a()) => {
+                        return Err(format!(
+                            "function {index} initialized this operand is invalid"
+                        ));
+                    }
+                    Op::GetIterator
+                    | Op::GetAsyncIterator
+                    | Op::IteratorClose
+                    | Op::SpreadToArray
+                    | Op::RequireObjectCoercible
+                    | Op::SetFunctionName
+                    | Op::Return
+                    | Op::Throw
                         if !register(instruction.a()) =>
                     {
                         return Err(format!("function {index} result register is invalid"));
+                    }
+                    Op::RequireObjectCoercible if !register(instruction.b()) => {
+                        return Err(format!("function {index} object operand is invalid"));
+                    }
+                    Op::IteratorCleanupPush
+                        if !register(instruction.a()) || !register(instruction.b()) =>
+                    {
+                        return Err(format!(
+                            "function {index} iterator cleanup register is invalid"
+                        ));
                     }
                     Op::JumpFalse if !register(instruction.a()) => {
                         return Err(format!("function {index} branch register is invalid"));
@@ -243,18 +314,33 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} branch operand is invalid"));
                     }
-                    Op::Call | Op::CallKnown
+                    Op::Call | Op::CallDirectEvalArray
                         if !destination(instruction.a())
                             || !register(instruction.b())
                             || !register(instruction.c())
-                            || (instruction.imm() & u16::MAX as u32) > 8
-                            || (((instruction.imm() & 0x3fff_ffff) >> 16) as u16)
-                                .checked_add((instruction.imm() & u16::MAX as u32) as u16)
-                                .is_none_or(|end| end > function.registers)
-                            || (instruction.op() == Op::CallKnown
-                                && instruction.b() as usize >= self.functions.len()) =>
+                            || !register_window_in_bounds(
+                                u16::from(instruction.call_window().base),
+                                u32::from(instruction.call_window().count),
+                                function.registers,
+                            ) =>
                     {
                         return Err(format!("function {index} call is invalid"));
+                    }
+                    Op::CallDirectEvalArray if instruction.call_window().count != 1 => {
+                        return Err(format!(
+                            "function {index} direct eval arguments are invalid"
+                        ));
+                    }
+                    Op::CallKnown
+                        if !destination(instruction.a())
+                            || instruction.b() as usize >= self.functions.len()
+                            || !register_window_in_bounds(
+                                u16::from(instruction.call_window().base),
+                                u32::from(instruction.call_window().count),
+                                function.registers,
+                            ) =>
+                    {
+                        return Err(format!("function {index} known call is invalid"));
                     }
                     Op::CallMethod | Op::CallThisMethod
                         if !destination(instruction.a())
@@ -265,11 +351,18 @@ impl ResidualProgram {
                     Op::Construct
                         if !destination(instruction.a())
                             || !register(instruction.b())
-                            || (instruction.imm() > 8)
-                            || instruction
-                                .c()
-                                .checked_add(instruction.imm() as u16)
-                                .is_none_or(|end| end > function.registers) =>
+                            || match instruction.construct_arguments() {
+                                super::ConstructArguments::Registers(window) => {
+                                    !register_window_in_bounds(
+                                        window.base,
+                                        u32::from(window.count),
+                                        function.registers,
+                                    )
+                                }
+                                super::ConstructArguments::Array(array_register) => {
+                                    !register(array_register)
+                                }
+                            } =>
                     {
                         return Err(format!("function {index} construct is invalid"));
                     }
@@ -295,14 +388,6 @@ impl ResidualProgram {
                     Op::MakeClosure if instruction.imm() as usize >= self.functions.len() => {
                         return Err(format!("function {index} closure target is invalid"));
                     }
-                    Op::CallKnown => {
-                        if instruction.b() as usize >= self.functions.len() {
-                            return Err(format!("function {index} call target is invalid"));
-                        }
-                        if instruction.imm() as u16 > 8 {
-                            return Err(format!("function {index} call has too many arguments"));
-                        }
-                    }
                     _ => {}
                 }
             }
@@ -310,11 +395,23 @@ impl ResidualProgram {
                 if handler.start > handler.end
                     || handler.end > code_len
                     || handler.target >= code_len
+                    || handler
+                        .return_target
+                        .is_some_and(|target| target >= code_len)
+                    || handler.return_target.is_some() != handler.return_slot.is_some()
                 {
                     return Err(format!("function {index} has an invalid handler"));
                 }
                 if handler.slot.is_some_and(|slot| slot >= function.locals) {
                     return Err(format!("function {index} handler slot is out of bounds"));
+                }
+                if handler
+                    .return_slot
+                    .is_some_and(|slot| slot >= function.locals)
+                {
+                    return Err(format!(
+                        "function {index} handler return slot is out of bounds"
+                    ));
                 }
             }
         }
@@ -378,13 +475,26 @@ mod tests {
             parent: None,
             name: None,
             params: 0,
+            length: 0,
+            parameter_end_pc: 0,
+            parameter_atoms: vec![],
             rest: false,
             is_async: false,
             is_generator: false,
+            is_class_constructor: false,
+            derived_constructor: false,
+            super_home_atom: None,
+            constructible: true,
+            class_field_initializer: false,
             arguments_slot: None,
             strict: false,
             locals: 0,
             local_atoms: vec![],
+            lexical_atoms: vec![],
+            global_lexical_atoms: vec![],
+            global_var_atoms: vec![],
+            global_function_atoms: vec![],
+            global_immutable_atoms: vec![],
             code,
             wide: vec![],
             registers,
@@ -397,6 +507,8 @@ mod tests {
     fn program(function: Function, roots: Vec<u64>) -> ResidualProgram {
         ResidualProgram {
             specialized: true,
+            module: false,
+            source_name: String::new(),
             atoms: AtomTable::default(),
             constants: vec![],
             functions: vec![function],
@@ -450,7 +562,13 @@ mod tests {
 
         let invalid_call = program(
             function(
-                vec![Instr::new(Op::Call, 0, 0, 0, (1 << 16) | 1)],
+                vec![Instr::new(
+                    Op::Call,
+                    0,
+                    0,
+                    0,
+                    super::super::ImmediateLayout::call_immediate(1, 1, false, false),
+                )],
                 1,
                 u32::MAX,
             ),

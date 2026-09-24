@@ -66,6 +66,7 @@ mod tests {
     fn vm() -> Vm<SilentHost> {
         let mut vm = Vm::new(SilentHost);
         vm.frames.push(Frame {
+            program: ProgramId::MAIN,
             function: 3,
             pc: 0,
             env: Value::NULL,
@@ -74,6 +75,7 @@ mod tests {
             dynamic_bindings: vec![],
             captured: false,
             registers: vec![],
+            active_iterators: vec![],
             with_base: 0,
         });
         vm

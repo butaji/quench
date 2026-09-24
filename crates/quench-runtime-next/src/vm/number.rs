@@ -1,8 +1,49 @@
 use super::*;
 
+const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
+const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PATTERN);
+const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
+const BINARY_RADIX: u32 = 2;
+const OCTAL_RADIX: u32 = 8;
+const HEXADECIMAL_RADIX: u32 = 16;
+
+pub(super) fn parse_number_string(text: &str) -> f64 {
+    let text =
+        text.trim_matches(|character: char| character.is_whitespace() || character == '\u{feff}');
+    if text.is_empty() {
+        return 0.0;
+    }
+    if matches!(text, "INFINITY" | "infinity" | "+infinity" | "-infinity") {
+        return f64::NAN;
+    }
+    let Some((prefix, digits)) = text
+        .get(..NUMBER_RADIX_PREFIX_LENGTH)
+        .map(|prefix| (prefix, &text[NUMBER_RADIX_PREFIX_LENGTH..]))
+    else {
+        return text.parse().unwrap_or(f64::NAN);
+    };
+    let radix = match prefix {
+        "0b" | "0B" => Some(BINARY_RADIX),
+        "0o" | "0O" => Some(OCTAL_RADIX),
+        "0x" | "0X" => Some(HEXADECIMAL_RADIX),
+        _ => None,
+    };
+    radix.map_or_else(
+        || text.parse().unwrap_or(f64::NAN),
+        |radix| i64::from_str_radix(digits, radix).map_or(f64::NAN, |value| value as f64),
+    )
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn install_number(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let number = self.native_value(Native::Number);
+        let prototype = self.object();
+        self.set_named(program, number, "prototype", prototype)?;
+        self.set_builtin_named(program, prototype, "constructor", Native::Number)?;
+        self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
+        self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
+        self.set_builtin_named(program, prototype, "toFixed", Native::NumberFixed)?;
+        self.set_builtin_named(program, prototype, "toPrecision", Native::NumberPrecision)?;
         for (name, native) in [
             ("isNaN", Native::NumberIsNaN),
             ("isFinite", Native::NumberIsFinite),
@@ -18,12 +59,12 @@ impl<H: Host> Vm<H> {
             ("MAX_SAFE_INTEGER", 9_007_199_254_740_991.0),
             ("MIN_SAFE_INTEGER", -9_007_199_254_740_991.0),
             ("MAX_VALUE", f64::MAX),
-            ("MIN_VALUE", f64::MIN_POSITIVE),
+            ("MIN_VALUE", MINIMUM_POSITIVE_SUBNORMAL),
             ("NaN", f64::NAN),
             ("POSITIVE_INFINITY", f64::INFINITY),
             ("NEGATIVE_INFINITY", f64::NEG_INFINITY),
         ] {
-            self.set_named(program, number, name, Value::number(value))?;
+            self.set_named_constant(program, number, name, Value::number(value))?;
         }
         self.global(program, "Number", number)
     }
@@ -34,7 +75,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let value = args.first().copied().unwrap_or(Value::number(0.0));
         Ok(match native {
             Native::Number => Value::number(self.to_number(p, value)?),
             Native::NumberIsNaN => {
@@ -149,6 +190,13 @@ pub(super) fn math_unary(native: Native, value: f64) -> f64 {
         }
         Native::MathTrunc => value.trunc(),
         Native::MathSqrt => value.sqrt(),
+        Native::MathAcos => value.acos(),
+        Native::MathAsin => value.asin(),
+        Native::MathAtan => value.atan(),
+        Native::MathCos => value.cos(),
+        Native::MathExp => value.exp(),
+        Native::MathSin => value.sin(),
+        Native::MathTan => value.tan(),
         Native::MathSign => {
             if value.is_nan() || value == 0.0 {
                 value

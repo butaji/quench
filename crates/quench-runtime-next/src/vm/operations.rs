@@ -1,4 +1,41 @@
 use super::*;
+
+const EXPONENTIATION_ZERO: f64 = 0.0;
+const EXPONENTIATION_ONE: f64 = 1.0;
+const EXPONENTIATION_TWO: f64 = 2.0;
+const ODD_INTEGER_PARITY: f64 = 1.0;
+const LAST_NUMERIC_BINARY_OPERATOR: u32 = 19;
+
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub(super) enum RelationalOperator {
+    LessThan = 4,
+    LessEqual = 5,
+    GreaterThan = 6,
+    GreaterEqual = 7,
+}
+
+impl RelationalOperator {
+    pub(super) fn from_immediate(immediate: u32) -> Option<Self> {
+        Some(match immediate {
+            value if value == Self::LessThan as u32 => Self::LessThan,
+            value if value == Self::LessEqual as u32 => Self::LessEqual,
+            value if value == Self::GreaterThan as u32 => Self::GreaterThan,
+            value if value == Self::GreaterEqual as u32 => Self::GreaterEqual,
+            _ => return None,
+        })
+    }
+
+    pub(super) fn matches(self, ordering: std::cmp::Ordering) -> bool {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        match (self, ordering) {
+            (Self::LessThan, Less) | (Self::LessEqual, Less | Equal) => true,
+            (Self::GreaterThan, Greater) | (Self::GreaterEqual, Greater | Equal) => true,
+            _ => false,
+        }
+    }
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn call_native(
         &mut self,
@@ -7,6 +44,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let this = self.string_method_receiver(p, native, this)?;
         if Self::is_finalization_native(native) {
             return self.call_finalization_registry_native(native, this, args);
         }
@@ -24,6 +62,9 @@ impl<H: Host> Vm<H> {
         }
         if native.is_promise_native() {
             return self.call_promise_native(p, native, this, args);
+        }
+        if native == Native::AsyncFromSyncValue {
+            return self.async_from_sync_value(args);
         }
         if native.is_object_static() {
             return self.call_object_native(p, native, args);
@@ -48,6 +89,7 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             }
             Native::Eval => self.eval_native(p, args),
+            Native::EvalScript => self.eval_script_native(p, args),
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::Print => {
@@ -62,8 +104,44 @@ impl<H: Host> Vm<H> {
             Native::DateGetTime
             | Native::DateValueOf
             | Native::DateGetTimezoneOffset
+            | Native::DateGetFullYear
+            | Native::DateGetMonth
+            | Native::DateGetDate
+            | Native::DateGetDay
+            | Native::DateGetHours
+            | Native::DateGetMinutes
+            | Native::DateGetSeconds
+            | Native::DateGetMilliseconds
+            | Native::DateGetUTCFullYear
+            | Native::DateGetUTCMonth
+            | Native::DateGetUTCDate
+            | Native::DateGetUTCDay
+            | Native::DateGetUTCHours
+            | Native::DateGetUTCMinutes
+            | Native::DateGetUTCSeconds
+            | Native::DateGetUTCMilliseconds
+            | Native::DateGetYear
+            | Native::DateSetTime
+            | Native::DateSetFullYear
+            | Native::DateSetMonth
+            | Native::DateSetUTCMonth
+            | Native::DateSetDate
+            | Native::DateSetUTCDate
+            | Native::DateSetUTCFullYear
+            | Native::DateSetHours
+            | Native::DateSetMinutes
+            | Native::DateSetSeconds
+            | Native::DateSetMilliseconds
+            | Native::DateSetUTCHours
+            | Native::DateSetUTCMinutes
+            | Native::DateSetUTCSeconds
+            | Native::DateSetUTCMilliseconds
+            | Native::DateSetYear
+            | Native::DateToString
+            | Native::DateToUTCString
+            | Native::DateToLocaleString
             | Native::DateToISOString
-            | Native::DateToJSON => self.date_native(native, this),
+            | Native::DateToJSON => self.date_native(p, native, this, args),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
@@ -83,6 +161,34 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 })
             }
+            Native::ObjectPrototypeLookupGetter | Native::ObjectPrototypeLookupSetter => {
+                let key =
+                    self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let mut object = self.box_object(this)?;
+                loop {
+                    let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
+                    if !descriptor.is_undefined() {
+                        let field =
+                            self.intern_atom(if native == Native::ObjectPrototypeLookupGetter {
+                                "get"
+                            } else {
+                                "set"
+                            });
+                        return self.get_property(p, descriptor, field);
+                    }
+                    object = self.object_get_prototype_of(p, object)?;
+                    if object.is_null() {
+                        return Ok(Value::UNDEFINED);
+                    }
+                }
+            }
+            Native::ObjectPrototypeToString => self.object_prototype_to_string(p, this),
+            Native::ObjectPrototypeValueOf => self.box_object(this).map_err(|_| {
+                self.type_error(
+                    p,
+                    "Object.prototype.valueOf called on null or undefined".into(),
+                )
+            }),
             Native::ObjectPrototypeIsPrototypeOf => {
                 let target = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let prototype = self.box_object(this)?;
@@ -101,12 +207,16 @@ impl<H: Host> Vm<H> {
                 Ok(if found { Value::TRUE } else { Value::FALSE })
             }
             Native::ReflectGet
+            | Native::ReflectHas
+            | Native::ReflectApply
             | Native::ReflectGetOwnPropertyDescriptor
             | Native::ReflectDefineProperty
             | Native::ReflectDeleteProperty
             | Native::ReflectPreventExtensions
             | Native::ReflectIsExtensible
             | Native::ReflectSet
+            | Native::SuperSet
+            | Native::ObjectLiteralPrototype
             | Native::ReflectOwnKeys
             | Native::ReflectGetPrototypeOf
             | Native::ReflectSetPrototypeOf
@@ -121,6 +231,14 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 })
             }
+            Native::GlobalIsFinite => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                Ok(if self.to_number(p, value)?.is_finite() {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
             Native::MathLog => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 Ok(Value::number(self.to_number(p, v)?.ln()))
@@ -128,9 +246,10 @@ impl<H: Host> Vm<H> {
             Native::MathPow => {
                 let a = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let b = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(
-                    self.to_number(p, a)?.powf(self.to_number(p, b)?),
-                ))
+                Ok(Value::number(exponentiate(
+                    self.to_number(p, a)?,
+                    self.to_number(p, b)?,
+                )))
             }
             Native::ArrayPush => self.array_push_native(this, args),
             Native::ArrayIsArray => Ok(
@@ -181,6 +300,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
                 self.array_iterator_native(native, this)
             }
+            Native::StringValues => self.string_iterator_native(p, this),
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args),
             Native::ArrayBufferTransfer => self.array_buffer_transfer_native(this),
             Native::ArrayBufferResize => self.array_buffer_resize_native(p, this, args),
@@ -196,20 +316,22 @@ impl<H: Host> Vm<H> {
             Native::FunctionApply => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let argument_array = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let arguments = if argument_array.is_undefined() {
-                    vec![]
-                } else {
-                    match self.heap.get(argument_array) {
-                        Some(Cell::Array { elements, .. }) => {
-                            super::array::normalized_array_values(elements)
-                        }
-                        _ => return Err(JsError("apply arguments must be an array".into())),
-                    }
-                };
+                let arguments = self.call_argument_list(p, argument_array, true)?;
                 self.call_value(p, this, receiver, &arguments)
             }
             Native::FunctionBind => self.bind_function(this, args),
             Native::FunctionBoundCall => self.call_bound_function(p, args),
+            Native::FunctionToString => {
+                if !self.is_function(this) {
+                    return Err(self.type_error(
+                        p,
+                        "Function.prototype.toString called on incompatible receiver".into(),
+                    ));
+                }
+                Ok(self
+                    .heap
+                    .alloc(Cell::String("function () { [native code] }".into())))
+            }
             Native::Number
             | Native::NumberIsNaN
             | Native::NumberIsFinite
@@ -231,7 +353,11 @@ impl<H: Host> Vm<H> {
             }
             Native::String => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let text = self.to_string(p, value)?;
+                let text = if let Some(Cell::Symbol(description)) = self.heap.get(value) {
+                    format!("Symbol({})", description.as_deref().unwrap_or(""))
+                } else {
+                    self.to_string(p, value)?
+                };
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::Symbol => self.call_symbol_constructor(p, args),
@@ -242,14 +368,9 @@ impl<H: Host> Vm<H> {
             Native::Date => {
                 let milliseconds =
                     HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
-                let prototype_atom = self.intern_atom("prototype");
-                let prototype = self
-                    .own_property(self.native_value(Native::Date), prototype_atom)
-                    .unwrap_or(self.object_proto);
-                Ok(self.heap.alloc(Cell::Date {
-                    milliseconds,
-                    object: Box::new(Self::empty_object(prototype)),
-                }))
+                Ok(self.heap.alloc(Cell::String(
+                    super::date::format_date_string(milliseconds).into(),
+                )))
             }
             Native::Object
             | Native::Array
@@ -264,6 +385,28 @@ impl<H: Host> Vm<H> {
             Native::ThrowTypeError => {
                 Err(self.type_error(p, "restricted arguments property".into()))
             }
+            Native::FunctionCaller => {
+                let strict = match self.heap.get(this) {
+                    Some(Cell::Function {
+                        kind: FunctionKind::User(program_id, id),
+                        ..
+                    }) => self.programs.get(*program_id).is_some_and(|program| {
+                        program.functions.get(*id as usize).is_some_and(|function| {
+                            function.strict
+                                || function.name.is_some_and(|name| {
+                                    (name as usize) < program.atoms.len()
+                                        && program.atoms[name as usize].as_bytes() == b"\0rqj:arrow"
+                                })
+                        })
+                    }),
+                    _ => false,
+                };
+                if strict {
+                    Err(self.type_error(p, "restricted function caller access".into()))
+                } else {
+                    Ok(Value::UNDEFINED)
+                }
+            }
             native if native.is_error_constructor() => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }
@@ -276,95 +419,141 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
+        if (9..=19).contains(&op) {
+            let left = self.to_numeric_value(p, left)?;
+            let right = self.to_numeric_value(p, right)?;
+            if matches!(self.heap.get(left), Some(Cell::BigInt(_)))
+                || matches!(self.heap.get(right), Some(Cell::BigInt(_)))
+            {
+                return self.binary_bigint(p, op, left, right);
+            }
+            return self.binary_slow(p, op, left, right);
+        }
+        if let Some(operator) = RelationalOperator::from_immediate(op) {
+            return Ok(if self.compare_relational(p, operator, left, right)? {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            });
+        }
         let primitive_operands = (8..=19).contains(&op);
-        let left = if primitive_operands && self.object_data(left).is_some() {
+        let left = if primitive_operands && self.is_object_like(left) {
             self.to_primitive(p, left, "default")?
         } else {
             left
         };
-        let right = if primitive_operands && self.object_data(right).is_some() {
+        let right = if primitive_operands && self.is_object_like(right) {
             self.to_primitive(p, right, "default")?
         } else {
             right
         };
+        // Addition dispatches to string concatenation before numeric or BigInt
+        // arithmetic whenever either primitive operand is a string.
+        if op == 8 && (self.is_string(left) || self.is_string(right)) {
+            return self.binary_slow(p, op, left, right);
+        }
         if let Some((a, b)) = Value::int_pair(left, right) {
-            return Ok(match op {
+            let result = match op {
                 0 | 2 => {
                     if a == b {
-                        Value::TRUE
+                        Some(Value::TRUE)
                     } else {
-                        Value::FALSE
+                        Some(Value::FALSE)
                     }
                 }
                 1 | 3 => {
                     if a != b {
-                        Value::TRUE
+                        Some(Value::TRUE)
                     } else {
-                        Value::FALSE
+                        Some(Value::FALSE)
                     }
                 }
                 4 => {
                     if a < b {
-                        Value::TRUE
+                        Some(Value::TRUE)
                     } else {
-                        Value::FALSE
+                        Some(Value::FALSE)
                     }
                 }
                 5 => {
                     if a <= b {
-                        Value::TRUE
+                        Some(Value::TRUE)
                     } else {
-                        Value::FALSE
+                        Some(Value::FALSE)
                     }
                 }
                 6 => {
                     if a > b {
-                        Value::TRUE
+                        Some(Value::TRUE)
                     } else {
-                        Value::FALSE
+                        Some(Value::FALSE)
                     }
                 }
                 7 => {
                     if a >= b {
-                        Value::TRUE
+                        Some(Value::TRUE)
                     } else {
-                        Value::FALSE
+                        Some(Value::FALSE)
                     }
                 }
                 8 => a
                     .checked_add(b)
                     .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(a as f64 + b as f64)),
+                    .unwrap_or_else(|| Value::number(a as f64 + b as f64))
+                    .into(),
                 9 => a
                     .checked_sub(b)
                     .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(a as f64 - b as f64)),
+                    .unwrap_or_else(|| Value::number(a as f64 - b as f64))
+                    .into(),
                 10 => a
                     .checked_mul(b)
                     .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(a as f64 * b as f64)),
-                11 => Value::number(a as f64 / b as f64),
+                    .unwrap_or_else(|| Value::number(a as f64 * b as f64))
+                    .into(),
+                11 => Some(Value::number(a as f64 / b as f64)),
                 12 => a
                     .checked_rem(b)
                     .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(f64::NAN)),
-                13 => Value::number((a as f64).powf(b as f64)),
-                14 => Value::integer(a << (b as u32 & 31)),
-                15 => Value::integer(a >> (b as u32 & 31)),
-                16 => Value::number(((a as u32) >> (b as u32 & 31)) as f64),
-                17 => Value::integer(a | b),
-                18 => Value::integer(a ^ b),
-                19 => Value::integer(a & b),
-                _ => return Err(JsError(format!("unsupported binary operator {op}").into())),
-            });
+                    .unwrap_or_else(|| Value::number(f64::NAN))
+                    .into(),
+                13 => Some(Value::number(exponentiate(a as f64, b as f64))),
+                14 => Some(Value::integer(a << (b as u32 & 31))),
+                15 => Some(Value::integer(a >> (b as u32 & 31))),
+                16 => Some(Value::number(((a as u32) >> (b as u32 & 31)) as f64)),
+                17 => Some(Value::integer(a | b)),
+                18 => Some(Value::integer(a ^ b)),
+                19 => Some(Value::integer(a & b)),
+                _ => None,
+            };
+            if let Some(result) = result {
+                return Ok(result);
+            }
         }
-        if op >= 8
+        if (8..=19).contains(&op)
             && (matches!(self.heap.get(left), Some(Cell::BigInt(_)))
                 || matches!(self.heap.get(right), Some(Cell::BigInt(_))))
         {
             return self.binary_bigint(p, op, left, right);
         }
         self.binary_slow(p, op, left, right)
+    }
+
+    pub(super) fn to_numeric_value(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let primitive = if self.is_object_like(value) {
+            self.to_primitive(p, value, "number")?
+        } else {
+            value
+        };
+        if matches!(self.heap.get(primitive), Some(Cell::BigInt(_))) {
+            Ok(primitive)
+        } else {
+            self.to_number(p, primitive).map(Value::number)
+        }
     }
 
     fn binary_bigint(
@@ -418,13 +607,16 @@ impl<H: Host> Vm<H> {
         match result {
             Ok(value) => Ok(self.heap.alloc(Cell::BigInt(value))),
             Err(crate::bigint::Error::DivisionByZero) => {
-                Err(self.type_error(p, "Division by zero".into()))
+                Err(self.range_error(p, "Division by zero".into()))
             }
             Err(crate::bigint::Error::NegativeExponent) => {
-                Err(self.type_error(p, "Negative exponent".into()))
+                Err(self.range_error(p, "Exponent must be positive".into()))
             }
-            Err(crate::bigint::Error::ExponentTooLarge | crate::bigint::Error::InvalidDecimal) => {
-                Err(self.type_error(p, "Invalid BigInt operation".into()))
+            Err(crate::bigint::Error::ExponentTooLarge) => {
+                Err(self.range_error(p, "Maximum BigInt size exceeded".into()))
+            }
+            Err(crate::bigint::Error::InvalidDecimal) => {
+                Err(self.type_error(p, "Invalid BigInt value".into()))
             }
         }
     }
@@ -437,7 +629,9 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        if let (Some(a), Some(b)) = (left.as_number(), right.as_number()) {
+        if op <= LAST_NUMERIC_BINARY_OPERATOR
+            && let (Some(a), Some(b)) = (left.as_number(), right.as_number())
+        {
             return Ok(match op {
                 0 | 2 => {
                     if a == b {
@@ -486,7 +680,7 @@ impl<H: Host> Vm<H> {
                 10 => Value::number(a * b),
                 11 => Value::number(a / b),
                 12 => Value::number(a % b),
-                13 => Value::number(a.powf(b)),
+                13 => Value::number(exponentiate(a, b)),
                 14 => Value::number(((number_to_u32(a) as i32) << (number_to_u32(b) & 31)) as f64),
                 15 => Value::number(((number_to_u32(a) as i32) >> (number_to_u32(b) & 31)) as f64),
                 16 => Value::number((number_to_u32(a) >> (number_to_u32(b) & 31)) as f64),
@@ -562,7 +756,7 @@ impl<H: Host> Vm<H> {
             10 => a * b,
             11 => a / b,
             12 => a % b,
-            13 => a.powf(b),
+            13 => exponentiate(a, b),
             14 => ((number_to_u32(a) as i32) << (number_to_u32(b) & 31)) as f64,
             15 => ((number_to_u32(a) as i32) >> (number_to_u32(b) & 31)) as f64,
             16 => (number_to_u32(a) >> (number_to_u32(b) & 31)) as f64,
@@ -572,4 +766,84 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError(format!("unsupported binary operator {op}").into())),
         })
     }
+
+    pub(super) fn call_argument_list(
+        &mut self,
+        p: &ResidualProgram,
+        list: Value,
+        allow_nullish: bool,
+    ) -> Result<Vec<Value>, JsError> {
+        if allow_nullish && (list.is_null() || list.is_undefined()) {
+            return Ok(Vec::new());
+        }
+        let object = self.box_object(list)?;
+        let length_atom = self.intern_atom("length");
+        let length_value = self.get_property(p, object, length_atom)?;
+        let length_number = self.to_number(p, length_value)?;
+        let length = if length_number.is_nan() || length_number <= 0.0 {
+            0
+        } else {
+            length_number.floor().min(9_007_199_254_740_991.0) as usize
+        };
+        let mut arguments = Vec::new();
+        arguments
+            .try_reserve(length)
+            .map_err(|_| self.type_error(p, "argument list is too large".into()))?;
+        for index in 0..length {
+            let atom = self.intern_atom(&index.to_string());
+            arguments.push(self.get_property(p, object, atom)?);
+        }
+        Ok(arguments)
+    }
+}
+
+fn exponentiate(base: f64, exponent: f64) -> f64 {
+    if exponent.is_nan() {
+        return f64::NAN;
+    }
+    if exponent == EXPONENTIATION_ZERO {
+        return EXPONENTIATION_ONE;
+    }
+    if base.is_nan() || base.abs() == EXPONENTIATION_ONE && exponent.is_infinite() {
+        return f64::NAN;
+    }
+    if base.is_infinite() {
+        return infinite_power(base, exponent);
+    }
+    if base == EXPONENTIATION_ZERO {
+        return zero_power(base, exponent);
+    }
+    base.powf(exponent)
+}
+
+fn infinite_power(base: f64, exponent: f64) -> f64 {
+    let magnitude = if exponent.is_sign_positive() {
+        f64::INFINITY
+    } else {
+        EXPONENTIATION_ZERO
+    };
+    signed_power_magnitude(base, exponent, magnitude)
+}
+
+fn zero_power(base: f64, exponent: f64) -> f64 {
+    let magnitude = if exponent.is_sign_positive() {
+        EXPONENTIATION_ZERO
+    } else {
+        f64::INFINITY
+    };
+    signed_power_magnitude(base, exponent, magnitude)
+}
+
+fn signed_power_magnitude(base: f64, exponent: f64, magnitude: f64) -> f64 {
+    if base.is_sign_negative() && is_odd_integer(exponent) {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+fn is_odd_integer(value: f64) -> bool {
+    value.is_finite()
+        && value.fract() == EXPONENTIATION_ZERO
+        && value.abs() % EXPONENTIATION_TWO == ODD_INTEGER_PARITY
 }

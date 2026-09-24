@@ -4,15 +4,15 @@ impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
         match self.heap.get(callee) {
             Some(Cell::Function {
-                kind: FunctionKind::User(id),
+                kind: FunctionKind::User(program, id),
                 env,
                 ..
-            }) => Ok(CallTarget::User(*id, *env)),
+            }) => Ok(CallTarget::User(*program, *id, *env)),
             Some(Cell::Function {
-                kind: FunctionKind::NumericUser(id),
+                kind: FunctionKind::NumericUser(program, id),
                 env,
                 ..
-            }) => Ok(CallTarget::NumericUser(*id, *env)),
+            }) => Ok(CallTarget::NumericUser(*program, *id, *env)),
             Some(Cell::Function {
                 kind: FunctionKind::Native(native),
                 ..
@@ -72,6 +72,21 @@ impl<H: Host> Vm<H> {
                     self.own_property(this, value_atom).ok_or_else(|| {
                         JsError("Boolean.prototype.valueOf called on incompatible receiver".into())
                     })
+                }
+            }
+            Native::BooleanToString => {
+                let value = if let Some(value) = this.as_bool() {
+                    Some(value)
+                } else {
+                    let value_atom = self.intern_atom("\0rqj:boolean-value");
+                    self.own_property(this, value_atom).and_then(Value::as_bool)
+                };
+                match value {
+                    Some(true) => Ok(self.heap.alloc(Cell::String("true".into()))),
+                    Some(false) => Ok(self.heap.alloc(Cell::String("false".into()))),
+                    None => Err(JsError(
+                        "Boolean.prototype.toString called on incompatible receiver".into(),
+                    )),
                 }
             }
             Native::StringCharCodeAt => {
@@ -347,12 +362,12 @@ impl<H: Host> Vm<H> {
                     let number = self.to_number(p, *value)?;
                     if !number.is_finite()
                         || number.fract() != 0.0
-                        || !(0.0..=0x10ffff as f64).contains(&number)
+                        || !(0.0..=crate::unicode::UNICODE_MAX_CODE_POINT as f64).contains(&number)
                     {
                         return Err(JsError("invalid code point".into()));
                     }
                     let code_point = number as u32;
-                    if (0xd800..=0xdfff).contains(&code_point) {
+                    if crate::unicode::is_surrogate(code_point) {
                         return Err(JsError("invalid code point".into()));
                     }
                     text.push(char::from_u32(code_point).expect("validated code point"));
@@ -384,9 +399,23 @@ impl<H: Host> Vm<H> {
             | Native::MathRound
             | Native::MathTrunc
             | Native::MathSqrt
-            | Native::MathSign => {
+            | Native::MathSign
+            | Native::MathAcos
+            | Native::MathAsin
+            | Native::MathAtan
+            | Native::MathCos
+            | Native::MathExp
+            | Native::MathSin
+            | Native::MathTan => {
                 let value = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 Ok(Value::number(super::number::math_unary(native, value)))
+            }
+            Native::MathAtan2 => {
+                let y = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let x = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                Ok(Value::number(
+                    self.to_number(p, y)?.atan2(self.to_number(p, x)?),
+                ))
             }
             Native::MathMin | Native::MathMax => {
                 let mut result = if native == Native::MathMin {
@@ -454,7 +483,12 @@ impl<H: Host> Vm<H> {
 
     fn ascii_string_len(&self, value: Value) -> Option<usize> {
         match self.heap.get(value) {
-            Some(Cell::String(text)) if text.units().iter().all(|unit| *unit < 0x80) => {
+            Some(Cell::String(text))
+                if text
+                    .units()
+                    .iter()
+                    .all(|unit| *unit < crate::unicode::ASCII_CODE_UNIT_LIMIT) =>
+            {
                 Some(text.units().len())
             }
             _ => None,

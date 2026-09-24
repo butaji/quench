@@ -7,13 +7,17 @@ mod instruction;
 mod numeric_ops;
 pub(crate) use atoms::AtomTable;
 pub use instruction::Instr;
-pub(crate) use instruction::WideInstruction;
+pub(crate) use instruction::{ConstructArguments, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const NUMERIC_LOCAL_INC_STORE: u16 = 1;
 pub(crate) const NUMERIC_LOCAL_TARGET: u16 = SET_THIS_REGISTER;
+pub(crate) const FUNCTION_NAME_PREFIX_NONE: u32 = 0;
+pub(crate) const FUNCTION_NAME_PREFIX_GETTER: u32 = 1;
+pub(crate) const FUNCTION_NAME_PREFIX_SETTER: u32 = 2;
+const NO_RESULT_FLAGS: Register = 0;
 #[derive(Clone, Debug)]
 pub enum Constant {
     Number(f64),
@@ -43,8 +47,159 @@ impl Effect {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ImmediateLayout {
+    Scalar,
+    CaptureDepthAndSlot,
+    CallWindow,
+    CallWindowWithEvalFlags,
+    ConstructCountAndFlags,
+    RegisterPair,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResultLayout {
+    Register,
+    Returnable,
+    ReturnableAndThis,
+    NumericReturnable,
+}
+
+impl ResultLayout {
+    const fn allowed_flags(self) -> Register {
+        match self {
+            Self::Register => NO_RESULT_FLAGS,
+            Self::Returnable => RETURN_REGISTER,
+            Self::ReturnableAndThis => RETURN_REGISTER | SET_THIS_REGISTER,
+            Self::NumericReturnable => RETURN_REGISTER | NUMERIC_LOCAL_TARGET,
+        }
+    }
+
+    const fn allows_return(self) -> bool {
+        matches!(
+            self,
+            Self::Returnable | Self::ReturnableAndThis | Self::NumericReturnable
+        )
+    }
+
+    const fn allows_this_write(self) -> bool {
+        matches!(self, Self::ReturnableAndThis)
+    }
+
+    const fn allows_numeric_local(self) -> bool {
+        matches!(self, Self::NumericReturnable)
+    }
+}
+
+impl ImmediateLayout {
+    const DIRECT_EVAL_FLAG_BIT: u32 = u32::BITS - 1;
+    const PARAMETER_EVAL_FLAG_BIT: u32 = Self::DIRECT_EVAL_FLAG_BIT - 1;
+    const CALL_BASE_SHIFT: u32 = u16::BITS;
+    const CALL_BASE_WIDTH: u32 = Self::PARAMETER_EVAL_FLAG_BIT - Self::CALL_BASE_SHIFT;
+    const CALL_BASE_MASK: u32 = ((1 << Self::CALL_BASE_WIDTH) - 1) << Self::CALL_BASE_SHIFT;
+    const ARGUMENT_COUNT_MASK: u32 = u16::MAX as u32;
+    const DIRECT_EVAL_FLAG: u32 = 1 << Self::DIRECT_EVAL_FLAG_BIT;
+    const PARAMETER_EVAL_FLAG: u32 = 1 << Self::PARAMETER_EVAL_FLAG_BIT;
+    const SUPER_CONSTRUCT_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
+    const CONSTRUCT_ARRAY_FLAG: u32 = Self::PARAMETER_EVAL_FLAG;
+    const PAIR_SECOND_SHIFT: u32 = u16::BITS;
+    const PAIR_FIELD_MASK: u32 = u16::MAX as u32;
+
+    pub(crate) const fn uses_packed_pair(self) -> bool {
+        matches!(
+            self,
+            Self::CaptureDepthAndSlot | Self::CallWindow | Self::CallWindowWithEvalFlags
+        )
+    }
+
+    pub(crate) const fn call_immediate(
+        base: Register,
+        count: u16,
+        direct_eval: bool,
+        parameter_eval: bool,
+    ) -> u32 {
+        ((base as u32) << Self::CALL_BASE_SHIFT)
+            | (count as u32)
+            | (if direct_eval {
+                Self::DIRECT_EVAL_FLAG
+            } else {
+                0
+            })
+            | (if parameter_eval {
+                Self::PARAMETER_EVAL_FLAG
+            } else {
+                0
+            })
+    }
+
+    pub(crate) const fn direct_eval(imm: u32) -> bool {
+        imm & Self::DIRECT_EVAL_FLAG != 0
+    }
+
+    pub(crate) const fn parameter_eval(imm: u32) -> bool {
+        imm & Self::PARAMETER_EVAL_FLAG != 0
+    }
+
+    pub(crate) const fn call_window_base(imm: u32) -> Register {
+        ((imm & Self::CALL_BASE_MASK) >> Self::CALL_BASE_SHIFT) as Register
+    }
+
+    pub(crate) const fn argument_count(imm: u32) -> u16 {
+        (imm & Self::ARGUMENT_COUNT_MASK) as u16
+    }
+
+    pub(crate) const fn capture_depth(imm: u32) -> u16 {
+        (imm >> Self::PAIR_SECOND_SHIFT) as u16
+    }
+
+    pub(crate) const fn capture_slot(imm: u32) -> u16 {
+        (imm & Self::PAIR_FIELD_MASK) as u16
+    }
+
+    pub(crate) const fn capture_immediate(depth: usize, slot: u16) -> u32 {
+        ((depth as u32) << Self::PAIR_SECOND_SHIFT) | slot as u32
+    }
+
+    pub(crate) const fn register_pair(imm: u32) -> (Register, Register) {
+        (
+            (imm & Self::PAIR_FIELD_MASK) as Register,
+            (imm >> Self::PAIR_SECOND_SHIFT) as Register,
+        )
+    }
+
+    pub(crate) const fn register_pair_immediate(first: Register, second: Register) -> u32 {
+        ((second as u32) << Self::PAIR_SECOND_SHIFT) | first as u32
+    }
+
+    pub(crate) const fn construct_immediate(
+        count: u16,
+        super_call: bool,
+        array_arguments: bool,
+    ) -> u32 {
+        (count as u32)
+            | (if super_call {
+                Self::SUPER_CONSTRUCT_FLAG
+            } else {
+                0
+            })
+            | (if array_arguments {
+                Self::CONSTRUCT_ARRAY_FLAG
+            } else {
+                0
+            })
+    }
+
+    pub(crate) const fn super_construct(imm: u32) -> bool {
+        imm & Self::SUPER_CONSTRUCT_FLAG != 0
+    }
+
+    pub(crate) const fn construct_array_arguments(imm: u32) -> bool {
+        imm & Self::CONSTRUCT_ARRAY_FLAG != 0
+    }
+}
+
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr),+ $(,)?) => {
+    ($($name:ident => $effect:expr $(; $layout:ident)? $(, @ $result:ident)?),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -54,12 +209,39 @@ macro_rules! opcodes {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             const EFFECTS: [Effect; Self::COUNT] = [$($effect),+];
+            const RESULT_LAYOUTS: [ResultLayout; Self::COUNT] = [$(
+                opcodes!(@result $($result)?)),+
+            ];
+            const IMMEDIATE_LAYOUTS: [ImmediateLayout; Self::COUNT] = [$(
+                opcodes!(@layout $($layout)?)),+
+            ];
 
             pub(crate) const fn effect(self) -> Effect {
                 Self::EFFECTS[self as usize]
             }
+
+            pub(crate) const fn immediate_layout(self) -> ImmediateLayout {
+                Self::IMMEDIATE_LAYOUTS[self as usize]
+            }
+
+            pub(crate) const fn result_layout(self) -> ResultLayout {
+                Self::RESULT_LAYOUTS[self as usize]
+            }
+
+            pub(crate) const fn from_index(index: usize) -> Option<Self> {
+                if index < Self::COUNT {
+                    // SAFETY: `opcodes!` emits a contiguous repr(u16) enum.
+                    Some(unsafe { std::mem::transmute::<u16, Self>(index as u16) })
+                } else {
+                    None
+                }
+            }
         }
     };
+    (@layout $layout:ident) => { ImmediateLayout::$layout };
+    (@layout) => { ImmediateLayout::Scalar };
+    (@result $result:ident) => { ResultLayout::$result };
+    (@result) => { ResultLayout::Register };
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
@@ -74,61 +256,98 @@ opcodes!(
     StoreLocal => Effect::PURE,
     LoadEnvLocal => Effect::READS_HEAP,
     StoreEnvLocal => Effect::WRITES_HEAP,
-    LoadCapture => Effect::READS_HEAP,
-    StoreCapture => Effect::WRITES_HEAP,
+    LoadCapture => Effect::READS_HEAP; CaptureDepthAndSlot,
+    StoreCapture => Effect::WRITES_HEAP; CaptureDepthAndSlot,
     LoadName => READ_THROW,
     LoadNameTypeof => Effect::READS_HEAP,
     ResolveName => READ_THROW,
+    DeleteName => READ_THROW,
     StoreName => WRITE_THROW,
     StoreResolvedName => WRITE_THROW,
     LoadThis => Effect::PURE,
+    LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
     MakeClosure => CALL_EFFECT,
     MakeArray => CALL_EFFECT,
     MakeConstArray => CALL_EFFECT,
     MakeObject => CALL_EFFECT,
-    MakeObject2 => CALL_EFFECT,
-    SuperConstArrayObject2 => CALL_EFFECT,
+    MakeObject2 => CALL_EFFECT, @ Returnable,
+    SuperConstArrayObject2 => CALL_EFFECT, @ Returnable,
     GetIterator => READ_THROW,
     GetAsyncIterator => READ_THROW,
+    IteratorClose => READ_THROW,
+    SpreadToArray => CALL_EFFECT,
+    RequireObjectCoercible => READ_THROW,
+    SuperCallCheck => READ_THROW,
+    IteratorCleanupPush => Effect::CONTROL,
+    IteratorCleanupPop => Effect::CONTROL,
+    SetFunctionName => Effect::WRITES_HEAP,
+    SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
+    InitializeTdz => Effect::PURE,
     Await => READ_THROW.union(Effect::CONTROL),
     Yield => READ_THROW.union(Effect::CONTROL),
-    GetField => READ_THROW,
+    YieldStar => READ_THROW.union(Effect::CONTROL); RegisterPair,
+    GetField => READ_THROW, @ ReturnableAndThis,
     GetIndex => READ_THROW,
     ToPropertyKey => READ_THROW,
+    ToNumeric => READ_THROW,
+    CopyDataProperties => CALL_EFFECT,
+    MarkPrivateName => Effect::WRITES_HEAP,
     SetField => WRITE_THROW,
     SetThisField => WRITE_THROW,
     SetIndex => WRITE_THROW,
-    Binary => READ_THROW,
+    Binary => READ_THROW, @ NumericReturnable,
     IncDec => READ_THROW,
     Unary => READ_THROW,
     Delete => READ_THROW,
+    CheckPrivate => READ_THROW,
+    PrivateIn => READ_THROW,
     Move => Effect::PURE,
-    Call => CALL_EFFECT,
-    CallKnown => CALL_EFFECT,
-    CallMethod => CALL_EFFECT,
-    CallThisMethod => CALL_EFFECT,
-    Construct => CALL_EFFECT,
+    Call => CALL_EFFECT; CallWindowWithEvalFlags, @ Returnable,
+    CallDirectEvalArray => CALL_EFFECT; CallWindowWithEvalFlags, @ Returnable,
+    CallKnown => CALL_EFFECT; CallWindow, @ Returnable,
+    CallMethod => CALL_EFFECT, @ Returnable,
+    CallThisMethod => CALL_EFFECT, @ Returnable,
+    Construct => CALL_EFFECT; ConstructCountAndFlags, @ Returnable,
     Jump => Effect::CONTROL,
     JumpFalse => Effect::CONTROL,
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL),
     Return => Effect::CONTROL,
     Throw => Effect::THROWS.union(Effect::CONTROL),
-    NumericAdd => READ_THROW,
-    NumericMultiply => READ_THROW,
+    NumericAdd => READ_THROW, @ NumericReturnable,
+    NumericMultiply => READ_THROW, @ NumericReturnable,
+    InitializeThis => Effect::CONTROL,
+    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
+    LoadCachedTemplateObject => Effect::READS_HEAP,
+    DefineField => WRITE_THROW,
+    ResolveNameThis => READ_THROW,
 );
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
     pub params: u16,
+    pub length: u16,
+    pub parameter_end_pc: u32,
+    pub parameter_atoms: Vec<Atom>,
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
+    pub is_class_constructor: bool,
+    pub derived_constructor: bool,
+    /// Lexical HomeObject captured by methods and arrows containing `super`.
+    pub super_home_atom: Option<Atom>,
+    pub constructible: bool,
+    pub class_field_initializer: bool,
     pub parameter_eval_arguments_error: bool,
     pub arguments_slot: Option<u16>,
     pub strict: bool,
     pub locals: u16,
     pub local_atoms: Vec<Atom>,
+    pub lexical_atoms: Vec<Atom>,
+    pub global_lexical_atoms: Vec<Atom>,
+    pub global_var_atoms: Vec<Atom>,
+    pub global_function_atoms: Vec<Atom>,
+    pub global_immutable_atoms: Vec<Atom>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -142,7 +361,6 @@ pub struct Function {
 /// residual field preserves the binary format while making the mapping an
 /// explicit execution invariant.
 pub(crate) const MAPPED_ARGUMENTS_BIT: u16 = 1 << 15;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum DispatchClass {
@@ -175,6 +393,8 @@ pub(crate) struct Handler {
     pub end: u32,
     pub target: u32,
     pub slot: Option<u16>,
+    pub return_target: Option<u32>,
+    pub return_slot: Option<u16>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,28 +427,42 @@ pub(crate) struct FieldSite {
 #[repr(transparent)]
 pub(crate) struct Operand(pub(crate) u16);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub(crate) enum OperandKind {
+    Register = 0,
+    Constant = 1,
+    Field = 2,
+    Local = 3,
+}
+
 impl Operand {
     const TAG_SHIFT: u16 = 14;
     const PAYLOAD_MASK: u16 = (1 << Self::TAG_SHIFT) - 1;
 
+    pub(crate) const fn kind(self) -> Option<OperandKind> {
+        match self.0 >> Self::TAG_SHIFT {
+            tag if tag == OperandKind::Register as u16 => Some(OperandKind::Register),
+            tag if tag == OperandKind::Constant as u16 => Some(OperandKind::Constant),
+            tag if tag == OperandKind::Field as u16 => Some(OperandKind::Field),
+            tag if tag == OperandKind::Local as u16 => Some(OperandKind::Local),
+            _ => None,
+        }
+    }
+
     pub(crate) fn register(value: Register) -> Self {
         debug_assert!(value <= Self::PAYLOAD_MASK);
-        Self(value)
+        Self(((OperandKind::Register as u16) << Self::TAG_SHIFT) | value)
     }
 
     pub(crate) fn constant(value: u32) -> Self {
         debug_assert!(value <= u32::from(Self::PAYLOAD_MASK));
-        Self((1 << Self::TAG_SHIFT) | value as u16)
-    }
-
-    pub(crate) fn field(value: u32) -> Self {
-        debug_assert!(value <= u32::from(Self::PAYLOAD_MASK));
-        Self((2 << Self::TAG_SHIFT) | value as u16)
+        Self(((OperandKind::Constant as u16) << Self::TAG_SHIFT) | value as u16)
     }
 
     pub(crate) fn local(slot: u16) -> Self {
         debug_assert!(slot <= Self::PAYLOAD_MASK);
-        Self((3 << Self::TAG_SHIFT) | slot)
+        Self(((OperandKind::Local as u16) << Self::TAG_SHIFT) | slot)
     }
 
     pub(crate) fn tag(self) -> u16 {
@@ -240,13 +474,107 @@ impl Operand {
     }
 
     pub(crate) fn register_index(self) -> Option<Register> {
-        (self.tag() == 0).then_some(self.payload())
+        (self.kind() == Some(OperandKind::Register)).then_some(self.payload())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ModuleRequest {
+    pub source: String,
+    pub phase: ModuleRequestPhase,
+    pub module_type: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ModuleImportBinding {
+    pub source: String,
+    pub phase: ModuleRequestPhase,
+    pub module_type: Option<String>,
+    pub imported: ModuleImportName,
+    pub local: String,
+}
+
+#[derive(Clone, Debug)]
+pub enum ModuleImportName {
+    Namespace,
+    Named(String),
+}
+
+impl ModuleImportName {
+    pub(crate) const fn binary_tag(&self) -> u8 {
+        match self {
+            Self::Namespace => ModuleImportNameKind::Namespace.binary_tag(),
+            Self::Named(_) => ModuleImportNameKind::Named.binary_tag(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ModuleImportNameKind {
+    Namespace,
+    Named,
+}
+
+impl ModuleImportNameKind {
+    const fn binary_tag(self) -> u8 {
+        match self {
+            Self::Namespace => 0,
+            Self::Named => 1,
+        }
+    }
+
+    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Namespace),
+            1 => Some(Self::Named),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModuleRequestPhase {
+    Evaluation,
+    Defer,
+    Source,
+}
+
+impl ModuleRequestPhase {
+    pub(crate) const fn binary_tag(self) -> u8 {
+        match self {
+            Self::Evaluation => 0,
+            Self::Defer => 1,
+            Self::Source => 2,
+        }
+    }
+
+    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Evaluation),
+            1 => Some(Self::Defer),
+            2 => Some(Self::Source),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn runtime_value(self) -> f64 {
+        self.binary_tag() as f64
+    }
+
+    pub(crate) fn from_runtime_value(value: f64) -> Option<Self> {
+        [Self::Evaluation, Self::Defer, Self::Source]
+            .into_iter()
+            .find(|phase| phase.runtime_value() == value)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,
+    pub(crate) module: bool,
+    pub(crate) module_requests: Vec<ModuleRequest>,
+    pub(crate) module_imports: Vec<ModuleImportBinding>,
+    pub(crate) source_name: String,
     pub(crate) atoms: AtomTable,
     pub(crate) constants: Vec<Constant>,
     pub(crate) functions: Vec<Function>,
@@ -270,8 +598,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 13;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_000d_0007;
+    pub const FORMAT_VERSION: u8 = 21;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0014_0000;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

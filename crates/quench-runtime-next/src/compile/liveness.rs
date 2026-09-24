@@ -1,6 +1,5 @@
 use crate::bytecode::{
-    FieldBase, FieldSite, Function, Instr, NUMERIC_LOCAL_TARGET, Op, Operand, REGISTER_MASK,
-    RETURN_REGISTER, Register, Superinstruction,
+    FieldBase, FieldSite, Function, Instr, Op, Operand, REGISTER_MASK, Register, Superinstruction,
 };
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -61,21 +60,33 @@ fn successors(function: &Function, live: &[u64], pc: usize, instruction: Instr) 
         Op::Jump => live[instruction.imm() as usize],
         Op::JumpFalse | Op::JumpBinaryFalse => fallthrough | live[instruction.imm() as usize],
         Op::Return | Op::Throw => 0,
-        _ if instruction.a() & RETURN_REGISTER != 0 => 0,
+        _ if instruction.returns_from_frame() => 0,
         _ => fallthrough,
     };
     function
         .handlers
         .iter()
         .filter(|handler| pc as u32 >= handler.start && (pc as u32) < handler.end)
-        .fold(normal, |mask, handler| mask | live[handler.target as usize])
+        .fold(normal, |mask, handler| {
+            let exceptional = live[handler.target as usize];
+            let returned = handler
+                .return_target
+                .map(|target| live[target as usize])
+                .unwrap_or(0);
+            mask | exceptional | returned
+        })
 }
 
 fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
     for (pc, instruction) in function.code.iter().enumerate() {
         if !matches!(
             instruction.op(),
-            Op::Call | Op::CallKnown | Op::CallMethod | Op::CallThisMethod | Op::Construct
+            Op::Call
+                | Op::CallDirectEvalArray
+                | Op::CallKnown
+                | Op::CallMethod
+                | Op::CallThisMethod
+                | Op::Construct
         ) {
             continue;
         }
@@ -98,11 +109,23 @@ fn uses(
             bit(instruction.a())
         }
         Op::StoreResolvedName => bit(instruction.a()) | bit(instruction.b()),
-        Op::ResolveName => 0,
-        Op::GetIterator | Op::GetAsyncIterator => bit(instruction.b()),
+        Op::ResolveName | Op::ResolveNameThis | Op::DeleteName => 0,
+        Op::GetIterator
+        | Op::GetAsyncIterator
+        | Op::IteratorClose
+        | Op::SpreadToArray
+        | Op::RequireObjectCoercible => bit(instruction.b()),
+        Op::IteratorCleanupPush => bit(instruction.a()) | bit(instruction.b()),
+        Op::SetFunctionName => bit(instruction.a()),
+        Op::SetFunctionNameKey => bit(instruction.a()) | bit(instruction.b()),
         Op::GetField => field_base(instruction, fields),
+        Op::CheckPrivate => bit(instruction.a()),
+        Op::PrivateIn => bit(instruction.b()),
         Op::GetIndex => operand(instruction.b(), fields) | operand(instruction.c(), fields),
-        Op::ToPropertyKey => bit(instruction.b()),
+        Op::ToPropertyKey | Op::ToNumeric => bit(instruction.b()),
+        Op::CopyDataProperties => {
+            bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c())
+        }
         Op::MakeObject2 => bit(instruction.b()) | bit(instruction.c()),
         Op::SuperConstArrayObject2 => superinstructions[instruction.imm() as usize]
             .code
@@ -110,8 +133,17 @@ fn uses(
             .fold(0, |mask, nested| {
                 mask | uses(*nested, methods, fields, superinstructions)
             }),
-        Op::SetField => bit(instruction.a()) | bit(instruction.b()),
+        Op::SetField | Op::DefineField => bit(instruction.a()) | bit(instruction.b()),
         Op::SetThisField => bit(instruction.a()),
+        Op::InitializeThis => bit(instruction.a()),
+        Op::YieldStar => {
+            let (state, next_method) = instruction.register_pair();
+            bit(instruction.a())
+                | bit(instruction.b())
+                | bit(instruction.c())
+                | bit(state)
+                | bit(next_method)
+        }
         Op::SetIndex => bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c()),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
             operand(instruction.b(), fields) | operand(instruction.c(), fields)
@@ -119,24 +151,32 @@ fn uses(
         Op::IncDec | Op::Unary | Op::Move => bit(instruction.b()),
         Op::Delete => bit(instruction.b()) | bit(instruction.c()),
         Op::JumpFalse | Op::Return | Op::Throw => bit(instruction.a()),
-        Op::Call => {
-            bit(instruction.b())
-                | bit(instruction.c())
-                | range(((instruction.imm() & 0x3fff_ffff) >> 16) as u16, instruction.imm() as u16)
+        Op::Call | Op::CallDirectEvalArray => {
+            let window = instruction.call_window();
+            bit(instruction.b()) | bit(instruction.c()) | range(window.base, window.count)
         }
-        Op::CallKnown => range(((instruction.imm() & 0x3fff_ffff) >> 16) as u16, instruction.imm() as u16),
+        Op::CallKnown => {
+            let window = instruction.call_window();
+            range(window.base, window.count)
+        }
         Op::CallMethod => bit(instruction.b()) | method_arguments(instruction, methods),
         Op::CallThisMethod => method_arguments(instruction, methods),
-        Op::Construct => bit(instruction.b()) | range(instruction.c(), instruction.imm() as u16),
+        Op::Construct => {
+            let arguments = match instruction.construct_arguments() {
+                crate::bytecode::ConstructArguments::Registers(window) => {
+                    range(window.base, window.count)
+                }
+                crate::bytecode::ConstructArguments::Array(register) => bit(register),
+            };
+            bit(instruction.b()) | arguments
+        }
         _ => 0,
     }
 }
 
 fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
     match instruction.op() {
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply
-            if instruction.a() & NUMERIC_LOCAL_TARGET != 0 =>
-        {
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply if instruction.writes_numeric_local() => {
             0
         }
         Op::LoadConst
@@ -146,7 +186,11 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::LoadName
         | Op::LoadNameTypeof
         | Op::ResolveName
+        | Op::ResolveNameThis
+        | Op::ToPropertyKey
+        | Op::ToNumeric
         | Op::LoadThis
+        | Op::LoadImportMeta
         | Op::MakeClosure
         | Op::MakeArray
         | Op::MakeConstArray
@@ -154,9 +198,10 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::MakeObject2
         | Op::GetIterator
         | Op::GetAsyncIterator
+        | Op::SpreadToArray
         | Op::GetField
         | Op::GetIndex
-        | Op::ToPropertyKey
+        | Op::PrivateIn
         | Op::Binary
         | Op::NumericAdd
         | Op::NumericMultiply
@@ -165,13 +210,18 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::Delete
         | Op::Move
         | Op::Call
+        | Op::CallDirectEvalArray
         | Op::CallKnown
         | Op::CallMethod
         | Op::CallThisMethod
         | Op::Construct
-            if instruction.a() & RETURN_REGISTER == 0 =>
+            if !instruction.returns_from_frame() =>
         {
             bit(instruction.a() & REGISTER_MASK)
+        }
+        Op::YieldStar => {
+            let (state, next_method) = instruction.register_pair();
+            bit(instruction.a()) | bit(instruction.c()) | bit(state) | bit(next_method)
         }
         Op::SuperConstArrayObject2 => superinstructions[instruction.imm() as usize]
             .code
@@ -200,7 +250,7 @@ fn operand(value: u16, fields: &[FieldSite]) -> u64 {
     if let Some(register) = operand.register_index() {
         return bit(register);
     }
-    if operand.tag() == 2 {
+    if operand.kind() == Some(crate::bytecode::OperandKind::Field) {
         return fields
             .get(operand.payload() as usize)
             .and_then(|site| site.base.register_index())
@@ -235,14 +285,27 @@ mod tests {
             parent: None,
             name: None,
             params: 0,
+            length: 0,
+            parameter_end_pc: 0,
+            parameter_atoms: vec![],
             rest: false,
             is_async: false,
             is_generator: false,
+            is_class_constructor: false,
+            derived_constructor: false,
+            super_home_atom: None,
+            constructible: true,
+            class_field_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
             strict: false,
             locals: 0,
             local_atoms: vec![],
+            lexical_atoms: vec![],
+            global_lexical_atoms: vec![],
+            global_var_atoms: vec![],
+            global_function_atoms: vec![],
+            global_immutable_atoms: vec![],
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),
                 Instr::new(Op::Jump, 0, 0, 0, 3),
@@ -263,7 +326,13 @@ mod tests {
 
     #[test]
     fn local_target_does_not_define_a_register() {
-        let instruction = Instr::new(Op::Binary, NUMERIC_LOCAL_TARGET | 2, 0, 1, 8);
+        let instruction = Instr::new(
+            Op::Binary,
+            crate::bytecode::NUMERIC_LOCAL_TARGET | 2,
+            0,
+            1,
+            8,
+        );
         assert_eq!(definitions(instruction, &[]), 0);
     }
 }

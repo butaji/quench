@@ -11,10 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use quench_test262::{
-    discover_js_files, resolve_stages, HarnessCache, ResolvedStage, RuntimeHost, StageReport,
-    Test262Runner, TestOutcome,
-};
+use quench_test262::{discover_js_files, resolve_stages, ResolvedStage, StageReport, TestOutcome};
 
 #[derive(Debug)]
 struct Args {
@@ -43,6 +40,9 @@ fn main() -> ExitCode {
 }
 
 fn run_stages_entry() -> ExitCode {
+    if let Err(error) = test_timeout_ms() {
+        return fail(error);
+    }
     let args = match parse_args() {
         Ok(args) => args,
         Err(error) => return fail(error),
@@ -380,21 +380,7 @@ fn run_stage_files(root: &Path, files: Vec<PathBuf>) -> Result<Vec<StageFileResu
 }
 
 fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
-    if env::var_os("QUENCH_STAGE_PROCESS_ISOLATION").is_some() {
-        return run_file_in_process(root, path);
-    }
-    let root = root.to_path_buf();
-    let path = path.to_path_buf();
-    std::thread::Builder::new()
-        .stack_size(256 * 1024 * 1024)
-        .spawn(move || {
-            let mut runner = Test262Runner::new(RuntimeHost);
-            let mut harness = HarnessCache::new(root.join("harness"));
-            runner.run_file_with_cache(path, &mut harness)
-        })
-        .map_err(|error| format!("stage worker spawn failed: {error}"))?
-        .join()
-        .map_err(|_| "stage worker panicked".to_string())?
+    run_file_in_process(root, path)
 }
 
 fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> {
@@ -408,10 +394,13 @@ fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> 
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("stage test process failed: {error}"))?;
-    let timeout_ms = env::var("QUENCH_STAGE_TEST_TIMEOUT_MS")
+    let timeout_ms = env::var("TEST262_TEST_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(30_000);
+        .filter(|timeout_ms| *timeout_ms > 0)
+        .ok_or_else(|| {
+            "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".to_string()
+        })?;
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
         if child
@@ -444,6 +433,16 @@ fn run_file_in_process(root: &Path, path: &Path) -> Result<TestOutcome, String> 
             reason
         },
     })
+}
+
+fn test_timeout_ms() -> Result<u64, String> {
+    env::var("TEST262_TEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|timeout_ms| *timeout_ms > 0)
+        .ok_or_else(|| {
+            "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".into()
+        })
 }
 fn parse_stage_index(value: &str) -> Result<u32, String> {
     value

@@ -1,11 +1,13 @@
 use super::*;
 
+const STRING_CONCAT_HASH_MULTIPLIER: usize = 0x9e37_79b1;
+
 impl<H: Host> Vm<H> {
     pub(super) fn intern_dynamic_concat(&mut self, left: Value, right: Value) -> Option<Value> {
         let left_index = left.heap_index()? as usize;
         let right_index = right.heap_index()? as usize;
-        let cache_index =
-            (left_index.wrapping_mul(0x9e37_79b1) ^ right_index) & (STRING_CONCAT_CACHE_SIZE - 1);
+        let cache_index = (left_index.wrapping_mul(STRING_CONCAT_HASH_MULTIPLIER) ^ right_index)
+            & (STRING_CONCAT_CACHE_SIZE - 1);
         if let Some(entry) = self
             .string_concats
             .as_ref()

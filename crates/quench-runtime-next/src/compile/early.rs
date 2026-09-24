@@ -1,4 +1,7 @@
+use oxc_ast::ast::{ArrowFunctionExpression, FormalParameterKind, FormalParameters, Function};
 use oxc_ast::ast::{BindingPattern, Program, Statement, VariableDeclarationKind};
+use oxc_ast_visit::{Visit, walk};
+use oxc_syntax::scope::ScopeFlags;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 
@@ -26,7 +29,166 @@ pub(super) fn strict_binding_early_error(program: &Program<'_>) -> Option<String
     validate_strict_statements(&program.body, strict)
 }
 
-fn validate_strict_statements(statements: &[Statement<'_>], inherited_strict: bool) -> Option<String> {
+pub(super) fn parameter_early_error(
+    program: &Program<'_>,
+    inherited_strict: bool,
+) -> Option<String> {
+    let mut validator = ParameterEarlyErrors {
+        strict: inherited_strict,
+        in_parameters: false,
+        async_parameters: false,
+        yield_parameters_forbidden: false,
+        error: None,
+    };
+    validator.visit_program(program);
+    validator.error
+}
+
+pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
+    let mut finder = DirectEvalParameterFinder(false);
+    finder.visit_formal_parameters(params);
+    finder.0
+}
+
+struct DirectEvalParameterFinder(bool);
+
+impl<'a> Visit<'a> for DirectEvalParameterFinder {
+    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+        if matches!(&call.callee, oxc_ast::ast::Expression::Identifier(id) if id.name == "eval") {
+            self.0 = true;
+        } else {
+            walk::walk_call_expression(self, call);
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
+}
+
+struct ParameterEarlyErrors {
+    strict: bool,
+    in_parameters: bool,
+    async_parameters: bool,
+    yield_parameters_forbidden: bool,
+    error: Option<String>,
+}
+
+impl ParameterEarlyErrors {
+    fn validate_function(&mut self, params: &FormalParameters<'_>, own_strict: bool) {
+        let strict = self.strict || own_strict;
+        let mut names = Vec::new();
+        let simple = params.rest.is_none()
+            && params.items.iter().all(|item| {
+                item.initializer.is_none()
+                    && matches!(item.pattern, BindingPattern::BindingIdentifier(_))
+            });
+        for item in &params.items {
+            collect_pattern_names(&item.pattern, &mut names);
+        }
+        if let Some(rest) = &params.rest {
+            collect_pattern_names(&rest.rest.argument, &mut names);
+        }
+        let duplicate = {
+            let mut seen = FxHashSet::default();
+            names.iter().any(|name| !seen.insert(name.clone()))
+        };
+        if duplicate
+            && (strict
+                || !simple
+                || matches!(
+                    params.kind,
+                    FormalParameterKind::UniqueFormalParameters
+                        | FormalParameterKind::ArrowFormalParameters
+                ))
+        {
+            self.error = Some("SyntaxError: duplicate formal parameter".into());
+            return;
+        }
+        if strict && names.iter().any(|name| strict_reserved(name)) {
+            self.error = Some("SyntaxError: strict-reserved formal parameter".into());
+            return;
+        }
+        if own_strict && !simple {
+            self.error = Some(
+                "SyntaxError: use strict directive is not allowed with non-simple parameters"
+                    .into(),
+            );
+        }
+    }
+}
+
+impl<'a> Visit<'a> for ParameterEarlyErrors {
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        let own_strict = function.body.as_ref().is_some_and(|body| {
+            body.directives
+                .iter()
+                .any(|directive| directive.directive == "use strict")
+        });
+        self.validate_function(&function.params, own_strict);
+        let previous = self.strict;
+        let previous_parameters = self.in_parameters;
+        let previous_async = self.async_parameters;
+        let previous_yield = self.yield_parameters_forbidden;
+        self.strict |= own_strict;
+        self.in_parameters = false;
+        self.async_parameters = function.r#async;
+        self.yield_parameters_forbidden = function.generator;
+        walk::walk_function(self, function, flags);
+        self.strict = previous;
+        self.in_parameters = previous_parameters;
+        self.async_parameters = previous_async;
+        self.yield_parameters_forbidden = previous_yield;
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        let own_strict = match &function.body {
+            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => body
+                .directives
+                .iter()
+                .any(|directive| directive.directive == "use strict"),
+            _ => false,
+        };
+        self.validate_function(&function.params, own_strict);
+        let previous = self.strict;
+        let previous_parameters = self.in_parameters;
+        let previous_async = self.async_parameters;
+        let previous_yield = self.yield_parameters_forbidden;
+        self.strict |= own_strict;
+        self.in_parameters = false;
+        self.async_parameters = function.r#async;
+        self.yield_parameters_forbidden = false;
+        walk::walk_arrow_function_expression(self, function);
+        self.strict = previous;
+        self.in_parameters = previous_parameters;
+        self.async_parameters = previous_async;
+        self.yield_parameters_forbidden = previous_yield;
+    }
+
+    fn visit_formal_parameters(&mut self, params: &FormalParameters<'a>) {
+        let previous = self.in_parameters;
+        self.in_parameters = true;
+        walk::walk_formal_parameters(self, params);
+        self.in_parameters = previous;
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        let name = identifier.name.as_str();
+        if name == "yield" && (self.strict || self.in_parameters && self.yield_parameters_forbidden)
+        {
+            self.error = Some("SyntaxError: yield identifier is not allowed here".into());
+        } else if name == "await" && self.in_parameters && self.async_parameters {
+            self.error =
+                Some("SyntaxError: await identifier is not allowed in async parameters".into());
+        }
+        walk::walk_identifier_reference(self, identifier);
+    }
+}
+
+fn validate_strict_statements(
+    statements: &[Statement<'_>],
+    inherited_strict: bool,
+) -> Option<String> {
     for statement in statements {
         match statement {
             Statement::VariableDeclaration(declaration) if inherited_strict => {
@@ -51,7 +213,9 @@ fn validate_strict_statements(statements: &[Statement<'_>], inherited_strict: bo
                 }
             }
             Statement::ExpressionStatement(statement) => {
-                if let Some(error) = validate_strict_expression(&statement.expression, inherited_strict) {
+                if let Some(error) =
+                    validate_strict_expression(&statement.expression, inherited_strict)
+                {
                     return Some(error);
                 }
             }
@@ -237,6 +401,14 @@ fn validate_block(statements: &[Statement<'_>]) -> Option<String> {
     validate_nested(statements)
 }
 
+pub(super) fn collect_var_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = FxHashSet::default();
+    collect_nested_vars(statements, &mut names);
+    let mut names = names.into_iter().collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
 fn collect_nested_vars(statements: &[Statement<'_>], names: &mut FxHashSet<String>) {
     for statement in statements {
         match statement {
@@ -289,7 +461,7 @@ fn collect_nested_vars(statements: &[Statement<'_>], names: &mut FxHashSet<Strin
     }
 }
 
-fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut impl Extend<String>) {
+pub(super) fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut impl Extend<String>) {
     match pattern {
         BindingPattern::BindingIdentifier(identifier) => {
             names.extend(std::iter::once(identifier.name.to_string()));
@@ -314,8 +486,8 @@ pub(super) fn strict_arguments_early_error(source: &str) -> bool {
     let mut index = 0;
     while index + 9 <= bytes.len() {
         if bytes[index..].starts_with(b"arguments")
-            && (index == 0 || !bytes[index - 1].is_ascii_alphanumeric())
-            && (index + 9 == bytes.len() || !bytes[index + 9].is_ascii_alphanumeric())
+            && (index == 0 || !is_identifier_byte(bytes[index - 1]))
+            && (index + 9 == bytes.len() || !is_identifier_byte(bytes[index + 9]))
         {
             let mut cursor = index + 9;
             while matches!(bytes.get(cursor), Some(b' ' | b'\t' | b'\n' | b'\r')) {
@@ -340,8 +512,8 @@ pub(super) fn strict_eval_early_error(source: &str) -> bool {
     let mut index = 0;
     while index + 4 <= bytes.len() {
         if bytes[index..].starts_with(b"eval")
-            && (index == 0 || !bytes[index - 1].is_ascii_alphanumeric())
-            && (index + 4 == bytes.len() || !bytes[index + 4].is_ascii_alphanumeric())
+            && (index == 0 || !is_identifier_byte(bytes[index - 1]))
+            && (index + 4 == bytes.len() || !is_identifier_byte(bytes[index + 4]))
         {
             let mut cursor = index + 4;
             while matches!(bytes.get(cursor), Some(b' ' | b'\t' | b'\n' | b'\r')) {
@@ -354,6 +526,10 @@ pub(super) fn strict_eval_early_error(source: &str) -> bool {
         index += 1;
     }
     false
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    !byte.is_ascii() || byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
 }
 
 fn mask_literals_and_comments(source: &str) -> String {
