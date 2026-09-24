@@ -162,6 +162,18 @@ impl<H: Host> Vm<H> {
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         self.with_stack.extend(self.captured_with_objects(parent));
+        if id == super::ROOT_FUNCTION_ID {
+            for &(slot, import) in self.programs.module_imports(frame.program) {
+                let value = match import {
+                    super::program_store::ModuleImport::Value(value)
+                    | super::program_store::ModuleImport::Binding(_, _, value) => value,
+                };
+                let Some(local) = frame.locals.get_mut(usize::from(slot)) else {
+                    return Err(JsError("module import slot is out of bounds".into()));
+                };
+                *local = value;
+            }
+        }
         let new_target_atom = self.intern_atom("\0rqj:new-target");
         if !arrow {
             frame.dynamic_bindings.push((
