@@ -67,6 +67,7 @@ impl<H: Host> Vm<H> {
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(self.promise.active_native.iter().copied())
                 .chain(self.promise.modules.values().flat_map(ModuleRecord::roots))
+                .chain(self.promise.module_sources.values().copied())
                 .chain(self.promise.records.iter().flat_map(|(promise, record)| {
                     std::iter::once(*promise)
                         .chain(std::iter::once(record.result))

@@ -22,6 +22,7 @@ enum StaticModuleValue {
         value: Constant,
     },
     Cached(Value),
+    ModuleSource(Value),
     Binding {
         program: ProgramId,
         slot: u16,
@@ -206,6 +207,9 @@ fn same_static_module_binding(left: &StaticModuleValue, right: &StaticModuleValu
                 == crate::module_identity::normalize(std::path::Path::new(right))
         }
         (StaticModuleValue::Cached(left), StaticModuleValue::Cached(right)) => left == right,
+        (StaticModuleValue::ModuleSource(left), StaticModuleValue::ModuleSource(right)) => {
+            left == right
+        }
         _ => false,
     }
 }
@@ -215,6 +219,7 @@ fn native_length(kind: Native) -> Option<f64> {
         return Some(length);
     }
     Some(match kind {
+        Native::AbstractModuleSource => 0.0,
         Native::Object => 1.0,
         Native::ObjectKeys
         | Native::ObjectValues
@@ -344,6 +349,7 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
+    pub(super) module_sources: FxHashMap<std::path::PathBuf, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<Value>,
 }
@@ -361,6 +367,7 @@ impl Default for PromiseRuntime {
             aggregate_jobs: FxHashMap::default(),
             async_resume_jobs: FxHashMap::default(),
             modules: FxHashMap::default(),
+            module_sources: FxHashMap::default(),
             waiting_static_modules: Vec::new(),
             active_native: vec![],
         }
@@ -563,6 +570,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match native {
             Native::DynamicImport => self.dynamic_import(p, args),
+            Native::AbstractModuleSource => {
+                Err(self.type_error(p, "AbstractModuleSource cannot be called".into()))
+            }
             Native::Promise => Err(JsError(
                 "Promise constructor must be called with new".into(),
             )),
@@ -674,6 +684,11 @@ impl<H: Host> Vm<H> {
             match resolution {
                 Err(message) => return Err(self.type_error(p, message)),
                 Ok(Some(module)) => {
+                    if phase == crate::bytecode::ModuleRequestPhase::Source {
+                        let source = self.module_source_value(&module);
+                        self.promise_resolve_value(p, promise, source)?;
+                        return Ok(Value::UNDEFINED);
+                    }
                     let module_type = module_type.as_deref().unwrap_or("javascript");
                     let cache_key = module_cache_key(&module.name, module_type);
                     if let Some(outcome) = self
@@ -979,10 +994,7 @@ impl<H: Host> Vm<H> {
         phase: crate::bytecode::ModuleRequestPhase,
     ) -> Result<Value, JsError> {
         if phase == crate::bytecode::ModuleRequestPhase::Source {
-            return self.syntax_error_result(
-                p,
-                "source phase import is not available for source text modules",
-            );
+            return Ok(self.module_source_value(module));
         }
         match module_type {
             "bytes" => {
@@ -1020,6 +1032,21 @@ impl<H: Host> Vm<H> {
             "javascript" => self.evaluate_javascript_module(p, module),
             _ => Err(self.type_error(p, "unsupported dynamic import type".into())),
         }
+    }
+
+    fn module_source_value(&mut self, module: &ModuleSource) -> Value {
+        let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
+        if let Some(value) = self.promise.module_sources.get(&identity) {
+            return *value;
+        }
+        let prototype_atom = self.intern_atom("prototype");
+        let constructor = self.native_value(Native::AbstractModuleSource);
+        let prototype = self
+            .own_property(constructor, prototype_atom)
+            .unwrap_or(self.object_proto);
+        let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        self.promise.module_sources.insert(identity, value);
+        value
     }
 
     fn evaluate_javascript_module(
@@ -1355,6 +1382,19 @@ impl<H: Host> Vm<H> {
                 .resolve_dynamic_import(referrer, &import.source)
                 .map_err(|message| self.type_error(p, message))?
                 .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
+            let local = self
+                .lookup_atom(&import.local)
+                .and_then(|atom| {
+                    root.local_atoms
+                        .iter()
+                        .position(|candidate| *candidate == atom)
+                })
+                .and_then(|slot| u16::try_from(slot).ok())
+                .ok_or_else(|| self.type_error(p, "module import slot is unavailable".into()))?;
+            if import.phase == crate::bytecode::ModuleRequestPhase::Source {
+                values.push((local, self.module_source_value(&module)));
+                continue;
+            }
             let module_type = import.module_type.as_deref().unwrap_or("javascript");
             let key = module_cache_key(&module.name, module_type);
             let outcome = self.promise.modules.get(&key).map(|record| record.outcome);
@@ -1439,15 +1479,6 @@ impl<H: Host> Vm<H> {
                     self.get_property(p, namespace, atom)?
                 }
             };
-            let local = self
-                .lookup_atom(&import.local)
-                .and_then(|atom| {
-                    root.local_atoms
-                        .iter()
-                        .position(|candidate| *candidate == atom)
-                })
-                .and_then(|slot| u16::try_from(slot).ok())
-                .ok_or_else(|| self.type_error(p, "module import slot is unavailable".into()))?;
             values.push((local, value));
         }
         Ok(values)
@@ -1506,16 +1537,31 @@ impl<H: Host> Vm<H> {
         requests: &[crate::bytecode::ModuleRequest],
         active: &mut FxHashSet<std::path::PathBuf>,
     ) -> Result<(), JsError> {
-        for request in requests {
+        // Resolve a module's complete request list before evaluating any
+        // dependency. Resolution is a host phase; evaluating a dependency
+        // while later requests are still unresolved can expose that
+        // dependency's link error in place of the host's resolution error.
+        let resolved = requests
+            .iter()
+            .map(|request| {
+                self.host
+                    .resolve_dynamic_import(referrer, &request.source)
+                    .map_err(|message| self.type_error(p, message))?
+                    .ok_or_else(|| {
+                        self.type_error(p, "static module request was not resolved".into())
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (request, module) in requests.iter().zip(resolved) {
             match request.phase {
                 crate::bytecode::ModuleRequestPhase::Evaluation => {
-                    self.evaluate_static_module_request(p, referrer, request, active)?;
+                    self.evaluate_static_module_request(p, request, module, active)?;
                 }
                 crate::bytecode::ModuleRequestPhase::Defer => {
-                    self.prepare_deferred_module_request(p, referrer, request)?;
+                    self.prepare_deferred_module_request(p, module)?;
                 }
                 crate::bytecode::ModuleRequestPhase::Source => {
-                    return Err(self.type_error(p, "source-phase imports are unsupported".into()));
+                    self.module_source_value(&module);
                 }
             }
         }
@@ -1525,14 +1571,8 @@ impl<H: Host> Vm<H> {
     fn prepare_deferred_module_request(
         &mut self,
         p: &ResidualProgram,
-        referrer: &str,
-        request: &crate::bytecode::ModuleRequest,
+        module: ModuleSource,
     ) -> Result<(), JsError> {
-        let module = self
-            .host
-            .resolve_dynamic_import(referrer, &request.source)
-            .map_err(|message| self.type_error(p, message))?
-            .ok_or_else(|| self.type_error(p, "deferred module request was not resolved".into()))?;
         let key = module_cache_key(&module.name, "javascript");
         match self.promise.modules.get(&key).map(|record| record.outcome) {
             Some(ModuleOutcome::Evaluated(_)) => {
@@ -1637,17 +1677,10 @@ impl<H: Host> Vm<H> {
     fn evaluate_static_module_request(
         &mut self,
         p: &ResidualProgram,
-        referrer: &str,
         request: &crate::bytecode::ModuleRequest,
+        module: ModuleSource,
         active: &mut FxHashSet<std::path::PathBuf>,
     ) -> Result<(), JsError> {
-        let module = match self.host.resolve_dynamic_import(referrer, &request.source) {
-            Ok(Some(module)) => module,
-            Ok(None) => {
-                return Err(self.type_error(p, "static module request was not resolved".into()));
-            }
-            Err(message) => return Err(self.type_error(p, message)),
-        };
         match request.module_type.as_deref().unwrap_or("javascript") {
             "javascript" => self.evaluate_static_module_source(p, module, active),
             module_type @ ("json" | "text" | "bytes") => {
@@ -1974,6 +2007,30 @@ impl<H: Host> Vm<H> {
             &residual.module_imports,
             active,
         )?;
+        let mut source_import_values = FxHashMap::default();
+        for import in residual
+            .module_imports
+            .iter()
+            .filter(|import| import.phase == crate::bytecode::ModuleRequestPhase::Source)
+        {
+            let atom = residual
+                .atoms
+                .iter()
+                .position(|name| name == &import.local)
+                .ok_or_else(|| self.type_error(p, "source import binding is unavailable".into()))?
+                as u32;
+            let slot = residual.functions[0]
+                .local_atoms
+                .iter()
+                .position(|candidate| *candidate == atom)
+                .and_then(|slot| u16::try_from(slot).ok())
+                .ok_or_else(|| self.type_error(p, "source import slot is unavailable".into()))?;
+            let value = imports
+                .iter()
+                .find_map(|(import_slot, value)| (*import_slot == slot).then_some(*value))
+                .ok_or_else(|| self.type_error(p, "source import value is unavailable".into()))?;
+            source_import_values.insert(import.local.clone(), value);
+        }
         self.programs.set_module_import_values(program_id, imports);
         let active_program = std::mem::replace(&mut self.active_program, program_id);
         let specialized = std::mem::replace(&mut self.specialized, false);
@@ -2077,14 +2134,15 @@ impl<H: Host> Vm<H> {
                         })?
                     }
                 };
-                values.push((
-                    exported,
-                    StaticModuleValue::Binding {
+                let binding = match source_import_values.get(&local) {
+                    Some(value) => StaticModuleValue::ModuleSource(*value),
+                    None => StaticModuleValue::Binding {
                         program: program_id,
                         slot,
                         value,
                     },
-                ));
+                };
+                values.push((exported, binding));
             }
             Ok(values)
         })();
@@ -2655,6 +2713,7 @@ impl<H: Host> Vm<H> {
             let value = match value {
                 StaticModuleValue::Constant { value, .. } => self.module_static_value(value),
                 StaticModuleValue::Cached(value) => value,
+                StaticModuleValue::ModuleSource(value) => value,
                 StaticModuleValue::Binding {
                     program,
                     slot,

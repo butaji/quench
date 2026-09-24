@@ -66,6 +66,13 @@ impl Host for RuntimeNextHost {
         referrer: &str,
         specifier: &str,
     ) -> Result<Option<ModuleSource>, String> {
+        if specifier == "<module source>" {
+            return Ok(Some(ModuleSource {
+                name: specifier.to_string(),
+                source: String::new(),
+                bytes: Vec::new(),
+            }));
+        }
         if !specifier.starts_with('.') {
             return Ok(None);
         }

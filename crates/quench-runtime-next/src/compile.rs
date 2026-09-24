@@ -232,6 +232,10 @@ impl Engine {
                 locals.push((local, exported));
                 continue;
             };
+            if import.phase == ModuleRequestPhase::Source {
+                locals.push((local, exported));
+                continue;
+            }
             if import.phase != ModuleRequestPhase::Evaluation || import.module_type.is_some() {
                 return None;
             }
