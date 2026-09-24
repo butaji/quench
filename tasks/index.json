@@ -89,7 +89,7 @@
     {"id":"42","file":"42.md","title":"Prove specialization is behavior-preserving via a disable-specialization gate","lane":"gates","status":"pending","depends_on":["19"]},
     {"id":"43","file":"43.md","title":"Put quench-node behind an engine-neutral host facade","lane":"host","status":"pending","depends_on":["06"]},
     {"id":"44","file":"44.md","title":"Fold remaining identity-keyed state into cells","lane":"simplification","status":"pending","depends_on":["07","08"]},
-    {"id":"45","file":"45.md","title":"Extract engine-independent legacy algorithms into shared crates","lane":"migration","status":"pending","depends_on":["06"]},
+    {"id":"45","file":"45.md","title":"Extract engine-independent legacy algorithms into shared crates","lane":"migration","status":"in_progress","depends_on":["06"]},
     {"id":"46","file":"46.md","title":"Declare the kernel watermark","lane":"critical_path","status":"pending","depends_on":["06"]},
     {"id":"47","file":"47.md","title":"Derive the generating extension and prove the Futamura equation","lane":"critical_path","status":"pending","depends_on":["08","09","10","42","46","52"]},
     {"id":"48","file":"48.md","title":"Make the full next-core Test262 run fast and ratcheted","lane":"conformance","status":"in_progress","depends_on":["05"]},

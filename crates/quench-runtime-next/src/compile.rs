@@ -9,8 +9,8 @@ use oxc_ast::ast::*;
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::fmt;
 use std::rc::Rc;
+use std::{fmt, ops::Range};
 mod arrow;
 mod ast;
 mod binding_time;
@@ -54,6 +54,10 @@ impl fmt::Display for Diagnostic {
     }
 }
 pub struct Engine;
+pub(crate) struct EvalRegExpLiteral {
+    pub(crate) span: Range<usize>,
+    pub(crate) flags: String,
+}
 pub(crate) enum StaticModuleThrow {
     Value(Constant),
     Error {
@@ -84,6 +88,37 @@ pub(crate) enum StaticModuleReexport {
     },
 }
 impl Engine {
+    pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
+            return None;
+        }
+        let Statement::ExpressionStatement(statement) = &parsed.program.body[0] else {
+            return None;
+        };
+        let Expression::RegExpLiteral(literal) = &statement.expression else {
+            return None;
+        };
+        let flags = [
+            ('d', RegExpFlags::D),
+            ('g', RegExpFlags::G),
+            ('i', RegExpFlags::I),
+            ('m', RegExpFlags::M),
+            ('s', RegExpFlags::S),
+            ('u', RegExpFlags::U),
+            ('v', RegExpFlags::V),
+            ('y', RegExpFlags::Y),
+        ]
+        .into_iter()
+        .filter_map(|(flag, bit)| literal.regex.flags.contains(bit).then_some(flag))
+        .collect();
+        Some(EvalRegExpLiteral {
+            span: literal.span.start as usize..literal.span.end as usize,
+            flags,
+        })
+    }
+
     pub(crate) fn strict_octal_numeric_early_error(source: &str) -> Option<String> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();

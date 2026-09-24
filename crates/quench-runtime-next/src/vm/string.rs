@@ -195,7 +195,7 @@ impl<H: Host> Vm<H> {
             (regex::escape(&self.to_string(p, pattern)?), String::new())
         };
         let regex = Self::compile_regexp(&source, &flags)?;
-        let Some(first) = regex.captures(receiver_host) else {
+        let Some(first) = regex.find_from(receiver_host, 0) else {
             return Ok(if native == Native::StringSearch {
                 Value::number(-1.0)
             } else {
@@ -203,26 +203,30 @@ impl<H: Host> Vm<H> {
             });
         };
         if native == Native::StringSearch {
-            return Ok(Value::number(first.get(0).map_or(-1isize, |value| {
-                utf16_index(receiver_host, value.start()) as isize
-            }) as f64));
+            return Ok(Value::number(
+                utf16_index(receiver_host, first.range.start) as f64
+            ));
         }
+        let first_index = utf16_index(receiver_host, first.range.start);
         if flags.contains('g') {
             let values = regex
-                .captures_iter(receiver_host)
-                .filter_map(|captures| captures.get(0))
-                .map(|value| self.heap.alloc(Cell::String(value.as_str().into())))
+                .find_iter(receiver_host)
+                .map(|matched| {
+                    self.heap
+                        .alloc(Cell::String(receiver_host[matched.range].to_owned().into()))
+                })
                 .collect();
             return Ok(self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.array_proto),
                 elements: Rc::new(values),
             }));
         }
-        let values = first
-            .iter()
-            .map(|value| {
-                value.map_or(Value::UNDEFINED, |value| {
-                    self.heap.alloc(Cell::String(value.as_str().into()))
+        let values = std::iter::once(Some(first.range.clone()))
+            .chain(first.captures)
+            .map(|range| {
+                range.map_or(Value::UNDEFINED, |range| {
+                    self.heap
+                        .alloc(Cell::String(receiver_host[range].to_owned().into()))
                 })
             })
             .collect::<Vec<_>>();
@@ -232,16 +236,7 @@ impl<H: Host> Vm<H> {
         });
         let index = self.intern_atom("index");
         let input = self.intern_atom("input");
-        self.set_property(
-            result,
-            index,
-            Value::number(
-                first
-                    .get(0)
-                    .map_or(0, |value| utf16_index(receiver_host, value.start()))
-                    as f64,
-            ),
-        )?;
+        self.set_property(result, index, Value::number(first_index as f64))?;
         let input_value = self.heap.alloc(Cell::String(receiver));
         self.set_property(result, input, input_value)?;
         Ok(result)
@@ -264,19 +259,18 @@ impl<H: Host> Vm<H> {
         let regex = Self::compile_regexp(&source, &flags)?;
         let mut values = Vec::new();
         let mut cursor = 0;
-        for captures in regex.captures_iter(receiver_host) {
-            let Some(whole) = captures.get(0) else {
-                continue;
-            };
+        for matched in regex.find_iter(receiver_host) {
+            let whole = matched.range;
             values.push(self.heap.alloc(Cell::String(
-                receiver_host[cursor..whole.start()].to_owned().into(),
+                receiver_host[cursor..whole.start].to_owned().into(),
             )));
-            for capture in captures.iter().skip(1) {
-                values.push(capture.map_or(Value::UNDEFINED, |value| {
-                    self.heap.alloc(Cell::String(value.as_str().into()))
+            for capture in matched.captures {
+                values.push(capture.map_or(Value::UNDEFINED, |range| {
+                    self.heap
+                        .alloc(Cell::String(receiver_host[range].to_owned().into()))
                 }));
             }
-            cursor = whole.end();
+            cursor = whole.end;
             if values.len() >= limit {
                 break;
             }
@@ -328,46 +322,47 @@ impl<H: Host> Vm<H> {
             let mut result = String::with_capacity(receiver_host.len());
             let mut cursor = 0;
             let mut replaced = false;
-            for captures in regex.captures_iter(receiver_host) {
+            for captures in regex.find_iter(receiver_host) {
                 if replaced && !global {
                     break;
                 }
-                let Some(whole) = captures.get(0) else {
-                    continue;
-                };
-                result.push_str(&receiver_host[cursor..whole.start()]);
+                let whole = captures.range;
+                result.push_str(&receiver_host[cursor..whole.start]);
                 let replacement_text = if replacement_function {
-                    let mut callback_args = Vec::with_capacity(captures.len() + 3);
-                    callback_args.push(self.heap.alloc(Cell::String(whole.as_str().into())));
-                    callback_args.extend(captures.iter().skip(1).map(|capture| {
-                        capture.map_or(Value::UNDEFINED, |value| {
-                            self.heap.alloc(Cell::String(value.as_str().into()))
+                    let mut callback_args = Vec::with_capacity(captures.captures.len() + 3);
+                    callback_args.push(
+                        self.heap
+                            .alloc(Cell::String(receiver_host[whole.clone()].to_owned().into())),
+                    );
+                    callback_args.extend(captures.captures.iter().map(|capture| {
+                        capture.as_ref().map_or(Value::UNDEFINED, |range| {
+                            self.heap
+                                .alloc(Cell::String(receiver_host[range.clone()].to_owned().into()))
                         })
                     }));
-                    callback_args.push(Value::number(
-                        utf16_index(receiver_host, whole.start()) as f64
-                    ));
+                    callback_args
+                        .push(Value::number(utf16_index(receiver_host, whole.start) as f64));
                     callback_args.push(self.heap.alloc(Cell::String(receiver.clone())));
                     let value =
                         self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
                     self.to_string(p, value)?
                 } else {
                     let captured = captures
+                        .captures
                         .iter()
-                        .skip(1)
-                        .map(|capture| capture.map(|value| value.as_str()))
+                        .map(|capture| capture.as_ref().map(|range| &receiver_host[range.clone()]))
                         .collect::<Vec<_>>();
                     expand_replacement(
                         &replacement,
-                        whole.as_str(),
+                        &receiver_host[whole.clone()],
                         &captured,
                         receiver_host,
-                        whole.start(),
-                        whole.end(),
+                        whole.start,
+                        whole.end,
                     )
                 };
                 result.push_str(&replacement_text);
-                cursor = whole.end();
+                cursor = whole.end;
                 replaced = true;
             }
             if !replaced {

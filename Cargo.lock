@@ -2776,6 +2776,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quench-regexp"
+version = "0.1.0"
+dependencies = [
+ "icu_casemap",
+ "icu_properties",
+ "oxc",
+ "regex",
+]
+
+[[package]]
 name = "quench-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2789,6 +2799,7 @@ dependencies = [
  "icu_provider",
  "num-bigint 0.4.8",
  "oxc",
+ "quench-regexp",
  "regex",
  "rug",
  "serde",
@@ -2812,6 +2823,7 @@ dependencies = [
  "oxc_semantic 0.150.0",
  "oxc_span 0.150.0",
  "oxc_syntax 0.150.0",
+ "quench-regexp",
  "regex",
  "rustc-hash",
  "serde_json",

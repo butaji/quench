@@ -1,8 +1,39 @@
 use super::*;
-use regex::RegexBuilder;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
-const REGEXP_HEX_ESCAPE_DIGITS: usize = 2;
-const REGEXP_UNICODE_ESCAPE_DIGITS: usize = 4;
+pub(super) struct CompiledRegexp(quench_regexp::Regex);
+
+impl CompiledRegexp {
+    pub(super) fn find_from(&self, input: &str, start: usize) -> Option<quench_regexp::Match> {
+        self.0.find_from(input, start).next()
+    }
+
+    pub(super) fn find_iter<'a>(
+        &'a self,
+        input: &'a str,
+    ) -> impl Iterator<Item = quench_regexp::Match> + 'a {
+        let mut next_start = 0;
+        let mut exhausted = false;
+        std::iter::from_fn(move || {
+            if exhausted {
+                return None;
+            }
+            let matched = self.find_from(input, next_start)?;
+            if matched.range.is_empty() {
+                if matched.range.end == input.len() {
+                    exhausted = true;
+                } else if let Some(next) = input[matched.range.end..].chars().next() {
+                    next_start = matched.range.end + next.len_utf8();
+                } else {
+                    exhausted = true;
+                }
+            } else {
+                next_start = matched.range.end;
+            }
+            Some(matched)
+        })
+    }
+}
 
 fn utf16_to_byte_index(text: &str, target: usize) -> usize {
     if target == 0 {
@@ -244,12 +275,9 @@ impl<H: Host> Vm<H> {
         } else {
             0
         };
-        let captures = regex.captures_at(&input, start);
-        let matched = captures
-            .as_ref()
-            .and_then(|captures| captures.get(0))
-            .is_some_and(|matched| !sticky || matched.start() == start);
-        let Some(captures) = captures.filter(|_| matched) else {
+        let matched = regex.find_from(&input, start);
+        let matched = matched.filter(|matched| !sticky || matched.range.start == start);
+        let Some(matched) = matched else {
             if stateful {
                 self.set_property(this, last_index_atom, Value::number(0.0))?;
             }
@@ -262,25 +290,22 @@ impl<H: Host> Vm<H> {
         if native == Native::RegExpTest {
             return Ok(Value::TRUE);
         }
-        let values = captures
-            .iter()
-            .map(|capture| {
-                capture
-                    .map(|value| self.heap.alloc(Cell::String(value.as_str().into())))
-                    .unwrap_or(Value::UNDEFINED)
+        let values = std::iter::once(Some(matched.range.clone()))
+            .chain(matched.captures.iter().cloned())
+            .map(|range| {
+                range.map_or(Value::UNDEFINED, |range| {
+                    self.heap
+                        .alloc(Cell::String(input[range].to_owned().into()))
+                })
             })
             .collect::<Vec<_>>();
         let result = self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),
         });
-        let index = captures
-            .get(0)
-            .map_or(0, |value| utf16_index(&input, value.start()));
+        let index = utf16_index(&input, matched.range.start);
         if stateful {
-            let end = captures.get(0).map_or(utf16_index(&input, start), |value| {
-                utf16_index(&input, value.end())
-            });
+            let end = utf16_index(&input, matched.range.end);
             self.set_property(this, last_index_atom, Value::number(end as f64))?;
         }
         let index_atom = self.intern_atom("index");
@@ -291,39 +316,17 @@ impl<H: Host> Vm<H> {
         Ok(result)
     }
 
-    pub(super) fn compile_regexp(source: &str, flags: &str) -> Result<regex::Regex, JsError> {
-        let normalized = normalize_nonunicode_case_fold(
-            &normalize_js_pattern(source, flags),
-            flags.contains('i') && !flags.contains('u') && !flags.contains('v'),
-        );
-        let mut builder = RegexBuilder::new(&normalized);
-        let mut seen = 0u8;
-        for flag in flags.chars() {
-            let bit = match flag {
-                'g' => 1,
-                'i' => {
-                    builder.case_insensitive(true);
-                    2
-                }
-                'm' => {
-                    builder.multi_line(true);
-                    4
-                }
-                's' => {
-                    builder.dot_matches_new_line(true);
-                    8
-                }
-                'u' | 'y' | 'd' | 'v' => 16,
-                _ => return Err(JsError("invalid regular expression flag".into())),
-            };
-            if bit != 16 && seen & bit != 0 {
-                return Err(JsError("duplicate regular expression flag".into()));
-            }
-            seen |= bit;
-        }
-        builder
-            .build()
-            .map_err(|error| JsError(format!("invalid regular expression: {error}").into()))
+    pub(super) fn compile_regexp(source: &str, flags: &str) -> Result<CompiledRegexp, JsError> {
+        quench_regexp::validate_flags(flags)
+            .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
+        let regex = catch_unwind(AssertUnwindSafe(|| {
+            quench_regexp::Regex::with_flags(source, quench_regexp::Flags::from(flags))
+        }))
+        .map_err(|_| JsError("SyntaxError: invalid regular expression".into()))?
+        .map_err(|error| {
+            JsError(format!("SyntaxError: invalid regular expression: {error}").into())
+        })?;
+        Ok(CompiledRegexp(regex))
     }
 
     pub(super) fn regexp_source_and_flags(&self, value: Value) -> Option<(String, String)> {
@@ -336,34 +339,6 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn normalize_nonunicode_case_fold(pattern: &str, enabled: bool) -> String {
-    if !enabled {
-        return pattern.to_owned();
-    }
-    let mut output = String::with_capacity(pattern.len());
-    let mut in_class = false;
-    for character in pattern.chars() {
-        if character == '[' {
-            in_class = true;
-        } else if character == ']' {
-            in_class = false;
-        }
-        let uppercase = character.to_uppercase().collect::<String>();
-        let lowercase = character.to_lowercase().collect::<String>();
-        let changes_to_ascii = [uppercase, lowercase]
-            .iter()
-            .any(|case| case.len() == 1 && case.as_bytes()[0].is_ascii());
-        if !in_class && !character.is_ascii() && changes_to_ascii {
-            output.push_str("(?-i:");
-            output.push(character);
-            output.push(')');
-        } else {
-            output.push(character);
-        }
-    }
-    output
-}
-
 const REGEXP_FLAG_ACCESSORS: &[(&str, Native)] = &[
     ("global", Native::RegExpGlobal),
     ("ignoreCase", Native::RegExpIgnoreCase),
@@ -374,152 +349,3 @@ const REGEXP_FLAG_ACCESSORS: &[(&str, Native)] = &[
     ("sticky", Native::RegExpSticky),
     ("hasIndices", Native::RegExpHasIndices),
 ];
-
-fn normalize_js_pattern(source: &str, flags: &str) -> String {
-    let unicode = flags.contains('u') || flags.contains('v');
-    let chars: Vec<char> = source.chars().collect();
-    let mut output = String::with_capacity(source.len());
-    let mut index = 0;
-    while index < chars.len() {
-        if unicode && let Some((scalar, end)) = decode_pattern_surrogate_pair(&chars, index) {
-            output.push(scalar);
-            index = end;
-        } else if chars[index] == '\\'
-            && index + 1 < chars.len()
-            && chars[index + 1] == '0'
-            && !chars.get(index + 2).is_some_and(char::is_ascii_digit)
-        {
-            output.push_str("\\x00");
-            index += 2;
-        } else if chars[index] == '\\'
-            && index + 3 < chars.len()
-            && chars[index + 1] == 'x'
-            && chars[index + 2].is_ascii_hexdigit()
-            && chars[index + 3].is_ascii_hexdigit()
-        {
-            let hex = chars[index + 2..index + 4].iter().collect::<String>();
-            let scalar = u32::from_str_radix(&hex, 16).unwrap_or_default();
-            output.push(char::from_u32(scalar).unwrap_or(char::REPLACEMENT_CHARACTER));
-            index += 4;
-        } else if chars[index] == '\\'
-            && index + 5 < chars.len()
-            && chars[index + 1] == 'u'
-            && chars[index + 2..index + 6]
-                .iter()
-                .all(char::is_ascii_hexdigit)
-        {
-            let value = chars[index + 2..index + 6].iter().collect::<String>();
-            let scalar = u32::from_str_radix(&value, 16).unwrap_or(0);
-            if crate::unicode::is_surrogate(scalar) {
-                output.push(char::REPLACEMENT_CHARACTER);
-            } else {
-                output.push(char::from_u32(scalar).unwrap_or(char::REPLACEMENT_CHARACTER));
-            }
-            index += 6;
-        } else {
-            output.push(chars[index]);
-            index += 1;
-        }
-    }
-    normalize_legacy_identity_escapes(&output, unicode)
-}
-
-fn decode_pattern_surrogate_pair(chars: &[char], start: usize) -> Option<(char, usize)> {
-    let (high, after_high) = read_pattern_unicode_unit(chars, start)?;
-    let (low, after_low) = read_pattern_unicode_unit(chars, after_high)?;
-    let scalar = crate::unicode::decode_surrogate_pair(high, low)?;
-    Some((char::from_u32(scalar)?, after_low))
-}
-
-fn read_pattern_unicode_unit(chars: &[char], start: usize) -> Option<(u16, usize)> {
-    if chars.get(start..start + 2)? != ['\\', 'u'] {
-        return None;
-    }
-    let digits = chars.get(start + 2..start + 6)?;
-    if !digits.iter().all(char::is_ascii_hexdigit) {
-        return None;
-    }
-    let value = digits.iter().collect::<String>();
-    Some((u16::from_str_radix(&value, 16).ok()?, start + 6))
-}
-
-fn normalize_legacy_identity_escapes(source: &str, unicode: bool) -> String {
-    if unicode {
-        return source.to_owned();
-    }
-    let chars: Vec<char> = source.chars().collect();
-    let mut output = String::with_capacity(source.len());
-    let mut in_class = false;
-    let mut index = 0;
-    let has_named_group = source.contains("(?<");
-    while index < chars.len() {
-        if chars[index] == '[' {
-            in_class = true;
-            output.push('[');
-            index += 1;
-            continue;
-        }
-        if chars[index] == ']' {
-            in_class = false;
-            output.push(']');
-            index += 1;
-            continue;
-        }
-        if chars[index] != '\\' || index + 1 == chars.len() {
-            output.push(chars[index]);
-            index += 1;
-            continue;
-        }
-        let escaped = chars[index + 1];
-        if ('1'..='7').contains(&escaped) {
-            let (value, end) = legacy_octal_value(&chars, index + 1);
-            output.push_str(&format!("\\x{value:02x}"));
-            index = end;
-            continue;
-        }
-        if is_valid_regexp_escape(&chars, index, escaped, has_named_group)
-            || in_class && escaped == '-'
-        {
-            output.push('\\');
-            output.push(escaped);
-        } else {
-            output.push(escaped);
-        }
-        index += 2;
-    }
-    output
-}
-
-fn is_valid_regexp_escape(
-    chars: &[char],
-    index: usize,
-    escaped: char,
-    has_named_group: bool,
-) -> bool {
-    let next = chars.get(index + 2).copied();
-    let hex_digits = |count: usize| {
-        chars
-            .get(index + 2..index + 2 + count)
-            .is_some_and(|digits| digits.iter().all(char::is_ascii_hexdigit))
-    };
-    match escaped {
-        'x' => hex_digits(REGEXP_HEX_ESCAPE_DIGITS),
-        'u' => hex_digits(REGEXP_UNICODE_ESCAPE_DIGITS),
-        'c' => next.is_some_and(|value| value.is_ascii_alphabetic()),
-        'k' => has_named_group && next == Some('<'),
-        'b' | 'B' | 'd' | 'D' | 'f' | 'n' | 'r' | 's' | 'S' | 't' | 'v' | 'w' | 'W' => true,
-        '^' | '$' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' => true,
-        _ => false,
-    }
-}
-
-fn legacy_octal_value(chars: &[char], start: usize) -> (u8, usize) {
-    let max_digits = if chars[start] <= '3' { 3 } else { 2 };
-    let mut end = start;
-    let mut value = 0_u8;
-    while end < chars.len() && end - start < max_digits && ('0'..='7').contains(&chars[end]) {
-        value = value.wrapping_mul(8).wrapping_add(chars[end] as u8 - b'0');
-        end += 1;
-    }
-    (value, end)
-}

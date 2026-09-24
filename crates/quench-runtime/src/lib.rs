@@ -122,7 +122,7 @@ pub mod reduce;
 mod reduce_support;
 mod reflect;
 pub mod regexp;
-mod regexp_backend;
+pub(crate) use quench_regexp as regexp_backend;
 mod regexp_native;
 pub mod register_file;
 pub mod resource;

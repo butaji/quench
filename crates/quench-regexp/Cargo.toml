@@ -1,0 +1,12 @@
+[package]
+name = "quench-regexp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared ECMAScript regular-expression parser and matcher"
+
+[dependencies]
+icu_casemap = { version = "2.2", features = ["compiled_data"] }
+icu_properties = { version = "2.3", features = ["compiled_data"] }
+oxc = { version = "0.47", features = ["semantic"] }
+regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl"] }
