@@ -5,6 +5,9 @@ fn decoder_rejects_out_of_range_local_load() {
     let program = ResidualProgram {
         specialized: true,
         module: false,
+        module_requests: Vec::new(),
+        module_imports: Vec::new(),
+        module_link_plan: None,
         source_name: String::new(),
         atoms: AtomTable::default(),
         constants: vec![],
@@ -59,6 +62,9 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
     let program = ResidualProgram {
         specialized: true,
         module: false,
+        module_requests: Vec::new(),
+        module_imports: Vec::new(),
+        module_link_plan: None,
         source_name: String::new(),
         atoms: AtomTable::default(),
         constants: vec![],
