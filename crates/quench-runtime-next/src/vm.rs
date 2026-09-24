@@ -67,7 +67,7 @@ mod property_key;
 use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use numeric_site::NumericSite;
-use program_store::{ProgramId, ProgramStore};
+use program_store::{ModuleImport, ProgramId, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;

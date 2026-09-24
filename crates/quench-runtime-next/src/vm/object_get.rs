@@ -210,6 +210,15 @@ impl<H: Host> Vm<H> {
                 };
             }
             if let Some(value) = self.module_binding_value(object, atom) {
+                if value.is_deleted() {
+                    return Err(self.reference_error(
+                        p,
+                        format!(
+                            "Cannot access '{}' before initialization",
+                            self.atom_name(atom)
+                        ),
+                    ));
+                }
                 return Ok(value);
             }
             if let Some(index) = super::object_static::array_index(self.atom_name(atom))
