@@ -50,6 +50,16 @@ impl ModuleRecord {
         }
     }
 
+    pub(crate) fn evaluating_main(namespace: Value) -> Self {
+        Self {
+            outcome: ModuleOutcome::Pending(ModulePhase::Evaluating),
+            deferred_namespace: None,
+            evaluation_promise: None,
+            waiters: Vec::new(),
+            pending_namespace: Some(namespace),
+        }
+    }
+
     pub(crate) fn evaluating_static() -> Self {
         Self {
             outcome: ModuleOutcome::Pending(ModulePhase::Evaluating),

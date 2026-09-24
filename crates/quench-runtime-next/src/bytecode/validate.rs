@@ -508,6 +508,9 @@ mod tests {
         ResidualProgram {
             specialized: true,
             module: false,
+            module_requests: Vec::new(),
+            module_imports: Vec::new(),
+            module_link_plan: None,
             source_name: String::new(),
             atoms: AtomTable::default(),
             constants: vec![],
