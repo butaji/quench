@@ -2104,7 +2104,6 @@ impl<H: Host> Vm<H> {
                 .and_then(ModuleRecord::pending_namespace);
             if let Some(namespace) = namespace
                 && let Some(exports) = self.cached_static_exports(namespace)
-                && !exports.is_empty()
             {
                 return Ok(StaticModuleGraph::Linked {
                     name: module.name,
