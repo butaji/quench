@@ -1338,6 +1338,9 @@ impl<H: Host> Vm<H> {
                     Some(
                         ModuleOutcome::Evaluated(namespace) | ModuleOutcome::Deferred(namespace),
                     ) => Some(namespace),
+                    Some(ModuleOutcome::Pending(_)) if pending_namespace.is_some() => {
+                        pending_namespace
+                    }
                     Some(ModuleOutcome::Pending(_))
                         if self_import_referrer(referrer, &module.name) =>
                     {
@@ -2088,6 +2091,27 @@ impl<H: Host> Vm<H> {
                 exports: exports.clone(),
                 incomplete: true,
             });
+        }
+        if p.module
+            && self.active_program == ProgramId::MAIN
+            && crate::module_identity::same_name(&module.name, &p.source_name)
+        {
+            let key = module_cache_key(&module.name, "javascript");
+            let namespace = self
+                .promise
+                .modules
+                .get(&key)
+                .and_then(ModuleRecord::pending_namespace);
+            if let Some(namespace) = namespace
+                && let Some(exports) = self.cached_static_exports(namespace)
+                && !exports.is_empty()
+            {
+                return Ok(StaticModuleGraph::Linked {
+                    name: module.name,
+                    exports,
+                    incomplete: false,
+                });
+            }
         }
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
             return Ok(StaticModuleGraph::Linked {
