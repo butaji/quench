@@ -383,6 +383,7 @@ impl Heap {
                 work.extend(elements.iter().copied());
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
+            Cell::RegExp { object: value, .. } => object(value),
             Cell::DataView {
                 object: value,
                 buffer,
@@ -495,12 +496,14 @@ impl Heap {
             Cell::Symbol(_) => 12,
             Cell::Date { .. } => 13,
             Cell::Error(_) => 14,
+            Cell::RegExp { .. } => 15,
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         match cell {
             Cell::Object(_) | Cell::Iterator { .. } | Cell::Proxy { .. } | Cell::Date { .. } => 0,
+            Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::TypedArray { .. } => 0,
