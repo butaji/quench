@@ -50,6 +50,8 @@ impl FunctionCompiler<'_, '_> {
                             )
                         })
                     }) => {}
+            Statement::ImportDeclaration(item)
+                if matches!(item.phase, Some(ImportPhase::Source)) => {}
             Statement::ImportDeclaration(item) => self.owner.reject(
                 item.span,
                 "deferred and source imports are outside the supported subset",
