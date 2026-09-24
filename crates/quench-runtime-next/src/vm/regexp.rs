@@ -59,7 +59,47 @@ impl<H: Host> Vm<H> {
             "test",
             self.native_value(Native::RegExpTest),
         )?;
+        for (name, native) in REGEXP_FLAG_ACCESSORS {
+            let getter = self.native_value(*native);
+            let atom = self.intern_atom(name);
+            self.set_named(program, self.regexp_proto, name, getter)?;
+            self.set_property_attributes(
+                self.regexp_proto,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
         self.global(program, "RegExp", constructor)
+    }
+
+    pub(super) fn regexp_flag_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let flags = self.intern_atom("flags");
+        let flags = self.get_property(p, this, flags)?;
+        let flags = self.to_string(p, flags)?;
+        let contains = match native {
+            Native::RegExpGlobal => flags.contains('g'),
+            Native::RegExpIgnoreCase => flags.contains('i'),
+            Native::RegExpMultiline => flags.contains('m'),
+            Native::RegExpDotAll => flags.contains('s'),
+            Native::RegExpUnicode => flags.contains('u') || flags.contains('v'),
+            Native::RegExpUnicodeSets => flags.contains('v'),
+            Native::RegExpSticky => flags.contains('y'),
+            Native::RegExpHasIndices => flags.contains('d'),
+            _ => return Err(JsError("invalid RegExp flag accessor".into())),
+        };
+        Ok(if contains { Value::TRUE } else { Value::FALSE })
     }
 
     pub(super) fn construct_regexp_native(
@@ -91,6 +131,18 @@ impl<H: Host> Vm<H> {
         self.set_property(object, source_atom, source_value)?;
         self.set_property(object, flags_atom, flags_value)?;
         self.set_property(object, last_index_atom, Value::number(0.0))?;
+        self.set_property_attributes(
+            object,
+            PropertyKey::string(last_index_atom),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         Ok(object)
     }
 
@@ -203,12 +255,30 @@ impl<H: Host> Vm<H> {
     }
 }
 
+const REGEXP_FLAG_ACCESSORS: &[(&str, Native)] = &[
+    ("global", Native::RegExpGlobal),
+    ("ignoreCase", Native::RegExpIgnoreCase),
+    ("multiline", Native::RegExpMultiline),
+    ("dotAll", Native::RegExpDotAll),
+    ("unicode", Native::RegExpUnicode),
+    ("unicodeSets", Native::RegExpUnicodeSets),
+    ("sticky", Native::RegExpSticky),
+    ("hasIndices", Native::RegExpHasIndices),
+];
+
 fn normalize_js_pattern(source: &str) -> String {
     let chars: Vec<char> = source.chars().collect();
     let mut output = String::with_capacity(source.len());
     let mut index = 0;
     while index < chars.len() {
         if chars[index] == '\\'
+            && index + 1 < chars.len()
+            && chars[index + 1] == '0'
+            && !chars.get(index + 2).is_some_and(char::is_ascii_digit)
+        {
+            output.push_str("\\x00");
+            index += 2;
+        } else if chars[index] == '\\'
             && index + 3 < chars.len()
             && chars[index + 1] == 'x'
             && chars[index + 2].is_ascii_hexdigit()
