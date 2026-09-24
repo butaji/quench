@@ -1,15 +1,20 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn string_constructor_argument(&mut self, args: &[Value]) -> Value {
+        args.first().copied().unwrap_or_else(|| {
+            self.heap
+                .alloc(Cell::String(super::wtf16::JsString::from_str("")))
+        })
+    }
+
     pub(super) fn string_constructor_value(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let text = match args.first().copied() {
-            Some(value) => self.to_string(p, value)?,
-            None => String::new(),
-        };
+        let argument = self.string_constructor_argument(args);
+        let text = self.to_string(p, argument)?;
         Ok(self.heap.alloc(Cell::String(text.into())))
     }
 
