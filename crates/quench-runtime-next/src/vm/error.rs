@@ -74,6 +74,13 @@ impl JsError {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn format_error(&mut self, program: &ResidualProgram, error: &JsError) -> String {
+        error
+            .thrown_value()
+            .and_then(|value| self.to_string(program, value).ok())
+            .unwrap_or_else(|| error.to_string())
+    }
+
     pub(super) fn type_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
         let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
         let object = self

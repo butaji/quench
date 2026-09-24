@@ -101,13 +101,16 @@ impl RuntimeNextHost {
                 SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
             .map_err(|errors| format!("next runtime SyntaxError: {errors:?}"))?;
-            runtime
-                .execute(&program)
-                .map_err(|error| format!("next runtime: {error:?}"))?;
+            runtime.execute(&program).map_err(|error| {
+                format!("next runtime: {}", runtime.format_error(&program, &error))
+            })?;
             if async_test {
-                runtime
-                    .run_jobs(&program)
-                    .map_err(|error| format!("next runtime jobs: {error:?}"))?;
+                runtime.run_jobs(&program).map_err(|error| {
+                    format!(
+                        "next runtime jobs: {}",
+                        runtime.format_error(&program, &error)
+                    )
+                })?;
                 if let Some(error) = runtime.host_mut().done.clone() {
                     if !error.is_empty() {
                         return Err(format!("next runtime async: {error}"));

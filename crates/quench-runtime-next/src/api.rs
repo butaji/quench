@@ -105,6 +105,10 @@ impl<H: Host> Runtime<H> {
         self.vm.drain_jobs(program)
     }
 
+    pub fn format_error(&mut self, program: &ResidualProgram, error: &JsError) -> String {
+        self.vm.format_error(program, error)
+    }
+
     /// Force the VM's named GC safepoint. The residual program supplies the
     /// frame root maps used when a host asks for collection between calls.
     pub fn collect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
