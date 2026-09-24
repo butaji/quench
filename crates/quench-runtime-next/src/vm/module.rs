@@ -126,6 +126,10 @@ impl ModuleRecord {
         self.pending_namespace
     }
 
+    pub(crate) fn cache_pending_namespace(&mut self, namespace: Value) {
+        self.pending_namespace = Some(namespace);
+    }
+
     pub(crate) fn begin_async_evaluation(&mut self, namespace: Value) {
         self.outcome = ModuleOutcome::Pending(ModulePhase::EvaluatingAsync);
         self.pending_namespace = Some(namespace);
