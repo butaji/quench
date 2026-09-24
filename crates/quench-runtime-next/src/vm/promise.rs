@@ -1689,7 +1689,7 @@ impl<H: Host> Vm<H> {
                     self.object_data(namespace)
                         .and_then(|object| object.module_binding(atom))
                         .map(|(program, slot)| {
-                            crate::vm::program_store::ModuleImport::Binding(program, slot)
+                            crate::vm::program_store::ModuleImport::Binding(program, slot, value)
                         })
                         .unwrap_or(crate::vm::program_store::ModuleImport::Value(value))
                 }
@@ -2324,7 +2324,7 @@ impl<H: Host> Vm<H> {
                         (true, crate::vm::program_store::ModuleImport::Value(value)) => {
                             Some(*value)
                         }
-                        (true, crate::vm::program_store::ModuleImport::Binding(_, _)) => None,
+                        (true, crate::vm::program_store::ModuleImport::Binding(_, _, _)) => None,
                         (false, _) => None,
                     },
                 )

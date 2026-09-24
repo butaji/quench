@@ -15,7 +15,7 @@ struct ProgramEntry {
 #[derive(Clone, Copy)]
 pub(crate) enum ModuleImport {
     Value(Value),
-    Binding(ProgramId, u16),
+    Binding(ProgramId, u16, Value),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -117,6 +117,12 @@ impl ProgramStore {
         }
     }
 
+    pub(crate) fn module_imports(&self, id: ProgramId) -> &[(u16, ModuleImport)] {
+        self.programs
+            .get(id.index())
+            .map_or(&[], |entry| &entry.module_imports)
+    }
+
     pub(crate) fn module_import(&self, id: ProgramId, slot: u16) -> Option<ModuleImport> {
         self.programs.get(id.index()).and_then(|entry| {
             entry
@@ -172,7 +178,7 @@ impl ProgramStore {
                         .iter()
                         .filter_map(|(_, import)| match import {
                             ModuleImport::Value(value) => Some(*value),
-                            ModuleImport::Binding(_, _) => None,
+                            ModuleImport::Binding(_, _, fallback) => Some(*fallback),
                         }),
                 )
         })

@@ -8,7 +8,7 @@ impl<H: Host> Vm<H> {
         let slot = u16::try_from(slot).ok()?;
         match self.programs.module_import(self.frames[f].program, slot)? {
             ModuleImport::Value(value) => Some(value),
-            ModuleImport::Binding(program, binding) => {
+            ModuleImport::Binding(program, binding, fallback) => {
                 let value = self
                     .programs
                     .module_environment(program)
@@ -18,7 +18,11 @@ impl<H: Host> Vm<H> {
                         }
                         _ => None,
                     });
-                Some(value.unwrap_or(Value::DELETED))
+                Some(match value {
+                    Some(Value::DELETED) | None if !fallback.is_undefined() => fallback,
+                    Some(value) => value,
+                    None => Value::DELETED,
+                })
             }
         }
     }
