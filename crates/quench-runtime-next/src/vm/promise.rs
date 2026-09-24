@@ -244,6 +244,7 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
+    pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<Value>,
 }
 
@@ -260,6 +261,7 @@ impl Default for PromiseRuntime {
             aggregate_jobs: FxHashMap::default(),
             async_resume_jobs: FxHashMap::default(),
             modules: FxHashMap::default(),
+            waiting_static_modules: Vec::new(),
             active_native: vec![],
         }
     }
@@ -1169,10 +1171,18 @@ impl<H: Host> Vm<H> {
         active.insert(crate::module_identity::normalize(std::path::Path::new(
             &p.source_name,
         )));
-        self.evaluate_module_requests(p, &p.source_name, &p.module_requests, &mut active)?;
+        let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
+        let requests =
+            self.evaluate_module_requests(p, &p.source_name, &p.module_requests, &mut active);
+        self.deferred_dependency_batch = outer_batch;
+        requests?;
         let imports = self.resolve_module_import_values(p, p, &p.source_name, &p.module_imports)?;
         self.programs
             .set_module_import_values(ProgramId::MAIN, imports);
+        if !outer_batch {
+            self.drain_jobs(p)?;
+            self.advance_static_module_jobs(p)?;
+        }
         Ok(())
     }
 
@@ -1372,6 +1382,10 @@ impl<H: Host> Vm<H> {
             let entry_has_tla = crate::Engine::static_module_plan(&module.source, &module.name)
                 .is_some_and(|plan| plan.has_top_level_await);
             if entry_has_tla {
+                let namespace = self.deferred_module_namespace(p, &module)?;
+                if let Some(record) = self.promise.modules.get_mut(&key) {
+                    record.cache_deferred_namespace(namespace);
+                }
                 return Ok(());
             }
         }
@@ -1434,13 +1448,34 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let cache_key = module_cache_key(&module.name, "javascript");
+        let resuming_waiting = matches!(
+            self.promise
+                .modules
+                .get(&cache_key)
+                .map(|record| record.outcome),
+            Some(ModuleOutcome::Pending(ModulePhase::WaitingForDependencies))
+        );
         match self
             .promise
             .modules
             .get(&cache_key)
             .map(|record| record.outcome)
         {
-            Some(ModuleOutcome::Evaluated(_)) | Some(ModuleOutcome::Pending(_)) => return Ok(()),
+            Some(ModuleOutcome::Evaluated(_)) => return Ok(()),
+            Some(ModuleOutcome::Pending(ModulePhase::WaitingForDependencies)) => {
+                if self.static_module_has_pending_dependencies(p, &module)? {
+                    return Ok(());
+                }
+                if !self
+                    .promise
+                    .modules
+                    .get_mut(&cache_key)
+                    .is_some_and(ModuleRecord::begin_after_dependencies)
+                {
+                    return Ok(());
+                }
+            }
+            Some(ModuleOutcome::Pending(_)) => return Ok(()),
             Some(ModuleOutcome::Deferred(namespace)) => {
                 self.evaluate_deferred_module_namespace(p, namespace)?;
                 return Ok(());
@@ -1461,15 +1496,31 @@ impl<H: Host> Vm<H> {
         let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
             return Err(self.type_error(p, "static module metadata is unavailable".into()));
         };
-        self.promise
-            .modules
-            .insert(cache_key.clone(), ModuleRecord::evaluating_static());
+        if !resuming_waiting {
+            self.promise
+                .modules
+                .insert(cache_key.clone(), ModuleRecord::evaluating_static());
+        }
         active.insert(identity);
         let result = self.evaluate_static_module_body(p, &module, &plan, active);
         active.remove(&crate::module_identity::normalize(std::path::Path::new(
             &module.name,
         )));
-        self.settle_static_module(p, &cache_key, result)
+        match result {
+            Ok(Some(namespace)) => self.settle_static_module(p, &cache_key, Ok(namespace)),
+            Ok(None) => {
+                let waiting = self
+                    .promise
+                    .modules
+                    .get_mut(&cache_key)
+                    .is_some_and(ModuleRecord::wait_for_dependencies);
+                if waiting {
+                    self.promise.waiting_static_modules.push(module);
+                }
+                Ok(())
+            }
+            Err(error) => self.settle_static_module(p, &cache_key, Err(error)),
+        }
     }
 
     fn evaluate_static_module_body(
@@ -1478,9 +1529,12 @@ impl<H: Host> Vm<H> {
         module: &ModuleSource,
         plan: &crate::compile::StaticModulePlan,
         active: &mut FxHashSet<std::path::PathBuf>,
-    ) -> Result<Value, JsError> {
+    ) -> Result<Option<Value>, JsError> {
         self.evaluate_module_requests(p, &module.name, &plan.requests, active)?;
-        self.evaluate_javascript_module_body(p, module)
+        if self.static_module_has_pending_dependencies(p, module)? {
+            return Ok(None);
+        }
+        self.evaluate_javascript_module_body(p, module).map(Some)
     }
 
     fn settle_static_module(
@@ -1498,12 +1552,12 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.to_string()))),
             ),
         };
-        let Some(record) = self.promise.modules.get_mut(cache_key) else {
-            return Err(self.type_error(p, "module record disappeared during evaluation".into()));
-        };
         if state == PromiseState::Fulfilled
-            && record
-                .evaluation_promise()
+            && self
+                .promise
+                .modules
+                .get(cache_key)
+                .and_then(ModuleRecord::evaluation_promise)
                 .is_some_and(|promise| {
                     self.promise
                         .records
@@ -1511,9 +1565,27 @@ impl<H: Host> Vm<H> {
                         .is_some_and(|record| record.state == PromiseState::Pending)
                 })
         {
+            let Some(record) = self.promise.modules.get_mut(cache_key) else {
+                return Err(
+                    self.type_error(p, "module record disappeared during evaluation".into())
+                );
+            };
             record.begin_async_evaluation(value);
             return Ok(());
         }
+        let deferred_namespace = self
+            .promise
+            .modules
+            .get(cache_key)
+            .and_then(ModuleRecord::deferred_namespace);
+        if state == PromiseState::Fulfilled
+            && let Some(namespace) = deferred_namespace
+        {
+            self.copy_module_namespace(value, namespace, p)?;
+        }
+        let Some(record) = self.promise.modules.get_mut(cache_key) else {
+            return Err(self.type_error(p, "module record disappeared during evaluation".into()));
+        };
         let waiters = match state {
             PromiseState::Fulfilled => record.evaluate(value),
             PromiseState::Rejected => record.fail(value),
@@ -1530,6 +1602,33 @@ impl<H: Host> Vm<H> {
                 value,
                 "static module evaluation failed".into(),
             ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn advance_static_module_jobs(
+        &mut self,
+        p: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        self.settle_pending_async_modules(p)?;
+        let waiting = std::mem::take(&mut self.promise.waiting_static_modules);
+        for module in waiting {
+            if self.static_module_has_pending_dependencies(p, &module)? {
+                self.promise.waiting_static_modules.push(module);
+                continue;
+            }
+            let cache_key = module_cache_key(&module.name, "javascript");
+            let Some(record) = self.promise.modules.get(&cache_key) else {
+                continue;
+            };
+            if record.phase() != ModulePhase::WaitingForDependencies {
+                continue;
+            }
+            let mut active = FxHashSet::default();
+            let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
+            let result = self.evaluate_static_module_source(p, module, &mut active);
+            self.deferred_dependency_batch = outer_batch;
+            result?;
         }
         Ok(())
     }
@@ -1559,11 +1658,52 @@ impl<H: Host> Vm<H> {
                 PromiseState::Rejected => self.settle_static_module(
                     p,
                     &key,
-                    Err(JsError::thrown(record.result, "module evaluation rejected".into())),
+                    Err(JsError::thrown(
+                        record.result,
+                        "module evaluation rejected".into(),
+                    )),
                 )?,
             }
         }
         Ok(())
+    }
+
+    fn static_module_has_pending_dependencies(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+    ) -> Result<bool, JsError> {
+        let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
+            return Err(self.type_error(p, "static module metadata is unavailable".into()));
+        };
+        for request in plan
+            .requests
+            .iter()
+            .filter(|request| request.phase == crate::bytecode::ModuleRequestPhase::Evaluation)
+        {
+            if request.module_type.as_deref().unwrap_or("javascript") != "javascript" {
+                continue;
+            }
+            let dependency = self
+                .host
+                .resolve_dynamic_import(&module.name, &request.source)
+                .map_err(|message| self.type_error(p, message))?
+                .ok_or_else(|| {
+                    self.type_error(p, "static module request was not resolved".into())
+                })?;
+            let phase = self
+                .promise
+                .modules
+                .get(&module_cache_key(&dependency.name, "javascript"))
+                .map(ModuleRecord::phase);
+            if matches!(
+                phase,
+                Some(ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)
+            ) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn evaluate_module_locals(

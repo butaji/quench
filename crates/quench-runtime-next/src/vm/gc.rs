@@ -237,6 +237,7 @@ impl<H: Host> Vm<H> {
             let args = job.args.clone();
             self.call_value(program, callback, this, &args)?;
             index += 1;
+            self.advance_static_module_jobs(program)?;
         }
         self.realm.jobs.drain(..index);
         Ok(Value::UNDEFINED)
@@ -261,6 +262,7 @@ impl<H: Host> Vm<H> {
             let args = job.args.clone();
             self.call_value(program, callback, this, &args)?;
             index += 1;
+            self.advance_static_module_jobs(program)?;
         }
         self.realm.jobs.drain(..index);
         Ok(())
