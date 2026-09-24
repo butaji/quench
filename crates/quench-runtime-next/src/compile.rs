@@ -1447,6 +1447,8 @@ impl<'a> Compiler<'a> {
                 locals.push(self.atom("\0rqj:parameter-arguments"));
                 slot
             });
+        let module_goal = self.module_goal;
+        let module_source = self.source;
         let arguments_slot = if has_arguments_binding {
             parameter_arguments_slot
         } else if parent.is_none() {
@@ -1514,6 +1516,13 @@ impl<'a> Compiler<'a> {
                         }
                         _ => {}
                     },
+                    Statement::ExportDefaultDeclaration(export) if module_goal => {
+                        if let Some(binding) =
+                            default_export_binding(&export.declaration, module_source)
+                        {
+                            names.push(binding);
+                        }
+                    }
                     _ => {}
                 }
             }
