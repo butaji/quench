@@ -241,6 +241,8 @@ const NATIVES: &[Native] = &[
     Native::Promise,
     Native::PromiseResolve,
     Native::PromiseReject,
+    Native::PromiseWithResolvers,
+    Native::PromiseCapabilityExecutor,
     Native::PromiseThen,
     Native::PromiseCatch,
     Native::PromiseFinally, Native::PromiseAll, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAny,
