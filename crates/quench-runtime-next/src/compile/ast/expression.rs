@@ -236,7 +236,7 @@ impl FunctionCompiler<'_, '_> {
                 u16::from(initializing),
                 u32::from(slot),
             );
-            if self.function_id == 0 {
+            if self.function_id == 0 && !self.owner.module_goal {
                 let cache = self.owner.cache_site();
                 self.emit(Op::StoreName, value, 0, cache, atom);
             }

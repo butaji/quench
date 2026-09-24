@@ -408,6 +408,26 @@ impl<H: Host> Vm<H> {
             return Ok(source);
         }
         let target = self.proxy_target(source);
+        if self
+            .object_data(target)
+            .is_some_and(Object::is_module_namespace)
+        {
+            self.object_prevent_extensions(p, &[target])?;
+            let configurable_atom = self.intern_atom("configurable");
+            let writable_atom = self.intern_atom("writable");
+            for key in self.object_own_key_values(p, target)? {
+                let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+                if descriptor.is_undefined() {
+                    continue;
+                }
+                self.set_property(descriptor, configurable_atom, Value::FALSE)?;
+                if freeze {
+                    self.set_property(descriptor, writable_atom, Value::FALSE)?;
+                }
+                self.object_define_property(p, &[target, key, descriptor])?;
+            }
+            return Ok(target);
+        }
         if self.object_data(target).is_none() {
             return Ok(target);
         }
