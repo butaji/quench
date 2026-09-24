@@ -115,10 +115,16 @@ impl StaticModuleLinks {
         }
     }
 
-    fn finish(mut self, name: String) -> StaticModuleGraph {
-        self.explicit.extend(self.stars);
-        let mut exports = self.explicit.into_iter().collect::<Vec<_>>();
+    fn partial_exports(&self) -> Vec<(String, StaticModuleValue)> {
+        let mut exports = self.explicit.clone();
+        exports.extend(self.stars.clone());
+        let mut exports = exports.into_iter().collect::<Vec<_>>();
         exports.sort_by(|left, right| left.0.encode_utf16().cmp(right.0.encode_utf16()));
+        exports
+    }
+
+    fn finish(self, name: String) -> StaticModuleGraph {
+        let exports = self.partial_exports();
         StaticModuleGraph::Linked { name, exports }
     }
 }
@@ -2048,8 +2054,18 @@ impl<H: Host> Vm<H> {
             return result;
         }
         let key = module_cache_key(&module.name, "javascript");
-        if let Some(ModuleOutcome::Evaluated(namespace) | ModuleOutcome::Deferred(namespace)) =
-            self.promise.modules.get(&key).map(|record| record.outcome)
+        let namespace = self
+            .promise
+            .modules
+            .get(&key)
+            .and_then(|record| match record.outcome {
+                ModuleOutcome::Evaluated(namespace) | ModuleOutcome::Deferred(namespace) => {
+                    Some(namespace)
+                }
+                ModuleOutcome::Pending(_) => record.pending_namespace(),
+                ModuleOutcome::Errored(_) => None,
+            });
+        if let Some(namespace) = namespace
             && let Some(exports) = self.cached_static_exports(namespace)
             && !exports.is_empty()
         {
@@ -2123,6 +2139,7 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(StaticModuleGraph::LinkError);
             }
+            active.insert(module.name.clone(), links.partial_exports());
         }
         Ok(links.finish(module.name.clone()))
     }
