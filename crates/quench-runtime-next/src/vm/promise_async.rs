@@ -169,6 +169,23 @@ impl<H: Host> Vm<H> {
             }
             return Err(JsError("stale async continuation".into()));
         };
+        let Some(program) = self.programs.get(continuation.program) else {
+            return Err(JsError("async continuation program is unavailable".into()));
+        };
+        let active_program = std::mem::replace(&mut self.active_program, continuation.program);
+        let result =
+            self.resume_async_continuation_in_program(&program, resume, continuation, value);
+        self.active_program = active_program;
+        result
+    }
+
+    fn resume_async_continuation_in_program(
+        &mut self,
+        p: &ResidualProgram,
+        resume: AsyncResumeJob,
+        continuation: super::activation::Continuation,
+        value: Value,
+    ) -> Result<(), JsError> {
         if resume.yielded && !resume.rejected {
             if let Some(generator) = resume.generator
                 && let Some(record) = self.generator_record_mut(generator)
