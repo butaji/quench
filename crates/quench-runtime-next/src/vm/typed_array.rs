@@ -216,6 +216,7 @@ impl<H: Host> Vm<H> {
                     detached: false,
                     max_byte_length: count * width,
                     resizable: false,
+                    immutable: false,
                 });
                 self.new_typed_view(copied, 0, count, kind)
             }

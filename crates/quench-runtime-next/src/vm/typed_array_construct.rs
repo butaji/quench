@@ -77,6 +77,7 @@ impl<H: Host> Vm<H> {
             detached: false,
             max_byte_length: length.saturating_mul(width),
             resizable: false,
+            immutable: false,
         });
         if let Some(values) = values {
             let converted = values
@@ -101,7 +102,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn typed_array_proto(&self, kind: TypedArrayKind) -> Value {
+    pub(super) fn typed_array_proto(&self, kind: TypedArrayKind) -> Value {
         match kind {
             TypedArrayKind::Uint8 => self.uint8_array_proto,
             TypedArrayKind::Uint8Clamped => self.uint8_clamped_array_proto,

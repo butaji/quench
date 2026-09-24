@@ -1,5 +1,5 @@
 use super::*;
-use crate::bytecode::{REGISTER_MASK, RETURN_REGISTER, SET_THIS_REGISTER, Superinstruction};
+use crate::bytecode::{REGISTER_MASK, Superinstruction};
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -74,7 +74,7 @@ fusion_recipes! {
         MakeObject2, Return; SuperConstArrayObject2, Return
     ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
         if first.a() != second.a() || first.a() > REGISTER_MASK { return None; }
-        first.set_a(first.a() | RETURN_REGISTER);
+        first.set_returns_from_frame();
         Some(first)
     };
     GetSetThis: [GetField, SetThisField] =>
@@ -95,7 +95,7 @@ fusion_recipes! {
                 first.set_c(0);
                 fields.push(site);
             }
-            first.set_a(first.a() | SET_THIS_REGISTER);
+            first.set_this_result();
             Some(first)
         };
 }
@@ -139,7 +139,7 @@ fn rewrite_super_window(
     superinstructions: &mut Vec<Superinstruction>,
 ) -> bool {
     let old = std::mem::take(&mut function.code);
-    let protected = protected_positions(&old, &function.handlers);
+    let protected = protected_positions(&old, &function.handlers, function.parameter_end_pc);
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0; old.len() + 1];
     let mut index = 0;
@@ -172,7 +172,12 @@ fn rewrite_super_window(
         }
     }
     map[old.len()] = code.len();
-    relocate(&mut code, &map, &mut function.handlers);
+    relocate(
+        &mut code,
+        &map,
+        &mut function.handlers,
+        &mut function.parameter_end_pc,
+    );
     function.code = code;
     changed
 }
@@ -205,6 +210,7 @@ fn fuse_const_array_object2(
 pub(super) fn protected_positions(
     code: &[Instr],
     handlers: &[crate::bytecode::Handler],
+    parameter_end_pc: u32,
 ) -> Vec<bool> {
     let mut protected = vec![false; code.len() + 1];
     for instruction in code {
@@ -219,13 +225,19 @@ pub(super) fn protected_positions(
         protected[handler.start as usize] = true;
         protected[handler.end as usize] = true;
         protected[handler.target as usize] = true;
+        if let Some(target) = handler.return_target {
+            protected[target as usize] = true;
+        }
+    }
+    if parameter_end_pc != 0 {
+        protected[parameter_end_pc as usize] = true;
     }
     protected
 }
 
 fn rewrite_once(function: &mut BcFunction, field_sites: &mut Vec<FieldSite>) -> bool {
     let old = std::mem::take(&mut function.code);
-    let protected = protected_positions(&old, &function.handlers);
+    let protected = protected_positions(&old, &function.handlers, function.parameter_end_pc);
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
     let mut index = 0;
@@ -274,7 +286,12 @@ fn rewrite_once(function: &mut BcFunction, field_sites: &mut Vec<FieldSite>) -> 
         }
     }
     map[old.len()] = code.len();
-    relocate(&mut code, &map, &mut function.handlers);
+    relocate(
+        &mut code,
+        &map,
+        &mut function.handlers,
+        &mut function.parameter_end_pc,
+    );
     function.code = code;
     changed
 }
@@ -292,10 +309,10 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
             instruction.a() == register
         }
-        Op::StoreResolvedName => {
-            instruction.a() == register || instruction.b() == register
-        }
-        Op::ResolveName => false,
+        Op::StoreResolvedName => instruction.a() == register || instruction.b() == register,
+        Op::SetFunctionNameKey => instruction.a() == register || instruction.b() == register,
+        Op::ResolveName | Op::ResolveNameThis | Op::DeleteName => false,
+        Op::LoadImportMeta => false,
         Op::GetField if instruction.b() == FieldBase::NESTED => {
             fields
                 .get(instruction.imm() as usize)
@@ -303,13 +320,31 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
                 == Some(register)
         }
         Op::GetField => FieldBase(instruction.b()).register_index() == Some(register),
+        Op::CheckPrivate => instruction.a() == register,
+        Op::PrivateIn => instruction.b() == register,
         Op::GetIndex | Op::MakeObject2 => {
             instruction.b() == register || instruction.c() == register
         }
-        Op::ToPropertyKey => instruction.b() == register,
+        Op::CopyDataProperties => {
+            instruction.a() == register
+                || instruction.b() == register
+                || instruction.c() == register
+        }
+        Op::ToPropertyKey | Op::ToNumeric => instruction.b() == register,
         Op::SuperConstArrayObject2 => true,
-        Op::SetField => instruction.a() == register || instruction.b() == register,
+        Op::SetField | Op::DefineField => {
+            instruction.a() == register || instruction.b() == register
+        }
         Op::SetThisField => instruction.a() == register,
+        Op::InitializeThis => instruction.a() == register,
+        Op::YieldStar => {
+            let (state, next_method) = instruction.register_pair();
+            instruction.a() == register
+                || instruction.b() == register
+                || instruction.c() == register
+                || state == register
+                || next_method == register
+        }
         Op::SetIndex => {
             instruction.a() == register
                 || instruction.b() == register
@@ -318,15 +353,25 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::Binary | Op::JumpBinaryFalse => operand(instruction.b()) || operand(instruction.c()),
         Op::IncDec | Op::Unary | Op::Move => instruction.b() == register,
         Op::JumpFalse | Op::Return | Op::Throw => instruction.a() == register,
-        Op::Call => {
+        Op::Call | Op::CallDirectEvalArray => {
+            let window = instruction.call_window();
             instruction.b() == register
                 || instruction.c() == register
-                || range(((instruction.imm() & 0x3fff_ffff) >> 16) as u16, instruction.imm() as u16)
+                || range(window.base, window.count)
         }
-        Op::CallKnown => range(((instruction.imm() & 0x3fff_ffff) >> 16) as u16, instruction.imm() as u16),
+        Op::CallKnown => {
+            let window = instruction.call_window();
+            range(window.base, window.count)
+        }
         Op::CallMethod | Op::CallThisMethod => true,
         Op::Construct => {
-            instruction.b() == register || range(instruction.c(), instruction.imm() as u16)
+            let arguments = match instruction.construct_arguments() {
+                crate::bytecode::ConstructArguments::Registers(window) => {
+                    range(window.base, window.count)
+                }
+                crate::bytecode::ConstructArguments::Array(array) => array == register,
+            };
+            instruction.b() == register || arguments
         }
         _ => false,
     }
@@ -353,6 +398,7 @@ pub(super) fn relocate(
     code: &mut [Instr],
     map: &[usize],
     handlers: &mut [crate::bytecode::Handler],
+    parameter_end_pc: &mut u32,
 ) {
     for instruction in code {
         if matches!(
@@ -366,6 +412,12 @@ pub(super) fn relocate(
         handler.start = map[handler.start as usize] as u32;
         handler.end = map[handler.end as usize] as u32;
         handler.target = map[handler.target as usize] as u32;
+        if let Some(target) = handler.return_target.as_mut() {
+            *target = map[*target as usize] as u32;
+        }
+    }
+    if *parameter_end_pc != 0 {
+        *parameter_end_pc = map[*parameter_end_pc as usize] as u32;
     }
 }
 

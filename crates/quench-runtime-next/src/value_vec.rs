@@ -5,7 +5,7 @@ const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
 const EMPTY_START: u32 = START_MASK;
 const MIN_CAPACITY: usize = 4;
-const BUCKETS: usize = 14;
+const BUCKETS: usize = 32;
 
 /// Compact metadata for values owned by the heap's canonical property arena.
 #[derive(Clone, Copy, Debug)]
@@ -68,7 +68,7 @@ impl Default for ValueVec {
 pub(crate) struct ValueArena {
     values: Vec<Value>,
     free: [Vec<u32>; BUCKETS],
-    shape_lengths: Vec<u16>,
+    shape_lengths: Vec<u32>,
 }
 
 impl Default for ValueArena {
@@ -93,14 +93,14 @@ impl ValueArena {
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
         assert!(
-            length <= u16::MAX as usize,
+            length <= u32::MAX as usize,
             "object has too many properties"
         );
         let shape = shape as usize;
         if self.shape_lengths.len() <= shape {
             self.shape_lengths.resize(shape + 1, 0);
         }
-        self.shape_lengths[shape] = length as u16;
+        self.shape_lengths[shape] = length as u32;
     }
 
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {
@@ -189,9 +189,10 @@ impl ValueArena {
         let next = if capacity == 0 {
             MIN_CAPACITY
         } else {
-            capacity * 2
+            capacity
+                .checked_mul(2)
+                .expect("property arena capacity overflow")
         };
-        assert!(next <= u16::MAX as usize, "value vector too large");
         let start = self.allocate(next);
         if len != 0 {
             self.values
@@ -225,7 +226,10 @@ impl ValueArena {
             return start as usize;
         }
         let start = self.values.len();
-        let required = start + capacity;
+        assert!(start <= START_MASK as usize, "property arena exhausted");
+        let required = start
+            .checked_add(capacity)
+            .expect("property arena capacity overflow");
         // Vec's 2x policy leaves a large unused tail once long-lived heaps
         // cross into millions of property slots. Preserve that policy for
         // small programs, then grow by one third so the arena remains dense
@@ -240,7 +244,9 @@ impl ValueArena {
 
     fn bucket(capacity: usize) -> usize {
         debug_assert!(capacity >= MIN_CAPACITY && capacity.is_power_of_two());
-        capacity.trailing_zeros() as usize - MIN_CAPACITY.trailing_zeros() as usize
+        let bucket = capacity.trailing_zeros() as usize - MIN_CAPACITY.trailing_zeros() as usize;
+        assert!(bucket < BUCKETS, "property arena bucket overflow");
+        bucket
     }
 }
 

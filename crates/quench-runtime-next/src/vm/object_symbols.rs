@@ -2,6 +2,36 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn ordinary_own_key_values(&mut self, object: Value) -> Vec<Value> {
+        let mut values = self.indexed_name_keys(object).unwrap_or_default();
+        let Some(data) = self.object_data(object) else {
+            return values;
+        };
+        let shape = data.shape();
+        let strings = self
+            .ordered_shape(data)
+            .into_iter()
+            .filter(|(atom, slot)| {
+                self.heap.property_get(data, *slot).is_some()
+                    && !self.atom_name(*atom).starts_with("\0rqj:")
+            })
+            .map(|(atom, _)| atom)
+            .collect::<Vec<_>>();
+        let symbols = self.shapes[shape as usize]
+            .keys
+            .iter()
+            .filter_map(|key| key.symbol_value())
+            .filter(|symbol| self.symbol_property(object, *symbol).is_some())
+            .collect::<Vec<_>>();
+        values.extend(
+            strings
+                .into_iter()
+                .map(|atom| self.heap.alloc(Cell::String(self.atom_value(atom)))),
+        );
+        values.extend(symbols);
+        values
+    }
+
     pub(super) fn proxy_own_keys(
         &mut self,
         p: &ResidualProgram,
@@ -50,8 +80,7 @@ impl<H: Host> Vm<H> {
         for target_key in target_keys.iter().copied() {
             let required = match self.heap.get(target_key).cloned() {
                 Some(Cell::Symbol(_)) => self
-                    .descriptors
-                    .get(&(target, PropertyKey::symbol(target_key)))
+                    .property_attributes(target, PropertyKey::symbol(target_key))
                     .is_some_and(|attributes| !attributes.configurable),
                 Some(Cell::String(name)) => {
                     let atom = self.intern_js_atom(&name);
@@ -101,14 +130,14 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .copied()
                 .filter(|key| {
-                    !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with('\0'))
+                    !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with("\0rqj:"))
                 })
                 .collect(),
             _ => Vec::new(),
         })
     }
 
-    fn same_property_key(&self, left: Value, right: Value) -> bool {
+    pub(super) fn same_property_key(&self, left: Value, right: Value) -> bool {
         match (self.heap.get(left), self.heap.get(right)) {
             (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
             (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => left == right,
@@ -116,10 +145,52 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(super) fn copy_data_properties(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        source: Value,
+        exclusions: Value,
+    ) -> Result<(), JsError> {
+        if source.is_null() || source.is_undefined() {
+            return Ok(());
+        }
+        let excluded = match self.heap.get(exclusions) {
+            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+            _ => Vec::new(),
+        };
+        let enumerable_atom = self.intern_atom("enumerable");
+        for key in self.object_own_key_values(p, source)? {
+            if excluded
+                .iter()
+                .copied()
+                .any(|excluded| self.same_property_key(excluded, key))
+            {
+                continue;
+            }
+            let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
+            if descriptor.is_undefined() {
+                continue;
+            }
+            let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
+            if !self.truthy(enumerable) {
+                continue;
+            }
+            let value = self.get_index(p, source, key)?;
+            let property_key = match self.heap.get(key).cloned() {
+                Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
+                Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
+                _ => continue,
+            };
+            self.set_shape_property(target, property_key, value)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn symbol_property(&self, object: Value, key: Value) -> Option<Value> {
-        self.symbol_properties
-            .get(&(object, PropertyKey::symbol(key)))
-            .copied()
+        let data = self.object_data(object)?;
+        let slot = self.property_shape_slot(data.shape(), PropertyKey::symbol(key))?;
+        self.heap.property_get(data, slot)
     }
 
     pub(super) fn set_symbol_property(
@@ -128,88 +199,7 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> Result<(), JsError> {
-        if self.object_data(object).is_none() {
-            return Err(JsError("property write on non-object".into()));
-        }
-        let key = PropertyKey::symbol(key);
-        if !self.symbol_properties.contains_key(&(object, key))
-            && self
-                .object_data(object)
-                .is_some_and(|object| !object.is_extensible())
-        {
-            return Err(JsError(
-                "cannot add property to non-extensible object".into(),
-            ));
-        }
-        if self
-            .descriptors
-            .get(&(object, key))
-            .is_some_and(|attributes| !attributes.writable)
-        {
-            return Err(JsError("cannot write non-writable symbol property".into()));
-        }
-        let fresh = self
-            .symbol_properties
-            .insert((object, key), value)
-            .is_none();
-        if fresh {
-            self.symbol_property_order
-                .entry(object)
-                .or_default()
-                .push(key);
-        }
-        self.descriptors
-            .entry((object, key))
-            .or_insert(DEFAULT_PROPERTY_ATTRIBUTES);
-        Ok(())
-    }
-
-    pub(super) fn define_symbol_property(
-        &mut self,
-        target: Value,
-        key: Value,
-        descriptor: Value,
-    ) -> Result<Value, JsError> {
-        let existing = self.symbol_property(target, key);
-        let property_key = PropertyKey::symbol(key);
-        let mut attributes = self
-            .descriptors
-            .get(&(target, property_key))
-            .copied()
-            .unwrap_or(PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            });
-        let getter_atom = self.intern_atom("get");
-        let setter_atom = self.intern_atom("set");
-        let getter = self.own_property(descriptor, getter_atom);
-        let setter = self.own_property(descriptor, setter_atom);
-        if getter.is_some() || setter.is_some() {
-            attributes.accessor = true;
-            attributes.getter = getter.filter(|value| !value.is_undefined());
-            attributes.setter = setter.filter(|value| !value.is_undefined());
-        }
-        for (name, slot) in [
-            ("writable", &mut attributes.writable),
-            ("enumerable", &mut attributes.enumerable),
-            ("configurable", &mut attributes.configurable),
-        ] {
-            let atom = self.intern_atom(name);
-            if let Some(value) = self.own_property(descriptor, atom) {
-                *slot = self.truthy(value);
-            }
-        }
-        let value_atom = self.intern_atom("value");
-        let value = self
-            .own_property(descriptor, value_atom)
-            .unwrap_or(existing.unwrap_or(Value::UNDEFINED));
-        self.set_symbol_property(target, key, value)?;
-        self.descriptors.insert((target, property_key), attributes);
-        Ok(target)
+        self.set_shape_property(object, PropertyKey::symbol(key), value)
     }
 
     pub(super) fn object_symbols(
@@ -217,28 +207,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
     ) -> Result<Value, JsError> {
-        if let Some(keys) = self.proxy_own_keys(p, object)? {
-            let values = keys
-                .into_iter()
-                .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
-                .collect();
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(values),
-            }));
-        }
-        let object = self.proxy_target(object);
-        let object = self.box_object(object)?;
         let values = self
-            .symbol_property_order
-            .get(&object)
-            .cloned()
-            .unwrap_or_default()
+            .object_own_key_values(p, object)?
             .into_iter()
-            .filter_map(|key| {
-                key.symbol_value()
-                    .filter(|symbol| self.symbol_property(object, *symbol).is_some())
-            })
+            .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -257,23 +229,8 @@ impl<H: Host> Vm<H> {
                 elements: Rc::new(keys),
             }));
         }
-        let target = self.proxy_target(object);
-        let names = self.object_names(p, target)?;
-        let mut values = match self.heap.get(names) {
-            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
-            _ => Vec::new(),
-        };
-        values.extend(
-            self.symbol_property_order
-                .get(&target)
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter_map(|key| {
-                    key.symbol_value()
-                        .filter(|symbol| self.symbol_property(target, *symbol).is_some())
-                }),
-        );
+        let target = self.box_object(self.proxy_target(object))?;
+        let values = self.ordinary_own_key_values(target);
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),

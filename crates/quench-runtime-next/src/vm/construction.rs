@@ -1,6 +1,57 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn set_function_name(
+        &mut self,
+        p: &ResidualProgram,
+        function: Value,
+        name: Atom,
+    ) -> Result<(), JsError> {
+        let Some(text) = ((name as usize) < p.atoms.len()).then(|| &p.atoms[name as usize]) else {
+            return Err(JsError("function name atom is invalid".into()));
+        };
+        self.set_function_name_text(function, text.to_string());
+        Ok(())
+    }
+
+    pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
+        let name = match self.heap.get(key) {
+            Some(Cell::String(value)) => value.to_string(),
+            Some(Cell::Symbol(description)) => description
+                .as_ref()
+                .map_or_else(String::new, |description| format!("[{}]", description)),
+            _ => return,
+        };
+        let name = match prefix {
+            crate::bytecode::FUNCTION_NAME_PREFIX_GETTER => format!("get {name}"),
+            crate::bytecode::FUNCTION_NAME_PREFIX_SETTER => format!("set {name}"),
+            _ => name,
+        };
+        self.set_function_name_text(function, name);
+    }
+
+    fn set_function_name_text(&mut self, function: Value, text: String) {
+        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) {
+            return;
+        }
+        let name_atom = self.intern_atom("name");
+        let current = self
+            .own_property(function, name_atom)
+            .unwrap_or(Value::UNDEFINED);
+        let inferred = matches!(self.heap.get(current), Some(Cell::String(value)) if value.units().is_empty())
+            || matches!(self.heap.get(current), Some(Cell::String(value)) if value.to_string() == "\0rqj:arrow");
+        if !inferred {
+            return;
+        }
+        let value = self.heap.alloc(Cell::String(text.into()));
+        let Some(object) = self.object_data(function) else {
+            return;
+        };
+        if let Some(slot) = self.shape_slot(object.shape(), name_atom) {
+            self.heap.property_set(function, slot, value);
+        }
+    }
+
     pub(super) fn is_constructable(&self, p: &ResidualProgram, value: Value) -> bool {
         let Some(cell) = self.heap.get(value) else {
             return false;
@@ -10,13 +61,12 @@ impl<H: Host> Vm<H> {
                 target, handler, ..
             } => !handler.is_null() && self.is_constructable(p, *target),
             Cell::Function { kind, .. } => match kind {
-                FunctionKind::User(id) | FunctionKind::NumericUser(id) => {
-                    let function = &p.functions[*id as usize];
-                    !function.is_async
-                        && !function.is_generator
-                        && self
-                            .lookup_atom("prototype")
-                            .is_some_and(|atom| self.own_property(value, atom).is_some())
+                FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) => {
+                    self.programs.get(*program_id).is_some_and(|program| {
+                        program.functions.get(*id as usize).is_some_and(|function| {
+                            function.constructible && !function.is_async && !function.is_generator
+                        })
+                    })
                 }
                 FunctionKind::Native(native) => matches!(
                     native,
@@ -51,11 +101,13 @@ impl<H: Host> Vm<H> {
                         | Native::DisposableStack
                         | Native::Date
                         | Native::Error
+                        | Native::AggregateError
                         | Native::EvalError
                         | Native::RangeError
                         | Native::ReferenceError
                         | Native::SyntaxError
                         | Native::TypeError
+                        | Native::RealmTypeError
                         | Native::URIError
                         | Native::RegExp
                         | Native::String
@@ -74,21 +126,91 @@ impl<H: Host> Vm<H> {
         id: u32,
         env: Value,
     ) -> Result<Value, JsError> {
-        let prototype = self.object();
+        self.closure_in_realm(p, id, env, self.realm.globals)
+    }
+
+    pub(super) fn closure_in_realm(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        mut env: Value,
+        realm: Value,
+    ) -> Result<Value, JsError> {
+        let with_objects = self
+            .frames
+            .last()
+            .map(|frame| self.with_stack[frame.with_base.min(self.with_stack.len())..].to_vec())
+            .unwrap_or_default();
+        if !with_objects.is_empty() {
+            env = self.heap.alloc(Cell::Environment {
+                parent: env,
+                program: None,
+                root_eval_scope: false,
+                function: u32::MAX,
+                slots: Box::new([]),
+                dynamic_bindings: Vec::new(),
+                with_objects,
+            });
+        }
+        let is_arrow = p.functions[id as usize]
+            .name
+            .is_some_and(|atom| self.atom_name(atom) == "\0rqj:arrow");
+        if is_arrow {
+            env = self.heap.alloc(Cell::Environment {
+                parent: env,
+                program: None,
+                root_eval_scope: false,
+                function: u32::MAX,
+                slots: Box::new([]),
+                dynamic_bindings: Vec::new(),
+                with_objects: Vec::new(),
+            });
+        }
+        let generator_prototype_parent =
+            if p.functions[id as usize].is_async && p.functions[id as usize].is_generator {
+                self.async_iterator_proto
+            } else if p.functions[id as usize].is_generator {
+                self.iterator_proto
+            } else {
+                self.object_proto
+            };
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(generator_prototype_parent)));
+        let function_prototype_atom = self.intern_atom("prototype");
+        let intrinsic = match (
+            p.functions[id as usize].is_async,
+            p.functions[id as usize].is_generator,
+        ) {
+            (true, true) => Some(Native::AsyncGeneratorFunction),
+            (false, true) => Some(Native::GeneratorFunction),
+            (true, false) => Some(Native::AsyncFunction),
+            (false, false) => None,
+        };
+        let function_object_prototype = intrinsic
+            .and_then(|intrinsic| {
+                self.own_property(self.native_value(intrinsic), function_prototype_atom)
+            })
+            .unwrap_or(self.function_proto);
         let function = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.function_proto)),
+            object: Box::new(Self::empty_object(function_object_prototype)),
             kind: match p.functions[id as usize].dispatch {
-                DispatchClass::General => FunctionKind::User(id),
-                DispatchClass::Numeric => FunctionKind::NumericUser(id),
+                DispatchClass::General => FunctionKind::User(self.active_program, id),
+                DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
             },
             env,
+            realm,
         });
-        self.function_values[id as usize].push((env, function));
+        let program = self.active_program;
+        self.function_values
+            .entry((program, id))
+            .or_default()
+            .push((env, function));
         let length = self.intern_atom("length");
         self.set_property(
             function,
             length,
-            Value::number(p.functions[id as usize].params as f64),
+            Value::number(p.functions[id as usize].length as f64),
         )?;
         self.set_property_attributes(
             function,
@@ -103,13 +225,17 @@ impl<H: Host> Vm<H> {
             },
         );
         let name = self.intern_atom("name");
-        let name_value = p.functions[id as usize]
-            .name
-            .map(|atom| {
-                self.heap
-                    .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
-            })
-            .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
+        let name_value = if is_arrow {
+            self.heap.alloc(Cell::String(JsString::from_str("")))
+        } else {
+            p.functions[id as usize]
+                .name
+                .map(|atom| {
+                    self.heap
+                        .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
+                })
+                .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))))
+        };
         self.set_property(function, name, name_value)?;
         self.set_property_attributes(
             function,
@@ -123,16 +249,15 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let arrow = p.functions[id as usize]
-            .name
-            .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow");
-        if !arrow && let Some(atom) = self.lookup_atom("prototype") {
+        if (p.functions[id as usize].constructible || p.functions[id as usize].is_generator)
+            && let Some(atom) = self.lookup_atom("prototype")
+        {
             self.set_property(function, atom, prototype)?;
             self.set_property_attributes(
                 function,
                 property_key::PropertyKey::string(atom),
                 PropertyAttributes {
-                    writable: true,
+                    writable: !p.functions[id as usize].is_class_constructor,
                     enumerable: false,
                     configurable: false,
                     accessor: false,
@@ -151,7 +276,9 @@ impl<H: Host> Vm<H> {
             (false, true) => self.native_value(Native::GeneratorFunction),
             (false, false) => function,
         };
-        self.set_property(prototype, constructor_atom, constructor)?;
+        if !p.functions[id as usize].is_generator {
+            self.set_property(prototype, constructor_atom, constructor)?;
+        }
         if p.functions[id as usize].is_async || p.functions[id as usize].is_generator {
             self.set_property(function, constructor_atom, constructor)?;
         }
@@ -164,24 +291,58 @@ impl<H: Host> Vm<H> {
         callee: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.construct_value_with_new_target(p, callee, callee, args)
+    }
+
+    pub(super) fn construct_value_with_new_target(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        new_target: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
-            return self.proxy_construct(p, callee, args);
+            return self.proxy_construct(p, callee, new_target, args);
         }
-        let kind = match self.heap.get(callee) {
-            Some(Cell::Function { kind, .. }) => *kind,
-            _ => return Err(JsError("not a constructor".into())),
-        };
-        if let FunctionKind::User(id) = kind {
-            if p.functions[id as usize]
-                .name
-                .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow")
-            {
-                return Err(JsError("arrow function is not a constructor".into()));
+        if !self.is_constructable(p, callee) {
+            return Err(self.type_error(p, "value is not a constructor".into()));
+        }
+        if !self.is_constructable(p, new_target) {
+            return Err(self.type_error(p, "newTarget is not a constructor".into()));
+        }
+        let (kind, derived_constructor) = match self.heap.get(callee) {
+            Some(Cell::Function { kind, .. }) => {
+                let derived = match kind {
+                    FunctionKind::User(program_id, id)
+                    | FunctionKind::NumericUser(program_id, id) => {
+                        self.programs.get(*program_id).is_some_and(|program| {
+                            program
+                                .functions
+                                .get(*id as usize)
+                                .is_some_and(|function| function.derived_constructor)
+                        })
+                    }
+                    _ => false,
+                };
+                (*kind, derived)
             }
-            if p.functions[id as usize].is_async {
+            _ => unreachable!("IsConstructor accepted a non-function target"),
+        };
+        if let FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) = kind
+        {
+            let Some(program) = self.programs.get(program_id) else {
+                return Err(self.type_error(p, "function belongs to an unavailable program".into()));
+            };
+            let Some(function) = program.functions.get(id as usize) else {
+                return Err(self.type_error(p, "function index is outside its program".into()));
+            };
+            if !function.constructible {
+                return Err(self.type_error(p, "value is not a constructor".into()));
+            }
+            if function.is_async {
                 return Err(JsError("async function is not a constructor".into()));
             }
-            if p.functions[id as usize].is_generator {
+            if function.is_generator {
                 return Err(JsError("generator function is not a constructor".into()));
             }
             if self
@@ -196,22 +357,144 @@ impl<H: Host> Vm<H> {
                 Some(Cell::Function { env, .. }) => *env,
                 _ => return Err(JsError("not a constructor".into())),
             };
-            return self.construct_value(p, base, args);
+            return self.construct_value_with_new_target(p, base, new_target, args);
         }
         if let FunctionKind::Native(native) = kind {
-            return self.construct_native(p, native, args);
+            let realm = match self.heap.get(callee) {
+                Some(Cell::Function { realm, .. }) => *realm,
+                _ => self.realm.globals,
+            };
+            let previous_global = std::mem::replace(&mut self.realm.globals, realm);
+            let result = self.construct_native(p, native, args);
+            self.realm.globals = previous_global;
+            let result = result?;
+            if native != Native::Proxy {
+                self.set_constructed_prototype(p, result, new_target)?;
+            }
+            return Ok(result);
         }
-        let proto = self
-            .lookup_atom("prototype")
-            .and_then(|a| self.own_property(callee, a))
-            .unwrap_or(Value::NULL);
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(proto)));
+        let object = if derived_constructor {
+            Value::UNDEFINED
+        } else {
+            let proto = self.prototype_from_constructor(p, new_target)?;
+            self.heap.alloc(Cell::Object(Self::empty_object(proto)))
+        };
         let previous_target = self.construct_target;
-        self.construct_target = Some(callee);
-        let result = self.call_value(p, callee, object, args);
+        self.construct_target = Some(new_target);
+        let result = if derived_constructor {
+            self.call_user_for_construct(p, callee, args)
+                .map(|(value, this)| (value, Some(this)))
+        } else {
+            self.call_value(p, callee, object, args)
+                .map(|value| (value, None))
+        };
         self.construct_target = previous_target;
-        let result = result?;
-        Ok(if result.is_heap() { result } else { object })
+        let (result, this) = result?;
+        if self.is_object_like(result) {
+            return Ok(result);
+        }
+        if derived_constructor {
+            if result.is_undefined() {
+                let this = this.unwrap_or(Value::DELETED);
+                return if this.is_deleted() {
+                    Err(self.reference_error(
+                        p,
+                        "Must call super constructor before returning from derived constructor"
+                            .into(),
+                    ))
+                } else {
+                    Ok(this)
+                };
+            }
+            return Err(self.type_error(
+                p,
+                "derived constructor may only return an object or undefined".into(),
+            ));
+        }
+        Ok(object)
+    }
+
+    fn prototype_from_constructor(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+    ) -> Result<Value, JsError> {
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, constructor, prototype_atom)?;
+        if self.object_data(prototype).is_some() {
+            return Ok(prototype);
+        }
+        let realm = match self.heap.get(constructor) {
+            Some(Cell::Function { realm, .. }) => *realm,
+            _ => return Ok(self.object_proto),
+        };
+        let object_atom = self.intern_atom("Object");
+        let object_constructor = self.get_property(p, realm, object_atom)?;
+        let object_prototype = self.get_property(p, object_constructor, prototype_atom)?;
+        Ok(if self.object_data(object_prototype).is_some() {
+            object_prototype
+        } else {
+            self.object_proto
+        })
+    }
+
+    fn set_constructed_prototype(
+        &mut self,
+        p: &ResidualProgram,
+        result: Value,
+        new_target: Value,
+    ) -> Result<(), JsError> {
+        if self.object_data(result).is_none() {
+            return Ok(());
+        }
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = if prototype.is_null() || self.object_data(prototype).is_some() {
+            prototype
+        } else {
+            self.object_proto
+        };
+        self.object_set_prototype_of(p, result, prototype)?;
+        Ok(())
+    }
+
+    pub(super) fn construct_super_value(
+        &mut self,
+        p: &ResidualProgram,
+        active_constructor: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let active_constructor = if active_constructor.is_undefined() {
+            self.frames
+                .last()
+                .and_then(|frame| {
+                    self.function_values
+                        .get(&(frame.program, frame.function))
+                        .and_then(|entries| {
+                            entries.iter().rev().find_map(|(environment, function)| {
+                                (*environment == frame.env).then_some(*function)
+                            })
+                        })
+                })
+                .unwrap_or(active_constructor)
+        } else {
+            active_constructor
+        };
+        let superclass = self.object_get_prototype_of(p, active_constructor)?;
+        if !self.is_constructable(p, superclass) {
+            return Err(self.type_error(p, "superclass is not a constructor".into()));
+        }
+        let new_target_atom = self.intern_atom("\0rqj:new-target");
+        let new_target = self
+            .frames
+            .len()
+            .checked_sub(1)
+            .and_then(|frame| self.dynamic_binding(frame, new_target_atom))
+            .filter(|value| !value.is_undefined())
+            .ok_or_else(|| {
+                self.reference_error(p, "new.target is unavailable for super()".into())
+            })?;
+        self.construct_value_with_new_target(p, superclass, new_target, args)
     }
 
     pub(super) fn construct_native(
@@ -245,13 +528,7 @@ impl<H: Host> Vm<H> {
                     handler,
                 }))
             }
-            Native::Array => {
-                let len = args.first().and_then(|v| v.as_number()).unwrap_or(0.0) as usize;
-                Ok(self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(vec![Value::DELETED; len]),
-                }))
-            }
+            Native::Array => self.construct_array_native(p, args),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 self.construct_buffer_native(p, native, args)
             }
@@ -276,6 +553,7 @@ impl<H: Host> Vm<H> {
             Native::RegExp => self.construct_regexp_native(p, args),
             Native::Date => self.date_construct_native(p, args),
             Native::Error
+            | Native::AggregateError
             | Native::EvalError
             | Native::RangeError
             | Native::ReferenceError
@@ -291,7 +569,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Number => {
                 let value = Value::number(
-                    self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?,
+                    self.to_number(p, args.first().copied().unwrap_or(Value::number(0.0)))?,
                 );
                 self.box_primitive_object(value)
             }
@@ -309,5 +587,34 @@ impl<H: Host> Vm<H> {
             }
             _ => Err(JsError("native is not constructible".into())),
         }
+    }
+
+    fn construct_array_native(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if let [length] = args
+            && let Some(length) = length.as_number()
+        {
+            if !length.is_finite()
+                || length < 0.0
+                || length.fract() != 0.0
+                || length > u32::MAX as f64
+            {
+                return Err(self.range_error(p, "Invalid array length".into()));
+            }
+            let array = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(Vec::new()),
+            });
+            self.heap.sparse_set_length(array, length as usize);
+            return Ok(array);
+        }
+
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(args.to_vec()),
+        }))
     }
 }

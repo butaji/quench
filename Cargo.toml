@@ -13,7 +13,20 @@ members = [
 ]
 
 [profile.dev]
-opt-level = 3
+# Minimize compiler work for the default edit/compile cycle. Use `iteration`
+# when executing binaries matters more than compile latency.
+opt-level = 0
+debug = 0
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 256
+
+[profile.test]
+opt-level = 0
+debug = 0
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 256
 
 [profile.release]
 opt-level = 3
@@ -25,6 +38,16 @@ panic = "abort"
 [profile.release-thin]
 inherits = "release"
 lto = "thin"
+
+# Fast optimized execution for iterative conformance work, without whole-
+# program LTO invalidating the incremental build graph after each runtime edit.
+# The final release profile remains the production/performance authority.
+[profile.iteration]
+inherits = "release"
+opt-level = 1
+lto = false
+codegen-units = 256
+incremental = true
 
 [profile.production]
 inherits = "release"

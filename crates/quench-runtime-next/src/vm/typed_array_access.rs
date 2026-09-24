@@ -177,45 +177,43 @@ impl<H: Host> Vm<H> {
     pub(super) fn indexed_view_property(&self, object: Value, atom: Atom) -> Option<Value> {
         match self.heap.get(object) {
             Some(Cell::TypedArray { buffer, .. }) => {
-                if atom == self.length_atom || self.lookup_atom("byteLength") == Some(atom) {
+                if atom == self.length_atom || atom == self.byte_length_atom {
                     let width = self
                         .typed_array_kind(object)
                         .map_or(1, TypedArrayKind::width);
                     let length = self.typed_array_length(object).unwrap_or(0);
-                    return Some(Value::number(
-                        if self.lookup_atom("byteLength") == Some(atom) {
-                            (length * width) as f64
-                        } else {
-                            length as f64
-                        },
-                    ));
+                    return Some(Value::number(if atom == self.byte_length_atom {
+                        (length * width) as f64
+                    } else {
+                        length as f64
+                    }));
                 }
-                if self.lookup_atom("byteOffset") == Some(atom) {
+                if atom == self.byte_offset_atom {
                     return Some(Value::number(
                         self.typed_array_byte_offset(object).unwrap_or(0) as f64,
                     ));
                 }
-                if self.lookup_atom("buffer") == Some(atom) {
+                if atom == self.buffer_atom {
                     return Some(*buffer);
                 }
             }
             Some(Cell::DataView { .. }) => {
                 let (buffer, offset, length) = self.data_view_view(object)?;
-                if self.lookup_atom("byteLength") == Some(atom) {
+                if atom == self.byte_length_atom {
                     return Some(Value::number(if self.array_buffer_detached(buffer) {
                         0.0
                     } else {
                         length as f64
                     }));
                 }
-                if self.lookup_atom("byteOffset") == Some(atom) {
+                if atom == self.byte_offset_atom {
                     return Some(Value::number(if self.array_buffer_detached(buffer) {
                         0.0
                     } else {
                         offset as f64
                     }));
                 }
-                if self.lookup_atom("buffer") == Some(atom) {
+                if atom == self.buffer_atom {
                     return Some(buffer);
                 }
             }

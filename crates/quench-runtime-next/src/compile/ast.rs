@@ -8,8 +8,8 @@ mod expression;
 mod iteration;
 mod object;
 mod optional;
-mod super_ops;
 mod statement;
+mod super_ops;
 mod try_statement;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -20,7 +20,7 @@ enum ControlKind {
 }
 
 enum UpdateTarget {
-    Name(Atom),
+    Name(Atom, Option<Register>),
     Field(Atom, Register),
     Index(Register, Register),
 }
@@ -30,6 +30,12 @@ struct ControlTarget {
     label: Option<Atom>,
     breaks: Vec<usize>,
     continues: Vec<usize>,
+}
+
+struct LexicalScope {
+    bindings: FxHashMap<Atom, Atom>,
+    immutable: FxHashSet<Atom>,
+    pub(super) with_depth: u16,
 }
 
 pub(super) struct FinallyContext {
@@ -65,13 +71,21 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) super_home_atom: Option<Atom>,
     pub(super) async_function: bool,
     pub(super) generator: bool,
-    with_depth: u16,
+    pub(super) this_override: Option<Register>,
+    pub(super) class_field_initializer: bool,
+    pub(super) optional_chain_end_edges: Option<Vec<usize>>,
+    pub(super) with_depth: u16,
     pub(super) strict: bool,
     pub(super) dynamic_eval: bool,
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
-    lexical_scopes: Vec<FxHashMap<Atom, Atom>>,
+    pub(super) parameter_arguments_slot: Option<u16>,
+    pub(super) parameter_local_count: usize,
+    pub(super) defer_instance_fields: bool,
+    pub(super) super_call_binds_this: bool,
+    lexical_scopes: Vec<LexicalScope>,
     disposable_stack: Option<Atom>,
+    pub(super) deferred_instance_field_edges: Vec<(usize, u32)>,
 }
 
 impl<'a, 'b> FunctionCompiler<'a, 'b> {
@@ -83,6 +97,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         super_flags: (bool, bool),
         async_function: bool,
         generator: bool,
+        defer_instance_fields: bool,
+        parameter_arguments_slot: Option<u16>,
+        parameter_local_count: usize,
+        with_depth: u16,
     ) -> Self {
         if locals.len() > usize::from(u16::MAX) {
             owner.reject(Span::default(), "function exceeds the local-slot limit");
@@ -114,13 +132,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             super_home_atom: None,
             async_function,
             generator,
-            with_depth: 0,
+            this_override: None,
+            class_field_initializer: false,
+            optional_chain_end_edges: None,
+            with_depth,
             strict: false,
             dynamic_eval: false,
             parameter_context: false,
             parameter_eval_arguments_error: false,
+            parameter_arguments_slot,
+            parameter_local_count,
+            defer_instance_fields,
+            super_call_binds_this: false,
             lexical_scopes: Vec::new(),
             disposable_stack: None,
+            deferred_instance_field_edges: Vec::new(),
         }
     }
 
@@ -203,28 +229,57 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn emit_hoisted(&mut self, body: &[Statement<'_>]) {
         for statement in body {
-            if let Statement::FunctionDeclaration(function) = statement {
-                let Some(name) = &function.id else { continue };
+            let (function, default_export) = match statement {
+                Statement::FunctionDeclaration(function) => (Some(function), false),
+                Statement::ExportDeclaration(export) => match &export.declaration {
+                    oxc_ast::ast::Declaration::FunctionDeclaration(function) => {
+                        (Some(function), false)
+                    }
+                    _ => (None, false),
+                },
+                Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                    oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                        (Some(function), true)
+                    }
+                    _ => (None, false),
+                },
+                _ => (None, false),
+            };
+            if let Some(function) = function {
+                let name = function
+                    .id
+                    .as_ref()
+                    .map(|name| name.name.as_str())
+                    .or(default_export.then_some("default"));
+                let Some(name) = name else { continue };
                 let params = Self::params(function, self.owner);
                 let Some(body) = &function.body else { continue };
                 let mut scopes = self.capture_scopes();
                 scopes.extend(self.scopes.iter().cloned());
                 let id = self.owner.compile_function(
-                    Some(name.name.as_str()),
+                    Some(name),
                     &params,
                     &body.statements,
                     &scopes,
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: Some(&function.params),
+                        name_binding: None,
                         async_function: function.r#async,
                         generator: function.generator,
+                        class_constructor: false,
+                        derived_constructor: false,
+                        non_constructible: false,
+                        class_field_initializer: false,
                         instance_fields: None,
+                        instance_private_methods: None,
+                        defer_instance_fields: false,
                         super_static: false,
                         super_home: false,
                         super_home_atom: None,
                         rest_override: false,
                         implicit_super: false,
+                        with_depth: self.with_depth,
                         strict: self.strict
                             || body
                                 .directives
@@ -234,8 +289,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 );
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
-                let atom = self.owner.atom(name.name.as_str());
-                self.store_atom(atom, dst);
+                if let Some(identifier) = &function.id {
+                    let atom = self.owner.atom(identifier.name.as_str());
+                    self.store_atom(atom, dst);
+                }
+                if default_export {
+                    let binding = super::module_default_binding(self.owner.source);
+                    let atom = self.owner.atom(&binding);
+                    self.store_atom(atom, dst);
+                } else if function.id.is_some() {
+                    // The named declaration binding was stored above.
+                } else {
+                    continue;
+                }
                 self.release_temporaries();
             }
         }
@@ -252,54 +318,94 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         params: &'c oxc_ast::ast::FormalParameters<'c>,
         _owner: &mut Compiler<'_>,
     ) -> Vec<String> {
+        Self::parameter_local_names(params)
+    }
+
+    fn parameter_local_names(params: &oxc_ast::ast::FormalParameters<'_>) -> Vec<String> {
+        let non_simple = Self::has_non_simple_parameters(params);
         let mut result = params
             .items
             .iter()
             .enumerate()
-            .map(|(index, item)| Self::parameter_name(&item.pattern, index))
+            .map(|(index, item)| Self::parameter_name(&item.pattern, index, non_simple))
             .collect::<Vec<_>>();
         if let Some(rest) = &params.rest {
             result.push(Self::parameter_name(
                 &rest.rest.argument,
                 params.items.len(),
+                non_simple,
             ));
         }
         result
     }
 
-    fn parameter_name(pattern: &BindingPattern<'_>, index: usize) -> String {
-        Self::first_binding_name(pattern)
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("\0rqj:param:{index}"))
+    pub(super) fn has_non_simple_parameters(params: &oxc_ast::ast::FormalParameters<'_>) -> bool {
+        params.rest.is_some()
+            || params.items.iter().any(|item| {
+                item.initializer.is_some()
+                    || !matches!(item.pattern, BindingPattern::BindingIdentifier(_))
+            })
     }
 
-    fn first_binding_name<'c>(pattern: &'c BindingPattern<'c>) -> Option<&'c str> {
+    fn parameter_name(pattern: &BindingPattern<'_>, index: usize, hidden: bool) -> String {
+        if hidden {
+            return format!("\0rqj:param:{index}");
+        }
         match pattern {
-            BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
-            BindingPattern::ObjectPattern(object) => object
-                .properties
-                .iter()
-                .find_map(|property| Self::first_binding_name(&property.value))
-                .or_else(|| {
-                    object
-                        .rest
-                        .as_ref()
-                        .and_then(|rest| Self::first_binding_name(&rest.argument))
-                }),
-            BindingPattern::ArrayPattern(array) => array
-                .elements
-                .iter()
-                .flatten()
-                .find_map(Self::first_binding_name)
-                .or_else(|| {
-                    array
-                        .rest
-                        .as_ref()
-                        .and_then(|rest| Self::first_binding_name(&rest.argument))
-                }),
-            BindingPattern::AssignmentPattern(assignment) => {
-                Self::first_binding_name(&assignment.left)
+            BindingPattern::BindingIdentifier(id) => id.name.to_string(),
+            _ => format!("\0rqj:param:{index}"),
+        }
+    }
+
+    pub(super) fn parameter_bound_names(
+        params: &oxc_ast::ast::FormalParameters<'_>,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        for item in &params.items {
+            Self::collect_binding_names(&item.pattern, &mut names);
+        }
+        if let Some(rest) = &params.rest {
+            Self::collect_binding_names(&rest.rest.argument, &mut names);
+        }
+        names
+    }
+
+    fn collect_binding_names(pattern: &BindingPattern<'_>, names: &mut Vec<String>) {
+        match pattern {
+            BindingPattern::BindingIdentifier(identifier) => {
+                names.push(identifier.name.to_string());
             }
+            BindingPattern::AssignmentPattern(pattern) => {
+                Self::collect_binding_names(&pattern.left, names);
+            }
+            BindingPattern::ArrayPattern(pattern) => {
+                for element in pattern.elements.iter().flatten() {
+                    Self::collect_binding_names(element, names);
+                }
+                if let Some(rest) = &pattern.rest {
+                    Self::collect_binding_names(&rest.argument, names);
+                }
+            }
+            BindingPattern::ObjectPattern(pattern) => {
+                for property in &pattern.properties {
+                    Self::collect_binding_names(&property.value, names);
+                }
+                if let Some(rest) = &pattern.rest {
+                    Self::collect_binding_names(&rest.argument, names);
+                }
+            }
+        }
+    }
+
+    pub(super) fn anonymous_function_definition(expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::FunctionExpression(function) => function.id.is_none(),
+            Expression::ArrowFunctionExpression(_) => true,
+            Expression::ClassExpression(class) => class.id.is_none(),
+            Expression::ParenthesizedExpression(expression) => {
+                Self::anonymous_function_definition(&expression.expression)
+            }
+            _ => false,
         }
     }
 
@@ -317,32 +423,23 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         atom
     }
 
-    pub(super) fn emit_implicit_super(&mut self) {
-        let base = self.load_name("\0rqj:super");
-        let reflect = self.load_name("Reflect");
-        let construct = self.reg();
-        let atom = self.owner.atom("construct");
-        let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            construct,
-            FieldBase::register(reflect).0,
-            cache,
-            atom,
-        );
+    pub(super) fn emit_implicit_super(
+        &mut self,
+        fields: &[ClassField<'_>],
+        private_methods: &[Atom],
+    ) {
         let args = self.load_name("\0rqj:derived-args");
-        let base_arg = self.reg();
-        self.emit(Op::Move, base_arg, base, 0, 0);
-        let args_arg = self.reg();
-        self.emit(Op::Move, args_arg, args, 0, 0);
+        let callee = self.literal(Constant::Undefined);
         let result = self.reg();
         self.emit(
-            Op::Call,
+            Op::Construct,
             result,
-            construct,
-            reflect,
-            (u32::from(base_arg) << 16) | 2,
+            callee,
+            args,
+            crate::bytecode::ImmediateLayout::construct_immediate(1, true, true),
         );
+        self.emit(Op::InitializeThis, result, 0, 0, 0);
+        self.emit_instance_fields(fields, private_methods);
         self.emit(Op::Return, result, 0, 0, 0);
     }
 
@@ -359,25 +456,43 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn emit_parameter_bindings(&mut self, params: &oxc_ast::ast::FormalParameters<'_>) {
-        for (index, item) in params.items.iter().enumerate() {
-            let atom = self.owner.atom(&Self::parameter_name(&item.pattern, index));
-            let current = self.load_atom(atom);
-            if matches!(&item.pattern, BindingPattern::BindingIdentifier(_)) {
-                if let Some(initializer) = &item.initializer {
-                    let undefined = self.literal(Constant::Undefined);
-                    let missing = self.emit_binary(
-                        2,
-                        Operand::register(current),
-                        Operand::register(undefined),
-                    );
-                    let skip = self.emit(Op::JumpFalse, missing, 0, 0, 0);
-                    let previous = self.parameter_context;
-                    self.parameter_context = true;
-                    let value = self.expression(initializer);
-                    self.parameter_context = previous;
-                    self.store_atom(atom, value);
-                    self.patch(skip);
+        let non_simple = Self::has_non_simple_parameters(params);
+        let parameter_names = Self::parameter_local_names(params);
+        if non_simple {
+            for name in Self::parameter_bound_names(params) {
+                let atom = self.owner.atom(&name);
+                if let Some(slot) = self.local_slots.get(&atom).copied() {
+                    self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
                 }
+            }
+        }
+        for (index, item) in params.items.iter().enumerate() {
+            let atom = self.owner.atom(&parameter_names[index]);
+            let current = self.load_atom(atom);
+            if let Some(initializer) = &item.initializer {
+                let undefined = self.literal(Constant::Undefined);
+                let missing =
+                    self.emit_binary(2, Operand::register(current), Operand::register(undefined));
+                let skip = self.emit(Op::JumpFalse, missing, 0, 0, 0);
+                let previous = self.parameter_context;
+                self.parameter_context = true;
+                let value = self.expression(initializer);
+                self.parameter_context = previous;
+                if let BindingPattern::BindingIdentifier(identifier) = &item.pattern
+                    && Self::anonymous_function_definition(initializer)
+                {
+                    let name = self.owner.atom(identifier.name.as_str());
+                    self.emit(Op::SetFunctionName, value, 0, 0, name);
+                }
+                self.emit(Op::Move, current, value, 0, 0);
+                self.patch(skip);
+            }
+            if matches!(&item.pattern, BindingPattern::BindingIdentifier(_)) {
+                let BindingPattern::BindingIdentifier(identifier) = &item.pattern else {
+                    unreachable!();
+                };
+                let binding = self.owner.atom(identifier.name.as_str());
+                self.store_atom(binding, current);
             } else {
                 self.bind_pattern(&item.pattern, current);
             }
@@ -386,6 +501,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             let atom = self.owner.atom(&Self::parameter_name(
                 &rest.rest.argument,
                 params.items.len(),
+                non_simple,
             ));
             let current = self.load_atom(atom);
             self.bind_pattern(&rest.rest.argument, current);
@@ -400,42 +516,127 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.lexical_scopes
             .iter()
             .rev()
-            .find_map(|scope| scope.get(&atom).copied())
+            .filter(|scope| self.with_depth == 0 || scope.with_depth >= self.with_depth)
+            .find_map(|scope| scope.bindings.get(&atom).copied())
             .unwrap_or(atom)
+    }
+
+    pub(super) fn needs_strict_global_reference_capture(&mut self, atom: Atom) -> bool {
+        if !self.strict || self.owner.atoms[atom as usize].as_ref().starts_with('\0') {
+            return false;
+        }
+        let binding = self.resolve_lexical(atom);
+        !self.local_slots.contains_key(&binding)
+            && !self.scopes.iter().any(|scope| scope.contains_key(&binding))
+            && !self.has_immutable_capture(binding)
+    }
+
+    pub(super) fn push_lexical_bindings(&mut self, bindings: FxHashMap<Atom, Atom>) {
+        self.push_lexical_bindings_with_immutability(bindings, FxHashSet::default());
+    }
+
+    pub(super) fn push_immutable_lexical_bindings(
+        &mut self,
+        bindings: FxHashMap<Atom, Atom>,
+        immutable: FxHashSet<Atom>,
+    ) {
+        self.push_lexical_bindings_with_immutability(bindings, immutable);
+    }
+
+    fn push_lexical_bindings_with_immutability(
+        &mut self,
+        bindings: FxHashMap<Atom, Atom>,
+        immutable: FxHashSet<Atom>,
+    ) {
+        self.lexical_scopes.push(LexicalScope {
+            bindings,
+            immutable,
+            with_depth: self.with_depth,
+        });
+    }
+
+    pub(super) fn pop_lexical_scope(&mut self) {
+        self.lexical_scopes.pop();
     }
 
     pub(super) fn push_lexical_scope(&mut self, body: &[Statement<'_>]) {
         let mut scope = FxHashMap::default();
         for statement in body {
-            if let Statement::VariableDeclaration(declaration) = statement
-                && matches!(
+            self.collect_lexical_binding(statement, &mut scope);
+        }
+        self.push_lexical_bindings(scope);
+    }
+
+    pub(super) fn push_switch_lexical_scope(&mut self, cases: &[SwitchCase<'_>]) {
+        let mut scope = FxHashMap::default();
+        for statement in cases.iter().flat_map(|case| &case.consequent) {
+            self.collect_lexical_binding(statement, &mut scope);
+        }
+        self.push_lexical_bindings(scope);
+    }
+
+    fn collect_lexical_binding(
+        &mut self,
+        statement: &Statement<'_>,
+        scope: &mut FxHashMap<Atom, Atom>,
+    ) {
+        match statement {
+            Statement::VariableDeclaration(declaration)
+                if matches!(
                     declaration.kind,
                     VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                )
+                ) =>
             {
                 for item in &declaration.declarations {
-                    self.map_pattern_lexicals(&item.id, &mut scope);
+                    self.map_pattern_lexicals(&item.id, scope);
                 }
             }
+            Statement::FunctionDeclaration(function) if self.strict => {
+                if let Some(identifier) = &function.id {
+                    let source = self.owner.atom(identifier.name.as_str());
+                    let target =
+                        self.hidden_local(&format!("\0rqj:block-function:{}", identifier.name));
+                    scope.insert(source, target);
+                }
+            }
+            _ => {}
         }
-        self.lexical_scopes.push(scope);
     }
 
     pub(super) fn scoped_statements(&mut self, body: &[Statement<'_>]) {
         self.push_lexical_scope(body);
+        self.emit_hoisted(body);
         self.statements(body);
         self.lexical_scopes.pop();
     }
 
     pub(super) fn capture_scopes(&mut self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
+        if self.dynamic_eval {
+            return Vec::new();
+        }
         let mut scope = (*self.local_slots).clone();
+        if self.parameter_context {
+            scope.retain(|_, slot| {
+                usize::from(*slot) < self.parameter_local_count
+                    || Some(*slot) == self.parameter_arguments_slot
+            });
+        }
         if self.dynamic_eval {
             scope.remove(&self.owner.atom("arguments"));
         }
-        for lexical in &self.lexical_scopes {
-            for (source, target) in lexical {
+        for lexical in self
+            .lexical_scopes
+            .iter()
+            .filter(|scope| self.with_depth == 0 || scope.with_depth >= self.with_depth)
+        {
+            for (source, target) in &lexical.bindings {
                 if let Some(slot) = self.local_slots.get(target).copied() {
                     scope.insert(*source, slot);
+                    if lexical.immutable.contains(source) {
+                        let name = self.owner.atoms[*source as usize].clone();
+                        let marker = self.owner.atom(&format!("\0rqj:immutable-capture:{name}"));
+                        scope.insert(marker, slot);
+                    }
                 }
             }
         }
@@ -452,7 +653,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         ) {
             scope.insert(self.owner.atom(identifier.name.as_str()), binding);
         }
-        self.lexical_scopes.push(scope);
+        self.push_lexical_bindings(scope);
     }
 
     fn map_pattern_lexicals(

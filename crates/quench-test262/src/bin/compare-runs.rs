@@ -26,7 +26,6 @@ use quench_test262::{
 
 const WORK_BATCH: usize = 32;
 const STACK_SIZE: usize = 512 * 1024 * 1024;
-const PER_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Tests that crash the runtime with a stack overflow independent of runner
 /// state. These are real runtime bugs, not determinism issues; the comparison
@@ -68,6 +67,9 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    if let Err(error) = required_timeout() {
+        return fail(error);
+    }
     let args = match parse_args() {
         Ok(args) => args,
         Err(error) => return fail(error),
@@ -120,6 +122,17 @@ fn main() -> ExitCode {
     // the process alive. The diff is already written; nothing of value
     // remains in those threads.
     std::process::exit(exit_code);
+}
+
+fn required_timeout() -> Result<std::time::Duration, String> {
+    let timeout_ms = env::var("TEST262_TEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|timeout_ms| *timeout_ms > 0)
+        .ok_or_else(|| {
+            "TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds".to_string()
+        })?;
+    Ok(std::time::Duration::from_millis(timeout_ms))
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -319,7 +332,8 @@ fn dispatch_with_timeout(harness_root: &Path, fixture: TestSource) -> Result<Tes
             let _ = sender.send(result);
         })
         .expect("spawn timeout worker");
-    let outcome = match receiver.recv_timeout(PER_TEST_TIMEOUT) {
+    let timeout = required_timeout()?;
+    let outcome = match receiver.recv_timeout(timeout) {
         Ok(result) => result,
         Err(_) => Err("test execution timed out".to_string()),
     };

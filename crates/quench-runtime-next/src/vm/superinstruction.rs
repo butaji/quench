@@ -5,10 +5,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         program: &ResidualProgram,
         frame: usize,
-        destination: Register,
-        site: u32,
+        instruction: WideInstruction,
     ) -> Result<Option<Value>, JsError> {
-        let [array, first, second, object] = program.superinstructions[site as usize].code;
+        let destination = instruction.result_register();
+        let site = instruction.imm() as usize;
+        let [array, first, second, object] = program.superinstructions[site].code;
         debug_assert_eq!(array.op(), Op::MakeConstArray);
         debug_assert_eq!(first.op(), Op::Binary);
         debug_assert_eq!(second.op(), Op::Binary);
@@ -16,9 +17,10 @@ impl<H: Host> Vm<H> {
 
         let start = array.imm() as usize;
         let end = start + array.b() as usize;
-        let elements = self.const_arrays[start]
-            .get_or_insert_with(|| Rc::new(self.constants[start..end].to_vec()))
-            .clone();
+        let elements = self
+            .programs
+            .const_array(self.frames[frame].program, start, end - start)
+            .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
         let array_value = self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
             elements,
@@ -33,7 +35,7 @@ impl<H: Host> Vm<H> {
             self.read(frame, object.b()),
             self.read(frame, object.c()),
         );
-        if destination & RETURN_REGISTER != 0 {
+        if instruction.returns_from_frame() {
             Ok(Some(value))
         } else {
             self.write(frame, destination & REGISTER_MASK, value);

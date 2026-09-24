@@ -1,7 +1,17 @@
 use super::property_key::PropertyKey;
 use super::*;
+use crate::heap::PrivateBrand;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
+        let (program, slot) = self.object_data(object)?.module_binding(atom)?;
+        let environment = self.programs.module_environment(program)?;
+        let Some(Cell::Environment { slots, .. }) = self.heap.get(environment) else {
+            return None;
+        };
+        slots.get(slot as usize).copied()
+    }
+
     fn proxy_trap(
         &mut self,
         p: &ResidualProgram,
@@ -28,7 +38,7 @@ impl<H: Host> Vm<H> {
             let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
             return self.call_value(p, trap, handler, &[target, key, receiver]);
         }
-        self.get_property(p, target, atom)
+        self.get_property_with_receiver(p, target, atom, receiver)
     }
 
     pub(super) fn proxy_set(
@@ -40,6 +50,9 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
+        if self.atom_name(atom).starts_with("\0rqj:private:") {
+            return Err(self.type_error(p, "private member is not present on this object".into()));
+        }
         if handler.is_null() {
             return Err(JsError("cannot access a revoked proxy".into()));
         }
@@ -112,33 +125,92 @@ impl<H: Host> Vm<H> {
         object: Value,
         atom: Atom,
     ) -> Result<Value, JsError> {
-        if object.as_number().is_some() {
-            return Ok(if atom == self.primitive_atoms[4] {
-                self.native_value(Native::NumberString)
-            } else if atom == self.to_fixed_atom {
-                self.native_value(Native::NumberFixed)
-            } else if atom == self.to_precision_atom {
-                self.native_value(Native::NumberPrecision)
-            } else {
-                Value::UNDEFINED
-            });
+        self.get_property_with_receiver(p, object, atom, object)
+    }
+
+    pub(super) fn get_property_with_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        let private_name = self.atom_name(atom).starts_with("\0rqj:private:");
+        if object.is_null() || object.is_undefined() {
+            return Err(self.type_error(
+                p,
+                if object.is_null() {
+                    "cannot read properties of null".into()
+                } else {
+                    "cannot read properties of undefined".into()
+                },
+            ));
         }
-        let receiver = object;
         let mut object = object;
+        if object.as_bool().is_some() {
+            match self.atom_name(atom) {
+                "toString" => return Ok(self.native_value(Native::BooleanToString)),
+                "valueOf" => return Ok(self.native_value(Native::BooleanValueOf)),
+                _ => {
+                    object = self
+                        .primitive_prototype(object)
+                        .unwrap_or(self.object_proto)
+                }
+            }
+        } else if object.as_number().is_some() {
+            if self.lookup_atom("toString") == Some(atom) {
+                return Ok(self.native_value(Native::NumberString));
+            }
+            if atom == self.to_fixed_atom {
+                return Ok(self.native_value(Native::NumberFixed));
+            }
+            if atom == self.to_precision_atom {
+                return Ok(self.native_value(Native::NumberPrecision));
+            }
+            object = self
+                .primitive_prototype(object)
+                .unwrap_or(self.object_proto);
+        }
+        if self.atom_name(atom) != "then"
+            && self
+                .object_data(object)
+                .is_some_and(|object| object.deferred_module.is_some())
+        {
+            self.evaluate_deferred_module_namespace(p, object)?;
+        }
+        if private_name {
+            self.check_private_brand(p, object, atom)?;
+        }
         loop {
             if let Some(Cell::Proxy {
                 target, handler, ..
             }) = self.heap.get(object).cloned()
             {
+                // Private names are not property keys observable through a
+                // Proxy. Forwarding here would incorrectly let the target's
+                // hidden storage satisfy a private access on the Proxy.
+                if private_name {
+                    return Err(
+                        self.type_error(p, "private member is not present on this object".into())
+                    );
+                }
                 return self.proxy_get(p, target, handler, receiver, atom);
             }
             if let Some(attributes) = self.property_attributes(object, PropertyKey::string(atom))
                 && attributes.accessor
             {
+                if private_name && attributes.getter.is_none() {
+                    return Err(
+                        self.type_error(p, "private accessor does not have a getter".into())
+                    );
+                }
                 return match attributes.getter {
                     Some(getter) => self.call_value(p, getter, receiver, &[]),
                     None => Ok(Value::UNDEFINED),
                 };
+            }
+            if let Some(value) = self.module_binding_value(object, atom) {
+                return Ok(value);
             }
             if let Some(index) = super::object_static::array_index(self.atom_name(atom))
                 && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
@@ -164,9 +236,7 @@ impl<H: Host> Vm<H> {
                 {
                     return Ok(self.array_buffer_virtual_property(object, atom).unwrap());
                 }
-                Some(Cell::ArrayBuffer { bytes, shared, .. })
-                    if self.lookup_atom("byteLength") == Some(atom) =>
-                {
+                Some(Cell::ArrayBuffer { bytes, shared, .. }) if atom == self.byte_length_atom => {
                     let _shared = shared;
                     return Ok(Value::number(if self.array_buffer_detached(object) {
                         0.0
@@ -174,7 +244,12 @@ impl<H: Host> Vm<H> {
                         bytes.len() as f64
                     }));
                 }
-                Some(Cell::Array { .. }) if atom == self.length_atom => {
+                Some(Cell::Array { .. })
+                    if atom == self.length_atom
+                        && !self
+                            .object_data(object)
+                            .is_some_and(Object::is_arguments_object) =>
+                {
                     let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
                         unreachable!()
                     };
@@ -196,39 +271,33 @@ impl<H: Host> Vm<H> {
                     {
                         return Ok(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))));
                     }
-                    return Ok(if atom == self.length_atom {
-                        Value::number(v.units().len() as f64)
-                    } else if atom == self.primitive_atoms[0] {
-                        self.native_value(Native::StringCharCodeAt)
-                    } else if atom == self.primitive_atoms[1] {
-                        self.native_value(Native::StringCharAt)
-                    } else if atom == self.primitive_atoms[2] {
-                        self.native_value(Native::StringSubstring)
-                    } else if atom == self.primitive_atoms[3] {
-                        self.native_value(Native::StringSubstr)
-                    } else if atom == self.primitive_atoms[5] {
-                        self.native_value(Native::StringIncludes)
-                    } else if atom == self.primitive_atoms[6] {
-                        self.native_value(Native::StringStartsWith)
-                    } else if atom == self.primitive_atoms[7] {
-                        self.native_value(Native::StringEndsWith)
-                    } else if let Some(native) = self.string_native_for_atom(atom) {
-                        self.native_value(native)
-                    } else {
-                        Value::UNDEFINED
-                    });
+                    if atom == self.length_atom {
+                        return Ok(Value::number(v.units().len() as f64));
+                    }
+                    return self.get_property_with_receiver(p, self.string_proto, atom, object);
                 }
                 Some(Cell::Symbol(description)) => {
                     let description = description.clone();
-                    return Ok(match self.atom_name(atom) {
-                        "description" => description
-                            .as_ref()
-                            .map(|value| self.heap.alloc(Cell::String(value.clone().into())))
-                            .unwrap_or(Value::UNDEFINED),
-                        "toString" => self.native_value(Native::SymbolToString),
-                        "valueOf" => self.native_value(Native::SymbolValueOf),
-                        _ => Value::UNDEFINED,
-                    });
+                    match self.atom_name(atom) {
+                        "description" => {
+                            return Ok(description
+                                .as_ref()
+                                .map(|value| self.heap.alloc(Cell::String(value.clone().into())))
+                                .unwrap_or(Value::UNDEFINED));
+                        }
+                        "toString" => return Ok(self.native_value(Native::SymbolToString)),
+                        "valueOf" => return Ok(self.native_value(Native::SymbolValueOf)),
+                        _ => {
+                            object = self
+                                .primitive_prototype(object)
+                                .unwrap_or(self.object_proto)
+                        }
+                    }
+                }
+                Some(Cell::BigInt(_)) => {
+                    object = self
+                        .primitive_prototype(object)
+                        .unwrap_or(self.object_proto)
                 }
                 Some(Cell::Date { object: x, .. }) => {
                     let native = self.date_property_native(atom);
@@ -251,8 +320,95 @@ impl<H: Host> Vm<H> {
                 _ => return Ok(Value::UNDEFINED),
             }
             if object.is_null() {
-                return Ok(Value::UNDEFINED);
+                return if private_name {
+                    Err(self.type_error(p, "private member is not present on this object".into()))
+                } else {
+                    Ok(Value::UNDEFINED)
+                };
             }
         }
+    }
+
+    pub(super) fn check_private_brand(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        atom: Atom,
+    ) -> Result<(), JsError> {
+        if self.has_private_brand(p, target, atom) {
+            return Ok(());
+        }
+        Err(self.type_error(p, "private member is not present on this object".into()))
+    }
+
+    pub(super) fn has_private_brand(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        atom: Atom,
+    ) -> bool {
+        let Some(frame_index) = self.frames.len().checked_sub(1) else {
+            return false;
+        };
+        let mut function = Some(self.frames[frame_index].function);
+        let mut home_atoms = Vec::new();
+        while let Some(id) = function
+            && let Some(metadata) = p.functions.get(id as usize)
+        {
+            if let Some(atom) = metadata.super_home_atom
+                && !home_atoms.contains(&atom)
+            {
+                home_atoms.push(atom);
+            }
+            function = metadata.parent;
+        }
+        let mut environment = self.captured_parent_environment(frame_index);
+        let mut homes = Vec::with_capacity(home_atoms.len());
+        while let Some(Cell::Environment {
+            parent,
+            function,
+            slots,
+            ..
+        }) = self.heap.get(environment)
+        {
+            if *function != u32::MAX {
+                let visible_homes = p
+                    .functions
+                    .get(*function as usize)
+                    .into_iter()
+                    .flat_map(|metadata| metadata.local_atoms.iter().copied())
+                    .filter(|atom| self.atom_name(*atom).starts_with("\0rqj:home:"))
+                    .collect::<Vec<_>>();
+                for atom in home_atoms.iter().chain(&visible_homes) {
+                    if homes.iter().any(|(candidate, _)| candidate == atom) {
+                        continue;
+                    }
+                    if let Some(slot) = self
+                        .local_binding_slot(p, *function, *atom)
+                        .filter(|slot| *slot < slots.len())
+                    {
+                        homes.push((*atom, slots[slot]));
+                    }
+                }
+            }
+            environment = *parent;
+        }
+        for (_, home) in homes.iter().copied() {
+            let declares_name = self.object_data(home).is_some_and(|object| {
+                object
+                    .private_names
+                    .contains(&PrivateBrand { home, name: atom })
+            });
+            if !declares_name {
+                continue;
+            }
+            let branded = self.object_data(target).is_some_and(|object| {
+                object
+                    .private_names
+                    .contains(&PrivateBrand { home, name: atom })
+            });
+            return branded;
+        }
+        false
     }
 }

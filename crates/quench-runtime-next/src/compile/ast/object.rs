@@ -9,8 +9,10 @@ impl FunctionCompiler<'_, '_> {
         ] = value.properties.as_slice()
             && first.kind == PropertyKind::Init
             && second.kind == PropertyKind::Init
-            && !matches!(&first.value, Expression::FunctionExpression(_))
-            && !matches!(&second.value, Expression::FunctionExpression(_))
+            && !(Self::static_key(&first.key) == Some("__proto__") && !first.shorthand)
+            && !(Self::static_key(&second.key) == Some("__proto__") && !second.shorthand)
+            && !Self::anonymous_function_definition(&first.value)
+            && !Self::anonymous_function_definition(&second.value)
             && let (Some(first_key), Some(second_key)) =
                 (Self::static_key(&first.key), Self::static_key(&second.key))
         {
@@ -33,21 +35,49 @@ impl FunctionCompiler<'_, '_> {
                     continue;
                 }
             };
+            if property.kind == PropertyKind::Init
+                && !property.computed
+                && !property.shorthand
+                && Self::static_key(&property.key) == Some("__proto__")
+            {
+                let prototype = self.expression(&property.value);
+                self.object_literal_prototype(dst, prototype);
+                continue;
+            }
             if let Some(accessor) = match property.kind {
                 PropertyKind::Get => Some("get"),
                 PropertyKind::Set => Some("set"),
                 PropertyKind::Init => None,
             } {
-                let key = self.computed_object_key(&property.key).or_else(|| {
+                let computed = property.computed;
+                let key = if computed {
+                    self.computed_object_key(&property.key).map(|raw_key| {
+                        let key = self.reg();
+                        self.emit(Op::ToPropertyKey, key, raw_key, 0, 0);
+                        key
+                    })
+                } else {
                     Self::static_key(&property.key)
                         .map(|name| self.literal(Constant::String(name.into())))
-                });
+                };
                 let Some(key) = key else {
                     self.owner
                         .reject(property.span, "object accessor key unsupported");
                     continue;
                 };
                 let item = self.object_method(&property.value, super_atom);
+                if computed {
+                    self.emit(
+                        Op::SetFunctionNameKey,
+                        item,
+                        key,
+                        0,
+                        if accessor == "get" { 1 } else { 2 },
+                    );
+                } else if let Some(name) = Self::static_key(&property.key) {
+                    let name = self.owner.atom(&format!("{accessor} {name}"));
+                    self.emit(Op::SetFunctionName, item, 0, 0, name);
+                }
                 self.define_accessor(dst, key, item, accessor);
                 continue;
             }
@@ -57,8 +87,13 @@ impl FunctionCompiler<'_, '_> {
                         .reject(property.span, "computed object key expression unsupported");
                     continue;
                 };
+                let property_key = self.reg();
+                self.emit(Op::ToPropertyKey, property_key, key, 0, 0);
                 let item = self.object_method(&property.value, super_atom);
-                self.emit(Op::SetIndex, item, dst, key, 0);
+                if Self::anonymous_function_definition(&property.value) {
+                    self.emit(Op::SetFunctionNameKey, item, property_key, 0, 0);
+                }
+                self.emit(Op::SetIndex, item, dst, property_key, 0);
                 continue;
             }
             if let PropertyKey::StringLiteral(value) = &property.key {
@@ -66,6 +101,9 @@ impl FunctionCompiler<'_, '_> {
                 if matches!(&key, Constant::StringUnits(_)) {
                     let key = self.literal(key);
                     let item = self.expression(&property.value);
+                    if Self::anonymous_function_definition(&property.value) {
+                        self.emit(Op::SetFunctionNameKey, item, key, 0, 0);
+                    }
                     self.emit(Op::SetIndex, item, dst, key, 0);
                     continue;
                 }
@@ -77,6 +115,13 @@ impl FunctionCompiler<'_, '_> {
                     if let Some(expression) = property.key.as_expression() {
                         let key = self.expression(expression);
                         let item = self.expression(&property.value);
+                        if Self::anonymous_function_definition(&property.value) {
+                            let property_key = self.reg();
+                            self.emit(Op::ToPropertyKey, property_key, key, 0, 0);
+                            self.emit(Op::SetFunctionNameKey, item, property_key, 0, 0);
+                            self.emit(Op::SetIndex, item, dst, property_key, 0);
+                            continue;
+                        }
                         self.emit(Op::SetIndex, item, dst, key, 0);
                         continue;
                     }
@@ -87,10 +132,30 @@ impl FunctionCompiler<'_, '_> {
             };
             let item = self.object_method(&property.value, super_atom);
             let atom = self.owner.atom(key);
-            let site = self.owner.cache_site();
-            self.emit(Op::SetField, item, dst, site, atom);
+            if Self::anonymous_function_definition(&property.value) {
+                self.emit(Op::SetFunctionName, item, 0, 0, atom);
+            }
+            self.emit(Op::DefineField, item, dst, 0, atom);
         }
         dst
+    }
+
+    fn object_literal_prototype(&mut self, object: Register, prototype: Register) {
+        let callee = self.load_name("\0rqj:object-literal-prototype");
+        let this = self.literal(Constant::Undefined);
+        let start = self.next_reg;
+        for argument in [object, prototype] {
+            let slot = self.reg();
+            self.emit(Op::Move, slot, argument, 0, 0);
+        }
+        let result = self.reg();
+        self.emit(
+            Op::Call,
+            result,
+            callee,
+            this,
+            crate::bytecode::ImmediateLayout::call_immediate(start, 2, false, false),
+        );
     }
 
     fn object_method(&mut self, value: &Expression<'_>, super_atom: Atom) -> Register {
@@ -113,6 +178,8 @@ impl FunctionCompiler<'_, '_> {
                 defaults: Some(&function.params),
                 async_function: function.r#async,
                 generator: function.generator,
+                with_depth: self.with_depth,
+                non_constructible: true,
                 super_home: true,
                 super_home_atom: Some(super_atom),
                 strict: self.strict
@@ -168,7 +235,7 @@ impl FunctionCompiler<'_, '_> {
             result,
             define,
             object,
-            (u32::from(base) << 16) | 3,
+            crate::bytecode::ImmediateLayout::call_immediate(base, 3, false, false),
         );
     }
 
@@ -207,7 +274,7 @@ impl FunctionCompiler<'_, '_> {
             result,
             assign,
             object,
-            (u32::from(base) << 16) | 2,
+            crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
         );
         self.patch_instruction(skip_null, self.code.len() as u32);
         self.patch_instruction(skip_undefined, self.code.len() as u32);

@@ -228,7 +228,7 @@ fn normalize_js_pattern(source: &str) -> String {
         {
             let value = chars[index + 2..index + 6].iter().collect::<String>();
             let scalar = u32::from_str_radix(&value, 16).unwrap_or(0);
-            if (0xD800..=0xDFFF).contains(&scalar) {
+            if crate::unicode::is_surrogate(scalar) {
                 output.push_str("\\u{FFFD}");
             } else {
                 output.push_str("\\u{");

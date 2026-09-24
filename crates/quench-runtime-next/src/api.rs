@@ -33,10 +33,7 @@ impl Engine {
     pub fn compile(request: ExecutionRequest<'_>) -> Result<ResidualProgram, Vec<Diagnostic>> {
         match request.kind {
             SourceKind::Script => Self::specialize(request.source, request.name),
-            SourceKind::Module => Err(vec![Diagnostic::unsupported(
-                request.name,
-                "module compilation is not available in the staged v2 subset",
-            )]),
+            SourceKind::Module => Self::specialize_module(request.source, request.name),
             SourceKind::Eval => Err(vec![Diagnostic::unsupported(
                 request.name,
                 "eval compilation requires an activation context",

@@ -48,7 +48,7 @@ pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
 
 fn compact_binary_stores(function: &mut Function, live: &[u64]) {
     let old = std::mem::take(&mut function.code);
-    let protected = protected_positions(&old, &function.handlers);
+    let protected = protected_positions(&old, &function.handlers, function.parameter_end_pc);
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0; old.len() + 1];
     let mut pc = 0;
@@ -94,7 +94,12 @@ fn compact_binary_stores(function: &mut Function, live: &[u64]) {
         }
     }
     map[old.len()] = code.len();
-    relocate(&mut code, &map, &mut function.handlers);
+    relocate(
+        &mut code,
+        &map,
+        &mut function.handlers,
+        &mut function.parameter_end_pc,
+    );
     function.code = code;
 }
 
@@ -182,14 +187,27 @@ mod tests {
             parent: None,
             name: None,
             params: 0,
+            length: 0,
+            parameter_end_pc: 0,
+            parameter_atoms: vec![],
             rest: false,
             is_async: false,
             is_generator: false,
+            is_class_constructor: false,
+            derived_constructor: false,
+            super_home_atom: None,
+            constructible: true,
+            class_field_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
             strict: false,
             locals: 4,
             local_atoms: vec![],
+            lexical_atoms: vec![],
+            global_lexical_atoms: vec![],
+            global_var_atoms: vec![],
+            global_function_atoms: vec![],
+            global_immutable_atoms: vec![],
             code: code.clone(),
             wide: vec![],
             registers: 3,
@@ -219,14 +237,27 @@ mod tests {
             parent: None,
             name: None,
             params: 0,
+            length: 0,
+            parameter_end_pc: 0,
+            parameter_atoms: vec![],
             rest: false,
             is_async: false,
             is_generator: false,
+            is_class_constructor: false,
+            derived_constructor: false,
+            super_home_atom: None,
+            constructible: true,
+            class_field_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
             strict: false,
             locals: 4,
             local_atoms: vec![],
+            lexical_atoms: vec![],
+            global_lexical_atoms: vec![],
+            global_var_atoms: vec![],
+            global_function_atoms: vec![],
+            global_immutable_atoms: vec![],
             code: code.clone(),
             wide: vec![],
             registers: 3,

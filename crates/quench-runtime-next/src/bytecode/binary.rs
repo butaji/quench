@@ -1,16 +1,43 @@
 use super::{
     AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function, Handler, Instr, MethodSite,
+    ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleRequest, ModuleRequestPhase,
     ObjectSite, Op, Superinstruction, WideInstruction,
 };
+
+const RESIDUAL_MAGIC: &[u8; 5] = b"RQJ\0\x1b";
+const OPTIONAL_STRING_NONE: u8 = 0;
+const OPTIONAL_STRING_SOME: u8 = 1;
 
 pub(super) fn write_program(
     program: &super::ResidualProgram,
     path: &std::path::Path,
 ) -> Result<(), String> {
     let mut out = BinaryWriter::new();
-    out.bytes.extend_from_slice(b"RQJ\0\x0d");
+    out.bytes.extend_from_slice(RESIDUAL_MAGIC);
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
     out.u8(u8::from(program.specialized));
+    out.u8(u8::from(program.module));
+    out.string(&program.source_name);
+    out.u32(program.module_requests.len() as u32);
+    for request in &program.module_requests {
+        out.string(&request.source);
+        out.u8(request.phase.binary_tag());
+        write_optional_string(&mut out, request.module_type.as_deref());
+    }
+    out.u32(program.module_imports.len() as u32);
+    for import in &program.module_imports {
+        out.string(&import.source);
+        out.u8(import.phase.binary_tag());
+        write_optional_string(&mut out, import.module_type.as_deref());
+        match &import.imported {
+            ModuleImportName::Namespace => out.u8(import.imported.binary_tag()),
+            ModuleImportName::Named(name) => {
+                out.u8(import.imported.binary_tag());
+                out.string(name);
+            }
+        }
+        out.string(&import.local);
+    }
     out.strings(&program.atoms);
     out.u32(program.constants.len() as u32);
     for value in &program.constants {
@@ -43,15 +70,46 @@ pub(super) fn write_program(
         out.option_u32(function.parent);
         out.option_u32(function.name);
         out.u16(function.params);
+        out.u16(function.length);
+        out.u32(function.parameter_end_pc);
+        out.u32(function.parameter_atoms.len() as u32);
+        for atom in &function.parameter_atoms {
+            out.u32(*atom);
+        }
         out.u8(u8::from(function.rest));
         out.u8(u8::from(function.is_async));
         out.u8(u8::from(function.is_generator));
+        out.u8(u8::from(function.is_class_constructor));
+        out.u8(u8::from(function.derived_constructor));
+        out.u32(function.super_home_atom.unwrap_or(u32::MAX));
+        out.u8(u8::from(function.constructible));
+        out.u8(u8::from(function.class_field_initializer));
         out.u8(u8::from(function.parameter_eval_arguments_error));
         out.u8(u8::from(function.strict));
         out.u16(function.arguments_slot.unwrap_or(u16::MAX));
         out.u16(function.locals);
         out.u32(function.local_atoms.len() as u32);
         for atom in &function.local_atoms {
+            out.u32(*atom);
+        }
+        out.u32(function.lexical_atoms.len() as u32);
+        for atom in &function.lexical_atoms {
+            out.u32(*atom);
+        }
+        out.u32(function.global_lexical_atoms.len() as u32);
+        for atom in &function.global_lexical_atoms {
+            out.u32(*atom);
+        }
+        out.u32(function.global_var_atoms.len() as u32);
+        for atom in &function.global_var_atoms {
+            out.u32(*atom);
+        }
+        out.u32(function.global_function_atoms.len() as u32);
+        for atom in &function.global_function_atoms {
+            out.u32(*atom);
+        }
+        out.u32(function.global_immutable_atoms.len() as u32);
+        for atom in &function.global_immutable_atoms {
             out.u32(*atom);
         }
         out.u16(function.registers);
@@ -79,6 +137,8 @@ pub(super) fn write_program(
             out.u32(handler.end);
             out.u32(handler.target);
             out.u16(handler.slot.unwrap_or(u16::MAX));
+            out.u32(handler.return_target.unwrap_or(u32::MAX));
+            out.u16(handler.return_slot.unwrap_or(u16::MAX));
         }
     }
     out.u16(program.cache_sites);
@@ -123,7 +183,7 @@ pub(super) fn write_program(
 pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let mut input = BinaryReader::new(&bytes);
-    input.magic(b"RQJ\0\x0d")?;
+    input.magic(RESIDUAL_MAGIC)?;
     let abi = input.u64()?;
     if abi != super::ResidualProgram::RUNTIME_ABI_FINGERPRINT {
         return Err("residual runtime ABI mismatch".into());
@@ -133,6 +193,43 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         1 => true,
         _ => return Err("invalid residual specialization mode".into()),
     };
+    let module = match input.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err("invalid residual source goal".into()),
+    };
+    let source_name = input.string()?;
+    let module_requests = input.list(|input| {
+        let source = input.string()?;
+        let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
+            .ok_or_else(|| "invalid residual module request phase".to_string())?;
+        let module_type = read_optional_string(input)?;
+        Ok(ModuleRequest {
+            source,
+            phase,
+            module_type,
+        })
+    })?;
+    let module_imports = input.list(|input| {
+        let source = input.string()?;
+        let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
+            .ok_or_else(|| "invalid residual module import phase".to_string())?;
+        let module_type = read_optional_string(input)?;
+        let imported = match ModuleImportNameKind::from_binary_tag(input.u8()?)
+            .ok_or_else(|| "invalid residual module import name".to_string())?
+        {
+            ModuleImportNameKind::Namespace => ModuleImportName::Namespace,
+            ModuleImportNameKind::Named => ModuleImportName::Named(input.string()?),
+        };
+        let local = input.string()?;
+        Ok(ModuleImportBinding {
+            source,
+            phase,
+            module_type,
+            imported,
+            local,
+        })
+    })?;
     let atoms = input.strings()?;
     let constants = input.list(|input| match input.u8()? {
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
@@ -149,6 +246,9 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let parent = input.option_u32()?;
         let name = input.option_u32()?;
         let params = input.u16()?;
+        let length = input.u16()?;
+        let parameter_end_pc = input.u32()?;
+        let parameter_atoms = input.list(|input| input.u32())?;
         let rest = match input.u8()? {
             0 => false,
             1 => true,
@@ -163,6 +263,30 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             0 => false,
             1 => true,
             _ => return Err("invalid generator function flag".into()),
+        };
+        let is_class_constructor = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid class constructor flag".into()),
+        };
+        let derived_constructor = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid derived constructor flag".into()),
+        };
+        let super_home_atom = match input.u32()? {
+            u32::MAX => None,
+            atom => Some(atom),
+        };
+        let constructible = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid constructible function flag".into()),
+        };
+        let class_field_initializer = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid class field initializer flag".into()),
         };
         let parameter_eval_arguments_error = match input.u8()? {
             0 => false,
@@ -180,6 +304,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         };
         let locals = input.u16()?;
         let local_atoms = input.list(|input| input.u32())?;
+        let lexical_atoms = input.list(|input| input.u32())?;
+        let global_lexical_atoms = input.list(|input| input.u32())?;
+        let global_var_atoms = input.list(|input| input.u32())?;
+        let global_function_atoms = input.list(|input| input.u32())?;
+        let global_immutable_atoms = input.list(|input| input.u32())?;
         let registers = input.u16()?;
         let dispatch = match input.u8()? {
             0 => DispatchClass::General,
@@ -189,21 +318,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let register_root_offset = input.u32()?;
         let code = input.list(|input| {
             let opcode = input.u8()?;
-            if usize::from(opcode) >= Op::COUNT {
-                return Err("invalid residual opcode".into());
-            }
-            // SAFETY: `Op` is a contiguous repr(u16) enum generated by `opcodes!`.
-            let op = unsafe { std::mem::transmute::<u16, Op>(u16::from(opcode)) };
+            let op = Op::from_index(usize::from(opcode))
+                .ok_or_else(|| String::from("invalid residual opcode"))?;
             let a = input.u16()?;
             let b = input.u16()?;
             let c = input.u16()?;
             let imm = input.u32()?;
             if op == Op::Wide {
-                let index = u64::from(a)
-                    | (u64::from(b) << 14)
-                    | (u64::from(c) << 28)
-                    | (u64::from(imm) << 42);
-                Instr::wide(index as usize)
+                Instr::wide_from_fields(a, b, c, imm)
                     .ok_or_else(|| String::from("residual wide index exceeds domain"))
             } else {
                 Instr::try_new(op, a, b, c, imm)
@@ -212,11 +334,9 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         })?;
         let wide = input.list(|input| {
             let opcode = input.u8()?;
-            if usize::from(opcode) >= Op::COUNT || opcode == Op::Wide as u8 {
-                return Err("invalid residual wide opcode".into());
-            }
-            // SAFETY: `Op` is a contiguous repr(u16) enum generated by `opcodes!`.
-            let op = unsafe { std::mem::transmute::<u16, Op>(u16::from(opcode)) };
+            let op = Op::from_index(usize::from(opcode))
+                .filter(|op| *op != Op::Wide)
+                .ok_or_else(|| String::from("invalid residual wide opcode"))?;
             Ok(WideInstruction::new(
                 op,
                 input.u16()?,
@@ -233,25 +353,42 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             let end = input.u32()?;
             let target = input.u32()?;
             let slot = input.u16()?;
+            let return_target = input.u32()?;
+            let return_slot = input.u16()?;
             Ok(Handler {
                 start,
                 end,
                 target,
                 slot: (slot != u16::MAX).then_some(slot),
+                return_target: (return_target != u32::MAX).then_some(return_target),
+                return_slot: (return_slot != u16::MAX).then_some(return_slot),
             })
         })?;
         Ok(Function {
             parent,
             name,
             params,
+            length,
+            parameter_end_pc,
+            parameter_atoms,
             rest,
             is_async,
             is_generator,
+            is_class_constructor,
+            derived_constructor,
+            super_home_atom,
+            constructible,
+            class_field_initializer,
             parameter_eval_arguments_error,
             arguments_slot,
             strict,
             locals,
             local_atoms,
+            lexical_atoms,
+            global_lexical_atoms,
+            global_var_atoms,
+            global_function_atoms,
+            global_immutable_atoms,
             code,
             wide,
             registers,
@@ -310,6 +447,10 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
+        module,
+        module_requests,
+        module_imports,
+        source_name,
         atoms,
         constants,
         functions,
@@ -396,5 +537,23 @@ impl<'a> BinaryReader<'a> {
     }
     pub(super) fn finish(self) -> Result<(), String> {
         if self.cursor == self.bytes.len() { Ok(()) } else { Err("trailing residual data".into()) }
+    }
+}
+
+fn write_optional_string(out: &mut BinaryWriter, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            out.u8(OPTIONAL_STRING_SOME);
+            out.string(value);
+        }
+        None => out.u8(OPTIONAL_STRING_NONE),
+    }
+}
+
+fn read_optional_string(input: &mut BinaryReader<'_>) -> Result<Option<String>, String> {
+    match input.u8()? {
+        OPTIONAL_STRING_NONE => Ok(None),
+        OPTIONAL_STRING_SOME => input.string().map(Some),
+        _ => Err("invalid optional residual string".into()),
     }
 }

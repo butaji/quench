@@ -2,15 +2,58 @@ use super::wtf16::JsString;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn typeof_value(&mut self, value: Value) -> Value {
+        let text = if value.is_undefined() || value.is_deleted() {
+            "undefined"
+        } else if value.as_bool().is_some() {
+            "boolean"
+        } else if value.as_number().is_some() {
+            "number"
+        } else if matches!(self.heap.get(value), Some(Cell::String(_))) {
+            "string"
+        } else if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
+            "bigint"
+        } else if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
+            "symbol"
+        } else if value == self.function_proto || self.is_function(self.proxy_target(value)) {
+            "function"
+        } else {
+            "object"
+        };
+        self.heap.alloc(Cell::String(text.into()))
+    }
+
+    pub(super) fn to_numeric(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let primitive = if self.is_object_like(value) {
+            self.to_primitive(p, value, "number")?
+        } else {
+            value
+        };
+        if matches!(self.heap.get(primitive), Some(Cell::BigInt(_))) {
+            Ok(primitive)
+        } else {
+            Ok(Value::number(self.to_number(p, primitive)?))
+        }
+    }
+
     pub(super) fn to_property_key(
         &mut self,
         program: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
-            return Ok(value);
+        let primitive = if self.is_object_like(value) {
+            self.to_primitive(program, value, "string")?
+        } else {
+            value
+        };
+        if matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
+            return Ok(primitive);
         }
-        let text = self.coerce_js_string(program, value)?;
+        let text = self.coerce_js_string(program, primitive)?;
         Ok(self.heap.alloc(Cell::String(text)))
     }
 
@@ -31,15 +74,18 @@ impl<H: Host> Vm<H> {
         op: u32,
         value: Value,
     ) -> Result<Value, JsError> {
-        let value = if matches!(op, 0 | 1 | 3) && self.object_data(value).is_some() {
+        let value = if matches!(op, 0 | 1 | 3) && self.is_object_like(value) {
             self.to_primitive(p, value, "number")?
         } else {
             value
         };
         if let Some(Cell::BigInt(value)) = self.heap.get(value).cloned() {
-            let value = value.parse::<num_bigint::BigInt>().map_err(|_| {
-                self.type_error(p, "Invalid BigInt value".into())
-            })?;
+            if op == 0 {
+                return Err(self.type_error(p, "Cannot convert BigInt value to number".into()));
+            }
+            let value = value
+                .parse::<num_bigint::BigInt>()
+                .map_err(|_| self.type_error(p, "Invalid BigInt value".into()))?;
             if op == 1 {
                 return Ok(self.heap.alloc(Cell::BigInt((-value).to_str_radix(10))));
             }
@@ -58,26 +104,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             3 => Value::number((!(number_to_u32(self.to_number(p, value)?) as i32)) as f64),
-            4 => {
-                let text = if value.is_undefined() || value.is_deleted() {
-                    "undefined"
-                } else if value.as_bool().is_some() {
-                    "boolean"
-                } else if value.as_number().is_some() {
-                    "number"
-                } else if matches!(self.heap.get(value), Some(Cell::String(_))) {
-                    "string"
-                } else if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
-                    "bigint"
-                } else if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
-                    "symbol"
-                } else if matches!(self.heap.get(value), Some(Cell::Function { .. })) {
-                    "function"
-                } else {
-                    "object"
-                };
-                self.heap.alloc(Cell::String(text.into()))
-            }
+            4 => return Ok(self.typeof_value(value)),
             5 => Value::UNDEFINED,
             _ => return Err(JsError("unsupported unary operator".into())),
         })
@@ -113,19 +140,7 @@ impl<H: Host> Vm<H> {
                 );
             }
             Some(Cell::String(value)) => {
-                let text = value.host_string().trim();
-                let radix = if text.starts_with("0x") || text.starts_with("0X") {
-                    Some(16)
-                } else if text.starts_with("0o") || text.starts_with("0O") {
-                    Some(8)
-                } else if text.starts_with("0b") || text.starts_with("0B") {
-                    Some(2)
-                } else {
-                    None
-                };
-                return Ok(radix
-                    .and_then(|radix| u64::from_str_radix(&text[2..], radix).ok())
-                    .map_or_else(|| text.parse().unwrap_or(f64::NAN), |value| value as f64));
+                return Ok(super::number::parse_number_string(&value.host_string()));
             }
             Some(Cell::BigInt(value)) => return Ok(value.parse().unwrap_or(f64::NAN)),
             _ => {}
@@ -156,7 +171,7 @@ impl<H: Host> Vm<H> {
             return Ok(value.to_string());
         }
         if let Some(value) = value.as_number() {
-            return Ok(number_string(value));
+            return Ok(crate::number_to_string::format(value));
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "string")?;
@@ -167,8 +182,10 @@ impl<H: Host> Vm<H> {
             Some(Cell::String(value)) => return Ok(value.to_string()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.clone()),
-            Some(Cell::Symbol(description)) => {
-                return Ok(format!("Symbol({})", description.as_deref().unwrap_or("")));
+            Some(Cell::Symbol(_)) => {
+                return Err(
+                    self.type_error(program, "Cannot convert a Symbol value to a string".into())
+                );
             }
             Some(Cell::Date { milliseconds, .. }) => return Ok(milliseconds.to_string()),
             _ => {}
@@ -198,9 +215,14 @@ impl<H: Host> Vm<H> {
         value: Value,
         hint: &str,
     ) -> Result<Value, JsError> {
-        if !self.object_data(value).is_some() {
+        if !self.is_object_like(value) {
             return Ok(value);
         }
+        let hint = if matches!(self.heap.get(value), Some(Cell::Date { .. })) && hint == "default" {
+            "string"
+        } else {
+            hint
+        };
         if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
             let method = self.get_index(program, value, symbol)?;
             if !method.is_undefined() && !method.is_null() {
@@ -211,7 +233,7 @@ impl<H: Host> Vm<H> {
                 }
                 let hint = self.heap.alloc(Cell::String(hint.into()));
                 let result = self.call_value(program, method, value, &[hint])?;
-                if self.object_data(result).is_none() {
+                if !self.is_object_like(result) {
                     return Ok(result);
                 }
                 return Err(
@@ -224,25 +246,25 @@ impl<H: Host> Vm<H> {
         } else {
             ["valueOf", "toString"]
         };
-        let mut attempted = false;
         for name in names {
             let atom = self.intern_atom(name);
             let method = self.get_property(program, value, atom)?;
             if self.is_function(method) {
-                attempted = true;
                 let result = self.call_value(program, method, value, &[])?;
-                if self.object_data(result).is_none() {
+                if !self.is_object_like(result) {
                     return Ok(result);
+                }
+            } else if name == "toString" && method.is_undefined() {
+                let owns_method = self.own_property(value, atom).is_some();
+                let has_prototype = self
+                    .object_data(value)
+                    .is_none_or(|object| !object.proto.is_null());
+                if !owns_method && has_prototype {
+                    return Ok(self.heap.alloc(Cell::String("[object Object]".into())));
                 }
             }
         }
-        if !attempted {
-            return Ok(self.heap.alloc(Cell::String("[object Object]".into())));
-        }
-        Err(self.type_error(
-            program,
-            "Cannot convert object to primitive value".into(),
-        ))
+        Err(self.type_error(program, "Cannot convert object to primitive value".into()))
     }
 
     pub(super) fn strict_equal(&self, a: Value, b: Value) -> bool {
@@ -265,35 +287,5 @@ impl<H: Host> Vm<H> {
             || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan())
             || matches!(self.heap.get(v), Some(Cell::String(text)) if text.units().is_empty())
             || matches!(self.heap.get(v), Some(Cell::BigInt(value)) if value == "0"))
-    }
-}
-
-fn number_string(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".into();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            "-Infinity"
-        } else {
-            "Infinity"
-        }
-        .into();
-    }
-    if value == 0.0 {
-        return "0".into();
-    }
-    let magnitude = value.abs();
-    if magnitude >= 1e21 || magnitude < 1e-6 {
-        let scientific = format!("{value:e}");
-        let (mantissa, exponent) = scientific.split_once('e').unwrap();
-        let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
-        let exponent = exponent.parse::<i32>().unwrap();
-        return format!("{mantissa}e{:+}", exponent);
-    }
-    if value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        value.to_string()
     }
 }

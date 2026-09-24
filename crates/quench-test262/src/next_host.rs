@@ -7,7 +7,10 @@
 
 use std::path::Path;
 
-use rqj::{CapabilityId, Engine, Host, HostGlobal, Runtime, SystemHost};
+use rqj::{
+    CapabilityId, Engine, ExecutionRequest, Host, HostGlobal, ModuleSource, Runtime, SourceKind,
+    SystemHost,
+};
 
 use crate::Test262Host;
 
@@ -57,16 +60,47 @@ impl Host for RuntimeNextHost {
     fn done(&mut self, text: Option<&str>) {
         self.done = Some(text.unwrap_or_default().to_string());
     }
+
+    fn resolve_dynamic_import(
+        &mut self,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<ModuleSource>, String> {
+        if !specifier.starts_with('.') {
+            return Ok(None);
+        }
+        let referrer = Path::new(referrer);
+        let path = referrer
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(specifier);
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        let source = String::from_utf8_lossy(&bytes).into_owned();
+        Ok(Some(ModuleSource {
+            name: path.display().to_string(),
+            source,
+            bytes,
+        }))
+    }
 }
 
 impl RuntimeNextHost {
     fn execute(&mut self, source: &str, name: &str) -> Result<(), String> {
+        self.execute_kind(source, name, SourceKind::Script)
+    }
+
+    fn execute_kind(&mut self, source: &str, name: &str, kind: SourceKind) -> Result<(), String> {
         self.done = None;
         let async_test = self.async_test;
         let mut runtime = Runtime::new(std::mem::take(self));
         let result = (|| {
-            let program = Engine::specialize_unspecialized(source, name)
-                .map_err(|errors| format!("next runtime SyntaxError: {errors:?}"))?;
+            let program = match kind {
+                SourceKind::Script => Engine::specialize_unspecialized(source, name),
+                SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
+                SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
+            }
+            .map_err(|errors| format!("next runtime SyntaxError: {errors:?}"))?;
             runtime
                 .execute(&program)
                 .map_err(|error| format!("next runtime: {error:?}"))?;
@@ -118,10 +152,7 @@ impl Test262Host for RuntimeNextHost {
     }
 
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
-        // A module with no import/export declarations has the same residual
-        // execution shape as a script; keep the module boundary explicit
-        // until Task 18 supplies module records and linkage.
-        self.execute(source, "<test262-module>")
+        self.execute_kind(source, "<test262-module>", SourceKind::Module)
     }
 
     fn run_harnessed_script(
@@ -133,16 +164,37 @@ impl Test262Host for RuntimeNextHost {
         self.execute(&Self::compose(harness, source, strict), "<test262-harness>")
     }
 
+    fn run_harnessed_script_at(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        strict: bool,
+        path: &Path,
+    ) -> Result<(), String> {
+        self.execute(
+            &Self::compose(harness, source, strict),
+            &path.display().to_string(),
+        )
+    }
+
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
-        self.execute(&Self::compose(harness, source, false), "<test262-module>")
+        self.execute_kind(
+            &Self::compose(harness, source, false),
+            "<test262-module>",
+            SourceKind::Module,
+        )
     }
 
     fn run_harnessed_module_at(
         &mut self,
         harness: &[&str],
         source: &str,
-        _path: &Path,
+        path: &Path,
     ) -> Result<(), String> {
-        self.run_harnessed_module(harness, source)
+        self.execute_kind(
+            &Self::compose(harness, source, false),
+            &path.display().to_string(),
+            SourceKind::Module,
+        )
     }
 }

@@ -275,50 +275,46 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let values = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => {
-                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-                (0..length)
-                    .map(|index| {
-                        elements
-                            .get(index)
-                            .copied()
-                            .or_else(|| self.heap.sparse_get(this, index))
-                            .unwrap_or(Value::UNDEFINED)
-                    })
-                    .collect::<Vec<_>>()
-            }
-            Some(_) => {
-                let length_atom = self.intern_atom("length");
-                let length = self
-                    .get_property(p, this, length_atom)
-                    .and_then(|value| self.to_number(p, value))?
-                    .max(0.0)
-                    .floor() as usize;
-                (0..length)
-                    .map(|index| self.get_index(p, this, Value::number(index as f64)))
-                    .collect::<Result<Vec<_>, _>>()?
-            }
-            None => return Err(JsError("array callback receiver is not array".into())),
-        };
+        if this.is_null() || this.is_undefined() {
+            return Err(self.type_error(p, "array callback receiver is nullish".into()));
+        }
+        let this = self.box_object(this)?;
+        let length = self.array_like_length(p, this)?;
+        if native == Native::ArrayMap && length > u32::MAX as usize {
+            return Err(self.range_error(p, "invalid array length".into()));
+        }
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
             return Err(JsError("array callback is not callable".into()));
         }
         let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let mut output = Vec::new();
-        let indices = if matches!(native, Native::ArrayFindLast | Native::ArrayFindLastIndex) {
-            (0..values.len()).rev().collect::<Vec<_>>()
-        } else {
-            (0..values.len()).collect::<Vec<_>>()
-        };
-        for index in indices {
-            let value = values[index];
+        let reverse = matches!(native, Native::ArrayFindLast | Native::ArrayFindLastIndex);
+        for offset in 0..length {
+            let index = if reverse { length - offset - 1 } else { offset };
+            let key = Value::number(index as f64);
+            let finds_holes = matches!(
+                native,
+                Native::ArrayFind
+                    | Native::ArrayFindIndex
+                    | Native::ArrayFindLast
+                    | Native::ArrayFindLastIndex
+            );
+            if !finds_holes && !self.has_property(p, this, key)? {
+                if matches!(native, Native::ArrayMap) {
+                    output.resize(index + 1, Value::DELETED);
+                }
+                continue;
+            }
+            let value = self.get_index(p, this, key)?;
             let callback_args = [value, Value::number(index as f64), this];
             let result = self.call_value(p, callback, this_arg, &callback_args)?;
             match native {
                 Native::ArrayForEach => {}
-                Native::ArrayMap => output.push(result),
+                Native::ArrayMap => {
+                    output.resize(index + 1, Value::DELETED);
+                    output[index] = result;
+                }
                 Native::ArrayFilter if self.truthy(result) => output.push(value),
                 Native::ArraySome if self.truthy(result) => return Ok(Value::TRUE),
                 Native::ArrayEvery if !self.truthy(result) => return Ok(Value::FALSE),
@@ -347,6 +343,26 @@ impl<H: Host> Vm<H> {
             Native::ArrayFindLastIndex => Ok(Value::number(-1.0)),
             _ => unreachable!("non-callback native routed to callback dispatch"),
         }
+    }
+
+    fn array_like_length(&mut self, p: &ResidualProgram, object: Value) -> Result<usize, JsError> {
+        if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
+            return Ok(self
+                .heap
+                .sparse_length(object)
+                .unwrap_or(0)
+                .max(elements.len()));
+        }
+        let length_atom = self.intern_atom("length");
+        let value = self.get_property(p, object, length_atom)?;
+        let number = self.to_number(p, value)?;
+        if number.is_nan() || number <= 0.0 {
+            return Ok(0);
+        }
+        Ok(number
+            .floor()
+            .min(9_007_199_254_740_991.0)
+            .min(usize::MAX as f64) as usize)
     }
 
     pub(super) fn array_flat_map_native(

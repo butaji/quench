@@ -3,6 +3,16 @@ use std::{env, path::PathBuf, process::ExitCode};
 use quench_test262::{HarnessCache, RuntimeHost, Test262Runner, TestOutcome};
 
 fn main() -> ExitCode {
+    if !env::var("TEST262_TEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|timeout_ms| timeout_ms > 0)
+    {
+        eprintln!(
+            "FAIL: TEST262_TEST_TIMEOUT_MS must be set to a positive timeout in milliseconds"
+        );
+        return ExitCode::from(2);
+    }
     let Some(path) = env::args_os().nth(1).map(PathBuf::from) else {
         eprintln!("usage: cargo run -p quench-test262 --bin run-test -- <test.js>");
         return ExitCode::from(2);
