@@ -1414,7 +1414,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
-        if p.module_requests.is_empty() {
+        if !p.module {
             return Ok(());
         }
         let root = ModuleSource {
@@ -1427,6 +1427,9 @@ impl<H: Host> Vm<H> {
                 module_cache_key(&p.source_name, "javascript"),
                 ModuleRecord::evaluating_main(namespace),
             );
+        }
+        if p.module_requests.is_empty() {
+            return Ok(());
         }
         let mut active = FxHashSet::default();
         active.insert(crate::module_identity::normalize(std::path::Path::new(
