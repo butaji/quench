@@ -289,16 +289,17 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 );
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
-                if let Some(identifier) = &function.id {
+                if default_export {
+                    let binding = function
+                        .id
+                        .as_ref()
+                        .map(|identifier| identifier.name.to_string())
+                        .unwrap_or_else(|| super::module_default_binding(self.owner.source));
+                    let atom = self.owner.atom(&binding);
+                    self.store_atom_with_initialization(atom, dst, true);
+                } else if let Some(identifier) = &function.id {
                     let atom = self.owner.atom(identifier.name.as_str());
                     self.store_atom(atom, dst);
-                }
-                if default_export {
-                    let binding = super::module_default_binding(self.owner.source);
-                    let atom = self.owner.atom(&binding);
-                    self.store_atom(atom, dst);
-                } else if function.id.is_some() {
-                    // The named declaration binding was stored above.
                 } else {
                     continue;
                 }

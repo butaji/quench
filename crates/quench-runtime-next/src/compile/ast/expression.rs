@@ -209,7 +209,12 @@ impl FunctionCompiler<'_, '_> {
         self.store_atom_with_initialization(atom, value, true);
     }
 
-    fn store_atom_with_initialization(&mut self, atom: Atom, value: Register, initializing: bool) {
+    pub(super) fn store_atom_with_initialization(
+        &mut self,
+        atom: Atom,
+        value: Register,
+        initializing: bool,
+    ) {
         let atom = self.resolve_lexical(atom);
         if self.owner.atoms[atom as usize]
             .as_ref()
