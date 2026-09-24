@@ -2,6 +2,9 @@ use oxc_ast::ast::{StringLiteral, TemplateElementValue};
 
 use crate::bytecode::Constant;
 
+const OCTAL_ESCAPE_DIGITS_FOR_ZERO_TO_THREE: usize = 3;
+const OCTAL_ESCAPE_DIGITS_FOR_FOUR_TO_SEVEN: usize = 2;
+
 pub(super) fn constant(value: &StringLiteral<'_>) -> Constant {
     from_raw(
         value.raw.as_ref().map(|raw| raw.as_str()),
@@ -80,11 +83,34 @@ fn decode_units(raw: &str) -> Vec<u16> {
             'r' => units.push(13),
             't' => units.push(9),
             'v' => units.push(11),
-            '0' => units.push(0),
+            '0'..='7' => units.push(read_octal_escape(&mut chars, escape)),
             other => push_char(&mut units, other),
         }
     }
     units
+}
+
+fn read_octal_escape(chars: &mut std::str::Chars<'_>, first: char) -> u16 {
+    let maximum_digits = if first <= '3' {
+        OCTAL_ESCAPE_DIGITS_FOR_ZERO_TO_THREE
+    } else {
+        OCTAL_ESCAPE_DIGITS_FOR_FOUR_TO_SEVEN
+    };
+    let mut value = first as u16 - b'0' as u16;
+    let mut digits = 1;
+    while digits < maximum_digits
+        && chars
+            .clone()
+            .next()
+            .is_some_and(|next| ('0'..='7').contains(&next))
+    {
+        let Some(next) = chars.next() else {
+            break;
+        };
+        value = value * 8 + (next as u16 - b'0' as u16);
+        digits += 1;
+    }
+    value
 }
 
 fn push_char(units: &mut Vec<u16>, value: char) {

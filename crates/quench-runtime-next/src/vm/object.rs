@@ -209,6 +209,7 @@ impl<H: Host> Vm<H> {
                     | Cell::Proxy { .. }
                     | Cell::Function { .. }
                     | Cell::Date { .. }
+                    | Cell::RegExp { .. }
                     | Cell::Error(_)
             )
         )

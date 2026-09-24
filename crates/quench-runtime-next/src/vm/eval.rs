@@ -98,6 +98,12 @@ impl<H: Host> Vm<H> {
                 .last()
                 .and_then(|frame| p.functions.get(frame.function as usize))
                 .is_some_and(|function| function.strict);
+        if inherited_strict
+            && let Some(error) = crate::Engine::strict_octal_numeric_early_error(trimmed)
+        {
+            return self
+                .syntax_error_result(p, error.strip_prefix("SyntaxError: ").unwrap_or(&error));
+        }
         if inherited_strict && (trimmed.contains("arguments =") || trimmed.contains("arguments=")) {
             return self.syntax_error_result(p, "'arguments' is not allowed in strict mode");
         }

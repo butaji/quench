@@ -188,5 +188,6 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
         Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
         Cell::Date { .. } => 0,
+        Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
     }
 }

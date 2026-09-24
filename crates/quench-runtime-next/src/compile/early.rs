@@ -128,6 +128,30 @@ pub(super) fn strict_binding_early_error(program: &Program<'_>) -> Option<String
     validate_strict_statements(&program.body, strict)
 }
 
+pub(super) fn strict_octal_numeric_early_error(program: &Program<'_>) -> Option<String> {
+    let mut validator = StrictOctalNumericEarlyError(None);
+    validator.visit_program(program);
+    validator.0
+}
+
+struct StrictOctalNumericEarlyError(Option<String>);
+
+impl<'a> Visit<'a> for StrictOctalNumericEarlyError {
+    fn visit_numeric_literal(&mut self, literal: &oxc_ast::ast::NumericLiteral<'a>) {
+        let Some(raw) = literal.raw.as_ref().map(|raw| raw.as_str()) else {
+            return;
+        };
+        let bytes = raw.as_bytes();
+        if bytes.len() > 1
+            && bytes[0] == b'0'
+            && bytes[1].is_ascii_digit()
+            && bytes.iter().all(u8::is_ascii_digit)
+        {
+            self.0 = Some("SyntaxError: legacy octal literal is not allowed in strict mode".into());
+        }
+    }
+}
+
 pub(super) fn parameter_early_error(
     program: &Program<'_>,
     inherited_strict: bool,

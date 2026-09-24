@@ -189,14 +189,8 @@ impl<H: Host> Vm<H> {
         let receiver_host = receiver.host_string();
         let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
         let (source, flags) = if self.is_regexp(pattern) {
-            let source_atom = self.intern_atom("source");
-            let flags_atom = self.intern_atom("flags");
-            let source_value = self.get_property(p, pattern, source_atom)?;
-            let flags_value = self.get_property(p, pattern, flags_atom)?;
-            (
-                self.to_string(p, source_value)?,
-                self.to_string(p, flags_value)?,
-            )
+            self.regexp_source_and_flags(pattern)
+                .ok_or_else(|| JsError("RegExp method called on incompatible receiver".into()))?
         } else {
             (regex::escape(&self.to_string(p, pattern)?), String::new())
         };
@@ -255,7 +249,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn string_split_regexp_native(
         &mut self,
-        p: &ResidualProgram,
+        _p: &ResidualProgram,
         this: Value,
         separator: Value,
         limit: usize,
@@ -264,12 +258,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError("string method receiver is not a string".into()));
         };
         let receiver_host = receiver.host_string();
-        let source_atom = self.intern_atom("source");
-        let flags_atom = self.intern_atom("flags");
-        let source_value = self.get_property(p, separator, source_atom)?;
-        let flags_value = self.get_property(p, separator, flags_atom)?;
-        let source = self.to_string(p, source_value)?;
-        let flags = self.to_string(p, flags_value)?;
+        let (source, flags) = self
+            .regexp_source_and_flags(separator)
+            .ok_or_else(|| JsError("RegExp method called on incompatible receiver".into()))?;
         let regex = Self::compile_regexp(&source, &flags)?;
         let mut values = Vec::new();
         let mut cursor = 0;
@@ -326,12 +317,9 @@ impl<H: Host> Vm<H> {
         };
         let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
         if self.is_regexp(search_value) {
-            let source_atom = self.intern_atom("source");
-            let flags_atom = self.intern_atom("flags");
-            let source_value = self.get_property(p, search_value, source_atom)?;
-            let flags_value = self.get_property(p, search_value, flags_atom)?;
-            let source = self.to_string(p, source_value)?;
-            let flags = self.to_string(p, flags_value)?;
+            let (source, flags) = self
+                .regexp_source_and_flags(search_value)
+                .ok_or_else(|| JsError("RegExp method called on incompatible receiver".into()))?;
             let regex = Self::compile_regexp(&source, &flags)?;
             if replace_all && !flags.contains('g') {
                 return Err(JsError("replaceAll requires a global RegExp".into()));
