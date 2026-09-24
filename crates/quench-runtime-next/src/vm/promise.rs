@@ -35,6 +35,25 @@ enum StaticModuleValue {
 
 type ActiveModuleExports = FxHashMap<std::path::PathBuf, Vec<(String, StaticModuleValue)>>;
 
+type StaticModuleNodes = FxHashMap<std::path::PathBuf, StaticModuleNode>;
+type StaticModuleResolveSet = FxHashSet<(std::path::PathBuf, String)>;
+
+#[derive(Clone)]
+enum StaticModuleNode {
+    Direct(Vec<(String, StaticModuleValue)>),
+    Planned {
+        locals: Vec<(String, StaticModuleValue)>,
+        reexports: Vec<crate::compile::StaticModuleReexport>,
+    },
+}
+
+enum StaticModuleResolution {
+    Binding(StaticModuleValue),
+    Missing,
+    Ambiguous,
+    Unsupported,
+}
+
 enum StaticModuleGraph {
     Linked {
         name: String,
@@ -2098,6 +2117,351 @@ impl<H: Host> Vm<H> {
         Err(JsError::thrown(reason, "module evaluation threw".into()))
     }
 
+    fn ensure_static_module_node(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        nodes: &mut StaticModuleNodes,
+    ) -> Result<bool, JsError> {
+        let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
+        if nodes.contains_key(&identity) {
+            return Ok(true);
+        }
+        if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
+            let exports = exports
+                .into_iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        StaticModuleValue::Constant {
+                            module: module.name.clone(),
+                            export: name,
+                            value,
+                        },
+                    )
+                })
+                .collect();
+            nodes.insert(identity, StaticModuleNode::Direct(exports));
+            return Ok(true);
+        }
+        let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
+            return Ok(false);
+        };
+        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
+            .map(|atom| self.atom_name(atom as u32).to_owned())
+            .collect::<Vec<_>>();
+        let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+            &module.source,
+            &module.name,
+            &atom_prefix,
+        )
+        .map_err(|diagnostics| {
+            self.type_error(
+                p,
+                format!("dynamic module compilation failed: {diagnostics:?}"),
+            )
+        })?;
+        if !residual.module_imports.is_empty() {
+            return Ok(false);
+        }
+        let locals = if plan.locals.is_empty() {
+            Vec::new()
+        } else {
+            self.evaluate_module_locals(
+                p,
+                module,
+                plan.locals,
+                &mut ActiveModuleExports::default(),
+            )?
+        };
+        nodes.insert(
+            identity,
+            StaticModuleNode::Planned {
+                locals,
+                reexports: plan.reexports,
+            },
+        );
+        Ok(true)
+    }
+
+    fn static_module_export_names(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        nodes: &mut StaticModuleNodes,
+        visited: &mut FxHashSet<std::path::PathBuf>,
+    ) -> Result<Option<Vec<String>>, JsError> {
+        let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
+        if !visited.insert(identity.clone()) {
+            return Ok(Some(Vec::new()));
+        }
+        if !self.ensure_static_module_node(p, module, nodes)? {
+            return Ok(None);
+        }
+        let Some(node) = nodes.get(&identity).cloned() else {
+            return Ok(None);
+        };
+        let mut names = Vec::new();
+        match node {
+            StaticModuleNode::Direct(exports) => {
+                names.extend(exports.into_iter().map(|(name, _)| name));
+            }
+            StaticModuleNode::Planned { locals, reexports } => {
+                names.extend(locals.into_iter().map(|(name, _)| name));
+                for reexport in reexports {
+                    match reexport {
+                        crate::compile::StaticModuleReexport::Named { exported, .. }
+                        | crate::compile::StaticModuleReexport::Namespace { exported, .. } => {
+                            names.push(exported);
+                        }
+                        crate::compile::StaticModuleReexport::Star { source } => {
+                            let Some(dependency) =
+                                self.static_module_dependency(p, &module.name, &source)?
+                            else {
+                                return Ok(None);
+                            };
+                            let Some(dependency_names) =
+                                self.static_module_export_names(p, &dependency, nodes, visited)?
+                            else {
+                                return Ok(None);
+                            };
+                            names.extend(dependency_names);
+                        }
+                    }
+                }
+            }
+        }
+        names.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+        names.dedup();
+        Ok(Some(names))
+    }
+
+    fn static_module_dependency(
+        &mut self,
+        p: &ResidualProgram,
+        referrer: &str,
+        source: &str,
+    ) -> Result<Option<ModuleSource>, JsError> {
+        self.host
+            .resolve_dynamic_import(referrer, source)
+            .map_err(|message| self.type_error(p, message))
+    }
+
+    fn resolve_static_module_export(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        name: &str,
+        nodes: &mut StaticModuleNodes,
+        resolve_set: &mut StaticModuleResolveSet,
+    ) -> Result<StaticModuleResolution, JsError> {
+        let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
+        if !resolve_set.insert((identity.clone(), name.to_owned())) {
+            return Ok(StaticModuleResolution::Missing);
+        }
+        if !self.ensure_static_module_node(p, module, nodes)? {
+            return Ok(StaticModuleResolution::Unsupported);
+        }
+        let Some(node) = nodes.get(&identity).cloned() else {
+            return Ok(StaticModuleResolution::Unsupported);
+        };
+        let (locals, reexports) = match node {
+            StaticModuleNode::Direct(exports) => (exports, Vec::new()),
+            StaticModuleNode::Planned { locals, reexports } => (locals, reexports),
+        };
+        if let Some((_, value)) = locals.into_iter().find(|(export, _)| export == name) {
+            return Ok(StaticModuleResolution::Binding(value));
+        }
+        for reexport in &reexports {
+            if let crate::compile::StaticModuleReexport::Named {
+                source,
+                imported,
+                exported,
+            } = reexport
+                && exported == name
+            {
+                let Some(dependency) = self.static_module_dependency(p, &module.name, source)?
+                else {
+                    return Ok(StaticModuleResolution::Missing);
+                };
+                return self.resolve_static_module_export(
+                    p,
+                    &dependency,
+                    imported,
+                    nodes,
+                    resolve_set,
+                );
+            }
+            if let crate::compile::StaticModuleReexport::Namespace { source, exported } = reexport
+                && exported == name
+            {
+                let Some(dependency) = self.static_module_dependency(p, &module.name, source)?
+                else {
+                    return Ok(StaticModuleResolution::Missing);
+                };
+                let Some(names) = self.static_module_export_names(
+                    p,
+                    &dependency,
+                    nodes,
+                    &mut FxHashSet::default(),
+                )?
+                else {
+                    return Ok(StaticModuleResolution::Unsupported);
+                };
+                let mut exports = Vec::new();
+                for name in names {
+                    match self.resolve_static_module_export(
+                        p,
+                        &dependency,
+                        &name,
+                        nodes,
+                        &mut StaticModuleResolveSet::default(),
+                    )? {
+                        StaticModuleResolution::Binding(value) => exports.push((name, value)),
+                        StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {}
+                        StaticModuleResolution::Unsupported => {
+                            return Ok(StaticModuleResolution::Unsupported);
+                        }
+                    }
+                }
+                return Ok(StaticModuleResolution::Binding(
+                    StaticModuleValue::Namespace {
+                        name: dependency.name,
+                        exports,
+                    },
+                ));
+            }
+        }
+        let mut star_resolution: Option<StaticModuleValue> = None;
+        for reexport in reexports {
+            let crate::compile::StaticModuleReexport::Star { source } = reexport else {
+                continue;
+            };
+            if name == "default" {
+                continue;
+            }
+            let Some(dependency) = self.static_module_dependency(p, &module.name, &source)? else {
+                return Ok(StaticModuleResolution::Missing);
+            };
+            let mut branch = resolve_set.clone();
+            match self.resolve_static_module_export(p, &dependency, name, nodes, &mut branch)? {
+                StaticModuleResolution::Binding(value) => match &star_resolution {
+                    Some(existing) if !same_static_module_binding(existing, &value) => {
+                        return Ok(StaticModuleResolution::Ambiguous);
+                    }
+                    None => star_resolution = Some(value),
+                    _ => {}
+                },
+                StaticModuleResolution::Ambiguous => {
+                    return Ok(StaticModuleResolution::Ambiguous);
+                }
+                StaticModuleResolution::Missing => {}
+                StaticModuleResolution::Unsupported => {
+                    return Ok(StaticModuleResolution::Unsupported);
+                }
+            }
+        }
+        Ok(star_resolution.map_or(
+            StaticModuleResolution::Missing,
+            StaticModuleResolution::Binding,
+        ))
+    }
+
+    fn validate_static_module_links(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        nodes: &mut StaticModuleNodes,
+        visited: &mut FxHashSet<std::path::PathBuf>,
+    ) -> Result<Option<bool>, JsError> {
+        let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
+        if !visited.insert(identity.clone()) {
+            return Ok(Some(true));
+        }
+        if !self.ensure_static_module_node(p, module, nodes)? {
+            return Ok(None);
+        }
+        let Some(StaticModuleNode::Planned { reexports, .. }) = nodes.get(&identity).cloned()
+        else {
+            return Ok(Some(true));
+        };
+        for reexport in reexports {
+            let (source, named) = match reexport {
+                crate::compile::StaticModuleReexport::Named {
+                    source, imported, ..
+                } => (source, Some(imported)),
+                crate::compile::StaticModuleReexport::Star { source }
+                | crate::compile::StaticModuleReexport::Namespace { source, .. } => (source, None),
+            };
+            let Some(dependency) = self.static_module_dependency(p, &module.name, &source)? else {
+                return Ok(Some(false));
+            };
+            if let Some(imported) = named {
+                match self.resolve_static_module_export(
+                    p,
+                    &dependency,
+                    &imported,
+                    nodes,
+                    &mut StaticModuleResolveSet::default(),
+                )? {
+                    StaticModuleResolution::Binding(_) => {}
+                    StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {
+                        return Ok(Some(false));
+                    }
+                    StaticModuleResolution::Unsupported => return Ok(None),
+                }
+            }
+            let Some(valid) = self.validate_static_module_links(p, &dependency, nodes, visited)?
+            else {
+                return Ok(None);
+            };
+            if !valid {
+                return Ok(Some(false));
+            }
+        }
+        Ok(Some(true))
+    }
+
+    fn resolve_static_module_plan_graph(
+        &mut self,
+        p: &ResidualProgram,
+        module: ModuleSource,
+    ) -> Result<Option<StaticModuleGraph>, JsError> {
+        let mut nodes = StaticModuleNodes::default();
+        let Some(names) =
+            self.static_module_export_names(p, &module, &mut nodes, &mut FxHashSet::default())?
+        else {
+            return Ok(None);
+        };
+        let Some(valid) =
+            self.validate_static_module_links(p, &module, &mut nodes, &mut FxHashSet::default())?
+        else {
+            return Ok(None);
+        };
+        if !valid {
+            return Ok(Some(StaticModuleGraph::LinkError));
+        }
+        let mut exports = Vec::new();
+        for name in names {
+            match self.resolve_static_module_export(
+                p,
+                &module,
+                &name,
+                &mut nodes,
+                &mut StaticModuleResolveSet::default(),
+            )? {
+                StaticModuleResolution::Binding(value) => exports.push((name, value)),
+                StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {}
+                StaticModuleResolution::Unsupported => return Ok(None),
+            }
+        }
+        Ok(Some(StaticModuleGraph::Linked {
+            name: module.name,
+            exports,
+            incomplete: false,
+        }))
+    }
+
     fn resolve_static_module_graph(
         &mut self,
         p: &ResidualProgram,
@@ -2111,6 +2475,12 @@ impl<H: Host> Vm<H> {
                 exports: exports.clone(),
                 incomplete: true,
             });
+        }
+        if crate::Engine::static_module_plan(&module.source, &module.name)
+            .is_some_and(|plan| !plan.reexports.is_empty())
+            && let Some(graph) = self.resolve_static_module_plan_graph(p, module.clone())?
+        {
+            return Ok(graph);
         }
         if p.module
             && self.active_program == ProgramId::MAIN
