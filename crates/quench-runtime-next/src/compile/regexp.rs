@@ -1,16 +1,23 @@
+const HEX_ESCAPE_DIGITS: usize = 2;
+const UNICODE_ESCAPE_DIGITS: usize = 4;
+const MAX_UNICODE_CODEPOINT: u32 = char::MAX as u32;
+
 pub(crate) fn validate_pattern(pattern: &str, flags: &str) -> Result<(), String> {
     validate_initial_quantifier(pattern)?;
     validate_braced_quantifier(pattern)?;
-    validate_quantified_lookbehind(pattern)?;
+    validate_quantified_assertions(pattern, flags.contains('u') || flags.contains('v'))?;
     let unicode = flags.contains('u') || flags.contains('v');
     if unicode {
         validate_unicode_escapes(pattern, flags.contains('v'))?;
+        validate_unicode_quantifier_braces(pattern)?;
+        validate_unicode_class_ranges(pattern)?;
     }
     validate_named_groups(pattern, unicode)
 }
 
 fn validate_unicode_escapes(pattern: &str, unicode_sets: bool) -> Result<(), String> {
     let chars: Vec<char> = pattern.chars().collect();
+    let capture_count = pattern_capture_count(pattern);
     let mut index = 0;
     while index < chars.len() {
         if chars[index] != '\\' {
@@ -21,6 +28,20 @@ fn validate_unicode_escapes(pattern: &str, unicode_sets: bool) -> Result<(), Str
             break;
         };
         match escaped {
+            '1'..='9' => {
+                let end = (index + 1..chars.len())
+                    .find(|cursor| !chars[*cursor].is_ascii_digit())
+                    .unwrap_or(chars.len());
+                let reference = chars[index + 1..end]
+                    .iter()
+                    .collect::<String>()
+                    .parse::<usize>()
+                    .unwrap_or(usize::MAX);
+                if reference > capture_count {
+                    return Err(invalid_pattern());
+                }
+                index = end;
+            }
             'c' => {
                 if !chars
                     .get(index + 2)
@@ -30,26 +51,15 @@ fn validate_unicode_escapes(pattern: &str, unicode_sets: bool) -> Result<(), Str
                 }
                 index += 3;
             }
+            'u' => index = validate_unicode_escape(&chars, index + 2)?,
+            'x' => index = validate_fixed_hex_escape(&chars, index + 2, HEX_ESCAPE_DIGITS)?,
             'p' | 'P' => index = skip_braced_escape(&chars, index + 2),
             'k' => index = skip_delimited_escape(&chars, index + 2, '<', '>'),
             'q' if unicode_sets => index = skip_braced_escape(&chars, index + 2),
             character if character.is_ascii_alphabetic() => {
                 if !matches!(
                     character,
-                    'b' | 'B'
-                        | 'f'
-                        | 'n'
-                        | 'r'
-                        | 't'
-                        | 'v'
-                        | 'd'
-                        | 'D'
-                        | 's'
-                        | 'S'
-                        | 'w'
-                        | 'W'
-                        | 'u'
-                        | 'x'
+                    'b' | 'B' | 'f' | 'n' | 'r' | 't' | 'v' | 'd' | 'D' | 's' | 'S' | 'w' | 'W'
                 ) {
                     return Err(invalid_pattern());
                 }
@@ -59,6 +69,38 @@ fn validate_unicode_escapes(pattern: &str, unicode_sets: bool) -> Result<(), Str
         }
     }
     Ok(())
+}
+
+fn validate_unicode_escape(chars: &[char], start: usize) -> Result<usize, String> {
+    if chars.get(start) == Some(&'{') {
+        let end = start
+            + 1
+            + chars[start + 1..]
+                .iter()
+                .position(|character| *character == '}')
+                .ok_or_else(invalid_pattern)?;
+        let digits = &chars[start + 1..end];
+        if digits.is_empty() || !digits.iter().all(char::is_ascii_hexdigit) {
+            return Err(invalid_pattern());
+        }
+        let value = digits.iter().collect::<String>();
+        if u32::from_str_radix(&value, 16)
+            .map_or(true, |codepoint| codepoint > MAX_UNICODE_CODEPOINT)
+        {
+            return Err(invalid_pattern());
+        }
+        return Ok(end + 1);
+    }
+    validate_fixed_hex_escape(chars, start, UNICODE_ESCAPE_DIGITS)
+}
+
+fn validate_fixed_hex_escape(chars: &[char], start: usize, digits: usize) -> Result<usize, String> {
+    let end = start.checked_add(digits).ok_or_else(invalid_pattern)?;
+    let spelling = chars.get(start..end).ok_or_else(invalid_pattern)?;
+    if !spelling.iter().all(char::is_ascii_hexdigit) {
+        return Err(invalid_pattern());
+    }
+    Ok(end)
 }
 
 fn skip_braced_escape(chars: &[char], start: usize) -> usize {
@@ -136,20 +178,33 @@ fn is_atom_terminator(byte: u8) -> bool {
     matches!(byte, b'^' | b'$' | b'|' | b'(' | b'\\')
 }
 
-fn validate_quantified_lookbehind(pattern: &str) -> Result<(), String> {
+fn validate_quantified_assertions(pattern: &str, unicode: bool) -> Result<(), String> {
+    let bytes = pattern.as_bytes();
     let mut index = 0;
-    while let Some(found) = pattern[index..].find("(?<") {
-        let marker = index + found + 3;
-        let Some(head) = pattern.as_bytes().get(marker).copied() else {
-            return Ok(());
-        };
-        if !matches!(head, b'=' | b'!') {
-            index = marker;
+    while index + 2 < bytes.len() {
+        match bytes[index] {
+            b'\\' => {
+                index += 2;
+                continue;
+            }
+            b'[' => {
+                index = character_class_end(bytes, index + 1).saturating_add(1);
+                continue;
+            }
+            _ => {}
+        }
+        let lookbehind =
+            bytes[index..].starts_with(b"(?<") && matches!(bytes.get(index + 3), Some(b'=' | b'!'));
+        let lookahead = unicode
+            && bytes[index..].starts_with(b"(?")
+            && matches!(bytes.get(index + 2), Some(b'=' | b'!'));
+        if !lookbehind && !lookahead {
+            index += 1;
             continue;
         }
-        if let Some(close) = matching_group_end(pattern, marker + 1) {
-            if pattern
-                .as_bytes()
+        let body_start = if lookbehind { index + 4 } else { index + 3 };
+        if let Some(close) = matching_group_end(pattern, body_start) {
+            if bytes
                 .get(close + 1)
                 .is_some_and(|next| matches!(next, b'?' | b'*' | b'+' | b'{'))
             {
@@ -157,7 +212,7 @@ fn validate_quantified_lookbehind(pattern: &str) -> Result<(), String> {
             }
             index = close + 1;
         } else {
-            index = marker;
+            index = body_start;
         }
     }
     Ok(())
@@ -213,10 +268,147 @@ fn validate_named_groups(pattern: &str, unicode: bool) -> Result<(), String> {
     let Some(names) = collect_group_names(pattern)? else {
         return Ok(());
     };
-    if unicode && names.is_empty() && pattern.contains("\\k<") {
+    if unicode && names.is_empty() && has_named_backreference_escape(pattern) {
         return Err(invalid_pattern());
     }
     validate_group_references(pattern, &names)
+}
+
+fn has_named_backreference_escape(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'\\' {
+            if bytes[index + 1] == b'k' {
+                return true;
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    false
+}
+
+fn pattern_capture_count(pattern: &str) -> usize {
+    let bytes = pattern.as_bytes();
+    let mut in_class = false;
+    let mut count = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'[' => {
+                in_class = true;
+                index += 1;
+            }
+            b']' => {
+                in_class = false;
+                index += 1;
+            }
+            b'(' if !in_class && is_capturing_group(bytes, index) => {
+                count += 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    count
+}
+
+fn is_capturing_group(bytes: &[u8], open: usize) -> bool {
+    match bytes.get(open + 1) {
+        Some(b'?') => {
+            bytes.get(open + 2) == Some(&b'<') && !matches!(bytes.get(open + 3), Some(b'=' | b'!'))
+        }
+        _ => true,
+    }
+}
+
+fn validate_unicode_quantifier_braces(pattern: &str) -> Result<(), String> {
+    let bytes = pattern.as_bytes();
+    let mut in_class = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if bytes.get(index + 1) == Some(&b'u') && bytes.get(index + 2) == Some(&b'{') => {
+                index = pattern[index + 3..]
+                    .find('}')
+                    .map_or(bytes.len(), |offset| index + 4 + offset);
+            }
+            b'\\' => index += 2,
+            b'[' => {
+                in_class = true;
+                index += 1;
+            }
+            b']' => {
+                in_class = false;
+                index += 1;
+            }
+            b'{' if !in_class => {
+                if !is_closed_decimal_quantifier(&pattern[index..]) {
+                    return Err(invalid_pattern());
+                }
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    Ok(())
+}
+
+fn is_closed_decimal_quantifier(suffix: &str) -> bool {
+    is_decimal_quantifier(suffix) && suffix.as_bytes().contains(&b'}')
+}
+
+fn validate_unicode_class_ranges(pattern: &str) -> Result<(), String> {
+    let bytes = pattern.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'[' {
+            index += usize::from(bytes[index] == b'\\').saturating_add(1);
+            continue;
+        }
+        let start = index + 1;
+        let end = character_class_end(bytes, start);
+        for dash in start..end {
+            if bytes[dash] == b'-'
+                && dash > start
+                && dash + 1 < end
+                && (set_escape_ends_at(bytes, dash) || set_escape_starts_at(bytes, dash + 1))
+            {
+                return Err(invalid_pattern());
+            }
+        }
+        index = end.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn character_class_end(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b']' => return index,
+            _ => index += 1,
+        }
+    }
+    bytes.len()
+}
+
+fn set_escape_ends_at(bytes: &[u8], end: usize) -> bool {
+    end >= 2 && bytes[end - 2] == b'\\' && is_character_class_escape(bytes[end - 1])
+}
+
+fn set_escape_starts_at(bytes: &[u8], start: usize) -> bool {
+    start + 1 < bytes.len() && bytes[start] == b'\\' && is_character_class_escape(bytes[start + 1])
+}
+
+fn is_character_class_escape(escaped: u8) -> bool {
+    matches!(
+        escaped,
+        b'd' | b'D' | b's' | b'S' | b'w' | b'W' | b'p' | b'P'
+    )
 }
 
 fn named_group_occurrences(pattern: &str) -> Result<Vec<GroupOccurrence>, String> {

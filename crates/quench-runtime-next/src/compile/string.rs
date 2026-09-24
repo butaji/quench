@@ -73,6 +73,7 @@ fn decode_units(raw: &str) -> Vec<u16> {
                     chars.next();
                 }
             }
+            '\u{2028}' | '\u{2029}' => {}
             'b' => units.push(8),
             'f' => units.push(12),
             'n' => units.push(10),

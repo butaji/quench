@@ -144,6 +144,14 @@ impl<H: Host> Vm<H> {
             | Native::DateToJSON => self.date_native(p, native, this, args),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
+            Native::RegExpGlobal
+            | Native::RegExpIgnoreCase
+            | Native::RegExpMultiline
+            | Native::RegExpDotAll
+            | Native::RegExpUnicode
+            | Native::RegExpUnicodeSets
+            | Native::RegExpSticky
+            | Native::RegExpHasIndices => self.regexp_flag_native(p, native, this),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let key_value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let descriptor = self.object_get_own_property_descriptor(p, &[this, key_value])?;
