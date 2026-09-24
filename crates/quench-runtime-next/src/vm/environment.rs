@@ -538,7 +538,10 @@ impl<H: Host> Vm<H> {
             .capture_env(frame, (address >> 16) as u16)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
         let Cell::Environment {
-            function, slots, ..
+            function,
+            program,
+            slots,
+            ..
         } = self
             .heap
             .get(env)
@@ -546,16 +549,36 @@ impl<H: Host> Vm<H> {
         else {
             return Err(JsError("invalid capture".into()));
         };
-        let value = slots
-            .get(address as u16 as usize)
-            .copied()
+        let slot = address as u16 as usize;
+        let value = program
+            .and_then(|program| {
+                self.module_import_value(
+                    super::program_store::ProgramId::from_raw(program),
+                    *function,
+                    slot,
+                )
+            })
+            .or_else(|| slots.get(slot).copied())
             .ok_or_else(|| JsError("invalid capture slot".into()))?;
         if value.is_deleted() {
-            let atom = p
-                .functions
-                .get(*function as usize)
-                .and_then(|metadata| metadata.local_atoms.get(address as u16 as usize))
-                .copied()
+            let atom = program
+                .and_then(|program| {
+                    self.programs
+                        .get(super::program_store::ProgramId::from_raw(program))
+                })
+                .and_then(|program| {
+                    program
+                        .functions
+                        .get(*function as usize)
+                        .and_then(|metadata| metadata.local_atoms.get(slot))
+                        .copied()
+                })
+                .or_else(|| {
+                    p.functions
+                        .get(*function as usize)
+                        .and_then(|metadata| metadata.local_atoms.get(slot))
+                        .copied()
+                })
                 .unwrap_or_default();
             return Err(self.reference_error(
                 p,
