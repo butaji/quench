@@ -1,8 +1,8 @@
 use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
-    MAPPED_ARGUMENTS_BIT, MethodSite, ModuleImportBinding, ModuleImportName, ModuleRequest,
-    ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram, SET_THIS_REGISTER,
-    Superinstruction, WideInstruction,
+    MAPPED_ARGUMENTS_BIT, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
+    SET_THIS_REGISTER, Superinstruction, WideInstruction,
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
@@ -72,21 +72,7 @@ pub(crate) struct StaticModulePlan {
     pub(crate) requests: Vec<ModuleRequest>,
     pub(crate) has_top_level_await: bool,
 }
-#[derive(Clone, Debug)]
-pub(crate) enum StaticModuleReexport {
-    Named {
-        source: String,
-        imported: String,
-        exported: String,
-    },
-    Star {
-        source: String,
-    },
-    Namespace {
-        source: String,
-        exported: String,
-    },
-}
+pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
 impl Engine {
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
         let allocator = Allocator::with_capacity(source.len());
@@ -221,74 +207,49 @@ impl Engine {
         if !semantic.diagnostics.is_empty() {
             return None;
         }
-        let mut plan = StaticModulePlan {
+        let link_plan = Self::module_link_plan(&parsed.program.body, module_name)?;
+        Some(StaticModulePlan {
+            locals: link_plan.locals,
+            reexports: link_plan.reexports,
             requests: module_requests(&parsed.program.body),
             has_top_level_await: has_top_level_await(&parsed.program.body),
-            ..StaticModulePlan::default()
+        })
+    }
+
+    fn module_link_plan(statements: &[Statement<'_>], module_name: &str) -> Option<ModuleLinkPlan> {
+        let mut plan = ModuleLinkPlan {
+            locals: Vec::new(),
+            reexports: Vec::new(),
         };
-        for statement in &parsed.program.body {
-            match statement {
-                Statement::EmptyStatement(_) => {}
-                Statement::ExportDeclaration(export) => {
-                    static_declaration_exports(&export.declaration, &mut plan.locals)?;
-                }
-                Statement::ExportDefaultDeclaration(export) => {
-                    let local = match &export.declaration {
-                        oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(
-                            function,
-                        ) => function
-                            .id
-                            .as_ref()
-                            .map(|identifier| identifier.name.to_string())
-                            .unwrap_or_else(|| module_default_binding(module_name)),
-                        oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-                            class
-                                .id
-                                .as_ref()
-                                .map(|identifier| identifier.name.to_string())
-                                .unwrap_or_else(|| module_default_binding(module_name))
-                        }
-                        _ if export.declaration.as_expression().is_some() => {
-                            module_default_binding(module_name)
-                        }
-                        _ => return None,
-                    };
-                    plan.locals.push((local, "default".into()));
-                }
-                Statement::ExportNamedDeclaration(export) => {
-                    plan.locals
-                        .extend(export.specifiers.iter().map(|specifier| {
-                            (
-                                module_export_name(&specifier.local),
-                                module_export_name(&specifier.exported),
-                            )
-                        }));
-                }
-                Statement::ExportFromDeclaration(export) => {
-                    let source = export.source.value.to_string();
-                    plan.reexports
-                        .extend(export.specifiers.iter().map(|specifier| {
-                            StaticModuleReexport::Named {
-                                source: source.clone(),
-                                imported: module_export_name(&specifier.local),
-                                exported: module_export_name(&specifier.exported),
-                            }
-                        }));
-                }
-                Statement::ExportAllDeclaration(export) => {
-                    let source = export.source.value.to_string();
-                    plan.reexports.push(match &export.exported {
-                        Some(name) => StaticModuleReexport::Namespace {
-                            source,
-                            exported: module_export_name(name),
-                        },
-                        None => StaticModuleReexport::Star { source },
-                    });
-                }
-                Statement::ImportDeclaration(_) => {}
-                _ => {}
-            }
+        for statement in statements {
+            append_module_link_statement(statement, module_name, &mut plan)?;
         }
+        let imports = module_import_bindings(statements)
+            .into_iter()
+            .map(|binding| (binding.local.clone(), binding))
+            .collect::<FxHashMap<_, _>>();
+        let mut locals = Vec::with_capacity(plan.locals.len());
+        for (local, exported) in plan.locals {
+            let Some(import) = imports.get(&local) else {
+                locals.push((local, exported));
+                continue;
+            };
+            if import.phase != ModuleRequestPhase::Evaluation || import.module_type.is_some() {
+                return None;
+            }
+            plan.reexports.push(match &import.imported {
+                ModuleImportName::Namespace => StaticModuleReexport::Namespace {
+                    source: import.source.clone(),
+                    exported,
+                },
+                ModuleImportName::Named(imported) => StaticModuleReexport::Named {
+                    source: import.source.clone(),
+                    imported: imported.clone(),
+                    exported,
+                },
+            });
+        }
+        plan.locals = locals;
         Some(plan)
     }
 
@@ -758,6 +719,85 @@ fn module_export_name(name: &ModuleExportName<'_>) -> String {
     }
 }
 
+fn append_module_link_statement(
+    statement: &Statement<'_>,
+    module_name: &str,
+    plan: &mut ModuleLinkPlan,
+) -> Option<()> {
+    match statement {
+        Statement::ExportDeclaration(export) => {
+            static_declaration_exports(&export.declaration, &mut plan.locals)?;
+        }
+        Statement::ExportDefaultDeclaration(export) => {
+            plan.locals.push((
+                default_export_binding(&export.declaration, module_name)?,
+                "default".into(),
+            ));
+        }
+        Statement::ExportNamedDeclaration(export) => {
+            plan.locals
+                .extend(export.specifiers.iter().map(|specifier| {
+                    (
+                        module_export_name(&specifier.local),
+                        module_export_name(&specifier.exported),
+                    )
+                }));
+        }
+        Statement::ExportFromDeclaration(export) => {
+            let source = export.source.value.to_string();
+            plan.reexports
+                .extend(
+                    export
+                        .specifiers
+                        .iter()
+                        .map(|specifier| StaticModuleReexport::Named {
+                            source: source.clone(),
+                            imported: module_export_name(&specifier.local),
+                            exported: module_export_name(&specifier.exported),
+                        }),
+                );
+        }
+        Statement::ExportAllDeclaration(export) => {
+            let source = export.source.value.to_string();
+            plan.reexports.push(match &export.exported {
+                Some(name) => StaticModuleReexport::Namespace {
+                    source,
+                    exported: module_export_name(name),
+                },
+                None => StaticModuleReexport::Star { source },
+            });
+        }
+        _ => {}
+    }
+    Some(())
+}
+
+fn default_export_binding(
+    declaration: &ExportDefaultDeclarationKind<'_>,
+    module_name: &str,
+) -> Option<String> {
+    match declaration {
+        ExportDefaultDeclarationKind::FunctionDeclaration(function) => Some(
+            function
+                .id
+                .as_ref()
+                .map(|identifier| identifier.name.to_string())
+                .unwrap_or_else(|| module_default_binding(module_name)),
+        ),
+        ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(
+            class
+                .id
+                .as_ref()
+                .map(|identifier| identifier.name.to_string())
+                .unwrap_or_else(|| module_default_binding(module_name)),
+        ),
+        declaration if declaration.as_expression().is_some() => {
+            Some(module_default_binding(module_name))
+        }
+        _ => None,
+    }
+}
+
 fn same_module_path(module_name: &str, specifier: &str) -> bool {
     crate::module_identity::resolves_to(module_name, specifier)
 }
@@ -939,6 +979,9 @@ impl<'a> Compiler<'a> {
         } else {
             Vec::new()
         };
+        let module_link_plan = module_goal
+            .then(|| Engine::module_link_plan(&program.body, self.source))
+            .flatten();
         self.root_strict = module_goal
             || program
                 .directives
@@ -1173,6 +1216,7 @@ impl<'a> Compiler<'a> {
             module: self.module_goal,
             module_requests,
             module_imports,
+            module_link_plan,
             source_name: self.source.to_owned(),
             atoms,
             constants: self.constants,

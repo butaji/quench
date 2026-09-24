@@ -495,6 +495,68 @@ pub struct ModuleImportBinding {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct ModuleLinkPlan {
+    pub locals: Vec<(String, String)>,
+    pub reexports: Vec<ModuleReexport>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ModuleReexport {
+    Named {
+        source: String,
+        imported: String,
+        exported: String,
+    },
+    Star {
+        source: String,
+    },
+    Namespace {
+        source: String,
+        exported: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ModuleReexportKind {
+    Named,
+    Star,
+    Namespace,
+}
+
+impl ModuleReexportKind {
+    const NAMED_BINARY_TAG: u8 = 0;
+    const STAR_BINARY_TAG: u8 = 1;
+    const NAMESPACE_BINARY_TAG: u8 = 2;
+
+    pub(crate) const fn binary_tag(self) -> u8 {
+        match self {
+            Self::Named => Self::NAMED_BINARY_TAG,
+            Self::Star => Self::STAR_BINARY_TAG,
+            Self::Namespace => Self::NAMESPACE_BINARY_TAG,
+        }
+    }
+
+    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
+        match tag {
+            Self::NAMED_BINARY_TAG => Some(Self::Named),
+            Self::STAR_BINARY_TAG => Some(Self::Star),
+            Self::NAMESPACE_BINARY_TAG => Some(Self::Namespace),
+            _ => None,
+        }
+    }
+}
+
+impl ModuleReexport {
+    pub(crate) const fn kind(&self) -> ModuleReexportKind {
+        match self {
+            Self::Named { .. } => ModuleReexportKind::Named,
+            Self::Star { .. } => ModuleReexportKind::Star,
+            Self::Namespace { .. } => ModuleReexportKind::Namespace,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum ModuleImportName {
     Namespace,
     Named(String),
@@ -574,6 +636,7 @@ pub struct ResidualProgram {
     pub(crate) module: bool,
     pub(crate) module_requests: Vec<ModuleRequest>,
     pub(crate) module_imports: Vec<ModuleImportBinding>,
+    pub(crate) module_link_plan: Option<ModuleLinkPlan>,
     pub(crate) source_name: String,
     pub(crate) atoms: AtomTable,
     pub(crate) constants: Vec<Constant>,
@@ -598,8 +661,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 21;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0014_0000;
+    pub const FORMAT_VERSION: u8 = 22;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0015_0000;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

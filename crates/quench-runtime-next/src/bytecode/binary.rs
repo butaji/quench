@@ -1,12 +1,15 @@
 use super::{
     AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function, Handler, Instr, MethodSite,
-    ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleRequest, ModuleRequestPhase,
-    ObjectSite, Op, Superinstruction, WideInstruction,
+    ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan, ModuleReexport,
+    ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Superinstruction,
+    WideInstruction,
 };
 
 const RESIDUAL_MAGIC: &[u8; 5] = b"RQJ\0\x1b";
 const OPTIONAL_STRING_NONE: u8 = 0;
 const OPTIONAL_STRING_SOME: u8 = 1;
+const MODULE_LINK_PLAN_NONE: u8 = 0;
+const MODULE_LINK_PLAN_SOME: u8 = 1;
 
 pub(super) fn write_program(
     program: &super::ResidualProgram,
@@ -37,6 +40,37 @@ pub(super) fn write_program(
             }
         }
         out.string(&import.local);
+    }
+    match &program.module_link_plan {
+        None => out.u8(MODULE_LINK_PLAN_NONE),
+        Some(plan) => {
+            out.u8(MODULE_LINK_PLAN_SOME);
+            out.u32(plan.locals.len() as u32);
+            for (local, exported) in &plan.locals {
+                out.string(local);
+                out.string(exported);
+            }
+            out.u32(plan.reexports.len() as u32);
+            for reexport in &plan.reexports {
+                out.u8(reexport.kind().binary_tag());
+                match reexport {
+                    ModuleReexport::Named {
+                        source,
+                        imported,
+                        exported,
+                    } => {
+                        out.string(source);
+                        out.string(imported);
+                        out.string(exported);
+                    }
+                    ModuleReexport::Star { source } => out.string(source),
+                    ModuleReexport::Namespace { source, exported } => {
+                        out.string(source);
+                        out.string(exported);
+                    }
+                }
+            }
+        }
     }
     out.strings(&program.atoms);
     out.u32(program.constants.len() as u32);
@@ -230,6 +264,31 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             local,
         })
     })?;
+    let module_link_plan = match input.u8()? {
+        MODULE_LINK_PLAN_NONE => None,
+        MODULE_LINK_PLAN_SOME => Some(ModuleLinkPlan {
+            locals: input.list(|input| Ok((input.string()?, input.string()?)))?,
+            reexports: input.list(|input| {
+                let kind = ModuleReexportKind::from_binary_tag(input.u8()?)
+                    .ok_or_else(|| "invalid residual module re-export kind".to_string())?;
+                Ok(match kind {
+                    ModuleReexportKind::Named => ModuleReexport::Named {
+                        source: input.string()?,
+                        imported: input.string()?,
+                        exported: input.string()?,
+                    },
+                    ModuleReexportKind::Star => ModuleReexport::Star {
+                        source: input.string()?,
+                    },
+                    ModuleReexportKind::Namespace => ModuleReexport::Namespace {
+                        source: input.string()?,
+                        exported: input.string()?,
+                    },
+                })
+            })?,
+        }),
+        _ => return Err("invalid residual module link plan tag".into()),
+    };
     let atoms = input.strings()?;
     let constants = input.list(|input| match input.u8()? {
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
@@ -450,6 +509,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         module,
         module_requests,
         module_imports,
+        module_link_plan,
         source_name,
         atoms,
         constants,
