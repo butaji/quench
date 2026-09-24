@@ -1,12 +1,17 @@
 use super::*;
 use crate::heap::PrivateBrand;
 impl<H: Host> Vm<H> {
-    fn module_import_value(&self, f: usize, slot: usize) -> Option<Value> {
-        if self.frames[f].function != super::ROOT_FUNCTION_ID {
+    pub(super) fn module_import_value(
+        &self,
+        program: ProgramId,
+        function: u32,
+        slot: usize,
+    ) -> Option<Value> {
+        if function != super::ROOT_FUNCTION_ID {
             return None;
         }
         let slot = u16::try_from(slot).ok()?;
-        match self.programs.module_import(self.frames[f].program, slot)? {
+        match self.programs.module_import(program, slot)? {
             ModuleImport::Value(value) => Some(value),
             ModuleImport::Binding(program, binding, fallback) => {
                 let Some(environment) = self.programs.module_environment(program) else {
@@ -52,7 +57,9 @@ impl<H: Host> Vm<H> {
             }
             Op::LoadLocal => {
                 let slot = i.imm() as usize;
-                let v = if let Some(value) = self.module_import_value(f, slot) {
+                let v = if let Some(value) =
+                    self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
+                {
                     value
                 } else if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) = self.heap.get(self.frames[f].env)
@@ -151,7 +158,9 @@ impl<H: Host> Vm<H> {
             }
             Op::LoadEnvLocal => {
                 let slot = i.imm() as usize;
-                let value = if let Some(value) = self.module_import_value(f, slot) {
+                let value = if let Some(value) =
+                    self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
+                {
                     value
                 } else if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) = self.heap.get(self.frames[f].env)
