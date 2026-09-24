@@ -1,6 +1,7 @@
 use super::activation::ContinuationId;
 use super::module::{ModuleOutcome, ModulePhase, ModuleRecord};
 use super::*;
+use std::collections::VecDeque;
 
 const PROMISE_CAPABILITY_CALLED: &str = "\0rqj:promise-capability-called";
 const PROMISE_CAPABILITY_RESOLVE: &str = "\0rqj:promise-capability-resolve";
@@ -355,6 +356,7 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
+    pub(super) async_module_order: VecDeque<String>,
     pub(super) module_sources: FxHashMap<std::path::PathBuf, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<Value>,
@@ -373,6 +375,7 @@ impl Default for PromiseRuntime {
             aggregate_jobs: FxHashMap::default(),
             async_resume_jobs: FxHashMap::default(),
             modules: FxHashMap::default(),
+            async_module_order: VecDeque::new(),
             module_sources: FxHashMap::default(),
             waiting_static_modules: Vec::new(),
             active_native: vec![],
@@ -922,6 +925,47 @@ impl<H: Host> Vm<H> {
                             return Ok(Value::UNDEFINED);
                         }
                     }
+                    if module_type == "javascript"
+                        && phase == crate::bytecode::ModuleRequestPhase::Evaluation
+                    {
+                        let mut active = FxHashSet::default();
+                        let outer_batch =
+                            std::mem::replace(&mut self.deferred_dependency_batch, true);
+                        let evaluation =
+                            self.evaluate_static_module_source(p, module.clone(), &mut active);
+                        self.deferred_dependency_batch = outer_batch;
+                        evaluation?;
+                        match self
+                            .promise
+                            .modules
+                            .get(&cache_key)
+                            .map(|record| record.outcome)
+                        {
+                            Some(ModuleOutcome::Evaluated(namespace)) => {
+                                self.promise_resolve_value(p, promise, namespace)?;
+                            }
+                            Some(ModuleOutcome::Errored(reason)) => {
+                                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                            }
+                            Some(ModuleOutcome::Pending(_)) => {
+                                let joined = self
+                                    .promise
+                                    .modules
+                                    .get_mut(&cache_key)
+                                    .expect("module record found above")
+                                    .add_waiter(promise);
+                                debug_assert!(joined);
+                            }
+                            Some(ModuleOutcome::Deferred(_)) | None => {
+                                return Err(self.type_error(
+                                    p,
+                                    "dynamic module evaluation did not create a module record"
+                                        .into(),
+                                ));
+                            }
+                        }
+                        return Ok(Value::UNDEFINED);
+                    }
                     let mut record = ModuleRecord::loading(promise);
                     let linked = record.begin_linking();
                     debug_assert!(linked);
@@ -1051,26 +1095,98 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let key = module_cache_key(&p.source_name, "javascript");
-        let Some(record) = self.promise.modules.get_mut(&key) else {
+        if !self.promise.modules.contains_key(&key) {
             return Ok(());
-        };
+        }
         match result {
-            Ok(_) => {
-                if let Some((namespace, waiters)) = record.evaluate_root() {
-                    for waiter in waiters {
-                        self.promise_resolve_value(p, waiter, namespace)?;
-                    }
-                }
+            Ok(value) if Self::main_module_has_top_level_await(p) => {
+                self.finish_async_main_module(p, &key, *value)
             }
+            Ok(_) => self.complete_main_module(p, &key),
             Err(error) => {
                 let reason = error
                     .thrown_value()
                     .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.to_string())));
-                if let Some(waiters) = record.fail(reason) {
-                    for waiter in waiters {
-                        self.promise_settle(p, waiter, PromiseState::Rejected, reason)?;
-                    }
-                }
+                self.fail_main_module(p, &key, reason)
+            }
+        }
+    }
+
+    fn main_module_has_top_level_await(p: &ResidualProgram) -> bool {
+        p.functions.first().is_some_and(|function| {
+            function
+                .code
+                .iter()
+                .any(|instruction| instruction.op() == crate::bytecode::Op::Await)
+                || function
+                    .wide
+                    .iter()
+                    .any(|instruction| instruction.op() == crate::bytecode::Op::Await)
+        })
+    }
+
+    fn finish_async_main_module(
+        &mut self,
+        p: &ResidualProgram,
+        key: &str,
+        promise: Value,
+    ) -> Result<(), JsError> {
+        let Some(completion) = self.promise.records.get(&promise).cloned() else {
+            return Err(self.type_error(p, "module completion promise is unavailable".into()));
+        };
+        match completion.state {
+            PromiseState::Pending => {
+                let Some(record) = self.promise.modules.get_mut(key) else {
+                    return Ok(());
+                };
+                let Some(namespace) = record.pending_namespace() else {
+                    return Err(self.type_error(p, "main module namespace is unavailable".into()));
+                };
+                record.begin_async_evaluation(namespace);
+                record.track_evaluation_promise(promise);
+                self.promise.async_module_order.push_back(key.to_owned());
+                Ok(())
+            }
+            PromiseState::Fulfilled => self.complete_main_module(p, key),
+            PromiseState::Rejected => {
+                self.fail_main_module(p, key, completion.result)?;
+                Err(JsError::thrown(
+                    completion.result,
+                    "main module evaluation rejected".into(),
+                ))
+            }
+        }
+    }
+
+    fn complete_main_module(&mut self, p: &ResidualProgram, key: &str) -> Result<(), JsError> {
+        let Some((namespace, waiters)) = self
+            .promise
+            .modules
+            .get_mut(key)
+            .and_then(ModuleRecord::evaluate_root)
+        else {
+            return Ok(());
+        };
+        for waiter in waiters {
+            self.promise_resolve_value(p, waiter, namespace)?;
+        }
+        Ok(())
+    }
+
+    fn fail_main_module(
+        &mut self,
+        p: &ResidualProgram,
+        key: &str,
+        reason: Value,
+    ) -> Result<(), JsError> {
+        let waiters = self
+            .promise
+            .modules
+            .get_mut(key)
+            .and_then(|record| record.fail(reason));
+        if let Some(waiters) = waiters {
+            for waiter in waiters {
+                self.promise_settle(p, waiter, PromiseState::Rejected, reason)?;
             }
         }
         Ok(())
@@ -1933,6 +2049,9 @@ impl<H: Host> Vm<H> {
                 );
             };
             record.begin_async_evaluation(value);
+            self.promise
+                .async_module_order
+                .push_back(cache_key.to_owned());
             return Ok(());
         }
         let deferred_namespace = self
@@ -1956,16 +2075,48 @@ impl<H: Host> Vm<H> {
         let Some(waiters) = waiters else {
             return Err(self.type_error(p, "module record was not evaluating".into()));
         };
+        let rejection_is_observed = state != PromiseState::Rejected
+            || !waiters.is_empty()
+            || self.waiting_static_parent(p, cache_key)?;
         for waiter in waiters {
             self.promise_settle(p, waiter, state, value)?;
         }
-        if state == PromiseState::Rejected {
+        if state == PromiseState::Rejected && !rejection_is_observed {
             return Err(JsError::thrown(
                 value,
                 "static module evaluation failed".into(),
             ));
         }
         Ok(())
+    }
+
+    fn waiting_static_parent(
+        &mut self,
+        p: &ResidualProgram,
+        dependency_key: &str,
+    ) -> Result<bool, JsError> {
+        let waiting = self.promise.waiting_static_modules.clone();
+        for parent in waiting {
+            let Some(plan) = crate::Engine::static_module_plan(&parent.source, &parent.name) else {
+                return Err(self.type_error(p, "static module metadata is unavailable".into()));
+            };
+            for request in plan.requests.iter().filter(|request| {
+                request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
+                    && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
+            }) {
+                let dependency = self
+                    .host
+                    .resolve_dynamic_import(&parent.name, &request.source)
+                    .map_err(|message| self.type_error(p, message))?
+                    .ok_or_else(|| {
+                        self.type_error(p, "static module request was not resolved".into())
+                    })?;
+                if module_cache_key(&dependency.name, "javascript") == dependency_key {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     fn refresh_static_module_bindings(
@@ -2029,9 +2180,10 @@ impl<H: Host> Vm<H> {
     fn settle_pending_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let pending = self
             .promise
-            .modules
+            .async_module_order
             .iter()
-            .filter_map(|(key, module)| {
+            .filter_map(|key| {
+                let module = self.promise.modules.get(key)?;
                 (module.phase() == ModulePhase::EvaluatingAsync).then(|| {
                     Some((
                         key.clone(),
@@ -2058,6 +2210,12 @@ impl<H: Host> Vm<H> {
                 )?,
             }
         }
+        self.promise.async_module_order.retain(|key| {
+            self.promise
+                .modules
+                .get(key)
+                .is_some_and(|module| module.phase() == ModulePhase::EvaluatingAsync)
+        });
         Ok(())
     }
 
