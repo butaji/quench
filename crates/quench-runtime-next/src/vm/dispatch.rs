@@ -9,19 +9,19 @@ impl<H: Host> Vm<H> {
         match self.programs.module_import(self.frames[f].program, slot)? {
             ModuleImport::Value(value) => Some(value),
             ModuleImport::Binding(program, binding, fallback) => {
-                let value = self
-                    .programs
-                    .module_environment(program)
-                    .and_then(|environment| match self.heap.get(environment) {
-                        Some(Cell::Environment { slots, .. }) => {
-                            slots.get(usize::from(binding)).copied()
-                        }
-                        _ => None,
-                    });
+                let Some(environment) = self.programs.module_environment(program) else {
+                    return Some(fallback);
+                };
+                let value = match self.heap.get(environment) {
+                    Some(Cell::Environment { slots, .. }) => {
+                        slots.get(usize::from(binding)).copied()
+                    }
+                    _ => None,
+                };
                 Some(match value {
-                    Some(Value::DELETED) | None if !fallback.is_undefined() => fallback,
+                    Some(Value::DELETED) if !fallback.is_undefined() => fallback,
+                    None => fallback,
                     Some(value) => value,
-                    None => Value::DELETED,
                 })
             }
         }

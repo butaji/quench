@@ -1656,6 +1656,14 @@ impl<H: Host> Vm<H> {
                 }
                 return Err(self.type_error(p, "deferred module namespace is unavailable".into()));
             };
+            let named_binding = match (&import.imported, module_type) {
+                (crate::bytecode::ModuleImportName::Named(name), "javascript") => {
+                    let atom = self.intern_atom(name);
+                    self.object_data(namespace)
+                        .and_then(|object| object.module_binding(atom))
+                }
+                _ => None,
+            };
             let value = match (&import.phase, &import.imported) {
                 (
                     crate::bytecode::ModuleRequestPhase::Defer,
@@ -1671,29 +1679,26 @@ impl<H: Host> Vm<H> {
                 }
                 (_, crate::bytecode::ModuleImportName::Named(name)) => {
                     let atom = self.intern_atom(name);
-                    if self
+                    let is_namespace = self
                         .object_data(namespace)
-                        .is_some_and(Object::is_module_namespace)
-                        && self.own_property(namespace, atom).is_none()
-                    {
+                        .is_some_and(Object::is_module_namespace);
+                    let fallback = self.own_property(namespace, atom);
+                    if is_namespace && fallback.is_none() {
                         return self
                             .syntax_error_result(p, "module import binding could not be resolved")
                             .map(|_| Vec::new());
                     }
-                    self.get_property(p, namespace, atom)?
+                    match (named_binding, fallback) {
+                        (Some(_), Some(value)) => value,
+                        (_, _) => self.get_property(p, namespace, atom)?,
+                    }
                 }
             };
-            let binding = match (&import.imported, module_type) {
-                (crate::bytecode::ModuleImportName::Named(name), "javascript") => {
-                    let atom = self.intern_atom(name);
-                    self.object_data(namespace)
-                        .and_then(|object| object.module_binding(atom))
-                        .map(|(program, slot)| {
-                            crate::vm::program_store::ModuleImport::Binding(program, slot, value)
-                        })
-                        .unwrap_or(crate::vm::program_store::ModuleImport::Value(value))
+            let binding = match named_binding {
+                Some((program, slot)) => {
+                    crate::vm::program_store::ModuleImport::Binding(program, slot, value)
                 }
-                _ => crate::vm::program_store::ModuleImport::Value(value),
+                None => crate::vm::program_store::ModuleImport::Value(value),
             };
             values.push((local, binding));
         }
