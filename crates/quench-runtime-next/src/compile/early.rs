@@ -21,6 +21,105 @@ pub(super) fn block_early_error(program: &Program<'_>) -> Option<String> {
     validate_nested(&program.body)
 }
 
+pub(super) fn regexp_early_error(program: &Program<'_>) -> Option<String> {
+    let mut validator = RegExpEarlyErrors(None);
+    validator.visit_program(program);
+    validator.0
+}
+
+struct RegExpEarlyErrors(Option<String>);
+
+impl<'a> Visit<'a> for RegExpEarlyErrors {
+    fn visit_reg_exp_literal(&mut self, literal: &oxc_ast::ast::RegExpLiteral<'a>) {
+        let Some(raw) = literal.raw.as_ref() else {
+            return;
+        };
+        let text = raw.as_str();
+        let Some(separator) = text.rfind('/') else {
+            return;
+        };
+        let pattern = &text[1..separator];
+        let flags = &text[separator + 1..];
+        if let Err(error) = validate_modifier_groups(pattern) {
+            self.0 = Some(error);
+            return;
+        }
+        if let Err(error) = super::regexp::validate_pattern(pattern, flags) {
+            self.0 = Some(error);
+        }
+    }
+}
+
+fn validate_modifier_groups(pattern: &str) -> Result<(), String> {
+    let bytes = pattern.as_bytes();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'\\' {
+            index += 2;
+            continue;
+        }
+        if bytes[index] != b'(' || bytes[index + 1] != b'?' {
+            index += 1;
+            continue;
+        }
+        let start = index + 2;
+        match bytes.get(start).copied() {
+            Some(b'=' | b'!') => index = start + 1,
+            Some(b':' | b'>') => index = start,
+            Some(b'<') => {
+                index = pattern[start..]
+                    .find('>')
+                    .map_or(start + 1, |close| start + close + 1);
+            }
+            Some(_) => index = validate_modifier_group(pattern, start)?,
+            None => return Ok(()),
+        }
+    }
+    Ok(())
+}
+
+fn validate_modifier_group(pattern: &str, start: usize) -> Result<usize, String> {
+    let bytes = pattern.as_bytes();
+    let (enable, mut cursor) = read_modifier_flags(bytes, start)?;
+    let disable = if bytes.get(cursor) == Some(&b'-') {
+        cursor += 1;
+        let (flags, after) = read_modifier_flags(bytes, cursor)?;
+        cursor = after;
+        flags
+    } else {
+        String::new()
+    };
+    if bytes.get(cursor) != Some(&b':')
+        || enable.is_empty() && disable.is_empty()
+        || !valid_modifier_flags(&enable, enable.is_empty())
+        || !valid_modifier_flags(&disable, disable.is_empty())
+        || enable.chars().any(|flag| disable.contains(flag))
+    {
+        return Err("SyntaxError: invalid regular expression modifiers".into());
+    }
+    Ok(cursor)
+}
+
+fn read_modifier_flags(bytes: &[u8], start: usize) -> Result<(String, usize), String> {
+    let mut end = start;
+    while end < bytes.len() && !matches!(bytes[end], b':' | b'-' | b')') {
+        end += 1;
+    }
+    let flags = std::str::from_utf8(&bytes[start..end])
+        .map_err(|_| "SyntaxError: invalid regular expression modifiers".to_owned())?;
+    Ok((flags.to_owned(), end))
+}
+
+fn valid_modifier_flags(flags: &str, allow_empty: bool) -> bool {
+    if flags.is_empty() {
+        return allow_empty;
+    }
+    let mut seen = FxHashSet::default();
+    flags
+        .chars()
+        .all(|flag| matches!(flag, 'i' | 'm' | 's') && seen.insert(flag))
+}
+
 pub(super) fn strict_binding_early_error(program: &Program<'_>) -> Option<String> {
     let strict = program
         .directives
