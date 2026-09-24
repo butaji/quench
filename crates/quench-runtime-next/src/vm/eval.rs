@@ -101,7 +101,115 @@ impl<H: Host> Vm<H> {
         if inherited_strict && (trimmed.contains("arguments =") || trimmed.contains("arguments=")) {
             return self.syntax_error_result(p, "'arguments' is not allowed in strict mode");
         }
-        self.eval_source_simple(p, trimmed, inherited_strict)
+        let result = self.eval_source_simple(p, trimmed, inherited_strict);
+        let global_direct_eval = self.direct_eval
+            && self
+                .frames
+                .last()
+                .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
+        match result {
+            Err(error) if global_direct_eval && error.is_eval_parser_diagnostic() => {
+                self.eval_global_script(p, &text)
+            }
+            result => result,
+        }
+    }
+
+    fn eval_global_script(&mut self, p: &ResidualProgram, source: &str) -> Result<Value, JsError> {
+        let source_name = format!("<Eval:{}>", self.programs.len());
+        if let Some(expression) = crate::Engine::eval_single_expression(source) {
+            let strict = self
+                .frames
+                .last()
+                .and_then(|frame| p.functions.get(frame.function as usize))
+                .is_some_and(|function| function.strict);
+            return self.eval_compiled_expression_named(p, expression, strict, &source_name);
+        }
+        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
+            .map(|atom| self.atom_name(atom as u32).to_owned())
+            .collect::<Vec<_>>();
+        let residual = crate::Engine::specialize_unspecialized_with_atom_prefix(
+            source,
+            &source_name,
+            &atom_prefix,
+        )
+        .map_err(|diagnostics| {
+            let message = diagnostics
+                .first()
+                .map_or("invalid eval source".to_owned(), ToString::to_string);
+            self.syntax_error_result(p, &message)
+                .expect_err("dynamic eval syntax errors must throw")
+        })?;
+        let Some(program_id) = self.store_dynamic_program(residual) else {
+            return Err(self.type_error(p, "dynamic program store is full".into()));
+        };
+        self.run_global_eval_program(p, program_id)
+    }
+
+    fn run_global_eval_program(
+        &mut self,
+        p: &ResidualProgram,
+        program_id: super::ProgramId,
+    ) -> Result<Value, JsError> {
+        let residual = self
+            .programs
+            .get(program_id)
+            .ok_or_else(|| self.type_error(p, "dynamic program is unavailable".into()))?;
+        let active_program = std::mem::replace(&mut self.active_program, program_id);
+        let direct_eval = std::mem::replace(&mut self.direct_eval, false);
+        let result = (|| {
+            for atom in residual.functions[super::ROOT_FUNCTION_ID as usize]
+                .global_var_atoms
+                .iter()
+                .copied()
+            {
+                let globals = self.realm.globals;
+                let name = self.atom_name(atom).to_owned();
+                self.check_global_eval_declaration(p, globals, &name, false)?;
+                if self.own_property(globals, atom).is_none() {
+                    self.set_property(globals, atom, Value::UNDEFINED)?;
+                    self.set_property_attributes(
+                        globals,
+                        PropertyKey::string(atom),
+                        PropertyAttributes {
+                            writable: true,
+                            enumerable: true,
+                            configurable: false,
+                            accessor: false,
+                            getter: None,
+                            setter: None,
+                        },
+                    );
+                }
+            }
+            let root_scope = self
+                .frames
+                .last()
+                .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
+            let parent = self
+                .frames
+                .len()
+                .checked_sub(1)
+                .map_or(Value::NULL, |frame| self.promote_frame_environment(frame));
+            let parent = if root_scope {
+                self.heap.alloc(Cell::Environment {
+                    parent,
+                    program: None,
+                    root_eval_scope: true,
+                    function: u32::MAX,
+                    slots: Box::new([]),
+                    dynamic_bindings: Vec::new(),
+                    with_objects: Vec::new(),
+                })
+            } else {
+                parent
+            };
+            let root = self.closure(&residual, super::ROOT_FUNCTION_ID, parent)?;
+            self.call_value(&residual, root, self.realm.globals, &[])
+        })();
+        self.direct_eval = direct_eval;
+        self.active_program = active_program;
+        result
     }
 
     pub(super) fn eval_source_simple(
@@ -186,6 +294,33 @@ impl<H: Host> Vm<H> {
         {
             let message = error.strip_prefix("SyntaxError: ").unwrap_or(&error);
             return self.syntax_error_result(p, message);
+        }
+        let has_eval_declarations =
+            contains_eval_identifier(source, "var") || contains_eval_identifier(source, "function");
+        if has_eval_declarations
+            && !source_strict
+            && self
+                .frames
+                .last()
+                .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID)
+        {
+            let global_lexicals = p
+                .functions
+                .first()
+                .map(|root| root.global_lexical_atoms.clone())
+                .unwrap_or_default();
+            let eval_var_names = crate::Engine::eval_var_declared_names(source).unwrap_or_default();
+            for name in eval_var_names {
+                let atom = self.intern_atom(&name);
+                let declared_lexically = self.realm.global_lexical_declarations.contains(&atom)
+                    || global_lexicals.contains(&atom);
+                if declared_lexically {
+                    return self.syntax_error_result(
+                        p,
+                        "var declaration conflicts with global lexical binding",
+                    );
+                }
+            }
         }
         if self.direct_eval && !source_strict {
             let globals = self.realm.globals;
@@ -764,6 +899,7 @@ impl<H: Host> Vm<H> {
                         .map_or("invalid eval expression".to_owned(), ToString::to_string);
                     self.syntax_error_result(p, &message)
                         .expect_err("dynamic eval syntax errors must throw")
+                        .mark_eval_parser_diagnostic()
                 })?;
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
