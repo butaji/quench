@@ -65,11 +65,11 @@ impl FunctionCompiler<'_, '_> {
                         self.emit(Op::SetFunctionName, value, 0, 0, name);
                     } else if let Some(identifier) = &class.id {
                         let atom = self.owner.atom(identifier.name.as_str());
-                        self.store_atom(atom, value);
+                        self.store_atom_with_initialization(atom, value, true);
                     }
                     let binding = super::super::module_default_binding(self.owner.source);
                     let atom = self.owner.atom(&binding);
-                    self.store_atom(atom, value);
+                    self.store_atom_with_initialization(atom, value, true);
                 }
                 _ => {
                     if let Some(expression) = item.declaration.as_expression() {
@@ -80,7 +80,7 @@ impl FunctionCompiler<'_, '_> {
                         }
                         let binding = super::super::module_default_binding(self.owner.source);
                         let atom = self.owner.atom(&binding);
-                        self.store_atom(atom, value);
+                        self.store_atom_with_initialization(atom, value, true);
                     } else {
                         self.owner.reject(
                             item.span,
