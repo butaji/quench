@@ -346,6 +346,12 @@ impl<H: Host> Vm<H> {
                         "evalScript",
                         self.native_value(Native::EvalScript),
                     )?;
+                    self.set_named(
+                        program,
+                        realm,
+                        "AbstractModuleSource",
+                        self.native_value(Native::AbstractModuleSource),
+                    )?;
                     self.global(program, global.name, realm)?;
                     continue;
                 }
@@ -353,6 +359,58 @@ impl<H: Host> Vm<H> {
             };
             self.global(program, global.name, self.native_value(native))?;
         }
+        Ok(())
+    }
+
+    pub(super) fn install_abstract_module_source(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        let constructor = self.native_value(Native::AbstractModuleSource);
+        let prototype = self.object();
+        self.set_named(program, constructor, "prototype", prototype)?;
+        self.set_named(program, prototype, "constructor", constructor)?;
+        let name = self.heap.alloc(Cell::String("AbstractModuleSource".into()));
+        self.set_named(program, constructor, "name", name)?;
+        let name_atom = self.intern_atom("name");
+        let prototype_atom = self.intern_atom("prototype");
+        let constructor_atom = self.intern_atom("constructor");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(constructor_atom),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(name_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         Ok(())
     }
 

@@ -71,6 +71,7 @@ impl<H: Host> Vm<H> {
                 FunctionKind::Native(native) => matches!(
                     native,
                     Native::Function
+                        | Native::AbstractModuleSource
                         | Native::AsyncFunction
                         | Native::GeneratorFunction
                         | Native::AsyncGeneratorFunction
@@ -504,6 +505,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
+            Native::AbstractModuleSource => {
+                Err(self.type_error(p, "AbstractModuleSource cannot be constructed".into()))
+            }
             Native::Function
             | Native::AsyncFunction
             | Native::GeneratorFunction
