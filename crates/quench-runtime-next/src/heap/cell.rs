@@ -190,6 +190,8 @@ pub(crate) enum Native {
     RegExpUnicodeSets,
     RegExpSticky,
     RegExpHasIndices,
+    RegExpSource,
+    RegExpFlags,
     String, Boolean, BooleanToString, BooleanValueOf,
     Symbol, SymbolToString, SymbolValueOf,
     BigInt, BigIntValueOf,
@@ -566,5 +568,10 @@ pub(crate) enum Cell {
     String(JsString), BigInt(String),
     Symbol(Option<String>),
     Date { milliseconds: f64, object: Box<Object> },
+    RegExp {
+        object: Object,
+        source: JsString,
+        flags: String,
+    },
     Error(String),
 }

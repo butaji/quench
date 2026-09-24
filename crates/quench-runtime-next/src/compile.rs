@@ -84,6 +84,16 @@ pub(crate) enum StaticModuleReexport {
     },
 }
 impl Engine {
+    pub(crate) fn strict_octal_numeric_early_error(source: &str) -> Option<String> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        parsed
+            .diagnostics
+            .is_empty()
+            .then(|| early::strict_octal_numeric_early_error(&parsed.program))
+            .flatten()
+    }
+
     pub(crate) fn eval_var_declared_names(source: &str) -> Option<Vec<String>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
@@ -910,6 +920,11 @@ impl<'a> Compiler<'a> {
                 Span::default(),
                 "SyntaxError: assignment to eval is not allowed in strict mode",
             );
+        }
+        if self.root_strict
+            && let Some(error) = early::strict_octal_numeric_early_error(program)
+        {
+            self.reject(Span::default(), error);
         }
         if let Some(error) = early::regexp_early_error(program) {
             self.reject(Span::default(), error);

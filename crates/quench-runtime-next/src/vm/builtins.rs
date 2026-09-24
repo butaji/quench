@@ -190,6 +190,8 @@ const NATIVES: &[Native] = &[
     Native::RegExpUnicodeSets,
     Native::RegExpSticky,
     Native::RegExpHasIndices,
+    Native::RegExpSource,
+    Native::RegExpFlags,
     Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf,
     Native::Symbol, Native::SymbolToString, Native::SymbolValueOf,
     Native::SymbolFor,
