@@ -361,11 +361,15 @@ impl<H: Host> Vm<H> {
                     .alloc(Cell::String(format!("{number:.digits$}").into())))
             }
             Native::String => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let text = if let Some(Cell::Symbol(description)) = self.heap.get(value) {
-                    format!("Symbol({})", description.as_deref().unwrap_or(""))
-                } else {
-                    self.to_string(p, value)?
+                let text = match args.first().copied() {
+                    Some(value) => {
+                        if let Some(Cell::Symbol(description)) = self.heap.get(value) {
+                            format!("Symbol({})", description.as_deref().unwrap_or(""))
+                        } else {
+                            self.to_string(p, value)?
+                        }
+                    }
+                    None => String::new(),
                 };
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }

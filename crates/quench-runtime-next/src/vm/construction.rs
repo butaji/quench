@@ -1,6 +1,18 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn string_constructor_value(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let text = match args.first().copied() {
+            Some(value) => self.to_string(p, value)?,
+            None => String::new(),
+        };
+        Ok(self.heap.alloc(Cell::String(text.into())))
+    }
+
     pub(super) fn set_function_name(
         &mut self,
         p: &ResidualProgram,
@@ -566,9 +578,7 @@ impl<H: Host> Vm<H> {
             | Native::URIError
             | Native::RealmTypeError => self.construct_error_native(p, native, args),
             Native::String => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let text = self.to_string(p, value)?;
-                let value = self.heap.alloc(Cell::String(text.into()));
+                let value = self.string_constructor_value(p, args)?;
                 self.box_primitive_object(value)
             }
             Native::Number => {
