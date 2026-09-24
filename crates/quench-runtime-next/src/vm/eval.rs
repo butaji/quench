@@ -68,6 +68,26 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
+            && source_text
+                .units()
+                .iter()
+                .any(|unit| crate::unicode::is_surrogate(u32::from(*unit)))
+            && let Some(literal) =
+                crate::Engine::eval_single_regexp_literal(source_text.host_string())
+        {
+            let start = source_text.host_string()[..literal.span.start]
+                .encode_utf16()
+                .count();
+            let end = source_text.host_string()[..literal.span.end]
+                .encode_utf16()
+                .count();
+            if let Some(pattern) = regexp_literal_pattern(&source_text.units()[start..end]) {
+                let pattern = self.heap.alloc(Cell::String(JsString::from_units(pattern)));
+                let flags = self.heap.alloc(Cell::String(literal.flags.into()));
+                return self.construct_regexp_native(p, &[pattern, flags]);
+            }
+        }
         if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.host_string()))
         {
             return Ok(Value::UNDEFINED);
@@ -1479,6 +1499,23 @@ impl<H: Host> Vm<H> {
         }
         false
     }
+}
+
+fn regexp_literal_pattern(literal: &[u16]) -> Option<&[u16]> {
+    if literal.first().copied() != Some(u16::from(b'/')) {
+        return None;
+    }
+    let mut escaped = false;
+    for (index, unit) in literal.iter().copied().enumerate().skip(1) {
+        if unit == u16::from(b'/') && !escaped {
+            return Some(&literal[1..index]);
+        }
+        escaped = unit == u16::from(b'\\') && !escaped;
+        if unit != u16::from(b'\\') {
+            escaped = false;
+        }
+    }
+    None
 }
 
 fn eval_new_expression(expression: &str) -> Option<(&str, Option<&str>)> {
