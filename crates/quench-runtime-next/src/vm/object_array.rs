@@ -195,6 +195,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_is_integrity_level(&self, target: Value, freeze: bool) -> bool {
+        if !matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+            return true;
+        }
         let length_attributes = self
             .descriptors
             .get(&(target, PropertyKey::string(self.length_atom)))
