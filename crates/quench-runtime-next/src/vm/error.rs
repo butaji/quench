@@ -786,6 +786,22 @@ impl<H: Host> Vm<H> {
             );
         }
         self.set_named(program, global, "Array", array)?;
+        let async_disposable_stack =
+            self.native_with_realm(Native::AsyncDisposableStack, global, global);
+        let async_disposable_stack_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.set_builtin_value_named(
+            async_disposable_stack,
+            "prototype",
+            async_disposable_stack_prototype,
+        )?;
+        self.set_builtin_value_named(
+            async_disposable_stack_prototype,
+            "constructor",
+            async_disposable_stack,
+        )?;
+        self.set_builtin_value_named(global, "AsyncDisposableStack", async_disposable_stack)?;
         let array_buffer = self.native_with_realm(Native::ArrayBuffer, global, global);
         let array_buffer_prototype = self.object();
         self.object_data_mut(array_buffer_prototype)

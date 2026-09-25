@@ -431,6 +431,7 @@ impl<H: Host> Vm<H> {
             | Native::WeakRef
             | Native::FinalizationRegistry
             | Native::DisposableStack
+            | Native::AsyncDisposableStack
             | Native::RegExp => self.construct_native(p, native, args),
             Native::ThrowTypeError => {
                 Err(self.type_error(p, "restricted arguments property".into()))

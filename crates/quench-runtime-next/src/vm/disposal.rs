@@ -1,7 +1,9 @@
 use super::promise::PromiseState;
+use super::property_key::PropertyKey;
 
 const ENTRIES: &str = "\0rqj:disposable-stack:entries";
 const DISPOSED: &str = "\0rqj:disposable-stack:disposed";
+const ASYNC_STACK: &str = "\0rqj:disposable-stack:async";
 const ASYNC_DISPOSAL_ENTRIES_SLOT: usize = 0;
 const ASYNC_DISPOSAL_CURSOR_SLOT: usize = 1;
 const ASYNC_DISPOSAL_COMPLETION_SLOT: usize = 2;
@@ -13,6 +15,7 @@ const DISPOSAL_ENTRY_AWAIT_RESULT_SLOT: usize = 3;
 const DISPOSAL_USE_MODE: i32 = 0;
 const DISPOSAL_ADOPT_MODE: i32 = 1;
 const DISPOSAL_DEFER_MODE: i32 = 2;
+const DISPOSAL_AWAIT_MODE: i32 = 3;
 const DISPOSAL_INVALID_MODE: i32 = -1;
 
 impl<H: Host> Vm<H> {
@@ -20,6 +23,13 @@ impl<H: Host> Vm<H> {
         matches!(
             native,
             Native::DisposableStack
+                | Native::AsyncDisposableStack
+                | Native::AsyncDisposableStackUse
+                | Native::AsyncDisposableStackAdopt
+                | Native::AsyncDisposableStackDefer
+                | Native::AsyncDisposableStackMove
+                | Native::AsyncDisposableStackDisposeAsync
+                | Native::AsyncDisposableStackDisposed
                 | Native::DisposableStackUse
                 | Native::DisposableStackAdopt
                 | Native::DisposableStackDefer
@@ -44,7 +54,7 @@ impl<H: Host> Vm<H> {
             ("useAsync", Native::DisposableStackUseAsync),
             ("disposeAsync", Native::DisposableStackDisposeAsync),
         ] {
-            self.set_named(p, prototype, name, self.native_value(native))?;
+            self.set_builtin_named(p, prototype, name, native)?;
         }
         if let Some(symbol) = self.well_known_symbols.get("dispose").copied() {
             self.set_index(
@@ -73,18 +83,112 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::DisposableStackDisposeAsyncWithCompletion),
         )?;
         self.set_named(p, constructor, "prototype", prototype)?;
-        self.global(p, "DisposableStack", constructor)
+        self.set_builtin_function_name(constructor, "DisposableStack")?;
+        self.global(p, "DisposableStack", constructor)?;
+
+        let constructor = self.native_value(Native::AsyncDisposableStack);
+        let prototype = self.object();
+        for (name, native) in [
+            ("use", Native::AsyncDisposableStackUse),
+            ("adopt", Native::AsyncDisposableStackAdopt),
+            ("defer", Native::AsyncDisposableStackDefer),
+            ("move", Native::AsyncDisposableStackMove),
+            ("disposeAsync", Native::AsyncDisposableStackDisposeAsync),
+        ] {
+            self.set_builtin_named(p, prototype, name, native)?;
+        }
+        self.set_builtin_value_named(
+            prototype,
+            "constructor",
+            constructor,
+        )?;
+        self.install_builtin_to_string_tag(prototype, "AsyncDisposableStack")?;
+        if let Some(symbol) = self.well_known_symbols.get("asyncDispose").copied() {
+            let method = self.native_value(Native::AsyncDisposableStackDisposeAsync);
+            self.set_index(
+                p,
+                prototype,
+                symbol,
+                method,
+            )?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        let disposed = self.native_value(Native::AsyncDisposableStackDisposed);
+        let disposed_atom = self.intern_atom("disposed");
+        self.set_named(p, prototype, "disposed", disposed)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(disposed_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(disposed),
+                setter: None,
+            },
+        );
+        self.set_builtin_function_name(disposed, "get disposed")?;
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_function_name(constructor, "AsyncDisposableStack")?;
+        self.global(p, "AsyncDisposableStack", constructor)
     }
 
     pub(super) fn construct_disposable_stack_native(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
+        native: Native,
+        new_target: Value,
     ) -> Result<Value, JsError> {
-        let constructor = self.native_value(Native::DisposableStack);
+        let async_stack = native == Native::AsyncDisposableStack;
+        let constructor = self.native_value(native);
         let prototype_atom = self.intern_atom("prototype");
-        let prototype = self
-            .own_property(constructor, prototype_atom)
-            .unwrap_or(self.object_proto);
+        let candidate = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = if self.object_data(candidate).is_some() {
+            candidate
+        } else {
+            let realm = match self.heap.get(new_target) {
+                Some(Cell::Function { realm, .. }) => *realm,
+                _ => self.realm.globals,
+            };
+            let constructor_atom = self.intern_atom(if async_stack {
+                "AsyncDisposableStack"
+            } else {
+                "DisposableStack"
+            });
+            let realm_constructor = self.get_property(p, realm, constructor_atom)?;
+            let realm_prototype = self.get_property(p, realm_constructor, prototype_atom)?;
+            if self.object_data(realm_prototype).is_some() {
+                realm_prototype
+            } else {
+                self.own_property(constructor, prototype_atom)
+                    .unwrap_or(self.object_proto)
+            }
+        };
         let stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let root = self.heap.root(stack);
         let entries = self.heap.alloc(Cell::Array {
@@ -95,6 +199,12 @@ impl<H: Host> Vm<H> {
         let disposed_atom = self.intern_atom(DISPOSED);
         self.set_property(stack, entries_atom, entries)?;
         self.set_property(stack, disposed_atom, Value::FALSE)?;
+        let async_atom = self.intern_atom(ASYNC_STACK);
+        self.set_property(
+            stack,
+            async_atom,
+            if async_stack { Value::TRUE } else { Value::FALSE },
+        )?;
         self.heap.release_root(root);
         Ok(stack)
     }
@@ -109,21 +219,55 @@ impl<H: Host> Vm<H> {
         if native == Native::DisposableStack {
             return Err(JsError("DisposableStack constructor requires new".into()));
         }
+        if native == Native::AsyncDisposableStack {
+            return Err(JsError("AsyncDisposableStack constructor requires new".into()));
+        }
+        if native == Native::AsyncDisposableStackDisposed {
+            self.require_async_stack(p, this)?;
+            return self.stack_disposed(this);
+        }
+        if matches!(
+            native,
+            Native::AsyncDisposableStackUse
+                | Native::AsyncDisposableStackAdopt
+                | Native::AsyncDisposableStackDefer
+                | Native::AsyncDisposableStackMove
+        ) {
+            self.require_async_stack(p, this)?;
+        }
+        if native == Native::AsyncDisposableStackDisposeAsync {
+            return self.stack_dispose_async_native(p, this);
+        }
+        if native == Native::AsyncDisposableStackMove {
+            return self.stack_move(p, this, true);
+        }
+        if native == Native::AsyncDisposableStackUse {
+            self.require_open_stack(p, this)?;
+            return self.stack_use_async(p, this, args);
+        }
+        if native == Native::AsyncDisposableStackAdopt {
+            self.require_open_stack(p, this)?;
+            return self.stack_adopt(p, this, args, true);
+        }
+        if native == Native::AsyncDisposableStackDefer {
+            self.require_open_stack(p, this)?;
+            return self.stack_defer(p, this, args, true);
+        }
         if native == Native::DisposableStackDispose {
-            self.require_stack(this)?;
+            self.require_stack(p, this)?;
             return self.stack_dispose(p, this);
         }
         if native == Native::DisposableStackDisposeAsync {
-            self.require_stack(this)?;
+            self.require_stack(p, this)?;
             return self.stack_dispose_async(p, this);
         }
         if native == Native::DisposableStackDisposeWithCompletion {
-            self.require_stack(this)?;
+            self.require_stack(p, this)?;
             let completion = args.first().copied().unwrap_or(Value::UNDEFINED);
             return self.stack_dispose_with_completion(p, this, completion);
         }
         if native == Native::DisposableStackDisposeAsyncWithCompletion {
-            self.require_stack(this)?;
+            self.require_stack(p, this)?;
             let completion = args.first().copied().unwrap_or(Value::UNDEFINED);
             return self.stack_dispose_async_with_completion(p, this, completion);
         }
@@ -139,40 +283,106 @@ impl<H: Host> Vm<H> {
             }
             return self.continue_async_disposal(p, state);
         }
-        self.require_open_stack(this)?;
+        self.require_open_stack(p, this)?;
         match native {
             Native::DisposableStackUse => self.stack_use(p, this, args),
             Native::DisposableStackUseAsync => self.stack_use_async(p, this, args),
-            Native::DisposableStackAdopt => self.stack_adopt(this, args),
-            Native::DisposableStackDefer => self.stack_defer(this, args),
+            Native::DisposableStackAdopt => self.stack_adopt(p, this, args, false),
+            Native::DisposableStackDefer => self.stack_defer(p, this, args, false),
             _ => Err(JsError("invalid disposal native".into())),
         }
     }
 
-    fn require_stack(&self, stack: Value) -> Result<(), JsError> {
+    fn require_stack(&mut self, p: &ResidualProgram, stack: Value) -> Result<(), JsError> {
         let Some(Cell::Object(_)) = self.heap.get(stack) else {
-            return Err(JsError("DisposableStack receiver is invalid".into()));
+            return Err(self.type_error(p, "DisposableStack receiver is invalid".into()));
         };
         let entries = self
             .lookup_atom(ENTRIES)
             .and_then(|atom| self.own_property(stack, atom))
             .filter(|value| matches!(self.heap.get(*value), Some(Cell::Array { .. })));
-        if entries.is_none() {
-            return Err(JsError("DisposableStack receiver is invalid".into()));
+        let async_marker = self
+            .lookup_atom(ASYNC_STACK)
+            .and_then(|atom| self.own_property(stack, atom));
+        if entries.is_none() || async_marker.is_none() {
+            return Err(self.type_error(p, "DisposableStack receiver is invalid".into()));
         }
         Ok(())
     }
 
-    fn require_open_stack(&self, stack: Value) -> Result<(), JsError> {
-        self.require_stack(stack)?;
+    fn require_async_stack(&mut self, p: &ResidualProgram, stack: Value) -> Result<(), JsError> {
+        self.require_stack(p, stack)?;
+        let async_stack = self
+            .lookup_atom(ASYNC_STACK)
+            .and_then(|atom| self.own_property(stack, atom))
+            .is_some_and(|value| self.truthy(value));
+        if async_stack {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "AsyncDisposableStack receiver is invalid".into()))
+        }
+    }
+
+    fn require_open_stack(&mut self, p: &ResidualProgram, stack: Value) -> Result<(), JsError> {
+        self.require_stack(p, stack)?;
         let disposed = self
             .lookup_atom(DISPOSED)
             .and_then(|atom| self.own_property(stack, atom))
             .is_some_and(|value| self.truthy(value));
         if disposed {
-            return Err(JsError("DisposableStack is already disposed".into()));
+            return Err(self.reference_error(p, "DisposableStack is already disposed".into()));
         }
         Ok(())
+    }
+
+    fn stack_disposed(&mut self, stack: Value) -> Result<Value, JsError> {
+        let atom = self.intern_atom(DISPOSED);
+        Ok(self
+            .own_property(stack, atom)
+            .filter(|value| self.truthy(*value))
+            .map_or(Value::FALSE, |_| Value::TRUE))
+    }
+
+    fn stack_move(
+        &mut self,
+        p: &ResidualProgram,
+        stack: Value,
+        async_stack: bool,
+    ) -> Result<Value, JsError> {
+        self.require_open_stack(p, stack)?;
+        let entries = self.stack_entries(stack)?;
+        let moved = match self.heap.get_mut(entries) {
+            Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
+            _ => return Err(JsError("DisposableStack entries are invalid".into())),
+        };
+        let disposed_atom = self.intern_atom(DISPOSED);
+        self.set_property(stack, disposed_atom, Value::TRUE)?;
+        let constructor = self.native_value(if async_stack {
+            Native::AsyncDisposableStack
+        } else {
+            Native::DisposableStack
+        });
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self
+            .own_property(constructor, prototype_atom)
+            .unwrap_or(self.object_proto);
+        let moved_stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let root = self.heap.root(moved_stack);
+        let entries = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: moved,
+        });
+        let entries_atom = self.intern_atom(ENTRIES);
+        self.set_property(moved_stack, entries_atom, entries)?;
+        self.set_property(moved_stack, disposed_atom, Value::FALSE)?;
+        let async_atom = self.intern_atom(ASYNC_STACK);
+        self.set_property(
+            moved_stack,
+            async_atom,
+            if async_stack { Value::TRUE } else { Value::FALSE },
+        )?;
+        self.heap.release_root(root);
+        Ok(moved_stack)
     }
 
     fn stack_use(
@@ -209,6 +419,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         if is_nullish(value) {
+            self.push_stack_entry(
+                stack,
+                Value::UNDEFINED,
+                Value::UNDEFINED,
+                DISPOSAL_AWAIT_MODE,
+                true,
+            )?;
             return Ok(value);
         }
         if !self.is_object_like(value) {
@@ -237,26 +454,40 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
-    fn stack_adopt(&mut self, stack: Value, args: &[Value]) -> Result<Value, JsError> {
+    fn stack_adopt(
+        &mut self,
+        p: &ResidualProgram,
+        stack: Value,
+        args: &[Value],
+        await_result: bool,
+    ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         if !self.is_function(callback) {
-            return Err(JsError(
-                "DisposableStack.adopt callback is not callable".into(),
-            ));
+            return Err(self.type_error(p, "DisposableStack.adopt callback is not callable".into()));
         }
-        self.push_stack_entry(stack, callback, value, DISPOSAL_ADOPT_MODE, false)?;
+        self.push_stack_entry(stack, callback, value, DISPOSAL_ADOPT_MODE, await_result)?;
         Ok(value)
     }
 
-    fn stack_defer(&mut self, stack: Value, args: &[Value]) -> Result<Value, JsError> {
+    fn stack_defer(
+        &mut self,
+        p: &ResidualProgram,
+        stack: Value,
+        args: &[Value],
+        await_result: bool,
+    ) -> Result<Value, JsError> {
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_function(callback) {
-            return Err(JsError(
-                "DisposableStack.defer callback is not callable".into(),
-            ));
+            return Err(self.type_error(p, "DisposableStack.defer callback is not callable".into()));
         }
-        self.push_stack_entry(stack, callback, Value::UNDEFINED, DISPOSAL_DEFER_MODE, false)?;
+        self.push_stack_entry(
+            stack,
+            callback,
+            Value::UNDEFINED,
+            DISPOSAL_DEFER_MODE,
+            await_result,
+        )?;
         Ok(Value::UNDEFINED)
     }
 
@@ -366,6 +597,20 @@ impl<H: Host> Vm<H> {
 
     fn stack_dispose_async(&mut self, p: &ResidualProgram, stack: Value) -> Result<Value, JsError> {
         self.begin_async_disposal(p, stack, Value::DELETED)
+    }
+
+    fn stack_dispose_async_native(
+        &mut self,
+        p: &ResidualProgram,
+        stack: Value,
+    ) -> Result<Value, JsError> {
+        if let Err(error) = self.require_async_stack(p, stack) {
+            let reason = self.thrown_value_for(p, error);
+            let promise = self.promise_object();
+            self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+            return Ok(promise);
+        }
+        self.stack_dispose_async(p, stack)
     }
 
     fn stack_dispose_async_with_completion(
@@ -512,6 +757,7 @@ impl<H: Host> Vm<H> {
                 DISPOSAL_DEFER_MODE => {
                     self.call_value(p, callback, Value::UNDEFINED, &[])
                 }
+                DISPOSAL_AWAIT_MODE => Ok(Value::UNDEFINED),
                 _ => return Err(JsError("DisposableStack entry mode is invalid".into())),
             };
             match result {

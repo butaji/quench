@@ -241,6 +241,12 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::ArrayBuffer | Native::ArrayBufferIsView | Native::DetachArrayBuffer => 1.0,
         Native::ArrayIteratorNext => 0.0,
+        Native::AsyncDisposableStack
+        | Native::AsyncDisposableStackMove
+        | Native::AsyncDisposableStackDisposeAsync
+        | Native::AsyncDisposableStackDisposed => 0.0,
+        Native::AsyncDisposableStackUse | Native::AsyncDisposableStackDefer => 1.0,
+        Native::AsyncDisposableStackAdopt => 2.0,
         Native::ArrayBufferSlice | Native::ArrayBufferSliceToImmutable => 2.0,
         Native::ArrayBufferResize => 1.0,
         Native::ArrayBufferTransfer
