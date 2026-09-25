@@ -84,7 +84,7 @@ impl Compiler<'_> {
                         _ => {}
                     }
                 }
-                Statement::ClassDeclaration(class) => self.collect_name(
+                Statement::ClassDeclaration(class) if !nested => self.collect_name(
                     class.id.as_ref().map(|name| name.name.as_str()),
                     output,
                     seen,

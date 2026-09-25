@@ -592,6 +592,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     self.map_pattern_lexicals(&item.id, scope);
                 }
             }
+            Statement::ClassDeclaration(class) => {
+                if let Some(identifier) = &class.id {
+                    let source = self.owner.atom(identifier.name.as_str());
+                    let target =
+                        self.hidden_local(&format!("\0rqj:block-class:{}", identifier.name));
+                    scope.insert(source, target);
+                }
+            }
             Statement::FunctionDeclaration(function) if self.strict => {
                 if let Some(identifier) = &function.id {
                     let source = self.owner.atom(identifier.name.as_str());
