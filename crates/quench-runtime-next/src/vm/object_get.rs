@@ -58,13 +58,6 @@ impl<H: Host> Vm<H> {
         }
         let trap = self.proxy_trap(p, handler, "set")?;
 
-        if let Some(Cell::Proxy {
-            handler: current, ..
-        }) = self.heap.get(receiver)
-            && *current != handler
-        {
-            return Err(JsError("cannot access a revoked proxy".into()));
-        }
         if self.is_function(trap) {
             let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
             let result = self.call_value(p, trap, handler, &[target, key, value, receiver])?;
@@ -73,7 +66,11 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
-        self.set_property_with_program(p, target, atom, value)
+        if self.set_property_with_receiver(p, target, atom, value, receiver)? {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "cannot set property through proxy".into()))
+        }
     }
 
     pub(super) fn proxy_get_symbol(

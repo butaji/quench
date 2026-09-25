@@ -543,6 +543,9 @@ impl<H: Host> Vm<H> {
                 self.validate_proxy_define_property(p, target, key, descriptor)?;
                 return Ok(true);
             }
+            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+            self.object_define_property(p, &[target, key, descriptor])?;
+            return Ok(true);
         }
         let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
         self.object_define_property(p, &[receiver, key, descriptor])?;
