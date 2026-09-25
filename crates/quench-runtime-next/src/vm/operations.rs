@@ -400,13 +400,21 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "restricted arguments property".into()))
             }
             Native::FunctionCaller => {
-                let strict = match self.heap.get(this) {
+                let restricted = match self.heap.get(this) {
                     Some(Cell::Function {
-                        kind: FunctionKind::User(program_id, id),
+                        kind: FunctionKind::Native(Native::FunctionBoundCall),
+                        ..
+                    }) => true,
+                    Some(Cell::Function {
+                        kind:
+                            FunctionKind::User(program_id, id)
+                            | FunctionKind::NumericUser(program_id, id),
                         ..
                     }) => self.programs.get(*program_id).is_some_and(|program| {
                         program.functions.get(*id as usize).is_some_and(|function| {
                             function.strict
+                                || function.is_async
+                                || function.is_generator
                                 || function.name.is_some_and(|name| {
                                     (name as usize) < program.atoms.len()
                                         && program.atoms[name as usize].as_bytes() == b"\0rqj:arrow"
@@ -415,7 +423,7 @@ impl<H: Host> Vm<H> {
                     }),
                     _ => false,
                 };
-                if strict {
+                if restricted {
                     Err(self.type_error(p, "restricted function caller access".into()))
                 } else {
                     Ok(Value::UNDEFINED)
