@@ -116,6 +116,7 @@ impl FunctionCompiler<'_, '_> {
             value_cache,
             value_atom,
         );
+        let iteration_body_start = self.code.len() as u32;
         let using_iteration = match left {
             ForStatementLeft::VariableDeclaration(declaration)
                 if matches!(
@@ -141,6 +142,8 @@ impl FunctionCompiler<'_, '_> {
         self.bind_for_of_left(left, value);
         self.push_control(ControlKind::Loop, label);
         self.statement(body);
+        let iteration_body_end = self.code.len() as u32;
+        self.emit_iterator_close_on_abrupt(iterator_atom, iteration_body_start, iteration_body_end);
         let control = self.controls.pop().unwrap();
         self.iterator_closures.pop();
         let iteration_cleanup = self.code.len() as u32;
@@ -167,6 +170,43 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::Call, ignored, close_fn, iterator, 0);
         let end = self.code.len() as u32;
         self.patch_to(end_edge, end);
+    }
+
+    fn emit_iterator_close_on_abrupt(&mut self, iterator: Atom, start: u32, end: u32) {
+        let error = self.hidden_local("\0rqj:for-of-body-error");
+        let skip_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
+        let cleanup = self.code.len() as u32;
+        self.handlers.push(crate::bytecode::Handler {
+            start,
+            end,
+            target: cleanup,
+            slot: self.local_slot(error),
+            return_target: None,
+            return_slot: None,
+            with_depth: self.with_depth,
+        });
+
+        let close_iterator = self.load_atom(iterator);
+        let _ = self.emit(Op::IteratorClose, 0, close_iterator, 0, 0);
+        let close_end = self.code.len() as u32;
+        let close_ok = self.emit(Op::Jump, 0, 0, 0, 0);
+        let close_error = self.code.len() as u32;
+        let ignored_error = self.hidden_local("\0rqj:for-of-close-error");
+        self.handlers.push(crate::bytecode::Handler {
+            start: cleanup,
+            end: close_end,
+            target: close_error,
+            slot: self.local_slot(ignored_error),
+            return_target: None,
+            return_slot: None,
+            with_depth: self.with_depth,
+        });
+
+        let original_error = self.load_atom(error);
+        self.emit(Op::Throw, original_error, 0, 0, 0);
+        let continuation = self.code.len() as u32;
+        self.patch_to(skip_cleanup, continuation);
+        self.patch_to(close_ok, close_error);
     }
 
     fn push_iteration_scope(&mut self, left: &ForStatementLeft<'_>) -> bool {

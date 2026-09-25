@@ -413,7 +413,7 @@ impl<H: Host> Vm<H> {
             IteratorKind::Array
             | IteratorKind::ArrayKeys
             | IteratorKind::ArrayValues
-            | IteratorKind::ArrayEntries => self.array_iterator_item(source, kind, index),
+            | IteratorKind::ArrayEntries => self.array_iterator_item(p, source, kind, index)?,
             _ => match (kind, self.heap.get(source)) {
                 (IteratorKind::String, Some(Cell::String(text))) => {
                     let units = text.units();
@@ -480,16 +480,22 @@ impl<H: Host> Vm<H> {
 
     fn array_iterator_item(
         &mut self,
+        p: &ResidualProgram,
         source: Value,
         kind: IteratorKind,
         index: usize,
-    ) -> Option<(Value, Option<Value>)> {
+    ) -> Result<Option<(Value, Option<Value>)>, JsError> {
         if let Some(length) = self.typed_array_length(source) {
             if index >= length {
-                return None;
+                return Ok(None);
             }
-            let value = self.typed_array_get(source, index)?;
-            return match kind {
+            if kind == IteratorKind::ArrayKeys {
+                return Ok(Some((Value::number(index as f64), None)));
+            }
+            let Some(value) = self.typed_array_get(source, index) else {
+                return Ok(None);
+            };
+            return Ok(match kind {
                 IteratorKind::ArrayKeys => Some((Value::number(index as f64), None)),
                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
                 IteratorKind::ArrayEntries => {
@@ -500,20 +506,22 @@ impl<H: Host> Vm<H> {
                     Some((entry, None))
                 }
                 _ => None,
-            };
+            });
         }
         let length = match self.heap.get(source) {
             Some(Cell::Array { elements, .. }) => {
                 self.heap.sparse_length(source).unwrap_or(elements.len())
             }
-            _ => return None,
+            _ => return Ok(None),
         };
         if index >= length {
-            return None;
+            return Ok(None);
         }
-        let value = self.array_value_at(source, index);
-        match kind {
-            IteratorKind::ArrayKeys => Some((Value::number(index as f64), None)),
+        if kind == IteratorKind::ArrayKeys {
+            return Ok(Some((Value::number(index as f64), None)));
+        }
+        let value = self.get_index(p, source, Value::number(index as f64))?;
+        Ok(match kind {
             IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
             IteratorKind::ArrayEntries => {
                 let entry = self.heap.alloc(Cell::Array {
@@ -523,7 +531,7 @@ impl<H: Host> Vm<H> {
                 Some((entry, None))
             }
             _ => None,
-        }
+        })
     }
 
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
