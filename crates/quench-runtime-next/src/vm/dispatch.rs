@@ -240,13 +240,8 @@ impl<H: Host> Vm<H> {
             }
             Op::StoreName => self.store_name(p, i.imm(), self.read(f, i.a()), i.c())?,
             Op::LoadThis => {
-                if self.frames[f].this.is_deleted() {
-                    return Err(self.reference_error(
-                        p,
-                        "Must call super constructor before accessing 'this'".into(),
-                    ));
-                }
-                self.write(f, i.a(), self.frames[f].this);
+                let this = self.checked_this_binding(p, f)?;
+                self.write(f, i.a(), this);
             }
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
@@ -354,7 +349,7 @@ impl<H: Host> Vm<H> {
                 let v = if i.b() == FieldBase::NESTED {
                     self.resolve_field(p, f, i.imm())?
                 } else {
-                    let base = self.resolve_field_base(f, FieldBase(i.b()));
+                    let base = self.resolve_field_base(p, f, FieldBase(i.b()))?;
                     self.get_field_cached(p, base, i.imm(), i.c())?
                 };
                 if i.writes_current_this() {
@@ -633,14 +628,17 @@ impl<H: Host> Vm<H> {
                 let value = self.read(f, i.a());
                 self.define_object_literal_data_property(p, object, i.imm(), value)?;
             }
-            Op::SetThisField => self.set_field_cached(
-                p,
-                self.frames[f].this,
-                i.imm(),
-                self.read(f, i.a()),
-                i.c(),
-                p.functions[self.frames[f].function as usize].strict,
-            )?,
+            Op::SetThisField => {
+                let this = self.checked_this_binding(p, f)?;
+                self.set_field_cached(
+                    p,
+                    this,
+                    i.imm(),
+                    self.read(f, i.a()),
+                    i.c(),
+                    p.functions[self.frames[f].function as usize].strict,
+                )?;
+            }
             Op::SetIndex => {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.index_dispatch(true, false);
@@ -968,7 +966,7 @@ impl<H: Host> Vm<H> {
         site: u32,
     ) -> Result<Value, JsError> {
         let site = p.field_sites[site as usize];
-        let base = self.resolve_field_base(frame, site.base);
+        let base = self.resolve_field_base(p, frame, site.base)?;
         let value = self.get_field_cached(p, base, site.first.0, site.first.1)?;
         match site.second {
             Some((atom, cache)) => self.get_field_cached(p, value, atom, cache),
