@@ -164,9 +164,20 @@ impl FunctionCompiler<'_, '_> {
         self.with_depth = self.with_depth.saturating_add(1);
         self.statement(&item.body);
         self.with_depth = self.with_depth.saturating_sub(1);
+        self.emit_with_exit();
+    }
+
+    fn emit_with_exit(&mut self) {
         let exit = self.load_name("\0rqj:with-exit");
         let ignored = self.reg();
         self.emit(Op::Call, ignored, exit, exit, 0);
+    }
+
+    fn emit_with_exits_to(&mut self, target_depth: u16) {
+        let exits = self.with_depth.saturating_sub(target_depth);
+        for _ in 0..exits {
+            self.emit_with_exit();
+        }
     }
     fn return_statement(&mut self, item: &ReturnStatement<'_>) {
         if let Some(value) = &item.argument {
@@ -524,6 +535,10 @@ impl FunctionCompiler<'_, '_> {
             );
             return;
         };
+        if self.finally_contexts.is_empty() {
+            let target_depth = self.controls[index].with_depth;
+            self.emit_with_exits_to(target_depth);
+        }
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
         if let Some(context) = self.finally_contexts.last_mut() {
             context.abrupt_edges.push(FinallyAbrupt {
@@ -558,6 +573,10 @@ impl FunctionCompiler<'_, '_> {
             );
             return;
         };
+        if self.finally_contexts.is_empty() {
+            let target_depth = self.controls[index].with_depth;
+            self.emit_with_exits_to(target_depth);
+        }
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
         if let Some(context) = self.finally_contexts.last_mut() {
             context.abrupt_edges.push(FinallyAbrupt {
@@ -606,6 +625,7 @@ impl FunctionCompiler<'_, '_> {
         self.controls.push(ControlTarget {
             kind,
             label,
+            with_depth: self.with_depth,
             breaks: vec![],
             continues: vec![],
         });

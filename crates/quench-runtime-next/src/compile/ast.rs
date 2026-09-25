@@ -44,6 +44,7 @@ impl StatementCompletion {
 struct ControlTarget {
     kind: ControlKind,
     label: Option<Atom>,
+    with_depth: u16,
     breaks: Vec<usize>,
     continues: Vec<usize>,
 }
