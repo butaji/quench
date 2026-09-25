@@ -359,6 +359,7 @@ impl<H: Host> Vm<H> {
         if !self.is_function(callback) {
             return Err(JsError("flatMap callback is not callable".into()));
         }
+        let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let target = self.array_species_create(p, source, 0)?;
         let mut output = Vec::new();
         for index in 0..length {
@@ -368,7 +369,7 @@ impl<H: Host> Vm<H> {
             }
             let value = self.get_index(p, source, key)?;
             let callback_args = [value, key, source];
-            let result = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
+            let result = self.call_value(p, callback, this_arg, &callback_args)?;
             if self.is_array(p, result)? {
                 self.flatten_into(p, result, 0, &mut output)?;
             } else {
