@@ -167,6 +167,7 @@ pub(crate) enum Native {
     AsyncGeneratorNext, AsyncGeneratorReturn, AsyncGeneratorThrow,
     AsyncGeneratorReturnFulfilled, AsyncGeneratorReturnRejected,
     AsyncIteratorDispose, AsyncIteratorDisposeFulfilled,
+    Test262Agent,
     WeakMap,
     WeakMapGet,
     WeakMapSet,

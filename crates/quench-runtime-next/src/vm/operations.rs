@@ -60,6 +60,9 @@ impl<H: Host> Vm<H> {
         if native.is_atomics_native() {
             return self.atomics_native(p, native, args);
         }
+        if native == Native::Test262Agent {
+            return self.call_test262_agent(p, args);
+        }
         if native.is_promise_native() {
             return self.call_promise_native(p, native, this, args);
         }

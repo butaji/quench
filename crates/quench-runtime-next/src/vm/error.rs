@@ -394,6 +394,7 @@ impl<H: Host> Vm<H> {
                         "AbstractModuleSource",
                         self.native_value(Native::AbstractModuleSource),
                     )?;
+                    self.install_test262_agent(program, realm)?;
                     self.global(program, global.name, realm)?;
                     continue;
                 }

@@ -51,6 +51,7 @@ impl<H: Host> Vm<H> {
             suspended: vec![],
             suspended_free: vec![],
             promise: Default::default(),
+            test262_agent: Default::default(),
             programs: ProgramStore::default(),
             active_program: ProgramId::MAIN,
             #[cfg(feature = "profile-aggregate")]

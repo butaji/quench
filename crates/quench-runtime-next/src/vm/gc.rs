@@ -69,6 +69,7 @@ impl<H: Host> Vm<H> {
                     self.regexp_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
+                .chain(self.test262_agent.roots())
                 .chain(self.promise.active_native.iter().copied())
                 .chain(self.promise.modules.values().flat_map(ModuleRecord::roots))
                 .chain(self.promise.module_sources.values().copied())
