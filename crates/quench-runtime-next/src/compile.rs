@@ -1788,7 +1788,7 @@ impl<'a> Compiler<'a> {
         }
         let parameter_local_count = locals.len();
         let root_strict = self.root_strict || options.strict;
-        self.collect_locals(body, &mut locals, root_strict);
+        let mut function_scope = self.collect_locals(body, &mut locals, root_strict);
         let name_binding = options.name_binding.and_then(|source_name| {
             if locals.contains(&source_name) {
                 None
@@ -1831,12 +1831,14 @@ impl<'a> Compiler<'a> {
                     .map(|slot| slot as u16)
             } else {
                 locals.push(arguments);
+                function_scope.insert(arguments);
                 Some((locals.len() - 1) as u16)
             }
         };
         let mut function = FunctionCompiler::new(
             self,
             locals,
+            function_scope,
             scopes.to_vec(),
             id,
             (options.super_static, options.super_home),

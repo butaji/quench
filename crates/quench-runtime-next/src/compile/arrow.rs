@@ -40,12 +40,16 @@ impl Compiler<'_> {
         let parameter_local_count = locals.len();
         let strict = inherited_strict
             || matches!(&value.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict"));
-        if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body {
-            self.collect_locals(&body.statements, &mut locals, strict);
-        }
+        let function_scope = match &value.body {
+            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
+                self.collect_locals(&body.statements, &mut locals, strict)
+            }
+            _ => locals.iter().copied().collect(),
+        };
         let mut function = FunctionCompiler::new(
             self,
             locals,
+            function_scope,
             scopes.to_vec(),
             id,
             (false, false),
