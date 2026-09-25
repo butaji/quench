@@ -747,6 +747,10 @@ impl Engine {
         }
         early::strict_binding_early_error(&parsed.program, strict)
     }
+
+    pub(crate) fn eval_strict_eval_early_error(source: &str) -> bool {
+        early::strict_eval_early_error(source)
+    }
 }
 
 pub(crate) fn module_default_binding(module_name: &str) -> String {
