@@ -440,6 +440,24 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        let to_string_tag = self
+            .well_known_symbols
+            .get("toStringTag")
+            .copied()
+            .expect("well-known toStringTag symbol installed before module source intrinsics");
+        self.set_symbol_property(prototype, to_string_tag, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::symbol(to_string_tag),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(self.native_value(Native::AbstractModuleSourceToStringTag)),
+                setter: None,
+            },
+        );
         Ok(())
     }
 
