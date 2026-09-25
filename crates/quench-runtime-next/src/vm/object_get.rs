@@ -361,8 +361,17 @@ impl<H: Host> Vm<H> {
         target: Value,
         atom: Atom,
     ) -> bool {
+        self.private_brand_home(p, target, atom).is_some()
+    }
+
+    pub(super) fn private_brand_home(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        atom: Atom,
+    ) -> Option<Value> {
         let Some(frame_index) = self.frames.len().checked_sub(1) else {
-            return false;
+            return None;
         };
         let mut function = Some(self.frames[frame_index].function);
         let mut home_atoms = Vec::new();
@@ -421,8 +430,31 @@ impl<H: Host> Vm<H> {
                     .private_names
                     .contains(&PrivateBrand { home, name: atom })
             });
-            return branded;
+            return branded.then_some(home);
         }
-        false
+        None
+    }
+
+    pub(super) fn get_private_proxy_field(
+        &mut self,
+        p: &ResidualProgram,
+        proxy: Value,
+        atom: Atom,
+    ) -> Result<Value, JsError> {
+        let Some(home) = self.private_brand_home(p, proxy, atom) else {
+            return Err(self.type_error(p, "private member is not present on this object".into()));
+        };
+        if let Some(value) = self.own_property(proxy, atom) {
+            return Ok(value);
+        }
+        if let Some(attributes) = self.property_accessor(home, atom) {
+            let Some(getter) = attributes.getter else {
+                return Err(
+                    self.type_error(p, "private member is not present on this object".into())
+                );
+            };
+            return self.call_value(p, getter, proxy, &[]);
+        }
+        self.get_property(p, home, atom)
     }
 }
