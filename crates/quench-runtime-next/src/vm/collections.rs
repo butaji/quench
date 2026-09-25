@@ -1,4 +1,7 @@
 use super::*;
+
+const MAP_ENTRY_KEY_INDEX: usize = 0;
+const MAP_ENTRY_VALUE_INDEX: usize = 1;
 impl<H: Host> Vm<H> {
     pub(super) fn is_collection_native(native: Native) -> bool {
         matches!(
@@ -153,6 +156,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_collection_iterators(&mut self) -> Result<(), JsError> { let Some(iterator) = self.well_known_symbols.get("iterator").copied() else { return Ok(()) }; self.set_symbol_property(self.map_proto, iterator, self.native_value(Native::MapEntries))?; self.set_symbol_property(self.set_proto, iterator, self.native_value(Native::SetValues)) }
     pub(super) fn construct_collection_native(
         &mut self,
+        p: &ResidualProgram,
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
@@ -166,14 +170,15 @@ impl<H: Host> Vm<H> {
                 if let Some(entries) = entries {
                     for index in 0..self.array_length(entries).unwrap_or(0) {
                         let entry = self.array_value_at(entries, index);
-                        let Some(pair_length) = self.array_length(entry) else {
-                            return Err(JsError("Map constructor entries must be arrays".into()));
-                        };
-                        if pair_length < 2 {
-                            return Err(JsError("Map constructor entries need two values".into()));
+                        if !self.is_object_like(entry) {
+                            return Err(
+                                self.type_error(p, "Iterator value is not an entry object".into())
+                            );
                         }
-                        let key = self.array_value_at(entry, 0);
-                        let value = self.array_value_at(entry, 1);
+                        let key =
+                            self.get_index(p, entry, Value::number(MAP_ENTRY_KEY_INDEX as f64))?;
+                        let value =
+                            self.get_index(p, entry, Value::number(MAP_ENTRY_VALUE_INDEX as f64))?;
                         if let Some(index) = pairs
                             .iter()
                             .position(|(candidate, _)| self.same_value_zero(*candidate, key))
