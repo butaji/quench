@@ -219,6 +219,9 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&index.to_string());
                 return self.set_property_with_program(p, object, atom, value);
             }
+            if self.set_inherited_index_accessor(p, object, index, value, strict)? {
+                return Ok(());
+            }
             if self
                 .array_descriptor(object, index)
                 .is_some_and(|attributes| !attributes.writable)
@@ -297,10 +300,30 @@ impl<H: Host> Vm<H> {
             return self.set_symbol_property(object, key, value);
         }
         if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {
+            let index = index as usize;
+            if let Some(attributes) = self.array_descriptor(object, index) {
+                if attributes.accessor {
+                    if let Some(setter) = attributes.setter {
+                        self.call_value(p, setter, object, &[value])?;
+                    } else if strict {
+                        return Err(self.type_error(p, "array index has no setter".into()));
+                    }
+                    return Ok(());
+                }
+                if !attributes.writable {
+                    return if strict {
+                        Err(self.type_error(p, "array index is not writable".into()))
+                    } else {
+                        Ok(())
+                    };
+                }
+            }
+            if self.set_inherited_index_accessor(p, object, index, value, strict)? {
+                return Ok(());
+            }
             #[cfg(feature = "profile-aggregate")]
             let kind = self.heap.get(object).and_then(|cell| match cell {
                 Cell::Array { elements, .. } => {
-                    let index = index as usize;
                     let sparse = self.heap.sparse_length(object).is_some()
                         || index > 1024 && index > elements.len().saturating_mul(4).max(16);
                     Some(if sparse {
@@ -311,7 +334,7 @@ impl<H: Host> Vm<H> {
                 }
                 _ => None,
             });
-            if self.set_array_element(object, index as usize, value) {
+            if self.set_array_element(object, index, value) {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile
                     .index_set(usize::from(key.as_int().is_none()) * 3 + kind.unwrap());
@@ -352,12 +375,35 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 };
             }
+            if self.set_inherited_index_accessor(p, object, index as usize, value, strict)? {
+                return Ok(());
+            }
             if self.set_array_element(object, index as usize, value) {
                 return Ok(());
             }
         }
         let atom = self.intern_js_atom(&key);
         self.set_property_with_program(p, object, atom, value)
+    }
+
+    fn set_inherited_index_accessor(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        index: usize,
+        value: Value,
+        strict: bool,
+    ) -> Result<bool, JsError> {
+        let atom = self.intern_atom(&index.to_string());
+        let Some(attributes) = self.property_accessor(object, atom) else {
+            return Ok(false);
+        };
+        if let Some(setter) = attributes.setter {
+            self.call_value(p, setter, object, &[value])?;
+        } else if strict {
+            return Err(self.type_error(p, "property has no setter".into()));
+        }
+        Ok(true)
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
