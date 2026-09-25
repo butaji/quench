@@ -102,8 +102,14 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) defer_instance_fields: bool,
     pub(super) super_call_binds_this: bool,
     lexical_scopes: Vec<LexicalScope>,
-    disposable_stack: Option<Atom>,
+    disposal_scopes: Vec<DisposalScope>,
     pub(super) deferred_instance_field_edges: Vec<(usize, u32)>,
+}
+
+#[derive(Default)]
+pub(super) struct DisposalScope {
+    stack: Option<Atom>,
+    asynchronous: bool,
 }
 
 impl<'a, 'b> FunctionCompiler<'a, 'b> {
@@ -165,7 +171,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             defer_instance_fields,
             super_call_binds_this: false,
             lexical_scopes: Vec::new(),
-            disposable_stack: None,
+            disposal_scopes: vec![DisposalScope::default()],
             deferred_instance_field_edges: Vec::new(),
         }
     }
@@ -632,10 +638,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     ) {
         match statement {
             Statement::VariableDeclaration(declaration)
-                if matches!(
-                    declaration.kind,
-                    VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                ) =>
+                if super::is_lexical_binding_declaration(declaration.kind) =>
             {
                 for item in &declaration.declarations {
                     self.map_pattern_lexicals(&item.id, scope);

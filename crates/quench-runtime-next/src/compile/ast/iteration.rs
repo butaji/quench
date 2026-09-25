@@ -115,6 +115,20 @@ impl FunctionCompiler<'_, '_> {
             value_cache,
             value_atom,
         );
+        let using_iteration = match left {
+            ForStatementLeft::VariableDeclaration(declaration)
+                if matches!(
+                    declaration.kind,
+                    VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+                ) =>
+            {
+                Some(declaration.kind)
+            }
+            _ => None,
+        };
+        if using_iteration.is_some() {
+            self.push_disposal_scope();
+        }
         self.iterator_closures.push(iterator_atom);
         if matches!(
             left,
@@ -128,11 +142,24 @@ impl FunctionCompiler<'_, '_> {
         self.statement(body);
         let control = self.controls.pop().unwrap();
         self.iterator_closures.pop();
+        let iteration_cleanup = self.code.len() as u32;
+        self.patch_edges(&control.continues, iteration_cleanup);
+        if using_iteration.is_some() {
+            self.emit_disposal();
+        }
+        let skip_break_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
+        let break_cleanup = self.code.len() as u32;
+        self.patch_edges(&control.breaks, break_cleanup);
+        if using_iteration.is_some() {
+            self.emit_disposal();
+            self.pop_disposal_scope();
+        }
+        let break_close = self.emit(Op::Jump, 0, 0, 0, 0);
         let update = self.code.len() as u32;
-        self.patch_edges(&control.continues, update);
+        self.patch_instruction(skip_break_cleanup, update);
         self.emit(Op::Jump, 0, 0, 0, head);
         let close = self.code.len() as u32;
-        self.patch_edges(&control.breaks, close);
+        self.patch_instruction(break_close, close);
         let iterator = self.load_atom(iterator_atom);
         let close_fn = self.load_name("\0rqj:iterator-close");
         let ignored = self.reg();
@@ -161,6 +188,15 @@ impl FunctionCompiler<'_, '_> {
             ForStatementLeft::VariableDeclaration(declaration)
                 if declaration.declarations.len() == 1 =>
             {
+                let value = match declaration.kind {
+                    VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => {
+                        let asynchronous = declaration.kind == VariableDeclarationKind::AwaitUsing;
+                        let stack = self.ensure_disposable_stack(asynchronous);
+                        let method = if asynchronous { "useAsync" } else { "use" };
+                        self.call_disposable_method(stack, method, value)
+                    }
+                    _ => value,
+                };
                 self.bind_pattern(&declaration.declarations[0].id, value);
             }
             _ => {
