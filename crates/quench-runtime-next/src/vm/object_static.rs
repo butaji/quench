@@ -588,6 +588,9 @@ impl<H: Host> Vm<H> {
         let key = self.coerce_js_string(p, key_value)?;
         if key.host_string() == "length"
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))
+            && !self
+                .object_data(target)
+                .is_some_and(Object::is_arguments_object)
         {
             return if self.define_array_length(p, target, descriptor)? {
                 Ok(target)
