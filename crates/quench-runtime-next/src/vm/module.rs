@@ -1,4 +1,5 @@
 use crate::Value;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModulePhase {
@@ -27,6 +28,7 @@ pub(crate) struct ModuleRecord {
     evaluation_promise: Option<Value>,
     waiters: Vec<Value>,
     pending_namespace: Option<Value>,
+    async_cycle_root: Option<PathBuf>,
 }
 
 impl ModuleRecord {
@@ -37,6 +39,7 @@ impl ModuleRecord {
             evaluation_promise: None,
             waiters: vec![import_promise],
             pending_namespace: None,
+            async_cycle_root: None,
         }
     }
 
@@ -47,6 +50,7 @@ impl ModuleRecord {
             evaluation_promise: None,
             waiters: vec![import_promise],
             pending_namespace: Some(namespace),
+            async_cycle_root: None,
         }
     }
 
@@ -57,6 +61,7 @@ impl ModuleRecord {
             evaluation_promise: None,
             waiters: Vec::new(),
             pending_namespace: Some(namespace),
+            async_cycle_root: None,
         }
     }
 
@@ -67,6 +72,7 @@ impl ModuleRecord {
             evaluation_promise: None,
             waiters: Vec::new(),
             pending_namespace: None,
+            async_cycle_root: None,
         }
     }
 
@@ -77,6 +83,7 @@ impl ModuleRecord {
             evaluation_promise: None,
             waiters: vec![],
             pending_namespace: None,
+            async_cycle_root: None,
         }
     }
 
@@ -87,6 +94,7 @@ impl ModuleRecord {
             evaluation_promise: None,
             waiters: Vec::new(),
             pending_namespace: None,
+            async_cycle_root: None,
         }
     }
 
@@ -134,6 +142,14 @@ impl ModuleRecord {
 
     pub(crate) fn pending_namespace(&self) -> Option<Value> {
         self.pending_namespace
+    }
+
+    pub(crate) fn async_cycle_root(&self) -> Option<&PathBuf> {
+        self.async_cycle_root.as_ref()
+    }
+
+    pub(crate) fn set_async_cycle_root(&mut self, root: PathBuf) {
+        self.async_cycle_root = Some(root);
     }
 
     pub(crate) fn cache_pending_namespace(&mut self, namespace: Value) {
@@ -215,5 +231,28 @@ impl ModuleRecord {
         }
         self.outcome = ModuleOutcome::Pending(to);
         true
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct ModuleEvaluationStack(Vec<PathBuf>);
+
+impl ModuleEvaluationStack {
+    pub(crate) fn contains(&self, module: &PathBuf) -> bool {
+        self.0.contains(module)
+    }
+
+    pub(crate) fn enter(&mut self, module: PathBuf) {
+        self.0.push(module);
+    }
+
+    pub(crate) fn leave(&mut self, module: &PathBuf) {
+        debug_assert_eq!(self.0.last(), Some(module));
+        self.0.pop();
+    }
+
+    pub(crate) fn cycle_to(&self, module: &PathBuf) -> Option<&[PathBuf]> {
+        let start = self.0.iter().position(|active| active == module)?;
+        Some(&self.0[start..])
     }
 }

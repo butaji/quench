@@ -1,5 +1,5 @@
 use super::activation::ContinuationId;
-use super::module::{ModuleOutcome, ModulePhase, ModuleRecord};
+use super::module::{ModuleEvaluationStack, ModuleOutcome, ModulePhase, ModuleRecord};
 use super::*;
 use std::collections::VecDeque;
 
@@ -900,7 +900,7 @@ impl<H: Host> Vm<H> {
                             self.promise_resolve_value(p, promise, namespace)?;
                             return Ok(Value::UNDEFINED);
                         }
-                        let mut active = FxHashSet::default();
+                        let mut active = ModuleEvaluationStack::default();
                         for dependency in asynchronous {
                             self.evaluate_static_module_source(p, dependency, &mut active)?;
                         }
@@ -928,7 +928,7 @@ impl<H: Host> Vm<H> {
                     if module_type == "javascript"
                         && phase == crate::bytecode::ModuleRequestPhase::Evaluation
                     {
-                        let mut active = FxHashSet::default();
+                        let mut active = ModuleEvaluationStack::default();
                         let outer_batch =
                             std::mem::replace(&mut self.deferred_dependency_batch, true);
                         let evaluation =
@@ -1255,8 +1255,8 @@ impl<H: Host> Vm<H> {
             return self.syntax_error_result(p, "module source has an early error");
         }
         if let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) {
-            let mut active = FxHashSet::default();
-            active.insert(crate::module_identity::normalize(std::path::Path::new(
+            let mut active = ModuleEvaluationStack::default();
+            active.enter(crate::module_identity::normalize(std::path::Path::new(
                 &module.name,
             )));
             self.evaluate_module_requests(p, &module.name, &plan.requests, &mut active)?;
@@ -1538,8 +1538,8 @@ impl<H: Host> Vm<H> {
         if p.module_requests.is_empty() {
             return Ok(());
         }
-        let mut active = FxHashSet::default();
-        active.insert(crate::module_identity::normalize(std::path::Path::new(
+        let mut active = ModuleEvaluationStack::default();
+        active.enter(crate::module_identity::normalize(std::path::Path::new(
             &p.source_name,
         )));
         let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
@@ -1683,14 +1683,15 @@ impl<H: Host> Vm<H> {
                         .object_data(namespace)
                         .is_some_and(Object::is_module_namespace);
                     let fallback = self.own_property(namespace, atom);
-                    if is_namespace && fallback.is_none() {
+                    if is_namespace && named_binding.is_none() && fallback.is_none() {
                         return self
                             .syntax_error_result(p, "module import binding could not be resolved")
                             .map(|_| Vec::new());
                     }
                     match (named_binding, fallback) {
                         (Some(_), Some(value)) => value,
-                        (_, _) => self.get_property(p, namespace, atom)?,
+                        (Some(_), None) => Value::UNDEFINED,
+                        (None, _) => self.get_property(p, namespace, atom)?,
                     }
                 }
             };
@@ -1756,7 +1757,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         referrer: &str,
         requests: &[crate::bytecode::ModuleRequest],
-        active: &mut FxHashSet<std::path::PathBuf>,
+        active: &mut ModuleEvaluationStack,
     ) -> Result<(), JsError> {
         // Resolve a module's complete request list before evaluating any
         // dependency. Resolution is a host phase; evaluating a dependency
@@ -1776,6 +1777,16 @@ impl<H: Host> Vm<H> {
         for (request, module) in requests.iter().zip(resolved) {
             match request.phase {
                 crate::bytecode::ModuleRequestPhase::Evaluation => {
+                    let identity =
+                        crate::module_identity::normalize(std::path::Path::new(&module.name));
+                    if let Some(cycle) = active.cycle_to(&identity) {
+                        for member in cycle {
+                            let key = module_cache_key(&member.to_string_lossy(), "javascript");
+                            if let Some(record) = self.promise.modules.get_mut(&key) {
+                                record.set_async_cycle_root(identity.clone());
+                            }
+                        }
+                    }
                     self.evaluate_static_module_request(p, request, module, active)?;
                 }
                 crate::bytecode::ModuleRequestPhase::Defer => {
@@ -1859,7 +1870,7 @@ impl<H: Host> Vm<H> {
         let mut asynchronous = Vec::new();
         self.gather_async_transitive_dependencies(p, &module, &mut seen, &mut asynchronous)?;
         if !asynchronous.is_empty() {
-            let mut active = FxHashSet::default();
+            let mut active = ModuleEvaluationStack::default();
             let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
             let launched = (|| {
                 for dependency in asynchronous {
@@ -1900,7 +1911,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         request: &crate::bytecode::ModuleRequest,
         module: ModuleSource,
-        active: &mut FxHashSet<std::path::PathBuf>,
+        active: &mut ModuleEvaluationStack,
     ) -> Result<(), JsError> {
         match request.module_type.as_deref().unwrap_or("javascript") {
             "javascript" => self.evaluate_static_module_source(p, module, active),
@@ -1928,7 +1939,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         module: ModuleSource,
-        active: &mut FxHashSet<std::path::PathBuf>,
+        active: &mut ModuleEvaluationStack,
     ) -> Result<(), JsError> {
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
         if active.contains(&identity) {
@@ -1988,11 +1999,9 @@ impl<H: Host> Vm<H> {
                 .modules
                 .insert(cache_key.clone(), ModuleRecord::evaluating_static());
         }
-        active.insert(identity);
+        active.enter(identity.clone());
         let result = self.evaluate_static_module_body(p, &module, &plan, active);
-        active.remove(&crate::module_identity::normalize(std::path::Path::new(
-            &module.name,
-        )));
+        active.leave(&identity);
         match result {
             Ok(Some(namespace)) => self.settle_static_module(p, &cache_key, Ok(namespace)),
             Ok(None) => {
@@ -2015,7 +2024,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
         plan: &crate::compile::StaticModulePlan,
-        active: &mut FxHashSet<std::path::PathBuf>,
+        active: &mut ModuleEvaluationStack,
     ) -> Result<Option<Value>, JsError> {
         self.evaluate_module_requests(p, &module.name, &plan.requests, active)?;
         if self.static_module_has_pending_dependencies(p, module)? {
@@ -2180,7 +2189,7 @@ impl<H: Host> Vm<H> {
             if record.phase() != ModulePhase::WaitingForDependencies {
                 continue;
             }
-            let mut active = FxHashSet::default();
+            let mut active = ModuleEvaluationStack::default();
             let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
             let result = self.evaluate_static_module_source(p, module, &mut active);
             self.deferred_dependency_batch = outer_batch;
@@ -2254,13 +2263,28 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
-            let phase = self
-                .promise
-                .modules
-                .get(&module_cache_key(&dependency.name, "javascript"))
-                .map(ModuleRecord::phase);
+            let dependency_key = module_cache_key(&dependency.name, "javascript");
+            let dependency_record = self.promise.modules.get(&dependency_key);
+            let phase = dependency_record.map(ModuleRecord::phase);
             if matches!(
                 phase,
+                Some(ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)
+            ) {
+                return Ok(true);
+            }
+            let cycle_root = dependency_record.and_then(ModuleRecord::async_cycle_root);
+            let module_identity =
+                crate::module_identity::normalize(std::path::Path::new(&module.name));
+            let cycle_root_phase = cycle_root
+                .filter(|root| **root != module_identity)
+                .and_then(|root| {
+                    self.promise
+                        .modules
+                        .get(&module_cache_key(&root.to_string_lossy(), "javascript"))
+                })
+                .map(ModuleRecord::phase);
+            if matches!(
+                cycle_root_phase,
                 Some(ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)
             ) {
                 return Ok(true);
