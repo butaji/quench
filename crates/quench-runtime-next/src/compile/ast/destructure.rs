@@ -890,7 +890,10 @@ impl FunctionCompiler<'_, '_> {
             0,
             0,
         );
-        self.iterator_closures.push(iterator_atom);
+        self.iterator_closures.push(IteratorClosure {
+            iterator: iterator_atom,
+            control_depth: self.controls.len(),
+        });
         let error_atom = self.hidden_local("\0rqj:binding-iterator-error");
         (self.code.len() as u32, error_atom)
     }
