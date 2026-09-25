@@ -137,6 +137,9 @@ impl<H: Host> Vm<H> {
         if is_nullish(value) {
             return Ok(value);
         }
+        if !self.is_object_like(value) {
+            return Err(self.type_error(p, "using value is not an object".into()));
+        }
         let symbol = self
             .well_known_symbols
             .get("dispose")
@@ -144,9 +147,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("Symbol.dispose is unavailable".into()))?;
         let callback = self.get_index(p, value, symbol)?;
         if !self.is_function(callback) {
-            return Err(JsError(
-                "disposable value has no callable dispose method".into(),
-            ));
+            return Err(self.type_error(p, "dispose method is not callable".into()));
         }
         self.push_stack_entry(stack, callback, value, 0)?;
         Ok(value)
@@ -161,6 +162,9 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         if is_nullish(value) {
             return Ok(value);
+        }
+        if !self.is_object_like(value) {
+            return Err(self.type_error(p, "await using value is not an object".into()));
         }
         let async_symbol = self
             .well_known_symbols
@@ -179,9 +183,7 @@ impl<H: Host> Vm<H> {
             callback
         };
         if !self.is_function(callback) {
-            return Err(JsError(
-                "disposable value has no callable async dispose method".into(),
-            ));
+            return Err(self.type_error(p, "async dispose method is not callable".into()));
         }
         self.push_stack_entry(stack, callback, value, 0)?;
         Ok(value)

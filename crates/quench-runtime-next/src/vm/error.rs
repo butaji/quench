@@ -702,6 +702,21 @@ impl<H: Host> Vm<H> {
             };
             self.set_named(program, constructor, "prototype", prototype)?;
             self.set_named(program, prototype, "constructor", constructor)?;
+            let constructor_name = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            self.set_named(program, constructor, "name", constructor_name)?;
+            let name_atom = self.intern_atom("name");
+            self.set_property_attributes(
+                constructor,
+                PropertyKey::string(name_atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
             let name_value = self.heap.alloc(Cell::String(JsString::from_str(name)));
             self.set_named(program, prototype, "name", name_value)?;
             self.global(program, name, constructor)?;
