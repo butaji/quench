@@ -261,7 +261,8 @@ impl<H: Host> Vm<H> {
             if crate::Engine::eval_has_use_strict_directive(source) {
                 Vec::new()
             } else {
-                crate::Engine::eval_var_declared_names(source)
+                crate::Engine::eval_var_names(source)
+                    .map(|names| names.declarations)
                     .unwrap_or_default()
                     .into_iter()
                     .map(|name| self.intern_atom(&name))
@@ -388,7 +389,9 @@ impl<H: Host> Vm<H> {
                 .first()
                 .map(|root| root.global_lexical_atoms.clone())
                 .unwrap_or_default();
-            let eval_var_names = crate::Engine::eval_var_declared_names(source).unwrap_or_default();
+            let eval_var_names = crate::Engine::eval_var_names(source)
+                .map(|names| names.declarations)
+                .unwrap_or_default();
             for name in eval_var_names {
                 let atom = self.intern_atom(&name);
                 let declared_lexically = self.realm.global_lexical_declarations.contains(&atom)
@@ -512,6 +515,20 @@ impl<H: Host> Vm<H> {
                 .syntax_error_result(p, "arguments binding is not allowed in generator eval");
         }
         let strict = source_strict;
+        if strict && self.direct_eval {
+            let atoms = crate::Engine::eval_var_names(source)
+                .map(|names| names.bindings)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|name| self.intern_atom(&name))
+                .collect::<Vec<_>>();
+            if let Some(frame) = self.frames.last_mut() {
+                frame
+                    .dynamic_bindings
+                    .extend(atoms.into_iter().map(|atom| (atom, Value::UNDEFINED)));
+            }
+            self.sync_dynamic_bindings();
+        }
         for statement in &statements {
             if function_declaration_name(statement.trim()).is_some() {
                 self.install_eval_function(p, statement.trim(), strict)?;
@@ -612,6 +629,21 @@ impl<H: Host> Vm<H> {
                         }
                     } else {
                         if strict {
+                            if self.direct_eval
+                                && let Some((_, binding)) = self
+                                    .frames
+                                    .last_mut()
+                                    .and_then(|frame| {
+                                        frame
+                                            .dynamic_bindings
+                                            .iter_mut()
+                                            .rev()
+                                            .find(|(candidate, _)| *candidate == atom)
+                                    })
+                            {
+                                *binding = value;
+                                self.sync_dynamic_bindings();
+                            }
                             continue;
                         }
                         if self.direct_eval && !self.parameter_eval {
