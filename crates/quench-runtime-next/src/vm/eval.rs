@@ -244,6 +244,24 @@ impl<H: Host> Vm<H> {
         source: &str,
         inherited_strict: bool,
     ) -> Result<Value, JsError> {
+        let binding_count = self
+            .frames
+            .last()
+            .map_or(0, |frame| frame.dynamic_bindings.len());
+        let result = self.eval_source_simple_body(p, source, inherited_strict);
+        if let Some(frame) = self.frames.last_mut() {
+            frame.dynamic_bindings.truncate(binding_count);
+        }
+        self.sync_dynamic_bindings();
+        result
+    }
+
+    fn eval_source_simple_body(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+        inherited_strict: bool,
+    ) -> Result<Value, JsError> {
         if source.trim().is_empty() {
             return Ok(Value::UNDEFINED);
         }
@@ -308,7 +326,11 @@ impl<H: Host> Vm<H> {
         if is_empty_eval_statement(source.trim()) {
             return Ok(Value::UNDEFINED);
         }
-        let statements = split_statements(source);
+        let statements = if self.direct_eval {
+            crate::Engine::eval_statement_slices(source).unwrap_or_else(|| split_statements(source))
+        } else {
+            split_statements(source)
+        };
         let source_strict = inherited_strict
             || statements
                 .first()
@@ -539,8 +561,21 @@ impl<H: Host> Vm<H> {
                             );
                         }
                     }
+                    if lexical && let Some(frame) = self.frames.last_mut() {
+                        frame.dynamic_bindings.push((atom, Value::DELETED));
+                    }
                     let value = self.eval_simple_expression(p, expression, strict)?;
-                    if !lexical {
+                    if lexical {
+                        if let Some(frame) = self.frames.last_mut()
+                            && let Some((_, binding)) = frame
+                                .dynamic_bindings
+                                .iter_mut()
+                                .rev()
+                                .find(|(candidate, _)| *candidate == atom)
+                        {
+                            *binding = value;
+                        }
+                    } else {
                         if strict {
                             continue;
                         }
@@ -595,6 +630,22 @@ impl<H: Host> Vm<H> {
             }
             if let Some((block, expression)) = crate::Engine::eval_block_completion(statement) {
                 let _ = self.eval_source_simple(p, block, strict)?;
+                result = self.eval_simple_expression(p, expression, strict)?;
+                continue;
+            }
+            if let Some(block) = crate::Engine::eval_block_statement(statement) {
+                if !block.trim().is_empty() {
+                    result = self.eval_source_simple(p, block, strict)?;
+                }
+                continue;
+            }
+            if let Some(expression) = crate::Engine::eval_labeled_expression(statement) {
+                result = self.eval_simple_expression(p, expression, strict)?;
+                continue;
+            }
+            if let Some((label, expression)) = statement.split_once(':')
+                && is_eval_identifier(label.trim())
+            {
                 result = self.eval_simple_expression(p, expression, strict)?;
                 continue;
             }
@@ -666,6 +717,16 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<Value, JsError> {
         let expression = expression.trim();
+        if let Some(literal) = crate::Engine::eval_single_regexp_literal(expression) {
+            let start = expression[..literal.span.start].encode_utf16().count();
+            let end = expression[..literal.span.end].encode_utf16().count();
+            let units = expression.encode_utf16().collect::<Vec<_>>();
+            if let Some(pattern) = regexp_literal_pattern(&units[start..end]) {
+                let pattern = self.heap.alloc(Cell::String(JsString::from_units(pattern)));
+                let flags = self.heap.alloc(Cell::String(literal.flags.into()));
+                return self.construct_regexp_native(p, &[pattern, flags]);
+            }
+        }
         if expression.starts_with('(') && !self.direct_eval {
             return self.eval_compiled_expression(p, expression, strict);
         }

@@ -178,6 +178,55 @@ impl Engine {
         ))
     }
 
+    pub(crate) fn eval_statement_slices(source: &str) -> Option<Vec<&str>> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() {
+            return None;
+        }
+        let mut statements = Vec::with_capacity(parsed.program.body.len());
+        for statement in &parsed.program.body {
+            if matches!(statement, Statement::EmptyStatement(_)) {
+                continue;
+            }
+            let span = match statement {
+                Statement::ExpressionStatement(expression) => expression.expression.span(),
+                _ => statement.span(),
+            };
+            statements.push(source.get(span.start as usize..span.end as usize)?);
+        }
+        Some(statements)
+    }
+
+    pub(crate) fn eval_block_statement(source: &str) -> Option<&str> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
+            return None;
+        }
+        let Statement::BlockStatement(block) = &parsed.program.body[0] else {
+            return None;
+        };
+        source.get(block.span.start as usize + 1..block.span.end as usize - 1)
+    }
+
+    pub(crate) fn eval_labeled_expression(source: &str) -> Option<&str> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
+            return None;
+        }
+        let Statement::LabeledStatement(labeled) = &parsed.program.body[0] else {
+            return None;
+        };
+        let Statement::ExpressionStatement(expression) = &labeled.body else {
+            return None;
+        };
+        source.get(
+            expression.expression.span().start as usize..expression.expression.span().end as usize,
+        )
+    }
+
     pub(crate) fn static_module_has_early_error(source: &str) -> bool {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
