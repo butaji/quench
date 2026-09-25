@@ -203,6 +203,11 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(StepResult::Continue);
                 }
+                let global_var =
+                    self.root_global_var_atom(p, self.frames[f].function, i.imm() as usize);
+                if let Some(atom) = global_var {
+                    self.set_property_with_program(p, self.realm.globals, atom, value)?;
+                }
                 if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) =
                         self.heap.get_mut(self.frames[f].env)

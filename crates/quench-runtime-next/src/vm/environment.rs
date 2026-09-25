@@ -2,6 +2,20 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn root_global_var_atom(
+        &self,
+        program: &ResidualProgram,
+        function: u32,
+        slot: usize,
+    ) -> Option<Atom> {
+        if program.module || function != super::ROOT_FUNCTION_ID {
+            return None;
+        }
+        let root = program.functions.first()?;
+        let atom = *root.local_atoms.get(slot)?;
+        root.global_var_atoms.contains(&atom).then_some(atom)
+    }
+
     fn root_declares_binding(&self, program: &ResidualProgram, atom: Atom) -> bool {
         program.functions.first().is_some_and(|root| {
             root.global_var_atoms.contains(&atom) || root.global_lexical_atoms.contains(&atom)
@@ -550,6 +564,17 @@ impl<H: Host> Vm<H> {
             return Err(JsError("invalid capture".into()));
         };
         let slot = address as u16 as usize;
+        let atom = program
+            .and_then(|program| {
+                self.programs
+                    .get(super::program_store::ProgramId::from_raw(program))
+            })
+            .as_deref()
+            .and_then(|program| self.root_global_var_atom(program, *function, slot))
+            .or_else(|| self.root_global_var_atom(p, *function, slot));
+        if let Some(atom) = atom {
+            return self.get_property(p, self.realm.globals, atom);
+        }
         let value = program
             .and_then(|program| {
                 self.module_import_value(
@@ -643,6 +668,20 @@ impl<H: Host> Vm<H> {
                 .contains(&atom)
         }) {
             return Err(self.type_error(p, "assignment to constant binding".into()));
+        }
+        if let Some(atom) = self
+            .programs
+            .get(self.frames[frame].program)
+            .as_deref()
+            .and_then(|program| {
+                self.root_global_var_atom(program, function, address as u16 as usize)
+            })
+            .or_else(|| self.root_global_var_atom(p, function, address as u16 as usize))
+        {
+            if !self.store_global_var_binding(p, atom, value)? {
+                self.set_property_with_program(p, self.realm.globals, atom, value)?;
+            }
+            return Ok(());
         }
         let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) else {
             return Err(JsError("invalid capture".into()));
