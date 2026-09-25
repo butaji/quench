@@ -1987,7 +1987,9 @@ impl<'a> Compiler<'a> {
             is_class_constructor: options.class_constructor,
             derived_constructor: options.derived_constructor,
             super_home_atom: options.super_home_atom,
-            constructible: !options.non_constructible,
+            constructible: !options.non_constructible
+                && !options.async_function
+                && !options.generator,
             class_field_initializer: options.class_field_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
             arguments_slot,
