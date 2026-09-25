@@ -92,6 +92,7 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::Await, awaited, result, 0, 0);
             result = awaited;
         }
+        self.emit(Op::RequireIteratorResult, 0, result, 0, 0);
         let done = self.reg();
         let done_atom = self.owner.atom("done");
         let done_cache = self.owner.cache_site();
@@ -176,10 +177,9 @@ impl FunctionCompiler<'_, '_> {
             return false;
         }
         let mut scope = FxHashMap::default();
-        for item in &declaration.declarations {
-            self.map_pattern_lexicals(&item.id, &mut scope);
-        }
-        self.push_lexical_bindings(scope);
+        let mut immutable = FxHashSet::default();
+        self.map_declaration_lexicals(declaration, &mut scope, &mut immutable);
+        self.push_immutable_lexical_bindings(scope, immutable);
         self.initialize_lexical_scope();
         true
     }

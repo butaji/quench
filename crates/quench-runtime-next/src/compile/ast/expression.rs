@@ -215,10 +215,18 @@ impl FunctionCompiler<'_, '_> {
         value: Register,
         initializing: bool,
     ) {
+        let source_atom = atom;
+        let immutable_lexical = !initializing
+            && self
+                .lexical_scopes
+                .iter()
+                .rev()
+                .any(|scope| scope.immutable.contains(&source_atom));
         let atom = self.resolve_lexical(atom);
         if self.owner.atoms[atom as usize]
             .as_ref()
             .contains("\0rqj:class-binding:")
+            || immutable_lexical
             || (self.with_depth == 0
                 && !self.local_slots.contains_key(&atom)
                 && self.has_immutable_capture(atom))

@@ -114,7 +114,8 @@ fn uses(
         | Op::GetAsyncIterator
         | Op::IteratorClose
         | Op::SpreadToArray
-        | Op::RequireObjectCoercible => bit(instruction.b()),
+        | Op::RequireObjectCoercible
+        | Op::RequireIteratorResult => bit(instruction.b()),
         Op::IteratorCleanupPush => bit(instruction.a()) | bit(instruction.b()),
         Op::SetFunctionName => bit(instruction.a()),
         Op::SetFunctionNameKey => bit(instruction.a()) | bit(instruction.b()),

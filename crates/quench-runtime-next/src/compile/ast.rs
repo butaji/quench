@@ -599,6 +599,27 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.push_lexical_bindings_with_immutability(bindings, immutable);
     }
 
+    pub(super) fn map_declaration_lexicals(
+        &mut self,
+        declaration: &VariableDeclaration<'_>,
+        bindings: &mut FxHashMap<Atom, Atom>,
+        immutable: &mut FxHashSet<Atom>,
+    ) {
+        for item in &declaration.declarations {
+            self.map_pattern_lexicals(&item.id, bindings);
+            if matches!(
+                declaration.kind,
+                VariableDeclarationKind::Const
+                    | VariableDeclarationKind::Using
+                    | VariableDeclarationKind::AwaitUsing
+            ) {
+                let mut names = Vec::new();
+                super::early::collect_pattern_names(&item.id, &mut names);
+                immutable.extend(names.iter().map(|name| self.owner.atom(name)));
+            }
+        }
+    }
+
     fn push_lexical_bindings_with_immutability(
         &mut self,
         bindings: FxHashMap<Atom, Atom>,
