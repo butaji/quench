@@ -240,6 +240,7 @@ const NATIVES: &[Native] = &[
     Native::NumberIsSafeInteger,
     Native::NumberParseFloat,
     Native::NumberFixed,
+    Native::NumberExponential,
     Native::NumberPrecision,
     Native::Promise,
     Native::PromiseResolve,
