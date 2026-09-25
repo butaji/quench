@@ -105,7 +105,7 @@ impl FunctionCompiler<'_, '_> {
                 };
                 let property_key = self.reg();
                 self.emit(Op::ToPropertyKey, property_key, key, 0, 0);
-                let item = self.object_method(&property.value, super_atom);
+                let item = self.object_property_value(&property.value, property.method, super_atom);
                 if Self::anonymous_function_definition(&property.value) {
                     self.emit(Op::SetFunctionNameKey, item, property_key, 0, 0);
                 }
@@ -116,7 +116,8 @@ impl FunctionCompiler<'_, '_> {
                 let key = super::super::string::constant(value);
                 if matches!(&key, Constant::StringUnits(_)) {
                     let key = self.literal(key);
-                    let item = self.expression(&property.value);
+                    let item =
+                        self.object_property_value(&property.value, property.method, super_atom);
                     if Self::anonymous_function_definition(&property.value) {
                         self.emit(Op::SetFunctionNameKey, item, key, 0, 0);
                     }
@@ -130,7 +131,11 @@ impl FunctionCompiler<'_, '_> {
                 _ => {
                     if let Some(expression) = property.key.as_expression() {
                         let key = self.expression(expression);
-                        let item = self.expression(&property.value);
+                        let item = self.object_property_value(
+                            &property.value,
+                            property.method,
+                            super_atom,
+                        );
                         if Self::anonymous_function_definition(&property.value) {
                             let property_key = self.reg();
                             self.emit(Op::ToPropertyKey, property_key, key, 0, 0);
@@ -146,7 +151,7 @@ impl FunctionCompiler<'_, '_> {
                     continue;
                 }
             };
-            let item = self.object_method(&property.value, super_atom);
+            let item = self.object_property_value(&property.value, property.method, super_atom);
             let atom = self.owner.atom(key);
             if Self::anonymous_function_definition(&property.value) {
                 self.emit(Op::SetFunctionName, item, 0, 0, atom);
@@ -210,6 +215,19 @@ impl FunctionCompiler<'_, '_> {
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, id);
         dst
+    }
+
+    fn object_property_value(
+        &mut self,
+        value: &Expression<'_>,
+        is_method: bool,
+        super_atom: Atom,
+    ) -> Register {
+        if is_method {
+            self.object_method(value, super_atom)
+        } else {
+            self.expression(value)
+        }
     }
 
     fn define_accessor(&mut self, target: Register, key: Register, function: Register, kind: &str) {
