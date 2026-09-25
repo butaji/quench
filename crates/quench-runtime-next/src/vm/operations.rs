@@ -72,6 +72,12 @@ impl<H: Host> Vm<H> {
         if native == Native::AsyncGeneratorReturnResult {
             return self.iterator_result(args.first().copied().unwrap_or(Value::UNDEFINED), true);
         }
+        if native == Native::AsyncGeneratorReturnFulfilled {
+            return self.async_generator_return_fulfilled(p, args);
+        }
+        if native == Native::AsyncGeneratorReturnRejected {
+            return self.async_generator_return_rejected(p, args);
+        }
         if native == Native::AsyncGeneratorDelegateReturnStart {
             return self.async_generator_delegate_return_start(p, args);
         }

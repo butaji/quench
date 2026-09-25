@@ -826,6 +826,19 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(global, name, constructor)?;
             self.install_builtin_to_string_tag(prototype, name)?;
         }
+        let async_generator_function_atom = self.intern_atom("AsyncGeneratorFunction");
+        let prototype_atom = self.intern_atom("prototype");
+        let async_generator_function = self
+            .own_property(global, async_generator_function_atom)
+            .unwrap_or(self.native_value(Native::AsyncGeneratorFunction));
+        let async_generator_function_prototype = self
+            .own_property(async_generator_function, prototype_atom)
+            .unwrap_or(self.function_proto);
+        self.install_async_generator_prototype(
+            realm_async_generator_proto,
+            async_generator_function_prototype,
+            Some(global),
+        )?;
         let object = self.native_with_realm(Native::Object, global, global);
         self.set_named(program, object, "prototype", object_prototype)?;
         self.set_named(program, object_prototype, "constructor", object)?;

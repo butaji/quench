@@ -241,6 +241,9 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::ArrayBuffer | Native::ArrayBufferIsView | Native::DetachArrayBuffer => 1.0,
         Native::ArrayIteratorNext => 0.0,
+        Native::AsyncGeneratorNext | Native::AsyncGeneratorReturn | Native::AsyncGeneratorThrow => {
+            1.0
+        }
         Native::AsyncDisposableStack
         | Native::AsyncDisposableStackMove
         | Native::AsyncDisposableStackDisposeAsync
@@ -861,6 +864,8 @@ impl<H: Host> Vm<H> {
                 this,
                 args.first().copied().unwrap_or(Value::UNDEFINED),
             ),
+            Native::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
+            Native::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
             _ => unreachable!(),
         }
     }

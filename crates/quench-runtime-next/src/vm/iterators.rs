@@ -172,12 +172,6 @@ impl<H: Host> Vm<H> {
         )?;
         self.set_named(
             program,
-            self.async_generator_proto,
-            "next",
-            self.native_value(Native::IteratorNext),
-        )?;
-        self.set_named(
-            program,
             self.async_from_sync_iterator_proto,
             "next",
             self.native_value(Native::IteratorNext),
@@ -197,6 +191,17 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(self.object_proto);
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
+        let async_generator_function_prototype = self
+            .own_property(
+                self.native_value(Native::AsyncGeneratorFunction),
+                prototype_atom,
+            )
+            .unwrap_or(self.function_proto);
+        self.install_async_generator_prototype(
+            self.async_generator_proto,
+            async_generator_function_prototype,
+            None,
+        )?;
         self.array_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
@@ -282,6 +287,59 @@ impl<H: Host> Vm<H> {
             async_iterator,
             self.native_value(Native::IteratorSelf),
         )
+    }
+
+    pub(super) fn install_async_generator_prototype(
+        &mut self,
+        prototype: Value,
+        constructor: Value,
+        realm: Option<Value>,
+    ) -> Result<(), JsError> {
+        for (name, native) in [
+            ("next", Native::AsyncGeneratorNext),
+            ("return", Native::AsyncGeneratorReturn),
+            ("throw", Native::AsyncGeneratorThrow),
+        ] {
+            let method = realm
+                .map(|realm| self.native_with_realm(native, realm, realm))
+                .unwrap_or_else(|| self.native_value(native));
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(prototype, name, method)?;
+        }
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        let constructor_atom = self.intern_atom("constructor");
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(constructor_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        if let Some(async_iterator) = self.well_known_symbols.get("asyncIterator").copied() {
+            let method = realm
+                .map(|realm| self.native_with_realm(Native::IteratorSelf, realm, realm))
+                .unwrap_or_else(|| self.native_value(Native::IteratorSelf));
+            self.set_symbol_property(prototype, async_iterator, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(async_iterator),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        self.install_builtin_to_string_tag(prototype, "AsyncGenerator")?;
+        Ok(())
     }
 
     pub(super) fn collection_iterator(
