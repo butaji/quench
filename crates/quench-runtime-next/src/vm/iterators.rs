@@ -43,11 +43,11 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         if !self.is_function(method) {
-            return Err(JsError("iterator return method is not callable".into()));
+            return Err(self.type_error(p, "iterator return method is not callable".into()));
         }
         let result = self.call_value(p, method, iterator, &[])?;
         if !self.is_object_like(result) {
-            return Err(JsError("iterator return result is not an object".into()));
+            return Err(self.type_error(p, "iterator return result is not an object".into()));
         }
         Ok(result)
     }
