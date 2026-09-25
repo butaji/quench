@@ -178,6 +178,7 @@ pub(super) fn write_program(
             out.u16(handler.slot.unwrap_or(u16::MAX));
             out.u32(handler.return_target.unwrap_or(u32::MAX));
             out.u16(handler.return_slot.unwrap_or(u16::MAX));
+            out.u16(handler.with_depth);
         }
     }
     out.u16(program.cache_sites);
@@ -420,6 +421,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             let slot = input.u16()?;
             let return_target = input.u32()?;
             let return_slot = input.u16()?;
+            let with_depth = input.u16()?;
             Ok(Handler {
                 start,
                 end,
@@ -427,6 +429,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
                 slot: (slot != u16::MAX).then_some(slot),
                 return_target: (return_target != u32::MAX).then_some(return_target),
                 return_slot: (return_slot != u16::MAX).then_some(return_slot),
+                with_depth,
             })
         })?;
         Ok(Function {
