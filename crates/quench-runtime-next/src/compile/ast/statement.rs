@@ -135,7 +135,6 @@ impl FunctionCompiler<'_, '_> {
             Statement::LabeledStatement(item) => self.labeled_statement(item),
             Statement::ThrowStatement(item) => {
                 let value = self.expression(&item.argument);
-                self.close_active_iterators();
                 self.emit(Op::Throw, value, 0, 0, 0);
             }
             Statement::TryStatement(item) => self.try_statement(item),
