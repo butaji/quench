@@ -419,7 +419,7 @@ impl<H: Host> Vm<H> {
                 _ => self.realm.globals,
             };
             let previous_global = std::mem::replace(&mut self.realm.globals, realm);
-            let result = self.construct_native(p, native, args);
+            let result = self.construct_native_with_new_target(p, native, args, new_target);
             self.realm.globals = previous_global;
             let result = result?;
             if native != Native::Proxy {
@@ -503,11 +503,9 @@ impl<H: Host> Vm<H> {
         }
         let prototype_atom = self.intern_atom("prototype");
         let prototype = self.get_property(p, new_target, prototype_atom)?;
-        let prototype = if prototype.is_null() || self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            self.object_proto
-        };
+        if prototype.is_null() || self.object_data(prototype).is_none() {
+            return Ok(());
+        }
         self.object_set_prototype_of(p, result, prototype)?;
         Ok(())
     }
@@ -556,6 +554,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         native: Native,
         args: &[Value],
+    ) -> Result<Value, JsError> {
+        let new_target = self.native_value(native);
+        self.construct_native_with_new_target(p, native, args, new_target)
+    }
+
+    fn construct_native_with_new_target(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+        new_target: Value,
     ) -> Result<Value, JsError> {
         match native {
             Native::AbstractModuleSource => {
@@ -609,9 +618,9 @@ impl<H: Host> Vm<H> {
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args),
             Native::Date => self.date_construct_native(p, args),
+            Native::AggregateError => self.construct_aggregate_error(p, args, new_target),
             Native::Symbol => Err(self.type_error(p, "Symbol is not a constructor".into())),
             Native::Error
-            | Native::AggregateError
             | Native::SuppressedError
             | Native::EvalError
             | Native::RangeError

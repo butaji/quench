@@ -734,6 +734,41 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             self.set_builtin_value_named(global, name, constructor)?;
         }
+        let realm_error_prototype = self.object();
+        let realm_error_constructor = self.native_with_realm(Native::Error, global, global);
+        self.set_builtin_value_named(realm_error_constructor, "prototype", realm_error_prototype)?;
+        self.set_builtin_value_named(
+            realm_error_prototype,
+            "constructor",
+            realm_error_constructor,
+        )?;
+        let realm_error_name = self.heap.alloc(Cell::String("Error".into()));
+        self.set_builtin_value_named(realm_error_prototype, "name", realm_error_name)?;
+        let realm_empty_message = self.heap.alloc(Cell::String("".into()));
+        self.set_builtin_value_named(realm_error_prototype, "message", realm_empty_message)?;
+        self.set_builtin_value_named(global, "Error", realm_error_constructor)?;
+        for (name, native) in [
+            ("AggregateError", Native::AggregateError),
+            ("SuppressedError", Native::SuppressedError),
+            ("EvalError", Native::EvalError),
+            ("RangeError", Native::RangeError),
+            ("ReferenceError", Native::ReferenceError),
+            ("SyntaxError", Native::SyntaxError),
+            ("URIError", Native::URIError),
+        ] {
+            let constructor = self.native_with_realm(native, global, global);
+            let prototype = self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(realm_error_prototype)));
+            self.set_builtin_value_named(constructor, "prototype", prototype)?;
+            self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            let name_value = self.heap.alloc(Cell::String(name.into()));
+            self.set_builtin_value_named(prototype, "name", name_value)?;
+            let empty_message = self.heap.alloc(Cell::String("".into()));
+            self.set_builtin_value_named(prototype, "message", empty_message)?;
+            self.set_builtin_value_named(global, name, constructor)?;
+            self.object_data_mut(constructor).unwrap().proto = realm_error_constructor;
+        }
         for (name, native) in [
             ("parseFloat", Native::NumberParseFloat),
             ("parseInt", Native::ParseInt),
@@ -784,9 +819,33 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
+            let prototype_atom = self.intern_atom("prototype");
+            self.set_property_attributes(
+                constructor,
+                PropertyKey::string(prototype_atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
             let name_value = self.heap.alloc(Cell::String(JsString::from_str(name)));
             self.set_builtin_value_named(prototype, "name", name_value)?;
+            let empty_message = self.heap.alloc(Cell::String(JsString::from_str("")));
+            self.set_builtin_value_named(prototype, "message", empty_message)?;
             self.global(program, name, constructor)?;
+        }
+        if let Some(error) = self
+            .lookup_atom("Error")
+            .and_then(|atom| self.own_property(self.realm.globals, atom))
+            && let Some(aggregate) = self
+                .lookup_atom("AggregateError")
+                .and_then(|atom| self.own_property(self.realm.globals, atom))
+        {
+            self.object_data_mut(aggregate).unwrap().proto = error;
         }
         self.set_builtin_named(program, error_prototype, "toString", Native::ErrorToString)?;
         let realm_constructor = self.native_value(Native::RealmTypeError);
@@ -854,6 +913,51 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
+        }
+        Ok(object)
+    }
+
+    pub(super) fn construct_aggregate_error(
+        &mut self,
+        program: &ResidualProgram,
+        args: &[Value],
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        let message = args.get(1).copied().filter(|value| !value.is_undefined());
+        let message = message
+            .map(|message| self.to_string(program, message))
+            .transpose()?;
+        let errors =
+            self.spread_to_array(program, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let prototype_atom = self.intern_atom("prototype");
+        let realm = match self.heap.get(new_target) {
+            Some(Cell::Function { realm, .. }) => *realm,
+            _ => self.realm.globals,
+        };
+        let constructor_atom = self.intern_atom("AggregateError");
+        let constructor = self
+            .own_property(realm, constructor_atom)
+            .unwrap_or_else(|| self.native_value(Native::AggregateError));
+        let prototype = self
+            .own_property(constructor, prototype_atom)
+            .unwrap_or(self.object_proto);
+        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        self.set_builtin_value_named(object, "errors", errors)?;
+        if let Some(message) = message {
+            let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
+            self.set_builtin_value_named(object, "message", message)?;
+        }
+        if let Some(options) = args
+            .get(2)
+            .copied()
+            .filter(|value| self.is_object_like(*value))
+        {
+            let cause_atom = self.intern_atom("cause");
+            let cause_key = self.heap.alloc(Cell::String("cause".into()));
+            if self.has_property(program, options, cause_key)? {
+                let cause = self.get_property(program, options, cause_atom)?;
+                self.set_builtin_value_named(object, "cause", cause)?;
+            }
         }
         Ok(object)
     }
