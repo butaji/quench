@@ -155,6 +155,7 @@ impl<H: Host> Vm<H> {
                 IteratorKind::Generator
             },
             index: 0,
+            done: false,
             generator: None,
         });
         if let Some(Cell::Iterator { source, .. }) = self.heap.get_mut(generator) {

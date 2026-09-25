@@ -507,6 +507,17 @@ impl<H: Host> Vm<H> {
         } else {
             Value::UNDEFINED
         };
+        let constructor_is_foreign_intrinsic_array = matches!(
+            self.heap.get(constructor),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::Array),
+                realm,
+                ..
+            }) if *realm != self.realm.globals
+        );
+        if constructor_is_foreign_intrinsic_array {
+            constructor = Value::UNDEFINED;
+        }
         if self.is_object_like(constructor) {
             let species = self
                 .well_known_symbols

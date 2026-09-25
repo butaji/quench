@@ -245,62 +245,81 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
             return Err(JsError("array callback is not callable".into()));
         }
-        let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let mut output = Vec::new();
-        let reverse = matches!(native, Native::ArrayFindLast | Native::ArrayFindLastIndex);
-        for offset in 0..length {
-            let index = if reverse { length - offset - 1 } else { offset };
-            let key = Value::number(index as f64);
-            let finds_holes = matches!(
-                native,
-                Native::ArrayFind
-                    | Native::ArrayFindIndex
-                    | Native::ArrayFindLast
-                    | Native::ArrayFindLastIndex
-            );
-            if !finds_holes && !self.has_property(p, this, key)? {
-                if matches!(native, Native::ArrayMap) {
-                    output.resize(index + 1, Value::DELETED);
+        let result = match native {
+            Native::ArrayMap => Some(self.array_species_create(p, this, length)?),
+            Native::ArrayFilter => Some(self.array_species_create(p, this, 0)?),
+            _ => None,
+        };
+        let result_root = result.map(|result| self.heap.root(result));
+        let outcome = (|| {
+            let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+            let mut result_length = 0;
+            let reverse = matches!(native, Native::ArrayFindLast | Native::ArrayFindLastIndex);
+            for offset in 0..length {
+                let index = if reverse { length - offset - 1 } else { offset };
+                let key = Value::number(index as f64);
+                let finds_holes = matches!(
+                    native,
+                    Native::ArrayFind
+                        | Native::ArrayFindIndex
+                        | Native::ArrayFindLast
+                        | Native::ArrayFindLastIndex
+                );
+                if !finds_holes && !self.has_property(p, this, key)? {
+                    continue;
                 }
-                continue;
+                let value = self.get_index(p, this, key)?;
+                let callback_args = [value, Value::number(index as f64), this];
+                let mapped = self.call_value(p, callback, this_arg, &callback_args)?;
+                match native {
+                    Native::ArrayForEach => {}
+                    Native::ArrayMap => {
+                        let target = self
+                            .heap
+                            .root_value(result_root.expect("map result is rooted"))
+                            .unwrap();
+                        self.create_data_property_or_throw(p, target, index, mapped)?;
+                    }
+                    Native::ArrayFilter if self.truthy(mapped) => {
+                        let target = self
+                            .heap
+                            .root_value(result_root.expect("filter result is rooted"))
+                            .unwrap();
+                        self.create_data_property_or_throw(p, target, result_length, value)?;
+                        result_length += 1;
+                    }
+                    Native::ArraySome if self.truthy(mapped) => return Ok(Value::TRUE),
+                    Native::ArrayEvery if !self.truthy(mapped) => return Ok(Value::FALSE),
+                    Native::ArrayFind if self.truthy(mapped) => return Ok(value),
+                    Native::ArrayFindIndex if self.truthy(mapped) => {
+                        return Ok(Value::number(index as f64));
+                    }
+                    Native::ArrayFindLast if self.truthy(mapped) => return Ok(value),
+                    Native::ArrayFindLastIndex if self.truthy(mapped) => {
+                        return Ok(Value::number(index as f64));
+                    }
+                    _ => {}
+                }
             }
-            let value = self.get_index(p, this, key)?;
-            let callback_args = [value, Value::number(index as f64), this];
-            let result = self.call_value(p, callback, this_arg, &callback_args)?;
             match native {
-                Native::ArrayForEach => {}
-                Native::ArrayMap => {
-                    output.resize(index + 1, Value::DELETED);
-                    output[index] = result;
-                }
-                Native::ArrayFilter if self.truthy(result) => output.push(value),
-                Native::ArraySome if self.truthy(result) => return Ok(Value::TRUE),
-                Native::ArrayEvery if !self.truthy(result) => return Ok(Value::FALSE),
-                Native::ArrayFind if self.truthy(result) => return Ok(value),
-                Native::ArrayFindIndex if self.truthy(result) => {
-                    return Ok(Value::number(index as f64));
-                }
-                Native::ArrayFindLast if self.truthy(result) => return Ok(value),
-                Native::ArrayFindLastIndex if self.truthy(result) => {
-                    return Ok(Value::number(index as f64));
-                }
-                _ => {}
+                Native::ArrayForEach => Ok(Value::UNDEFINED),
+                Native::ArrayMap | Native::ArrayFilter => Ok(self
+                    .heap
+                    .root_value(result_root.expect("callback result is rooted"))
+                    .unwrap()),
+                Native::ArraySome => Ok(Value::FALSE),
+                Native::ArrayEvery => Ok(Value::TRUE),
+                Native::ArrayFind => Ok(Value::UNDEFINED),
+                Native::ArrayFindIndex => Ok(Value::number(-1.0)),
+                Native::ArrayFindLast => Ok(Value::UNDEFINED),
+                Native::ArrayFindLastIndex => Ok(Value::number(-1.0)),
+                _ => unreachable!("non-callback native routed to callback dispatch"),
             }
+        })();
+        if let Some(root) = result_root {
+            self.heap.release_root(root);
         }
-        match native {
-            Native::ArrayForEach => Ok(Value::UNDEFINED),
-            Native::ArrayMap | Native::ArrayFilter => Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(output),
-            })),
-            Native::ArraySome => Ok(Value::FALSE),
-            Native::ArrayEvery => Ok(Value::TRUE),
-            Native::ArrayFind => Ok(Value::UNDEFINED),
-            Native::ArrayFindIndex => Ok(Value::number(-1.0)),
-            Native::ArrayFindLast => Ok(Value::UNDEFINED),
-            Native::ArrayFindLastIndex => Ok(Value::number(-1.0)),
-            _ => unreachable!("non-callback native routed to callback dispatch"),
-        }
+        outcome
     }
 
     pub(super) fn array_like_length(
@@ -411,15 +430,6 @@ impl<H: Host> Vm<H> {
     }
 
     fn array_strict_equal(&self, left: Value, right: Value) -> bool {
-        if let (Some(left), Some(right)) = (left.as_number(), right.as_number()) {
-            return left == right;
-        }
-        if left == right {
-            return true;
-        }
-        matches!(
-            (self.heap.get(left), self.heap.get(right)),
-            (Some(Cell::String(left)), Some(Cell::String(right))) if left == right
-        )
+        self.strict_equal(left, right)
     }
 }

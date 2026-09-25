@@ -172,6 +172,7 @@ impl<H: Host> Vm<H> {
             source,
             kind: IteratorKind::String,
             index: 0,
+            done: false,
             generator: None,
         }))
     }

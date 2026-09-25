@@ -576,6 +576,7 @@ pub(crate) enum Cell {
         source: Value,
         kind: IteratorKind,
         index: usize,
+        done: bool,
         generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
     },
     ArrayFromAsyncState(ArrayFromAsyncState),
