@@ -600,7 +600,7 @@ impl<H: Host> Vm<H> {
             Native::Float32Array => self.construct_float32_array_native(p, args),
             Native::Float64Array => self.construct_float64_array_native(p, args),
             Native::DataView => self.construct_data_view_native(p, args),
-            Native::Map | Native::Set => self.construct_collection_native(native, args),
+            Native::Map | Native::Set => self.construct_collection_native(p, native, args),
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),
             Native::FinalizationRegistry => self.construct_finalization_registry_native(args),

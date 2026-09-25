@@ -69,17 +69,29 @@ impl<H: Host> Vm<H> {
             "prototype",
             self.iterator_proto,
         )?;
+        self.set_builtin_named(
+            program,
+            generator_function_proto,
+            "constructor",
+            Native::GeneratorFunction,
+        )?;
         self.set_named(
             program,
             async_generator_function_proto,
             "prototype",
             self.async_iterator_proto,
         )?;
-        self.set_named(
+        self.set_builtin_named(
             program,
             async_function_proto,
             "constructor",
-            self.native_value(Native::AsyncFunction),
+            Native::AsyncFunction,
+        )?;
+        self.set_builtin_named(
+            program,
+            async_generator_function_proto,
+            "constructor",
+            Native::AsyncGeneratorFunction,
         )?;
         self.set_named(
             program,
