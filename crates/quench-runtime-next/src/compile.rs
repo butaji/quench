@@ -66,6 +66,10 @@ pub(crate) struct EvalRegExpLiteral {
     pub(crate) span: Range<usize>,
     pub(crate) flags: String,
 }
+pub(crate) struct EvalVarNames {
+    pub(crate) bindings: Vec<String>,
+    pub(crate) declarations: Vec<String>,
+}
 pub(crate) enum StaticModuleThrow {
     Value(Constant),
     Error {
@@ -122,14 +126,15 @@ impl Engine {
             .flatten()
     }
 
-    pub(crate) fn eval_var_declared_names(source: &str) -> Option<Vec<String>> {
+    pub(crate) fn eval_var_names(source: &str) -> Option<EvalVarNames> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         if !parsed.diagnostics.is_empty() {
             return None;
         }
-        let mut names = early::collect_var_names(&parsed.program.body);
-        names.extend(parsed.program.body.iter().filter_map(|statement| {
+        let bindings = early::collect_var_names(&parsed.program.body);
+        let mut declarations = bindings.clone();
+        declarations.extend(parsed.program.body.iter().filter_map(|statement| {
             match statement {
                 Statement::FunctionDeclaration(function) => function
                     .id
@@ -138,9 +143,12 @@ impl Engine {
                 _ => None,
             }
         }));
-        names.sort();
-        names.dedup();
-        Some(names)
+        declarations.sort();
+        declarations.dedup();
+        Some(EvalVarNames {
+            bindings,
+            declarations,
+        })
     }
 
     pub(crate) fn eval_directives(source: &str) -> Option<Vec<String>> {
