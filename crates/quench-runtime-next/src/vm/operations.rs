@@ -80,8 +80,12 @@ impl<H: Host> Vm<H> {
                 "class constructor cannot be called without new".into(),
             )),
             Native::WithEnter => {
-                self.with_stack
-                    .push(args.first().copied().unwrap_or(Value::UNDEFINED));
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if value.is_null() || value.is_undefined() {
+                    return Err(self.type_error(p, "cannot convert nullish value to object".into()));
+                }
+                let object = self.box_object(value)?;
+                self.with_stack.push(object);
                 Ok(Value::UNDEFINED)
             }
             Native::WithExit => {
