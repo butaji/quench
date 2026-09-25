@@ -335,23 +335,7 @@ impl<H: Host> Vm<H> {
             };
             self.set_named(program, prototype, "valueOf", self.native_value(value_of))?;
         }
-        let boolean = self.native_value(Native::Boolean);
-        let boolean_prototype = self.object();
-        self.set_builtin_value_named(boolean, "prototype", boolean_prototype)?;
-        self.set_builtin_value_named(boolean_prototype, "constructor", boolean)?;
-        self.set_named(
-            program,
-            boolean_prototype,
-            "toString",
-            self.native_value(Native::BooleanToString),
-        )?;
-        self.set_named(
-            program,
-            boolean_prototype,
-            "valueOf",
-            self.native_value(Native::BooleanValueOf),
-        )?;
-        self.global(program, "Boolean", boolean)?;
+        self.install_boolean(program)?;
         self.install_bigint(program)?;
         for global in self.host.globals() {
             let native = match global.capability {
@@ -760,6 +744,8 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        let boolean = self.native_with_realm(Native::Boolean, global, global);
+        self.install_boolean_for_realm(program, global, object_prototype, boolean)?;
         let bigint = self.native_with_realm(Native::BigInt, global, global);
         self.install_bigint_for_realm(program, global, object_prototype, bigint)?;
         let realm_iterator_proto = self
