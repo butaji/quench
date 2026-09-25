@@ -1815,13 +1815,24 @@ impl<'a> Compiler<'a> {
         let module_goal = self.module_goal;
         let capture_script_completion = parent.is_none() && self.capture_script_completion;
         let module_source = self.source;
-        let arguments_slot = if has_arguments_binding {
-            parameter_arguments_slot
+        let arguments_slot = if let Some(slot) = parameter_arguments_slot {
+            Some(slot)
         } else if parent.is_none() {
             None
         } else {
-            locals.push(self.atom("arguments"));
-            Some((locals.len() - 1) as u16)
+            let arguments = self.atom("arguments");
+            let parameter_shadows_arguments = locals[..parameter_local_count].contains(&arguments);
+            if parameter_shadows_arguments {
+                None
+            } else if has_arguments_binding {
+                locals
+                    .iter()
+                    .position(|atom| *atom == arguments)
+                    .map(|slot| slot as u16)
+            } else {
+                locals.push(arguments);
+                Some((locals.len() - 1) as u16)
+            }
         };
         let mut function = FunctionCompiler::new(
             self,
