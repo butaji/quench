@@ -195,26 +195,6 @@ impl<H: Host> Vm<H> {
                     return Some(*buffer);
                 }
             }
-            Some(Cell::DataView { .. }) => {
-                let (buffer, offset, length) = self.data_view_view(object)?;
-                if atom == self.byte_length_atom {
-                    return Some(Value::number(if self.array_buffer_detached(buffer) {
-                        0.0
-                    } else {
-                        length as f64
-                    }));
-                }
-                if atom == self.byte_offset_atom {
-                    return Some(Value::number(if self.array_buffer_detached(buffer) {
-                        0.0
-                    } else {
-                        offset as f64
-                    }));
-                }
-                if atom == self.buffer_atom {
-                    return Some(buffer);
-                }
-            }
             _ => {}
         }
         None
