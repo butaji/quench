@@ -59,14 +59,15 @@ impl FunctionCompiler<'_, '_> {
             Statement::ExportDefaultDeclaration(item) => match &item.declaration {
                 oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(_) => {}
                 oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-                    let value = self.class_expression(class);
-                    if class.id.is_none() {
-                        let name = self.owner.atom("default");
-                        self.emit(Op::SetFunctionName, value, 0, 0, name);
-                    } else if let Some(identifier) = &class.id {
-                        let atom = self.owner.atom(identifier.name.as_str());
-                        self.store_atom_with_initialization(atom, value, true);
-                    }
+                    let value = match class.id.as_ref() {
+                        Some(identifier) => {
+                            let value = self.class_expression(class);
+                            let atom = self.owner.atom(identifier.name.as_str());
+                            self.store_atom_with_initialization(atom, value, true);
+                            value
+                        }
+                        None => self.named_class_expression(class, "default"),
+                    };
                     let binding = super::super::module_default_binding(self.owner.source);
                     let atom = self.owner.atom(&binding);
                     self.store_atom_with_initialization(atom, value, true);
