@@ -52,7 +52,7 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let index = index.trunc();
-        let index = if index.is_sign_negative() {
+        let index = if index < 0.0 {
             length as f64 + index
         } else {
             index
@@ -74,7 +74,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let object = self.box_object(this)?;
+        let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
             return Ok(Value::number(-1.0));
@@ -118,7 +118,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let object = self.box_object(this)?;
+        let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
             return Ok(Value::number(-1.0));
@@ -220,41 +220,37 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
-            _ => return Err(JsError("with receiver is not array".into())),
-        };
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
+        if length > u32::MAX as usize {
+            return Err(self.range_error(p, "invalid array length".into()));
+        }
         let number = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        if number.is_infinite() {
-            return Err(JsError("with index is out of range".into()));
-        }
-        let index = if number.is_nan() {
-            0
-        } else if number.is_sign_negative() {
-            length as isize + number.trunc() as isize
+        let index = if number.is_nan() || number == 0.0 {
+            0.0
+        } else if number.is_infinite() {
+            number
         } else {
-            number.trunc() as isize
+            number.trunc()
         };
-        if index < 0 || index >= length as isize {
-            return Err(JsError("with index is out of range".into()));
+        let actual_index = if index < 0.0 {
+            length as f64 + index
+        } else {
+            index
+        };
+        if actual_index < 0.0 || actual_index >= length as f64 {
+            return Err(self.range_error(p, "array index out of range".into()));
         }
-        let mut values = (0..length)
-            .map(|offset| {
-                elements
-                    .get(offset)
-                    .copied()
-                    .or_else(|| self.heap.sparse_get(this, offset))
-                    .unwrap_or(Value::UNDEFINED)
-            })
-            .collect::<Vec<_>>();
-        values[index as usize] = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+        let index = actual_index as usize;
+        let mut values = Vec::with_capacity(length);
+        for offset in 0..length {
+            values.push(if offset == index {
+                args.get(1).copied().unwrap_or(Value::UNDEFINED)
+            } else {
+                self.get_index(p, object, Value::number(offset as f64))?
+            });
+        }
+        Ok(self.new_array(values))
     }
 
     pub(super) fn array_callback_native(
@@ -267,7 +263,7 @@ impl<H: Host> Vm<H> {
         if this.is_null() || this.is_undefined() {
             return Err(self.type_error(p, "array callback receiver is nullish".into()));
         }
-        let this = self.box_object(this)?;
+        let this = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, this)?;
         if native == Native::ArrayMap && length > u32::MAX as usize {
             return Err(self.range_error(p, "invalid array length".into()));
@@ -339,7 +335,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
     ) -> Result<usize, JsError> {
-        if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
+        if let Some(Cell::Array { elements, .. }) = self.heap.get(object)
+            && !self
+                .object_data(object)
+                .is_some_and(Object::is_arguments_object)
+        {
             return Ok(self
                 .heap
                 .sparse_length(object)
@@ -408,7 +408,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let object = self.box_object(this)?;
+        let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {

@@ -1,10 +1,10 @@
 use std::cmp::Ordering;
 
-use num_bigint::{BigInt, Sign};
 use crate::bigint::{
     IEEE754_EXPONENT_BIAS, IEEE754_FRACTION_BITS, IEEE754_MAX_EXPONENT_BITS,
     IEEE754_SUBNORMAL_EXPONENT,
 };
+use num_bigint::{BigInt, Sign};
 
 impl<H: Host> Vm<H> {
     pub(super) fn compare_relational(
@@ -82,13 +82,9 @@ impl<H: Host> Vm<H> {
             if atom.is_some_and(|atom| {
                 super::object_static::array_index(self.atom_name(atom)).is_some_and(|index| {
                     match self.heap.get(current) {
-                        Some(Cell::Array { elements, .. }) => {
+                        Some(Cell::Array { .. }) => {
                             let index = index as usize;
-                            elements.get(index).is_some_and(|value| !value.is_deleted())
-                                || self
-                                    .heap
-                                    .sparse_get(current, index)
-                                    .is_some_and(|value| !value.is_deleted())
+                            self.has_own_array_index(current, index)
                         }
                         Some(Cell::TypedArray { .. }) => self
                             .typed_array_length(current)
@@ -136,10 +132,9 @@ impl<H: Host> Vm<H> {
         // Function.prototype is itself callable in JavaScript even though
         // this VM represents it with the shared prototype object cell.
         if !self.is_function(constructor) && constructor != self.function_proto {
-            return Err(self.type_error(
-                p,
-                "right-hand side of 'instanceof' is not callable".into(),
-            ));
+            return Err(
+                self.type_error(p, "right-hand side of 'instanceof' is not callable".into())
+            );
         }
         if self.object_data(value).is_none() {
             return Ok(false);
@@ -167,20 +162,12 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn compare_numbers(
-    left: f64,
-    right: f64,
-    operator: super::operations::RelationalOperator,
-) -> bool {
+fn compare_numbers(left: f64, right: f64, operator: super::operations::RelationalOperator) -> bool {
     left.partial_cmp(&right)
         .is_some_and(|ordering| operator.matches(ordering))
 }
 
-fn compare_bigint_string(
-    heap: &Heap,
-    left: Value,
-    right: Value,
-) -> Option<Option<Ordering>> {
+fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Option<Ordering>> {
     match (heap.get(left), heap.get(right)) {
         (Some(Cell::BigInt(bigint)), Some(Cell::String(string))) => Some(
             crate::bigint::parse_string(string.host_string())
@@ -195,9 +182,16 @@ fn compare_bigint_string(
 }
 
 fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Option<Ordering>> {
-    match (heap.get(left), heap.get(right), left.as_number(), right.as_number()) {
+    match (
+        heap.get(left),
+        heap.get(right),
+        left.as_number(),
+        right.as_number(),
+    ) {
         (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(
-            left.parse::<BigInt>().ok()?.cmp(&right.parse::<BigInt>().ok()?),
+            left.parse::<BigInt>()
+                .ok()?
+                .cmp(&right.parse::<BigInt>().ok()?),
         )),
         (Some(Cell::BigInt(bigint)), _, _, Some(number)) => {
             Some(bigint_number_ordering(bigint, number))

@@ -229,7 +229,9 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&index.to_string());
                 return self.set_property_with_program(p, object, atom, value);
             }
-            if self.set_inherited_index_accessor(p, object, index, value, strict)? {
+            if !self.has_own_array_index(object, index)
+                && self.set_inherited_index_accessor(p, object, index, value, strict)?
+            {
                 return Ok(());
             }
             if self
@@ -390,7 +392,9 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 };
             }
-            if self.set_inherited_index_accessor(p, object, index as usize, value, strict)? {
+            if !self.has_own_array_index(object, index as usize)
+                && self.set_inherited_index_accessor(p, object, index as usize, value, strict)?
+            {
                 return Ok(());
             }
             if self.set_array_element(object, index as usize, value) {
@@ -453,6 +457,20 @@ impl<H: Host> Vm<H> {
         }
         self.sync_mapped_argument(object, index, value);
         true
+    }
+
+    pub(super) fn define_array_literal_element(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        index: usize,
+        value: Value,
+    ) -> Result<(), JsError> {
+        if self.set_array_element(object, index, value) {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "cannot define array literal element".into()))
+        }
     }
 
     fn array_index_uses_sparse_storage(

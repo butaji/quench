@@ -677,6 +677,12 @@ impl<H: Host> Vm<H> {
                     p.functions[self.frames[f].function as usize].strict || i.imm() != 0,
                 )?
             }
+            Op::DefineArrayElement => self.define_array_literal_element(
+                p,
+                self.read(f, i.b()),
+                i.imm() as usize,
+                self.read(f, i.a()),
+            )?,
             Op::Move => self.write(f, i.a(), self.read(f, i.b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 self.profile.binary(i.imm() as usize, i.b(), i.c());

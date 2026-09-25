@@ -229,6 +229,12 @@ impl<H: Host> Vm<H> {
                             p.functions[self.frames[frame].function as usize].strict,
                         )?
                     }
+                    Op::DefineArrayElement => self.define_array_literal_element(
+                        p,
+                        self.read(frame, ins.b()),
+                        ins.imm() as usize,
+                        self.read(frame, ins.a()),
+                    )?,
                     Op::Binary => {
                         self.profile.binary(ins.imm() as usize, ins.b(), ins.c());
                         let left = self.resolve_operand(p, frame, Operand(ins.b()))?;
