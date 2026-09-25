@@ -432,6 +432,9 @@ impl FunctionCompiler<'_, '_> {
             _ => false,
         };
         self.for_initializer(item.init.as_ref());
+        if scoped {
+            self.emit(Op::CloneEnv, 0, 0, 0, 0);
+        }
         let head = self.code.len() as u32;
         let condition_end = item.test.as_ref().map(|test| self.condition(test));
         self.push_control(ControlKind::Loop, label);
