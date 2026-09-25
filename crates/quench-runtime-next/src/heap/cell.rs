@@ -160,6 +160,8 @@ pub(crate) enum Native {
     SetEntries,
     SetForEach,
     IteratorNext, IteratorClose, IteratorSelf, IteratorReturn, IteratorThrow,
+    AsyncGeneratorNext, AsyncGeneratorReturn, AsyncGeneratorThrow,
+    AsyncGeneratorReturnFulfilled, AsyncGeneratorReturnRejected,
     WeakMap,
     WeakMapGet,
     WeakMapSet,

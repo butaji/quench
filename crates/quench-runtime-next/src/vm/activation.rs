@@ -46,6 +46,7 @@ pub(crate) struct GeneratorRecord {
 pub(crate) enum AsyncGeneratorOperation {
     Next,
     Return,
+    Throw,
 }
 
 #[derive(Clone, Copy, Debug)]

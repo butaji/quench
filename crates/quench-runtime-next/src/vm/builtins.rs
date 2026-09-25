@@ -161,6 +161,8 @@ const NATIVES: &[Native] = &[
     Native::SetForEach,
     Native::IteratorNext, Native::IteratorClose, Native::IteratorSelf,
     Native::IteratorReturn, Native::IteratorThrow,
+    Native::AsyncGeneratorNext, Native::AsyncGeneratorReturn, Native::AsyncGeneratorThrow,
+    Native::AsyncGeneratorReturnFulfilled, Native::AsyncGeneratorReturnRejected,
     Native::WeakMap,
     Native::WeakMapGet,
     Native::WeakMapSet,
