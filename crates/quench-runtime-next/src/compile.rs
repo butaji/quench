@@ -198,6 +198,28 @@ impl Engine {
         Some(statements)
     }
 
+    pub(crate) fn eval_requires_program_execution(source: &str) -> bool {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() {
+            return false;
+        }
+        parsed.program.body.iter().any(|statement| {
+            matches!(
+                statement,
+                Statement::DoWhileStatement(_)
+                    | Statement::ForInStatement(_)
+                    | Statement::ForOfStatement(_)
+                    | Statement::ForStatement(_)
+                    | Statement::IfStatement(_)
+                    | Statement::LabeledStatement(_)
+                    | Statement::SwitchStatement(_)
+                    | Statement::TryStatement(_)
+                    | Statement::WhileStatement(_)
+            )
+        })
+    }
+
     pub(crate) fn eval_block_statement(source: &str) -> Option<&str> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
