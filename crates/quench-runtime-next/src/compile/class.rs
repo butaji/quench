@@ -119,9 +119,11 @@ impl FunctionCompiler<'_, '_> {
                 _ => None,
             })
             .collect();
+        let mut installed_private_names = FxHashSet::default();
         let instance_private_methods: Vec<_> = instance_private_method_spans
             .iter()
             .map(|span| self.owner.private_name_atom(*span))
+            .filter(|atom| installed_private_names.insert(*atom))
             .collect();
         let constructor = class.body.body.iter().find_map(|element| match element {
             ClassElement::MethodDefinition(method)
