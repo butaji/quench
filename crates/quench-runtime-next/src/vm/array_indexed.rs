@@ -371,7 +371,8 @@ impl<H: Host> Vm<H> {
             let callback_args = [value, key, source];
             let result = self.call_value(p, callback, this_arg, &callback_args)?;
             if self.is_array(p, result)? {
-                self.flatten_into(p, result, 0, &mut output)?;
+                let length = self.array_like_length(p, result)?;
+                self.flatten_into(p, result, length, 0, &mut output)?;
             } else {
                 output.push(result);
             }
