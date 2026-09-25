@@ -131,7 +131,10 @@ impl FunctionCompiler<'_, '_> {
         if using_iteration.is_some() {
             self.push_disposal_scope();
         }
-        self.iterator_closures.push(iterator_atom);
+        self.iterator_closures.push(IteratorClosure {
+            iterator: iterator_atom,
+            control_depth: self.controls.len(),
+        });
         if matches!(
             left,
             ForStatementLeft::VariableDeclaration(declaration)

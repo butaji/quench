@@ -49,6 +49,12 @@ struct ControlTarget {
     continues: Vec<usize>,
 }
 
+#[derive(Clone, Copy)]
+struct IteratorClosure {
+    iterator: Atom,
+    control_depth: usize,
+}
+
 struct LexicalScope {
     bindings: FxHashMap<Atom, Atom>,
     immutable: FxHashSet<Atom>,
@@ -80,7 +86,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) function_id: u32,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     controls: Vec<ControlTarget>,
-    iterator_closures: Vec<Atom>,
+    iterator_closures: Vec<IteratorClosure>,
     pub(super) finally_contexts: Vec<FinallyContext>,
     packed_domain_error: bool,
     pub(super) super_static: bool,
