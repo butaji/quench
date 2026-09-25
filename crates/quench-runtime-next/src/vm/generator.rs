@@ -141,6 +141,7 @@ impl<H: Host> Vm<H> {
                     .find(|(closure_env, _)| *closure_env == parent)
                     .map(|(_, function)| *function)
             });
+        let realm = self.realm.globals;
         let prototype_atom = self.intern_atom("prototype");
         let generator_prototype = function_object
             .and_then(|function| self.own_property(function, prototype_atom))
@@ -194,6 +195,7 @@ impl<H: Host> Vm<H> {
                     resume_register: None,
                     promise: Value::UNDEFINED,
                 }),
+                realm,
                 done: false,
                 running: false,
                 requests: std::collections::VecDeque::new(),
@@ -1057,14 +1059,19 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         initial_error: Option<JsError>,
     ) -> Result<Value, JsError> {
-        let (continuation, done, running) = {
+        let (continuation, realm, done, running) = {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
             };
             if record.running {
                 return Err(JsError("generator is already running".into()));
             }
-            (record.continuation.take(), record.done, record.running)
+            (
+                record.continuation.take(),
+                record.realm,
+                record.done,
+                record.running,
+            )
         };
         if running {
             return Err(JsError("generator is already running".into()));
@@ -1110,6 +1117,7 @@ impl<H: Host> Vm<H> {
             frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
         }
         let previous_program = std::mem::replace(&mut self.active_program, continuation.program);
+        let previous_global = std::mem::replace(&mut self.realm.globals, realm);
         self.frames.push(frame);
         let result = self.run_frame_general_with_error(
             &execution_program,
@@ -1118,6 +1126,7 @@ impl<H: Host> Vm<H> {
         );
         let frame = self.frames.pop().expect("generator frame exists");
         self.active_program = previous_program;
+        self.realm.globals = previous_global;
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -1248,7 +1257,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         promise: Value,
     ) -> Result<Value, JsError> {
-        let continuation = {
+        let (continuation, realm) = {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("async generator receiver is invalid".into()));
             };
@@ -1270,7 +1279,7 @@ impl<H: Host> Vm<H> {
                 return Err(JsError("async generator is suspended".into()));
             };
             record.running = true;
-            continuation
+            (continuation, record.realm)
         };
         let execution_program = match self.programs.get(continuation.program) {
             Some(program) => program,
@@ -1310,10 +1319,12 @@ impl<H: Host> Vm<H> {
             frame.registers[register as usize] = value;
         }
         let previous_program = std::mem::replace(&mut self.active_program, continuation.program);
+        let previous_global = std::mem::replace(&mut self.realm.globals, realm);
         self.frames.push(frame);
         let result = self.run_frame_general(&execution_program, self.frames.len() - 1);
         let frame = self.frames.pop().expect("async generator frame exists");
         self.active_program = previous_program;
+        self.realm.globals = previous_global;
         match result {
             Err(error) => {
                 self.frame_pool.push(Self::recycle_frame(frame));
