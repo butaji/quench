@@ -399,12 +399,29 @@ impl<H: Host> Vm<H> {
                 let object = self.read(f, i.b());
                 let home = self.read(f, i.c());
                 let atom = i.imm();
+                let brand = PrivateBrand { home, name: atom };
+                if object != home {
+                    let extensible = self.object_data(object).is_some_and(Object::is_extensible);
+                    let already_branded = self
+                        .object_data(object)
+                        .is_some_and(|object| object.private_names.contains(&brand));
+                    if !extensible {
+                        return Err(self.type_error(
+                            p,
+                            "Cannot add private field to a non-extensible object".into(),
+                        ));
+                    }
+                    if already_branded {
+                        return Err(self.type_error(
+                            p,
+                            "Cannot add private method to an object that already has it".into(),
+                        ));
+                    }
+                }
                 if let Some(object) = self.object_data_mut(object)
-                    && !object
-                        .private_names
-                        .contains(&PrivateBrand { home, name: atom })
+                    && !object.private_names.contains(&brand)
                 {
-                    object.private_names.push(PrivateBrand { home, name: atom });
+                    object.private_names.push(brand);
                 }
             }
             Op::ResolveName => {
