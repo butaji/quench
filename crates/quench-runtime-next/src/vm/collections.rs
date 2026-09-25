@@ -27,6 +27,7 @@ impl<H: Host> Vm<H> {
                 | Native::ArrayIteratorNext
                 | Native::IteratorClose
                 | Native::IteratorSelf
+                | Native::AsyncIteratorSelf
                 | Native::IteratorReturn
                 | Native::IteratorThrow
                 | Native::AsyncGeneratorNext
@@ -374,6 +375,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayIteratorNext => self.array_iterator_next(p, this, args),
             Native::IteratorClose => self.iterator_close(p, this),
             Native::IteratorSelf => Ok(this),
+            Native::AsyncIteratorSelf => Ok(this),
             Native::IteratorReturn => self.generator_return(p, this, args),
             Native::IteratorThrow => self.generator_throw(p, this, args),
             Native::AsyncGeneratorNext
