@@ -36,6 +36,7 @@ pub(crate) struct Continuation {
 #[derive(Clone, Debug)]
 pub(crate) struct GeneratorRecord {
     pub(crate) continuation: Option<Continuation>,
+    pub(crate) realm: Value,
     pub(crate) done: bool,
     pub(crate) running: bool,
     pub(crate) requests: VecDeque<AsyncGeneratorRequest>,
