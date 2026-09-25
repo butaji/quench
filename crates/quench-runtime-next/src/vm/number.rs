@@ -39,7 +39,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_number(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let number = self.native_value(Native::Number);
         let prototype = self.object();
-        self.set_named(program, number, "prototype", prototype)?;
+        self.set_builtin_value_named(number, "prototype", prototype)?;
         self.set_builtin_named(program, prototype, "constructor", Native::Number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
@@ -59,7 +59,7 @@ impl<H: Host> Vm<H> {
             ("parseInt", Native::ParseInt),
             ("parseFloat", Native::NumberParseFloat),
         ] {
-            self.set_named(program, number, name, self.native_value(native))?;
+            self.set_builtin_value_named(number, name, self.native_value(native))?;
         }
         for (name, value) in [
             ("EPSILON", f64::EPSILON),

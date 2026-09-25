@@ -406,6 +406,14 @@ impl<H: Host> Vm<H> {
         let mut current = target;
         let mut found = None;
         loop {
+            if let Some(Cell::Proxy {
+                target, handler, ..
+            }) = self.heap.get(current).cloned()
+            {
+                return self
+                    .proxy_set(p, target, handler, receiver, atom, value)
+                    .map(|()| true);
+            }
             if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom))
                 && (self.own_property(current, atom).is_some() || attributes.accessor)
             {
@@ -597,6 +605,18 @@ impl<H: Host> Vm<H> {
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
             return self.proxy_set(p, target, handler, object, atom, value);
+        }
+        if !self.is_object_like(object) {
+            if self.atom_name(atom).starts_with("\0rqj:private:") {
+                self.check_private_brand(p, object, atom)?;
+            }
+            let boxed = self.box_primitive_object(object)?;
+            let succeeded = self.set_property_with_receiver(p, boxed, atom, value, object)?;
+            return if succeeded || !strict {
+                Ok(())
+            } else {
+                Err(self.type_error(p, "cannot assign property on primitive value".into()))
+            };
         }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
