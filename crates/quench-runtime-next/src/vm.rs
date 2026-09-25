@@ -29,6 +29,7 @@ mod array_indexed;
 mod array_modern;
 mod atom_keys;
 mod atomics;
+mod bigint;
 mod builtins;
 mod call_arguments;
 mod coercion;
