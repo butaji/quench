@@ -566,6 +566,7 @@ impl<H: Host> Vm<H> {
     pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.initialize(program)?;
         if program.module {
+            self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
         }
         self.instantiate_global_declarations(program)?;
@@ -581,6 +582,7 @@ impl<H: Host> Vm<H> {
         };
         let result = self.call_value(program, root, this, &[]);
         self.finish_main_module(program, &result)?;
+        self.advance_dynamic_import_jobs(program, true)?;
         let jobs = self.drain_jobs(program);
         self.profile.report(&self.heap, program);
         #[cfg(feature = "profile-memory")]

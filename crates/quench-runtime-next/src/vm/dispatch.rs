@@ -278,7 +278,26 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeClosure => {
                 let env = self.promote_frame_environment(f);
-                let v = self.closure(p, i.imm(), env)?;
+                let module_root = p.module
+                    && self.frames[f].function == super::ROOT_FUNCTION_ID
+                    && self
+                        .programs
+                        .module_environment(self.frames[f].program)
+                        == Some(env);
+                let v = if module_root {
+                    self.function_values
+                        .get(&(self.frames[f].program, i.imm()))
+                        .and_then(|closures| {
+                            closures
+                                .iter()
+                                .find(|(closure_env, _)| *closure_env == env)
+                                .map(|(_, closure)| *closure)
+                        })
+                        .map(Ok)
+                        .unwrap_or_else(|| self.closure(p, i.imm(), env))?
+                } else {
+                    self.closure(p, i.imm(), env)?
+                };
                 self.write(f, i.a(), v);
             }
             Op::MakeObject => {

@@ -218,6 +218,7 @@ impl Engine {
         let mut plan = ModuleLinkPlan {
             locals: Vec::new(),
             reexports: Vec::new(),
+            hoisted_functions: module_hoisted_functions(statements, module_name),
         };
         for statement in statements {
             append_module_link_statement(statement, module_name, &mut plan)?;
@@ -720,6 +721,49 @@ fn module_export_name(name: &ModuleExportName<'_>) -> String {
         ModuleExportName::IdentifierReference(identifier) => identifier.name.to_string(),
         ModuleExportName::StringLiteral(literal) => literal.value.to_string(),
     }
+}
+
+fn module_hoisted_functions(
+    statements: &[Statement<'_>],
+    module_name: &str,
+) -> Vec<(String, String)> {
+    let mut functions = Vec::new();
+    for statement in statements {
+        let declaration = match statement {
+            Statement::FunctionDeclaration(function) => function
+                .id
+                .as_ref()
+                .map(|name| (name.name.to_string(), name.name.to_string())),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::FunctionDeclaration(function) => function
+                    .id
+                    .as_ref()
+                    .map(|name| (name.name.to_string(), name.name.to_string())),
+                _ => None,
+            },
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::FunctionDeclaration(function) =
+                    &export.declaration
+                {
+                    default_export_binding(&export.declaration, module_name).map(|binding| {
+                        let name = function
+                            .id
+                            .as_ref()
+                            .map(|identifier| identifier.name.to_string())
+                            .unwrap_or_else(|| "default".into());
+                        (binding, name)
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(declaration) = declaration {
+            functions.push(declaration);
+        }
+    }
+    functions
 }
 
 fn append_module_link_statement(

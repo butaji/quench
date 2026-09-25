@@ -345,6 +345,13 @@ pub(super) struct AsyncResumeJob {
     pub(super) yielded: bool,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct DynamicImportJob {
+    pub(super) cache_key: String,
+    pub(super) module: ModuleSource,
+    pub(super) promises: Vec<Value>,
+}
+
 pub(super) struct PromiseRuntime {
     pub(super) proto: Value,
     pub(super) records: FxHashMap<Value, PromiseRecord>,
@@ -356,6 +363,7 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
+    pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
     pub(super) async_module_order: VecDeque<String>,
     pub(super) module_sources: FxHashMap<std::path::PathBuf, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
@@ -375,6 +383,7 @@ impl Default for PromiseRuntime {
             aggregate_jobs: FxHashMap::default(),
             async_resume_jobs: FxHashMap::default(),
             modules: FxHashMap::default(),
+            dynamic_import_jobs: Vec::new(),
             async_module_order: VecDeque::new(),
             module_sources: FxHashMap::default(),
             waiting_static_modules: Vec::new(),
@@ -882,6 +891,26 @@ impl<H: Host> Vm<H> {
                         return Ok(Value::UNDEFINED);
                     }
                     if module_type == "javascript"
+                        && phase == crate::bytecode::ModuleRequestPhase::Evaluation
+                        && self.deferred_dependency_batch
+                    {
+                        if let Some(job) = self
+                            .promise
+                            .dynamic_import_jobs
+                            .iter_mut()
+                            .find(|job| job.cache_key == cache_key)
+                        {
+                            job.promises.push(promise);
+                        } else {
+                            self.promise.dynamic_import_jobs.push(DynamicImportJob {
+                                cache_key,
+                                module,
+                                promises: vec![promise],
+                            });
+                        }
+                        return Ok(Value::UNDEFINED);
+                    }
+                    if module_type == "javascript"
                         && phase == crate::bytecode::ModuleRequestPhase::Defer
                     {
                         let mut seen = FxHashSet::default();
@@ -1079,7 +1108,15 @@ impl<H: Host> Vm<H> {
                     StaticModuleValue::Binding {
                         program: ProgramId::MAIN,
                         slot: u16::try_from(slot).ok()?,
-                        value: Value::UNDEFINED,
+                        value: self
+                            .programs
+                            .module_environment(ProgramId::MAIN)
+                            .and_then(|environment| match self.heap.get(environment) {
+                                Some(Cell::Environment { slots, .. }) => slots.get(slot).copied(),
+                                _ => None,
+                            })
+                            .filter(|value| !value.is_deleted())
+                            .unwrap_or(Value::UNDEFINED),
                     },
                 ))
             })
@@ -1547,7 +1584,14 @@ impl<H: Host> Vm<H> {
             self.evaluate_module_requests(p, &p.source_name, &p.module_requests, &mut active);
         self.deferred_dependency_batch = outer_batch;
         requests?;
-        if !outer_batch {
+        self.advance_dynamic_import_jobs(p, false)?;
+        let pending_async_evaluation = self.promise.modules.values().any(|record| {
+            matches!(
+                record.phase(),
+                ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies
+            )
+        });
+        if !outer_batch && pending_async_evaluation {
             self.drain_jobs(p)?;
             self.advance_static_module_jobs(p)?;
         }
@@ -1560,6 +1604,131 @@ impl<H: Host> Vm<H> {
             &mut linking,
         )?;
         self.programs.set_module_imports(ProgramId::MAIN, imports);
+        Ok(())
+    }
+
+    pub(super) fn advance_dynamic_import_jobs(
+        &mut self,
+        p: &ResidualProgram,
+        allow_evaluation: bool,
+    ) -> Result<(), JsError> {
+        let jobs = std::mem::take(&mut self.promise.dynamic_import_jobs);
+        for job in jobs {
+            if let Some(outcome) = self
+                .promise
+                .modules
+                .get(&job.cache_key)
+                .map(|record| record.outcome)
+                && self.settle_dynamic_import_waiters(p, &job.promises, outcome)?
+            {
+                continue;
+            }
+            if !allow_evaluation {
+                self.promise.dynamic_import_jobs.push(job);
+                continue;
+            }
+            let mut active = ModuleEvaluationStack::default();
+            if let Err(error) = self.evaluate_static_module_source(p, job.module, &mut active) {
+                let reason = error
+                    .thrown_value()
+                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                for promise in job.promises {
+                    self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                }
+                continue;
+            }
+            let outcome = self
+                .promise
+                .modules
+                .get(&job.cache_key)
+                .map(|record| record.outcome)
+                .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
+            if !self.settle_dynamic_import_waiters(p, &job.promises, outcome)?
+                && let Some(record) = self.promise.modules.get_mut(&job.cache_key)
+            {
+                for promise in job.promises {
+                    record.add_waiter(promise);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn settle_dynamic_import_waiters(
+        &mut self,
+        p: &ResidualProgram,
+        promises: &[Value],
+        outcome: ModuleOutcome,
+    ) -> Result<bool, JsError> {
+        let (state, value) = match outcome {
+            ModuleOutcome::Evaluated(namespace) => (PromiseState::Fulfilled, namespace),
+            ModuleOutcome::Errored(reason) => (PromiseState::Rejected, reason),
+            ModuleOutcome::Pending(_) | ModuleOutcome::Deferred(_) => return Ok(false),
+        };
+        for promise in promises {
+            self.promise_settle(p, *promise, state, value)?;
+        }
+        Ok(true)
+    }
+
+    pub(super) fn instantiate_main_module(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        if !p.module || self.programs.module_environment(ProgramId::MAIN).is_some() {
+            return Ok(());
+        }
+        let Some(root) = p.functions.first() else {
+            return Ok(());
+        };
+        let mut slots = vec![Value::UNDEFINED; root.local_atoms.len()];
+        for atom in &root.lexical_atoms {
+            if let Some(slot) = root.local_atoms.iter().position(|local| local == atom) {
+                slots[slot] = Value::DELETED;
+            }
+        }
+        let environment = self.heap.alloc(Cell::Environment {
+            parent: Value::NULL,
+            program: Some(ProgramId::MAIN.raw()),
+            root_eval_scope: false,
+            function: super::ROOT_FUNCTION_ID,
+            slots: slots.into_boxed_slice(),
+            dynamic_bindings: Vec::new(),
+            with_objects: Vec::new(),
+        });
+        self.programs
+            .set_module_environment(ProgramId::MAIN, environment);
+
+        let hoisted_functions = p
+            .module_link_plan
+            .as_ref()
+            .into_iter()
+            .flat_map(|plan| plan.hoisted_functions.iter())
+            .filter_map(|(binding, function_name)| {
+                let slot = root
+                    .local_atoms
+                    .iter()
+                    .position(|atom| self.atom_name(*atom) == binding)?;
+                let function = p
+                    .functions
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .find(|(_, function)| {
+                        function.parent == Some(super::ROOT_FUNCTION_ID)
+                            && function
+                                .name
+                                .is_some_and(|atom| self.atom_name(atom) == function_name)
+                    })
+                    .map(|(id, _)| id as u32)?;
+                Some((slot, function))
+            })
+            .collect::<Vec<_>>();
+        for (slot, function) in hoisted_functions {
+            let closure = self.closure(p, function, environment)?;
+            if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(environment)
+                && let Some(binding) = slots.get_mut(slot)
+            {
+                *binding = closure;
+            }
+        }
         Ok(())
     }
 
