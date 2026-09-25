@@ -741,6 +741,19 @@ impl<H: Host> Vm<H> {
             let message = self.to_string(program, value)?;
             let message_value = self.heap.alloc(Cell::String(JsString::from_str(&message)));
             self.set_named(program, object, "message", message_value)?;
+            let message_atom = self.intern_atom("message");
+            self.set_property_attributes(
+                object,
+                PropertyKey::string(message_atom),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
         }
         Ok(object)
     }
