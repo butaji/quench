@@ -128,7 +128,7 @@ impl<H: Host> Vm<H> {
             }
         }
         let default_prototype = if function.is_async {
-            self.async_iterator_proto
+            self.async_generator_proto
         } else {
             self.iterator_proto
         };
@@ -707,10 +707,13 @@ impl<H: Host> Vm<H> {
                     record.done = true;
                     record.continuation = None;
                 }
-                let result = self.iterator_result(argument, true)?;
-                let promise = self.promise_object();
-                self.promise_resolve_value(p, promise, result)?;
-                return Ok(promise);
+                let awaited = self.promise_for_value(p, argument)?;
+                return self.promise_then(
+                    p,
+                    awaited,
+                    self.native_value(Native::AsyncGeneratorReturnResult),
+                    Value::UNDEFINED,
+                );
             }
             if !self.is_function(method) {
                 return Err(self.type_error(p, "delegated iterator method is not callable".into()));
@@ -769,13 +772,20 @@ impl<H: Host> Vm<H> {
         let (generator, destination, throwing, adapter) =
             (*generator, *destination, *throwing, *adapter);
         if !self.is_object_like(result) {
-            return Err(self.type_error(p, "iterator result is not an object".into()));
+            let error = self.type_error(p, "iterator result is not an object".into());
+            return self.resume_async_generator_with_throw(p, generator, error);
         }
         let done_atom = self.intern_atom("done");
-        let done_value = self.get_property(p, result, done_atom)?;
+        let done_value = match self.get_property(p, result, done_atom) {
+            Ok(value) => value,
+            Err(error) => return self.resume_async_generator_with_throw(p, generator, error),
+        };
         let done = self.truthy(done_value);
         let value_atom = self.intern_atom("value");
-        let value = self.get_property(p, result, value_atom)?;
+        let value = match self.get_property(p, result, value_atom) {
+            Ok(value) => value,
+            Err(error) => return self.resume_async_generator_with_throw(p, generator, error),
+        };
         let value = if self.truthy(adapter) {
             let resolved = self.promise_for_value(p, value)?;
             let state = self
@@ -822,7 +832,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn async_generator_delegate_rejected(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         _this: Value,
         reason: Value,
     ) -> Result<Value, JsError> {
@@ -836,15 +846,43 @@ impl<H: Host> Vm<H> {
             .first()
             .copied()
             .ok_or_else(|| JsError("async delegate rejection state is malformed".into()))?;
-        if let Some(record) = self.generator_record_mut(generator) {
-            record.running = false;
-            record.done = true;
-            record.continuation = None;
-        }
-        Err(JsError::thrown(
-            reason,
-            "delegated async iterator rejected".into(),
-        ))
+        self.resume_async_generator_with_throw(
+            p,
+            generator,
+            JsError::thrown(reason, "delegated async iterator rejected".into()),
+        )
+    }
+
+    fn resume_async_generator_with_throw(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        error: JsError,
+    ) -> Result<Value, JsError> {
+        let reason = error
+            .thrown_value()
+            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+        let continuation = match self.generator_record_mut(generator) {
+            Some(record) => {
+                record.running = true;
+                record.done = false;
+                record.continuation.take()
+            }
+            None => None,
+        };
+        let Some(mut continuation) = continuation else {
+            let promise = self.promise_object();
+            self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+            return Ok(promise);
+        };
+        continuation.pc += 1;
+        continuation.resume_register = None;
+        let rejected = self.promise_object();
+        self.promise_settle(p, rejected, PromiseState::Rejected, reason)?;
+        let promise = self.promise_object();
+        let id = self.suspend_continuation(continuation);
+        self.enqueue_async_resume(p, id, promise, Some(generator), rejected, false)?;
+        Ok(promise)
     }
 
     fn throw_into_yield_star(
@@ -1241,9 +1279,17 @@ impl<H: Host> Vm<H> {
             Ok(FrameOutcome::Yield {
                 value,
                 destination,
+                delegated_result,
                 frame: None,
-                ..
-            }) => self.async_generator_yield(p, generator, promise, frame, value, destination)?,
+            }) => self.async_generator_yield(
+                p,
+                generator,
+                promise,
+                frame,
+                value,
+                destination,
+                delegated_result.is_some(),
+            )?,
             Ok(FrameOutcome::Await {
                 value,
                 destination,
@@ -1287,8 +1333,8 @@ impl<H: Host> Vm<H> {
         frame: Frame,
         value: Value,
         destination: u16,
+        delegated: bool,
     ) -> Result<(), JsError> {
-        let awaited = self.promise_for_value(p, value)?;
         let continuation = Continuation {
             program: frame.program,
             function: frame.function,
@@ -1304,9 +1350,15 @@ impl<H: Host> Vm<H> {
             promise: Value::UNDEFINED,
         };
         if let Some(record) = self.generator_record_mut(generator) {
-            record.running = true;
+            record.running = !delegated;
             record.continuation = Some(continuation.clone());
         }
+        if delegated {
+            let result = self.iterator_result(value, false)?;
+            self.promise_resolve_value(p, promise, result)?;
+            return Ok(());
+        }
+        let awaited = self.promise_for_value(p, value)?;
         let id = self.suspend_continuation(continuation);
         self.enqueue_async_resume(p, id, promise, Some(generator), awaited, true)
     }

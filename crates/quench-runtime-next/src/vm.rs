@@ -301,6 +301,8 @@ pub struct Vm<H> {
     finalization_registry_proto: Value,
     iterator_proto: Value,
     async_iterator_proto: Value,
+    async_generator_proto: Value,
+    async_from_sync_iterator_proto: Value,
     regexp_proto: Value,
     natives: Vec<(Native, Value)>,
     frames: Vec<Frame>,

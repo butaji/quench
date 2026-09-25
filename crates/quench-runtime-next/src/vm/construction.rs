@@ -196,7 +196,7 @@ impl<H: Host> Vm<H> {
         }
         let generator_prototype_parent =
             if p.functions[id as usize].is_async && p.functions[id as usize].is_generator {
-                self.async_iterator_proto
+                self.async_generator_proto
             } else if p.functions[id as usize].is_generator {
                 self.iterator_proto
             } else {

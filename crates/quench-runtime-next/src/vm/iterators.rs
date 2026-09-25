@@ -55,6 +55,12 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_iterators(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.iterator_proto = self.object();
         self.async_iterator_proto = self.object();
+        self.async_generator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.async_iterator_proto)));
+        self.async_from_sync_iterator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.async_iterator_proto)));
         let generator_function_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.function_proto)));
@@ -80,7 +86,7 @@ impl<H: Host> Vm<H> {
             program,
             async_generator_function_proto,
             "prototype",
-            self.async_iterator_proto,
+            self.async_generator_proto,
         )?;
         self.set_builtin_named(
             program,
@@ -120,7 +126,13 @@ impl<H: Host> Vm<H> {
         )?;
         self.set_named(
             program,
-            self.async_iterator_proto,
+            self.async_generator_proto,
+            "next",
+            self.native_value(Native::IteratorNext),
+        )?;
+        self.set_named(
+            program,
+            self.async_from_sync_iterator_proto,
             "next",
             self.native_value(Native::IteratorNext),
         )
@@ -283,7 +295,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator = self.get_iterator(p, source)?;
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.async_iterator_proto),
+            object: Self::empty_object(self.async_from_sync_iterator_proto),
             source: iterator,
             kind: IteratorKind::AsyncFromSync,
             index: 0,
