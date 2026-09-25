@@ -318,6 +318,9 @@ fn validate_strict_statements(
 ) -> Option<String> {
     for statement in statements {
         match statement {
+            Statement::WithStatement(_) if inherited_strict => {
+                return Some("SyntaxError: with statement is not allowed in strict mode".into());
+            }
             Statement::FunctionDeclaration(function)
                 if inherited_strict
                     && function
@@ -346,6 +349,35 @@ fn validate_strict_statements(
                     if let Some(error) = validate_strict_statements(&body.statements, strict) {
                         return Some(error);
                     }
+                }
+            }
+            Statement::TryStatement(statement) => {
+                if let Some(error) =
+                    validate_strict_statements(&statement.block.body, inherited_strict)
+                {
+                    return Some(error);
+                }
+                if let Some(handler) = &statement.handler {
+                    if inherited_strict && let Some(parameter) = &handler.param {
+                        let mut names = Vec::new();
+                        collect_pattern_names(&parameter.pattern, &mut names);
+                        if names.iter().any(|name| strict_reserved(name)) {
+                            return Some(
+                                "SyntaxError: strict-reserved catch binding identifier".into(),
+                            );
+                        }
+                    }
+                    if let Some(error) =
+                        validate_strict_statements(&handler.body.body, inherited_strict)
+                    {
+                        return Some(error);
+                    }
+                }
+                if let Some(finalizer) = &statement.finalizer
+                    && let Some(error) =
+                        validate_strict_statements(&finalizer.body, inherited_strict)
+                {
+                    return Some(error);
                 }
             }
             Statement::ExpressionStatement(statement) => {
