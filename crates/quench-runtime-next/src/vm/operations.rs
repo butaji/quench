@@ -274,7 +274,7 @@ impl<H: Host> Vm<H> {
                     self.to_number(p, b)?,
                 )))
             }
-            Native::ArrayPush => self.array_push_native(this, args),
+            Native::ArrayPush => self.array_push_native(p, this, args),
             Native::ArrayIsArray => Ok(
                 if matches!(
                     args.first().and_then(|value| self.heap.get(*value)),
@@ -285,7 +285,7 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 },
             ),
-            Native::ArrayPop => self.array_pop_native(this),
+            Native::ArrayPop => self.array_pop_native(p, this),
             Native::ArraySlice => self.array_slice_native(p, this, args),
             Native::ArrayIncludes => self.array_includes_native(p, this, args),
             Native::ArrayJoin => self.array_join_native(p, this, args),

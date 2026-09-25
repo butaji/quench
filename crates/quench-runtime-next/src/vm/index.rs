@@ -139,7 +139,12 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {
+        if let Some(index) = key.as_number().filter(|x| {
+            *x >= 0.0
+                && x.fract() == 0.0
+                && (!matches!(self.heap.get(object), Some(Cell::Array { .. }))
+                    || *x < u32::MAX as f64)
+        }) {
             if let Some(value) = self.typed_array_get(object, index as usize) {
                 return Ok(value);
             }
@@ -304,7 +309,12 @@ impl<H: Host> Vm<H> {
             }
             return self.set_symbol_property(object, key, value);
         }
-        if let Some(index) = key.as_number().filter(|x| *x >= 0.0 && x.fract() == 0.0) {
+        if let Some(index) = key.as_number().filter(|x| {
+            *x >= 0.0
+                && x.fract() == 0.0
+                && (!matches!(self.heap.get(object), Some(Cell::Array { .. }))
+                    || *x < u32::MAX as f64)
+        }) {
             let index = index as usize;
             if let Some(attributes) = self.array_descriptor(object, index) {
                 if attributes.accessor {

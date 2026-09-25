@@ -90,6 +90,9 @@ impl<H: Host> Vm<H> {
                                     .sparse_get(current, index)
                                     .is_some_and(|value| !value.is_deleted())
                         }
+                        Some(Cell::TypedArray { .. }) => self
+                            .typed_array_length(current)
+                            .is_some_and(|length| (index as usize) < length),
                         _ => self.indexed_view_property(current, atom).is_some(),
                     }
                 })

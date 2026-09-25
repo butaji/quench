@@ -126,7 +126,20 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::number(0.0));
         Ok(match native {
-            Native::Number => Value::number(self.to_number(p, value)?),
+            Native::Number => {
+                let primitive = if self.is_object_like(value) {
+                    self.to_primitive(p, value, "number")?
+                } else {
+                    value
+                };
+                let number = match self.heap.get(primitive) {
+                    Some(Cell::BigInt(value)) => value.parse::<f64>().map_err(|_| {
+                        self.type_error(p, "invalid BigInt numeric representation".into())
+                    })?,
+                    _ => self.to_number(p, primitive)?,
+                };
+                Value::number(number)
+            }
             Native::NumberIsNaN => {
                 if value.as_number().is_some_and(f64::is_nan) {
                     Value::TRUE

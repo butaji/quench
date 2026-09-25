@@ -40,6 +40,29 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(super) fn to_bigint(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<num_bigint::BigInt, JsError> {
+        let primitive = if self.is_object_like(value) {
+            self.to_primitive(p, value, "number")?
+        } else {
+            value
+        };
+        match self.heap.get(primitive) {
+            Some(Cell::BigInt(value)) => value
+                .parse::<num_bigint::BigInt>()
+                .map_err(|_| self.type_error(p, "invalid BigInt value".into())),
+            Some(Cell::String(value)) => crate::bigint::parse_string(&value.host_string())
+                .ok_or_else(|| self.type_error(p, "cannot convert string to BigInt".into())),
+            _ => primitive
+                .as_bool()
+                .map(|value| num_bigint::BigInt::from(i32::from(value)))
+                .ok_or_else(|| self.type_error(p, "cannot convert value to BigInt".into())),
+        }
+    }
+
     pub(super) fn to_property_key(
         &mut self,
         program: &ResidualProgram,
