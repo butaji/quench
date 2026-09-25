@@ -472,11 +472,9 @@ impl<H: Host> Vm<H> {
             .position(|candidate| self.same_value_zero(*candidate, value))
     }
     pub(super) fn same_value_zero(&self, left: Value, right: Value) -> bool {
-        left == right
+        self.strict_equal(left, right)
             || (left.as_number().is_some_and(f64::is_nan)
                 && right.as_number().is_some_and(f64::is_nan))
-            || matches!((self.heap.get(left), self.heap.get(right)),
-                (Some(Cell::String(left)), Some(Cell::String(right))) if left == right)
     }
     pub(super) fn weak_key(&self, value: Value) -> Result<Value, JsError> {
         if self.object_data(value).is_some() {

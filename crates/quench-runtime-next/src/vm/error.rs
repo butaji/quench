@@ -722,6 +722,29 @@ impl<H: Host> Vm<H> {
             self.set_named(program, object, name, method)?;
         }
         self.set_named(program, global, "Object", object)?;
+        let array = self.native_with_realm(Native::Array, global, global);
+        let array_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.array_proto)));
+        self.set_builtin_value_named(array, "prototype", array_prototype)?;
+        self.set_builtin_value_named(array_prototype, "constructor", array)?;
+        if let Some(species) = self.well_known_symbols.get("species").copied() {
+            let getter = self.native_with_realm(Native::ArraySpecies, global, global);
+            self.set_symbol_property(array, species, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                array,
+                PropertyKey::symbol(species),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
+        self.set_named(program, global, "Array", array)?;
         for (name, native) in [
             ("Number", Native::Number),
             ("String", Native::String),
