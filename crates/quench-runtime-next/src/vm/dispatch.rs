@@ -415,6 +415,13 @@ impl<H: Host> Vm<H> {
                 let value = self.resolve_name_this(p, i.imm())?;
                 self.write(f, i.a(), value);
             }
+            Op::ValidateClassHeritage => {
+                let heritage = self.read(f, i.a());
+                if !heritage.is_null() && !self.is_constructable(p, heritage) {
+                    return Err(self
+                        .type_error(p, "Class extends value is not a constructor or null".into()));
+                }
+            }
             Op::DeleteName => {
                 let value = self.delete_name(p, i.imm())?;
                 self.write(f, i.a(), value);
