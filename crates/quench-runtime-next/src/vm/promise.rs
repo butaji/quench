@@ -226,6 +226,15 @@ fn native_length(kind: Native) -> Option<f64> {
     Some(match kind {
         Native::AbstractModuleSource => 0.0,
         Native::AbstractModuleSourceToStringTag => 0.0,
+        Native::AggregateError => 2.0,
+        Native::SuppressedError => 3.0,
+        Native::Error
+        | Native::EvalError
+        | Native::RangeError
+        | Native::ReferenceError
+        | Native::SyntaxError
+        | Native::TypeError
+        | Native::URIError => 1.0,
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
