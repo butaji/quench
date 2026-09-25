@@ -122,12 +122,11 @@ impl FunctionCompiler<'_, '_> {
             AssignmentReference::Name { atom, environment } => {
                 if let Some(environment) = environment {
                     let value = self.reg();
-                    let cache = self.owner.cache_site();
                     self.emit(
-                        Op::GetField,
+                        Op::LoadResolvedName,
                         value,
-                        FieldBase::register(environment).0,
-                        cache,
+                        environment,
+                        u16::from(self.strict),
                         atom,
                     );
                     value

@@ -433,6 +433,11 @@ impl<H: Host> Vm<H> {
                 let value = self.resolve_name(p, i.imm(), i.b() != 0)?;
                 self.write(f, i.a(), value);
             }
+            Op::LoadResolvedName => {
+                let object = self.read(f, i.b());
+                let value = self.load_resolved_name(p, object, i.imm(), i.c() != 0)?;
+                self.write(f, i.a(), value);
+            }
             Op::ValidateClassHeritage => {
                 let heritage = self.read(f, i.a());
                 if !heritage.is_null() && !self.is_constructable(p, heritage) {

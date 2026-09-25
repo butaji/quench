@@ -453,15 +453,32 @@ impl<H: Host> Vm<H> {
         if self.object_data(receiver).is_none() {
             return Ok(false);
         }
-        if self.own_property(receiver, atom).is_some() {
-            if let Some(attributes) = self.property_attributes(receiver, PropertyKey::string(atom))
-            {
-                if attributes.accessor || !attributes.writable {
+        let receiver_descriptor = if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
+            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+            Some(self.object_get_own_property_descriptor(p, &[receiver, key])?)
+        } else {
+            None
+        };
+        let receiver_has_own = receiver_descriptor
+            .is_some_and(|descriptor| !descriptor.is_undefined())
+            || self.own_property(receiver, atom).is_some();
+        if receiver_has_own {
+            if let Some(descriptor) = receiver_descriptor.filter(|value| !value.is_undefined()) {
+                let getter = self.descriptor_field(p, descriptor, "get")?;
+                let setter = self.descriptor_field(p, descriptor, "set")?;
+                let writable = self
+                    .descriptor_field(p, descriptor, "writable")?
+                    .is_some_and(|value| self.truthy(value));
+                if getter.is_some() || setter.is_some() || !writable {
                     return Ok(false);
                 }
+            } else if let Some(attributes) =
+                self.property_attributes(receiver, PropertyKey::string(atom))
+                && (attributes.accessor || !attributes.writable)
+            {
+                return Ok(false);
             }
-            self.set_property_with_program(p, receiver, atom, value)?;
-            return Ok(true);
+            return self.define_receiver_data_property(p, receiver, atom, value, false);
         }
         if !self
             .object_data(receiver)
@@ -469,9 +486,51 @@ impl<H: Host> Vm<H> {
         {
             return Ok(false);
         }
-        self.set_property_with_program(p, receiver, atom, value)?;
+        self.define_receiver_data_property(p, receiver, atom, value, true)
+    }
+
+    fn define_receiver_data_property(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        atom: Atom,
+        value: Value,
+        new_property: bool,
+    ) -> Result<bool, JsError> {
+        let descriptor = self.object();
+        let value_atom = self.intern_atom("value");
+        self.set_property(descriptor, value_atom, value)?;
+        if new_property {
+            for name in ["writable", "enumerable", "configurable"] {
+                let field = self.intern_atom(name);
+                self.set_property(descriptor, field, Value::TRUE)?;
+            }
+        }
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(receiver).cloned()
+        {
+            if handler.is_null() {
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("defineProperty");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if self.is_function(trap) {
+                let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+                let result = self.call_value(p, trap, handler, &[target, key, descriptor])?;
+                if !self.truthy(result) {
+                    return Ok(false);
+                }
+                self.validate_proxy_define_property(p, target, key, descriptor)?;
+                return Ok(true);
+            }
+        }
+        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        self.object_define_property(p, &[receiver, key, descriptor])?;
+        self.mirror_global_var_property_write(p, receiver, atom, value);
         Ok(true)
     }
+
     pub(super) fn set_shape_property(
         &mut self,
         object: Value,
