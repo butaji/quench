@@ -590,7 +590,20 @@ impl FunctionCompiler<'_, '_> {
                 } else {
                     None
                 };
-                (self.load_atom(atom), UpdateTarget::Name(atom, environment))
+                let old = if let Some(environment) = environment {
+                    let old = self.reg();
+                    self.emit(
+                        Op::LoadResolvedName,
+                        old,
+                        environment,
+                        u16::from(self.strict),
+                        atom,
+                    );
+                    old
+                } else {
+                    self.load_atom(atom)
+                };
+                (old, UpdateTarget::Name(atom, environment))
             }
             SimpleAssignmentTarget::StaticMemberExpression(item) => {
                 let object = self.expression(&item.object);

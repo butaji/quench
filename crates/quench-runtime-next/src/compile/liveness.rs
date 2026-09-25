@@ -109,6 +109,7 @@ fn uses(
             bit(instruction.a())
         }
         Op::StoreResolvedName => bit(instruction.a()) | bit(instruction.b()),
+        Op::LoadResolvedName => bit(instruction.b()),
         Op::ResolveName | Op::DeleteName | Op::LoadNameCall => 0,
         Op::GetIterator
         | Op::GetAsyncIterator
@@ -191,6 +192,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::LoadName
         | Op::LoadNameTypeof
         | Op::ResolveName
+        | Op::LoadResolvedName
         | Op::ToPropertyKey
         | Op::ToNumeric
         | Op::LoadThis

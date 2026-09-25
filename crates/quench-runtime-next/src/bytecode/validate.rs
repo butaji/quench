@@ -140,6 +140,14 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} name site is invalid"));
                     }
+                    Op::LoadResolvedName
+                        if !atom(instruction.imm())
+                            || !register(instruction.a())
+                            || !register(instruction.b())
+                            || instruction.c() > 1 =>
+                    {
+                        return Err(format!("function {index} resolved name site is invalid"));
+                    }
                     Op::LoadNameCall
                         if !atom(instruction.imm())
                             || !cache(instruction.c())
