@@ -74,7 +74,18 @@ const NATIVES: &[Native] = &[
     Native::ArrayBufferTransfer,
     Native::ArrayBufferResize,
     Native::ArrayBufferTransferToFixedLength,
+    Native::ArrayBufferTransferToImmutable,
+    Native::ArrayBufferSliceToImmutable,
+    Native::ArrayBufferByteLengthGetter,
+    Native::ArrayBufferDetachedGetter,
+    Native::ArrayBufferImmutableGetter,
+    Native::ArrayBufferMaxByteLengthGetter,
+    Native::ArrayBufferResizableGetter,
+    Native::SharedArrayBufferByteLengthGetter,
+    Native::SharedArrayBufferGrowableGetter,
+    Native::SharedArrayBufferMaxByteLengthGetter,
     Native::ArrayBufferIsView,
+    Native::DetachArrayBuffer,
     Native::SharedArrayBuffer,
     Native::SharedArrayBufferGrow,
     Native::AtomicsLoad,
@@ -531,7 +542,11 @@ impl<H: Host> Vm<H> {
         self.global(program, "Math", math)
     }
 
-    fn install_builtin_to_string_tag(&mut self, object: Value, tag: &str) -> Result<(), JsError> {
+    pub(super) fn install_builtin_to_string_tag(
+        &mut self,
+        object: Value,
+        tag: &str,
+    ) -> Result<(), JsError> {
         let symbol = self
             .well_known_symbols
             .get("toStringTag")

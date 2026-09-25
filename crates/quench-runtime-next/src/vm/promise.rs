@@ -239,6 +239,21 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
+        Native::ArrayBuffer | Native::ArrayBufferIsView | Native::DetachArrayBuffer => 1.0,
+        Native::ArrayBufferSlice | Native::ArrayBufferSliceToImmutable => 2.0,
+        Native::ArrayBufferResize => 1.0,
+        Native::ArrayBufferTransfer
+        | Native::ArrayBufferTransferToFixedLength
+        | Native::ArrayBufferTransferToImmutable
+        | Native::ArrayBufferByteLengthGetter
+        | Native::ArrayBufferDetachedGetter
+        | Native::ArrayBufferImmutableGetter
+        | Native::ArrayBufferMaxByteLengthGetter
+        | Native::ArrayBufferResizableGetter
+        | Native::SharedArrayBufferByteLengthGetter
+        | Native::SharedArrayBufferGrowableGetter
+        | Native::SharedArrayBufferMaxByteLengthGetter
+        | Native::ArrayBufferSpecies => 0.0,
         Native::ArraySpecies => 0.0,
         Native::ArrayOf
         | Native::ArrayPop

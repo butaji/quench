@@ -104,6 +104,9 @@ impl<H: Host> Vm<H> {
             Native::Eval => self.eval_native(p, args),
             Native::EvalScript => self.eval_script_native(p, args),
             Native::ProxyRevocable => self.proxy_revocable(p, args),
+            Native::ArrayBuffer | Native::SharedArrayBuffer => {
+                Err(self.type_error(p, "ArrayBuffer constructor requires new".into()))
+            }
             native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -328,11 +331,30 @@ impl<H: Host> Vm<H> {
             }
             Native::StringValues => self.string_iterator_native(p, this),
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args),
-            Native::ArrayBufferTransfer => self.array_buffer_transfer_native(p, this),
+            Native::ArrayBufferTransfer => {
+                self.array_buffer_transfer_native(p, this, args, true, false)
+            }
             Native::ArrayBufferResize => self.array_buffer_resize_native(p, this, args),
             Native::ArrayBufferTransferToFixedLength => {
-                self.array_buffer_transfer_fixed_native(p, this)
+                self.array_buffer_transfer_native(p, this, args, false, false)
             }
+            Native::ArrayBufferTransferToImmutable => {
+                self.array_buffer_transfer_native(p, this, args, false, true)
+            }
+            Native::ArrayBufferSliceToImmutable => {
+                self.array_buffer_slice_immutable_native(p, this, args)
+            }
+            Native::ArrayBufferByteLengthGetter
+            | Native::ArrayBufferDetachedGetter
+            | Native::ArrayBufferImmutableGetter
+            | Native::ArrayBufferMaxByteLengthGetter
+            | Native::ArrayBufferResizableGetter
+            | Native::SharedArrayBufferByteLengthGetter
+            | Native::SharedArrayBufferGrowableGetter
+            | Native::SharedArrayBufferMaxByteLengthGetter => {
+                self.array_buffer_getter_native(p, native, this)
+            }
+            Native::DetachArrayBuffer => self.detach_array_buffer_native(p, args),
             Native::SharedArrayBufferGrow => self.shared_array_buffer_grow_native(p, this, args),
             Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayOf => {
                 self.array_modern_native(p, native, this, args)

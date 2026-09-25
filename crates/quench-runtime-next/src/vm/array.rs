@@ -578,7 +578,7 @@ impl<H: Host> Vm<H> {
             return Ok(length);
         }
         let integer = number.trunc();
-        Ok(if integer.is_sign_negative() {
+        Ok(if integer < 0.0 {
             length.saturating_sub((-integer) as usize)
         } else {
             (integer as usize).min(length)

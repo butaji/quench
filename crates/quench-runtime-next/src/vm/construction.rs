@@ -422,7 +422,10 @@ impl<H: Host> Vm<H> {
             let result = self.construct_native_with_new_target(p, native, args, new_target);
             self.realm.globals = previous_global;
             let result = result?;
-            if !matches!(native, Native::Proxy | Native::Array) {
+            if !matches!(
+                native,
+                Native::Proxy | Native::Array | Native::ArrayBuffer | Native::SharedArrayBuffer
+            ) {
                 self.set_constructed_prototype(p, result, new_target)?;
             }
             return Ok(result);
@@ -620,7 +623,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Array => self.construct_array_native(p, args, new_target),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
-                self.construct_buffer_native(p, native, args)
+                self.construct_buffer_native(p, native, args, new_target)
             }
             Native::Uint8Array => self.construct_uint8_array_native(p, args),
             Native::Uint8ClampedArray => self.construct_uint8_clamped_array_native(p, args),

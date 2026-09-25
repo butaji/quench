@@ -182,8 +182,9 @@ impl<H: Host> Vm<H> {
             }
             Native::Uint8ArraySubarray => {
                 let begin = self.typed_array_relative_index(p, args.first(), length)?;
-                let end = self.typed_array_relative_index(p, args.get(1), length)?;
-                let end = if args.get(1).is_none() { length } else { end };
+                let end_arg = args.get(1).filter(|value| !value.is_undefined());
+                let end = self.typed_array_relative_index(p, end_arg, length)?;
+                let end = if end_arg.is_none() { length } else { end };
                 self.new_typed_view(
                     buffer,
                     offset + begin.min(end) * kind.width(),
@@ -193,8 +194,9 @@ impl<H: Host> Vm<H> {
             }
             Native::Uint8ArraySlice => {
                 let begin = self.typed_array_relative_index(p, args.first(), length)?;
-                let end = self.typed_array_relative_index(p, args.get(1), length)?;
-                let end = if args.get(1).is_none() { length } else { end };
+                let end_arg = args.get(1).filter(|value| !value.is_undefined());
+                let end = self.typed_array_relative_index(p, end_arg, length)?;
+                let end = if end_arg.is_none() { length } else { end };
                 let start = begin.min(end);
                 let count = begin.max(end) - start;
                 let width = kind.width();

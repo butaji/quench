@@ -282,6 +282,7 @@ pub struct Vm<H> {
     array_proto: Value,
     string_proto: Value,
     array_buffer_proto: Value,
+    shared_array_buffer_proto: Value,
     uint8_array_proto: Value,
     uint8_clamped_array_proto: Value,
     uint16_array_proto: Value,
