@@ -414,11 +414,11 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             Expression::Identifier(identifier) if self.with_depth != 0 => {
-                let callee = self.expression(value);
+                let callee = self.reg();
                 let this = self.reg();
                 let atom = self.owner.atom(identifier.name.as_str());
                 let cache = self.owner.cache_site();
-                self.emit(Op::ResolveNameThis, this, 0, cache, atom);
+                self.emit(Op::LoadNameCall, callee, this, cache, atom);
                 (callee, this)
             }
             _ => {

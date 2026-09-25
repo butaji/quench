@@ -335,7 +335,9 @@ impl<H: Host> Vm<H> {
             "toStringTag",
             "unscopables",
         ] {
-            let value = self.heap.alloc(Cell::Symbol(None));
+            let value = self
+                .heap
+                .alloc(Cell::Symbol(Some(format!("Symbol.{name}").into())));
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }

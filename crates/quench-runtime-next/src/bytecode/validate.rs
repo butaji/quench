@@ -135,14 +135,18 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} capture depth is invalid"));
                     }
-                    Op::LoadName
-                    | Op::LoadNameTypeof
-                    | Op::ResolveNameThis
-                    | Op::StoreName
-                    | Op::DeleteName
+                    Op::LoadName | Op::LoadNameTypeof | Op::StoreName | Op::DeleteName
                         if !atom(instruction.imm()) || !cache(instruction.c()) =>
                     {
                         return Err(format!("function {index} name site is invalid"));
+                    }
+                    Op::LoadNameCall
+                        if !atom(instruction.imm())
+                            || !cache(instruction.c())
+                            || !destination(instruction.a())
+                            || !destination(instruction.b()) =>
+                    {
+                        return Err(format!("function {index} call-name site is invalid"));
                     }
                     Op::MakeClosure
                         if instruction.imm() as usize >= self.functions.len()

@@ -259,6 +259,7 @@ opcodes!(
     LoadCapture => Effect::READS_HEAP; CaptureDepthAndSlot,
     StoreCapture => Effect::WRITES_HEAP; CaptureDepthAndSlot,
     LoadName => READ_THROW,
+    LoadNameCall => READ_THROW,
     LoadNameTypeof => Effect::READS_HEAP,
     ResolveName => READ_THROW,
     DeleteName => READ_THROW,
@@ -320,7 +321,6 @@ opcodes!(
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
     LoadCachedTemplateObject => Effect::READS_HEAP,
     DefineField => WRITE_THROW,
-    ResolveNameThis => READ_THROW,
     ValidateClassHeritage => READ_THROW,
 );
 #[derive(Clone, Debug)]

@@ -219,6 +219,28 @@ impl<H: Host> Vm<H> {
         Ok(true)
     }
 
+    fn get_with_binding_value(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        key: Value,
+        atom: Atom,
+    ) -> Result<Value, JsError> {
+        if !self.has_property(p, object, key)? {
+            let strict = self
+                .frames
+                .last()
+                .is_some_and(|frame| p.functions[frame.function as usize].strict);
+            if strict {
+                return Err(
+                    self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
+                );
+            }
+            return Ok(Value::UNDEFINED);
+        }
+        self.get_property(p, object, atom)
+    }
+
     pub(super) fn outer_environment_binding(
         &mut self,
         mut env: Value,
@@ -458,19 +480,6 @@ impl<H: Host> Vm<H> {
             .is_some())
     }
 
-    pub(super) fn resolve_name_this(
-        &mut self,
-        p: &ResidualProgram,
-        atom: Atom,
-    ) -> Result<Value, JsError> {
-        let (base, is_with_environment) = self.resolve_name_reference(p, atom)?;
-        Ok(if is_with_environment {
-            base
-        } else {
-            Value::UNDEFINED
-        })
-    }
-
     fn resolve_name_reference(
         &mut self,
         p: &ResidualProgram,
@@ -706,6 +715,15 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         cache: u16,
     ) -> Result<Value, JsError> {
+        self.load_name_call(p, atom, cache).map(|(value, _)| value)
+    }
+
+    fn load_name_without_with(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+        cache: u16,
+    ) -> Result<Value, JsError> {
         let name = self.atom_name(atom);
         if name == "\0rqj:dynamic-import" {
             return Ok(self.native_value(Native::DynamicImport));
@@ -735,19 +753,6 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         if !name.starts_with('\0') {
-            let key = self.heap.alloc(Cell::String(name.into()));
-            let with_base = self
-                .frames
-                .last()
-                .map_or(self.with_stack.len(), |frame| frame.with_base)
-                .min(self.with_stack.len());
-            let with_objects = self.with_stack[with_base..].to_vec();
-            for object in with_objects.into_iter().rev() {
-                if self.with_binding(p, object, key, atom)? {
-                    let value = self.get_property(p, object, atom)?;
-                    return Ok(value);
-                }
-            }
             if let Some(frame) = self.frames.last()
                 && (frame.function != 0
                     || p.functions[frame.function as usize]
@@ -784,6 +789,34 @@ impl<H: Host> Vm<H> {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
         Ok(value)
+    }
+
+    pub(super) fn load_name_call(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+        cache: u16,
+    ) -> Result<(Value, Value), JsError> {
+        let name = self.atom_name(atom);
+        if !name.starts_with('\0') {
+            let key = self.heap.alloc(Cell::String(name.into()));
+            let with_base = self
+                .frames
+                .last()
+                .map_or(self.with_stack.len(), |frame| frame.with_base)
+                .min(self.with_stack.len());
+            let with_objects = self.with_stack[with_base..].to_vec();
+            for object in with_objects.into_iter().rev() {
+                if !self.with_binding(p, object, key, atom)? {
+                    continue;
+                }
+                return Ok((self.get_with_binding_value(p, object, key, atom)?, object));
+            }
+        }
+        Ok((
+            self.load_name_without_with(p, atom, cache)?,
+            Value::UNDEFINED,
+        ))
     }
 
     pub(super) fn load_name_typeof(
