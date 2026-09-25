@@ -125,6 +125,7 @@ impl<H: Host> Vm<H> {
                         | Native::WeakRef
                         | Native::FinalizationRegistry
                         | Native::DisposableStack
+                        | Native::AsyncDisposableStack
                         | Native::Date
                         | Native::Error
                         | Native::AggregateError
@@ -641,7 +642,9 @@ impl<H: Host> Vm<H> {
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),
             Native::FinalizationRegistry => self.construct_finalization_registry_native(args),
-            Native::DisposableStack => self.construct_disposable_stack_native(p),
+            Native::DisposableStack | Native::AsyncDisposableStack => {
+                self.construct_disposable_stack_native(p, native, new_target)
+            }
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args),
             Native::Date => self.date_construct_native(p, args),
