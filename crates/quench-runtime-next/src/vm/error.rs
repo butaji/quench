@@ -495,10 +495,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let function_realm = self
-            .active_native_env()
-            .filter(|global| self.object_data(*global).is_some())
-            .unwrap_or(self.realm.globals);
+        let function_realm = self.realm.globals;
         let mut argument_strings = Vec::with_capacity(args.len());
         for argument in args {
             let text = self.to_string(program, *argument)?;
@@ -746,8 +743,90 @@ impl<H: Host> Vm<H> {
         self.set_named(program, global, "eval", eval)?;
         let function = self.native_with_realm(Native::Function, global, global);
         self.set_named(program, global, "Function", function)?;
-        let object = self.native_with_realm(Native::Object, global, global);
         let object_prototype = self.object();
+        let realm_iterator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        let realm_async_generator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+        self.set_builtin_value_named(
+            realm_async_generator_proto,
+            "next",
+            self.native_value(Native::IteratorNext),
+        )?;
+        for (name, native, prototype) in [
+            (
+                "AsyncFunction",
+                Native::AsyncFunction,
+                self.heap
+                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+            ),
+            (
+                "GeneratorFunction",
+                Native::GeneratorFunction,
+                self.heap
+                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+            ),
+            (
+                "AsyncGeneratorFunction",
+                Native::AsyncGeneratorFunction,
+                self.heap
+                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+            ),
+        ] {
+            let constructor = self.native_with_realm(native, global, global);
+            self.object_data_mut(constructor)
+                .expect("realm dynamic function")
+                .proto = function;
+            self.set_builtin_value_named(constructor, "prototype", prototype)?;
+            let prototype_atom = self.intern_atom("prototype");
+            self.set_property_attributes(
+                constructor,
+                PropertyKey::string(prototype_atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            if native == Native::AsyncGeneratorFunction {
+                self.set_builtin_value_named(prototype, "prototype", realm_async_generator_proto)?;
+                let prototype_atom = self.intern_atom("prototype");
+                self.set_property_attributes(
+                    prototype,
+                    PropertyKey::string(prototype_atom),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    },
+                );
+                let constructor_atom = self.intern_atom("constructor");
+                self.set_property_attributes(
+                    prototype,
+                    PropertyKey::string(constructor_atom),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    },
+                );
+            }
+            self.set_builtin_value_named(global, name, constructor)?;
+            self.install_builtin_to_string_tag(prototype, name)?;
+        }
+        let object = self.native_with_realm(Native::Object, global, global);
         self.set_named(program, object, "prototype", object_prototype)?;
         self.set_named(program, object_prototype, "constructor", object)?;
         for (name, native) in [

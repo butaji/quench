@@ -95,6 +95,19 @@ impl<H: Host> Vm<H> {
             "prototype",
             self.async_generator_proto,
         )?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            async_generator_function_proto,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_value_named(
             async_function_proto,
             "constructor",
@@ -105,6 +118,19 @@ impl<H: Host> Vm<H> {
             "constructor",
             self.native_value(Native::AsyncGeneratorFunction),
         )?;
+        let constructor_atom = self.intern_atom("constructor");
+        self.set_property_attributes(
+            async_generator_function_proto,
+            PropertyKey::string(constructor_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         for (native, prototype, name) in [
             (Native::AsyncFunction, async_function_proto, "AsyncFunction"),
             (
