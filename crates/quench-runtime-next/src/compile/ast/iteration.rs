@@ -61,6 +61,7 @@ impl FunctionCompiler<'_, '_> {
             &item.body,
             source,
             item.r#await,
+            None,
             clone_environment,
             label,
         );
@@ -81,6 +82,9 @@ impl FunctionCompiler<'_, '_> {
         self.clear_statement_completion();
         let scoped = self.push_iteration_scope(&item.left);
         let object = self.expression(&item.right);
+        let object_atom = self.hidden_local("\0rqj:for-in:source");
+        self.store_atom(object_atom, object);
+        let object = self.load_atom(object_atom);
         let keys = self.load_name("\0rqj:for-in-keys");
         let this = self.literal(Constant::Undefined);
         let base = self.next_reg;
@@ -100,6 +104,7 @@ impl FunctionCompiler<'_, '_> {
             &item.body,
             source,
             false,
+            Some(object_atom),
             clone_environment,
             label,
         );
@@ -114,6 +119,7 @@ impl FunctionCompiler<'_, '_> {
         body: &Statement<'_>,
         source: Register,
         await_values: bool,
+        for_in_source: Option<Atom>,
         clone_environment: bool,
         label: Option<Atom>,
     ) {
@@ -178,6 +184,25 @@ impl FunctionCompiler<'_, '_> {
             value_cache,
             value_atom,
         );
+        let invalid_for_in_key = for_in_source.map(|object_atom| {
+            let validate = self.load_name("\0rqj:for-in-key-is-enumerable");
+            let object = self.load_atom(object_atom);
+            let base = self.next_reg;
+            let object_arg = self.reg();
+            self.emit(Op::Move, object_arg, object, 0, 0);
+            let key_arg = self.reg();
+            self.emit(Op::Move, key_arg, value, 0, 0);
+            let valid = self.reg();
+            let this = self.literal(Constant::Undefined);
+            self.emit(
+                Op::Call,
+                valid,
+                validate,
+                this,
+                crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
+            );
+            self.emit(Op::JumpFalse, valid, 0, 0, 0)
+        });
         let iteration_body_start = self.code.len() as u32;
         let using_iteration = match left {
             ForStatementLeft::VariableDeclaration(declaration)
@@ -230,6 +255,9 @@ impl FunctionCompiler<'_, '_> {
         self.resolve_control_destinations(&control, break_cleanup, Some(iteration_cleanup));
         self.patch_instruction(skip_break_cleanup, update);
         self.emit(Op::Jump, 0, 0, 0, head);
+        if let Some(edge) = invalid_for_in_key {
+            self.patch_to(edge, head);
+        }
         let close = self.code.len() as u32;
         self.patch_instruction(break_close, close);
         let iterator = self.load_atom(iterator_atom);

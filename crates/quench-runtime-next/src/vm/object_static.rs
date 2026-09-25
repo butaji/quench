@@ -218,6 +218,27 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    pub(super) fn object_for_in_key_is_enumerable(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        key: Value,
+    ) -> Result<bool, JsError> {
+        if source.is_null() || source.is_undefined() {
+            return Ok(false);
+        }
+        let mut current = self.box_object(source)?;
+        let mut visited_objects = std::collections::HashSet::new();
+        while !current.is_null() && visited_objects.insert(current) {
+            let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
+            if !descriptor.is_undefined() {
+                return Ok(self.descriptor_flag(descriptor, "enumerable"));
+            }
+            current = self.object_get_prototype_of(p, current)?;
+        }
+        Ok(false)
+    }
+
     pub(super) fn install_object_extra(
         &mut self,
         program: &ResidualProgram,
@@ -283,6 +304,17 @@ impl<H: Host> Vm<H> {
             Native::ForInKeys => {
                 self.object_for_in_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
+            Native::ForInKeyIsEnumerable => Ok(
+                if self.object_for_in_key_is_enumerable(
+                    p,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
+                )? {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            ),
             Native::ObjectGetOwnPropertyNames => {
                 self.object_names(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
