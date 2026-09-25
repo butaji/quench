@@ -47,6 +47,8 @@ struct ControlTarget {
     with_depth: u16,
     breaks: Vec<usize>,
     continues: Vec<usize>,
+    break_destinations: Vec<Rc<std::cell::Cell<Option<u32>>>>,
+    continue_destinations: Vec<Rc<std::cell::Cell<Option<u32>>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -67,10 +69,11 @@ pub(super) struct FinallyContext {
     abrupt_edges: Vec<FinallyAbrupt>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct FinallyAbrupt {
     edge: usize,
     control: usize,
+    destination: Rc<std::cell::Cell<Option<u32>>>,
     continue_edge: bool,
 }
 

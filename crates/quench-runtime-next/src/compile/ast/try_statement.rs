@@ -163,23 +163,40 @@ impl FunctionCompiler<'_, '_> {
     fn emit_abrupt_paths(&mut self, finalizer: &BlockStatement<'_>, context: &FinallyContext) {
         let mut paths = Vec::new();
         for abrupt in &context.abrupt_edges {
-            if let Some((_, _, path, _)) = paths.iter().find(|(control, continue_edge, _, _)| {
-                *control == abrupt.control && *continue_edge == abrupt.continue_edge
-            }) {
+            if let Some((_, _, _, path, _)) =
+                paths.iter().find(|(control, continue_edge, _, _, _)| {
+                    *control == abrupt.control && *continue_edge == abrupt.continue_edge
+                })
+            {
                 self.patch_to(abrupt.edge, *path);
                 continue;
             }
             let path = self.code.len() as u32;
             self.scoped_statements_without_completion(&finalizer.body);
             let tail = self.emit(Op::Jump, 0, 0, 0, 0);
-            paths.push((abrupt.control, abrupt.continue_edge, path, tail));
+            paths.push((
+                abrupt.control,
+                abrupt.continue_edge,
+                abrupt.destination.clone(),
+                path,
+                tail,
+            ));
             self.patch_to(abrupt.edge, path);
         }
-        for (control, continue_edge, _, tail) in paths {
-            if continue_edge {
-                self.controls[control].continues.push(tail);
+        for (control, continue_edge, destination, _, tail) in paths {
+            if let Some(target) = destination.get() {
+                self.patch_to(tail, target);
+            } else if let Some(control) = self.controls.get_mut(control) {
+                if continue_edge {
+                    control.continues.push(tail);
+                } else {
+                    control.breaks.push(tail);
+                }
             } else {
-                self.controls[control].breaks.push(tail);
+                self.owner.reject(
+                    finalizer.span,
+                    "finally completion outlived its control target",
+                );
             }
         }
     }
