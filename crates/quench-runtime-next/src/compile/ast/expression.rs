@@ -180,6 +180,7 @@ impl FunctionCompiler<'_, '_> {
         } else if (self.with_depth == self.inherited_with_depth
             || lexical.is_some()
             || compiler_binding)
+            && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
@@ -240,10 +241,8 @@ impl FunctionCompiler<'_, '_> {
             self.throw_immutable_binding(atom);
             return;
         }
-        if (self.with_depth == self.inherited_with_depth
-            || lexical.is_some()
-            || compiler_binding
-            || initializing)
+        if (self.with_depth == self.inherited_with_depth || lexical.is_some() || compiler_binding)
+            && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             self.emit(
