@@ -63,6 +63,7 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Uint8 => unreachable!(),
         }
         self.set_named(program, constructor, "prototype", proto)?;
+        self.set_builtin_value_named(proto, "constructor", constructor)?;
         let name_value = self.heap.alloc(Cell::String(name.into()));
         self.set_named(program, constructor, "name", name_value)?;
         let width = Value::number(kind.width() as f64);
