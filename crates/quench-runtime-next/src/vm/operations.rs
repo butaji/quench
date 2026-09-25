@@ -278,16 +278,14 @@ impl<H: Host> Vm<H> {
                 )))
             }
             Native::ArrayPush => self.array_push_native(p, this, args),
-            Native::ArrayIsArray => Ok(
-                if matches!(
-                    args.first().and_then(|value| self.heap.get(*value)),
-                    Some(Cell::Array { .. })
-                ) {
+            Native::ArrayIsArray => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                Ok(if self.is_array(p, value)? {
                     Value::TRUE
                 } else {
                     Value::FALSE
-                },
-            ),
+                })
+            }
             Native::ArrayPop => self.array_pop_native(p, this),
             Native::ArraySlice => self.array_slice_native(p, this, args),
             Native::ArrayIncludes => self.array_includes_native(p, this, args),
