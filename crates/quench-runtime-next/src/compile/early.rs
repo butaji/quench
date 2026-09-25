@@ -1,5 +1,8 @@
-use oxc_ast::ast::{ArrowFunctionExpression, FormalParameterKind, FormalParameters, Function};
-use oxc_ast::ast::{BindingPattern, Program, Statement, VariableDeclarationKind};
+use oxc_ast::ast::{
+    ArrowFunctionExpression, AssignmentExpression, BindingPattern, FormalParameterKind,
+    FormalParameters, Function, Program, SimpleAssignmentTarget, Statement, UnaryExpression,
+    UpdateExpression, VariableDeclarationKind,
+};
 use oxc_ast_visit::{Visit, walk};
 use oxc_syntax::scope::ScopeFlags;
 use rustc_hash::FxHashSet;
@@ -678,30 +681,81 @@ pub(super) fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut im
     }
 }
 
-pub(super) fn strict_arguments_early_error(source: &str) -> bool {
-    let masked = mask_literals_and_comments(source);
-    let bytes = masked.as_bytes();
-    let mut index = 0;
-    while index + 9 <= bytes.len() {
-        if bytes[index..].starts_with(b"arguments")
-            && (index == 0 || !is_identifier_byte(bytes[index - 1]))
-            && (index + 9 == bytes.len() || !is_identifier_byte(bytes[index + 9]))
-        {
-            let mut cursor = index + 9;
-            while matches!(bytes.get(cursor), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-                cursor += 1;
-            }
-            if matches!(
-                bytes.get(cursor),
-                Some(b'=') | Some(b'+') | Some(b'-') | Some(b'*') | Some(b'/')
-            ) || source[index.saturating_sub(7)..index].contains("delete")
-            {
-                return true;
-            }
-        }
-        index += 1;
+pub(super) fn strict_arguments_early_error(program: &Program<'_>, strict: bool) -> bool {
+    let mut validator = StrictArgumentsEarlyError {
+        strict,
+        found: false,
+    };
+    validator.visit_program(program);
+    validator.found
+}
+
+struct StrictArgumentsEarlyError {
+    strict: bool,
+    found: bool,
+}
+
+impl<'a> Visit<'a> for StrictArgumentsEarlyError {
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        let own_strict = function.body.as_ref().is_some_and(|body| {
+            body.directives
+                .iter()
+                .any(|directive| directive.directive == "use strict")
+        });
+        let previous = self.strict;
+        self.strict |= own_strict || flags.is_strict_mode();
+        walk::walk_function(self, function, flags);
+        self.strict = previous;
     }
-    false
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        let own_strict = match &function.body {
+            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => body
+                .directives
+                .iter()
+                .any(|directive| directive.directive == "use strict"),
+            _ => false,
+        };
+        let previous = self.strict;
+        self.strict |= own_strict;
+        walk::walk_arrow_function_expression(self, function);
+        self.strict = previous;
+    }
+
+    fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
+        if self.strict
+            && expression
+                .left
+                .as_simple_assignment_target()
+                .is_some_and(Self::is_arguments_target)
+        {
+            self.found = true;
+        }
+        walk::walk_assignment_expression(self, expression);
+    }
+
+    fn visit_update_expression(&mut self, expression: &UpdateExpression<'a>) {
+        if self.strict && Self::is_arguments_target(&expression.argument) {
+            self.found = true;
+        }
+        walk::walk_update_expression(self, expression);
+    }
+
+    fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
+        if self.strict
+            && expression.operator == oxc_syntax::operator::UnaryOperator::Delete
+            && matches!(&expression.argument, oxc_ast::ast::Expression::Identifier(id) if id.name == "arguments")
+        {
+            self.found = true;
+        }
+        walk::walk_unary_expression(self, expression);
+    }
+}
+
+impl StrictArgumentsEarlyError {
+    fn is_arguments_target(target: &SimpleAssignmentTarget<'_>) -> bool {
+        matches!(target, SimpleAssignmentTarget::AssignmentTargetIdentifier(id) if id.name == "arguments")
+    }
 }
 
 pub(super) fn strict_eval_early_error(source: &str) -> bool {

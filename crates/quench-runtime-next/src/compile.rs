@@ -1303,7 +1303,7 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|directive| directive.directive == "use strict");
         let async_module = module_goal && has_top_level_await(&program.body);
-        if self.root_strict && early::strict_arguments_early_error(self.text) {
+        if early::strict_arguments_early_error(program, self.root_strict) {
             self.reject(
                 Span::default(),
                 "SyntaxError: assignment to arguments is not allowed in strict mode",
