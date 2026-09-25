@@ -239,6 +239,9 @@ impl<H: Host> Vm<H> {
         {
             return self.return_from_yield_star(p, generator, iterator, value);
         }
+        if kind == IteratorKind::Generator {
+            return self.complete_generator_return(p, generator, value);
+        }
         let promise = (kind == IteratorKind::AsyncGenerator).then(|| self.promise_object());
         let continuation = {
             let Some(record) = self.generator_record_mut(generator) else {
@@ -313,7 +316,7 @@ impl<H: Host> Vm<H> {
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
         };
         if method.is_undefined() || method.is_null() {
-            return self.finish_yield_star_return(p, generator, value);
+            return self.complete_generator_return(p, generator, value);
         }
         if !self.is_function(method) {
             let error = self.type_error(p, "iterator return method is not callable".into());
@@ -340,15 +343,24 @@ impl<H: Host> Vm<H> {
             Ok(value) => value,
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
         };
-        self.finish_yield_star_return(p, generator, value)
+        self.complete_generator_return(p, generator, value)
     }
 
-    fn finish_yield_star_return(
+    fn complete_generator_return(
         &mut self,
         p: &ResidualProgram,
         generator: Value,
         value: Value,
     ) -> Result<Value, JsError> {
+        let Some(record) = self.generator_record_mut(generator) else {
+            return Err(JsError("generator receiver is invalid".into()));
+        };
+        if record.running {
+            return Err(JsError("generator is already running".into()));
+        }
+        if record.done {
+            return self.iterator_result(Value::UNDEFINED, true);
+        }
         let unwind = {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
@@ -379,7 +391,16 @@ impl<H: Host> Vm<H> {
                 .map(|(target, slot, captured, env, _)| (target, slot, captured, env))
         };
         let Some((target, slot, captured, env)) = unwind else {
+            let continuation = self
+                .generator_record_mut(generator)
+                .and_then(|record| record.continuation.as_ref())
+                .cloned();
+            let cleanup = continuation
+                .as_ref()
+                .map(|continuation| self.close_suspended_iterators(p, continuation))
+                .unwrap_or(Ok(()));
             self.close_generator(generator)?;
+            cleanup?;
             return self.iterator_result(value, true);
         };
 
