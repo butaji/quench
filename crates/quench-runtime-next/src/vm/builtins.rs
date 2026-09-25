@@ -212,8 +212,10 @@ const NATIVES: &[Native] = &[
     Native::DateSetSeconds, Native::DateSetMilliseconds, Native::DateSetUTCHours,
     Native::DateSetUTCMinutes, Native::DateSetUTCSeconds, Native::DateSetUTCMilliseconds,
     Native::DateSetYear, Native::DateValueOf, Native::DateToString, Native::DateToUTCString,
-    Native::DateToLocaleString, Native::DateToISOString,
-    Native::DateToJSON, Native::DateParse, Native::DateUTC,
+    Native::DateToDateString, Native::DateToTimeString, Native::DateToLocaleString,
+    Native::DateToLocaleDateString, Native::DateToLocaleTimeString,
+    Native::DateToISOString, Native::DateToJSON, Native::DateToPrimitive,
+    Native::DateToTemporalInstant, Native::DateParse, Native::DateUTC,
     Native::Error, Native::ErrorToString, Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
     Native::RegExpToString,
@@ -397,6 +399,26 @@ impl<H: Host> Vm<H> {
         let data_view = self.native_value(Native::DataView);
         let data_view_prototype = self.get_property(program, data_view, prototype_atom)?;
         self.install_builtin_to_string_tag(data_view_prototype, "DataView")?;
+        let date = self.native_value(Native::Date);
+        let date_prototype = self.get_property(program, date, prototype_atom)?;
+        self.install_builtin_to_string_tag(date_prototype, "Date")?;
+        let date_to_primitive = self.native_value(Native::DateToPrimitive);
+        self.set_builtin_function_name(date_to_primitive, "[Symbol.toPrimitive]")?;
+        if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
+            self.set_symbol_property(date_prototype, symbol, date_to_primitive)?;
+            self.set_property_attributes(
+                date_prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         for (prototype, tag) in [
             (self.map_proto, "Map"),
             (self.set_proto, "Set"),
