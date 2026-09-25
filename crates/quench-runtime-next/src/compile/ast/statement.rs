@@ -356,6 +356,7 @@ impl FunctionCompiler<'_, '_> {
         let end = self.code.len() as u32;
         self.patch_to(condition_end, end);
         self.patch_edges(&control.breaks, end);
+        self.resolve_control_destinations(&control, end, Some(head));
     }
 
     fn do_while_statement(&mut self, item: &DoWhileStatement<'_>) {
@@ -375,6 +376,7 @@ impl FunctionCompiler<'_, '_> {
         let end = self.code.len() as u32;
         self.patch_to(end_edge, end);
         self.patch_edges(&control.breaks, end);
+        self.resolve_control_destinations(&control, end, Some(condition));
     }
 
     fn for_statement(&mut self, item: &ForStatement<'_>) {
@@ -429,6 +431,7 @@ impl FunctionCompiler<'_, '_> {
             self.patch_to(edge, end);
         }
         self.patch_edges(&control.breaks, end);
+        self.resolve_control_destinations(&control, end, Some(update));
         if scoped {
             self.lexical_scopes.pop();
         }
@@ -506,6 +509,7 @@ impl FunctionCompiler<'_, '_> {
             .map_or(end, |index| targets[index]);
         self.patch_to(no_match, fallback);
         self.patch_edges(&control.breaks, end);
+        self.resolve_control_destinations(&control, end, None);
         self.pop_lexical_scope();
     }
 
@@ -537,10 +541,16 @@ impl FunctionCompiler<'_, '_> {
             self.emit_with_exits_to(target_depth);
         }
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
-        if let Some(context) = self.finally_contexts.last_mut() {
+        if !self.finally_contexts.is_empty() {
+            let destination = Rc::new(std::cell::Cell::new(None));
+            self.controls[index]
+                .break_destinations
+                .push(destination.clone());
+            let context = self.finally_contexts.last_mut().unwrap();
             context.abrupt_edges.push(FinallyAbrupt {
                 edge,
                 control: index,
+                destination,
                 continue_edge: false,
             });
         } else {
@@ -576,10 +586,16 @@ impl FunctionCompiler<'_, '_> {
             self.emit_with_exits_to(target_depth);
         }
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
-        if let Some(context) = self.finally_contexts.last_mut() {
+        if !self.finally_contexts.is_empty() {
+            let destination = Rc::new(std::cell::Cell::new(None));
+            self.controls[index]
+                .continue_destinations
+                .push(destination.clone());
+            let context = self.finally_contexts.last_mut().unwrap();
             context.abrupt_edges.push(FinallyAbrupt {
                 edge,
                 control: index,
+                destination,
                 continue_edge: true,
             });
         } else {
@@ -617,6 +633,7 @@ impl FunctionCompiler<'_, '_> {
         let control = self.controls.pop().unwrap();
         let end = self.code.len() as u32;
         self.patch_edges(&control.breaks, end);
+        self.resolve_control_destinations(&control, end, None);
     }
 
     pub(super) fn push_control(&mut self, kind: ControlKind, label: Option<Atom>) {
@@ -626,7 +643,25 @@ impl FunctionCompiler<'_, '_> {
             with_depth: self.with_depth,
             breaks: vec![],
             continues: vec![],
+            break_destinations: vec![],
+            continue_destinations: vec![],
         });
+    }
+
+    pub(super) fn resolve_control_destinations(
+        &self,
+        control: &ControlTarget,
+        break_target: u32,
+        continue_target: Option<u32>,
+    ) {
+        for destination in &control.break_destinations {
+            destination.set(Some(break_target));
+        }
+        if let Some(target) = continue_target {
+            for destination in &control.continue_destinations {
+                destination.set(Some(target));
+            }
+        }
     }
 
     pub(super) fn patch_edges(&mut self, edges: &[usize], target: u32) {
