@@ -238,7 +238,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
-        Native::ArrayFrom | Native::ArrayIsArray => 1.0,
+        Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::ArraySpecies => 0.0,
         Native::ArrayOf
         | Native::ArrayPop
@@ -821,6 +821,12 @@ impl<H: Host> Vm<H> {
             Native::PromiseAsyncResumeJob => {
                 self.promise_async_resume_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
+            Native::ArrayFromAsyncFulfilled | Native::ArrayFromAsyncRejected => self
+                .array_from_async_reaction(
+                    p,
+                    native == Native::ArrayFromAsyncFulfilled,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                ),
             Native::AsyncFromSyncValue => self.async_from_sync_value(args),
             Native::AsyncGeneratorDelegateFulfilled => self.async_generator_delegate_fulfilled(
                 p,

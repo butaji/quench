@@ -439,6 +439,12 @@ impl Heap {
                     );
                 }
             }
+            Cell::ArrayFromAsyncState(state) => {
+                work.extend([state.output, state.result, state.this_arg]);
+                work.extend(state.iterator);
+                work.extend(state.mapper);
+                work.extend(state.array_like.map(|(source, _)| source));
+            }
             Cell::Proxy {
                 object: value,
                 target,
@@ -484,6 +490,7 @@ impl Heap {
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
             Cell::Iterator { .. } => 4,
+            Cell::ArrayFromAsyncState(_) => 16,
             Cell::Proxy { .. } => 0,
             Cell::WeakMap { .. } => 5,
             Cell::WeakSet { .. } => 6,
@@ -502,7 +509,11 @@ impl Heap {
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         match cell {
-            Cell::Object(_) | Cell::Iterator { .. } | Cell::Proxy { .. } | Cell::Date { .. } => 0,
+            Cell::Object(_)
+            | Cell::Iterator { .. }
+            | Cell::ArrayFromAsyncState(_)
+            | Cell::Proxy { .. }
+            | Cell::Date { .. } => 0,
             Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),

@@ -24,7 +24,8 @@ pub(crate) enum Native {
     Proxy, ProxyRevocable, ProxyRevoke,
     JsonParse,
     JsonStringify,
-    Array, TypedArray, ArrayToLocaleString, ArraySpecies,
+    Array, TypedArray, ArrayToLocaleString, ArraySpecies, ArrayFromAsync,
+    ArrayFromAsyncFulfilled, ArrayFromAsyncRejected,
     ArrayIsArray,
     ArrayPush,
     ArrayPop,
@@ -257,6 +258,25 @@ pub(crate) enum TypedArrayKind {
     Float32,
     Float64,
 }
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ArrayFromAsyncAwait {
+    IteratorStep,
+    ArrayLikeValue,
+    MapperResult,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ArrayFromAsyncState {
+    pub(crate) output: Value,
+    pub(crate) iterator: Option<Value>,
+    pub(crate) result: Value,
+    pub(crate) mapper: Option<Value>,
+    pub(crate) this_arg: Value,
+    pub(crate) index: usize,
+    pub(crate) array_like: Option<(Value, usize)>,
+    pub(crate) awaiting: ArrayFromAsyncAwait,
+}
 impl TypedArrayKind {
     pub(crate) const fn width(self) -> usize {
         match self {
@@ -394,6 +414,8 @@ impl Native {
                 | Self::PromiseFinallyContinuationJob
                 | Self::PromiseAggregateJob
                 | Self::PromiseAsyncResumeJob
+                | Self::ArrayFromAsyncFulfilled
+                | Self::ArrayFromAsyncRejected
                 | Self::DynamicImport
                 | Self::AsyncGeneratorDelegateFulfilled
                 | Self::AsyncGeneratorDelegateRejected
@@ -556,6 +578,7 @@ pub(crate) enum Cell {
         index: usize,
         generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
     },
+    ArrayFromAsyncState(ArrayFromAsyncState),
     Proxy {
         object: Object,
         target: Value,

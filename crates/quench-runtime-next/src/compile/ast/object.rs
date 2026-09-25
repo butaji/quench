@@ -59,6 +59,14 @@ impl FunctionCompiler<'_, '_> {
                 } else {
                     Self::static_key(&property.key)
                         .map(|name| self.literal(Constant::String(name.into())))
+                        .or_else(|| {
+                            property.key.as_expression().map(|expression| {
+                                let raw_key = self.expression(expression);
+                                let key = self.reg();
+                                self.emit(Op::ToPropertyKey, key, raw_key, 0, 0);
+                                key
+                            })
+                        })
                 };
                 let Some(key) = key else {
                     self.owner
@@ -77,6 +85,14 @@ impl FunctionCompiler<'_, '_> {
                 } else if let Some(name) = Self::static_key(&property.key) {
                     let name = self.owner.atom(&format!("{accessor} {name}"));
                     self.emit(Op::SetFunctionName, item, 0, 0, name);
+                } else {
+                    self.emit(
+                        Op::SetFunctionNameKey,
+                        item,
+                        key,
+                        0,
+                        if accessor == "get" { 1 } else { 2 },
+                    );
                 }
                 self.define_accessor(dst, key, item, accessor);
                 continue;

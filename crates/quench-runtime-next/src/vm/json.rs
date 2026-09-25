@@ -493,6 +493,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Error(value)) => Ok(Some(JsonValue::String(value.into()))),
             Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
+            | Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::Proxy { .. })
             | None => Ok(None),
         }

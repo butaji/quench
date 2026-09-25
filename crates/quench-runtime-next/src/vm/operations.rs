@@ -333,7 +333,9 @@ impl<H: Host> Vm<H> {
                 self.array_buffer_transfer_fixed_native(p, this)
             }
             Native::SharedArrayBufferGrow => self.shared_array_buffer_grow_native(p, this, args),
-            Native::ArrayFrom | Native::ArrayOf => self.array_modern_native(p, native, this, args),
+            Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayOf => {
+                self.array_modern_native(p, native, this, args)
+            }
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 self.call_value(p, this, receiver, args.get(1..).unwrap_or_default())
