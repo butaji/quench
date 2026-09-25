@@ -131,21 +131,22 @@ impl<H: Host> Vm<H> {
 
     fn eval_global_script(&mut self, p: &ResidualProgram, source: &str) -> Result<Value, JsError> {
         let source_name = format!("<Eval:{}>", self.programs.len());
+        let strict = self
+            .frames
+            .last()
+            .and_then(|frame| p.functions.get(frame.function as usize))
+            .is_some_and(|function| function.strict);
         if let Some(expression) = crate::Engine::eval_single_expression(source) {
-            let strict = self
-                .frames
-                .last()
-                .and_then(|frame| p.functions.get(frame.function as usize))
-                .is_some_and(|function| function.strict);
             return self.eval_compiled_expression_named(p, expression, strict, &source_name);
         }
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
-        let residual = crate::Engine::specialize_unspecialized_with_atom_prefix(
+        let residual = crate::Engine::specialize_eval_unspecialized_with_atom_prefix(
             source,
             &source_name,
             &atom_prefix,
+            strict,
         )
         .map_err(|diagnostics| {
             let message = diagnostics
@@ -200,11 +201,14 @@ impl<H: Host> Vm<H> {
                 .frames
                 .last()
                 .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
-            let parent = self
-                .frames
-                .len()
-                .checked_sub(1)
-                .map_or(Value::NULL, |frame| self.promote_frame_environment(frame));
+            let parent = if direct_eval || root_scope {
+                self.frames
+                    .len()
+                    .checked_sub(1)
+                    .map_or(Value::NULL, |frame| self.promote_frame_environment(frame))
+            } else {
+                Value::NULL
+            };
             let parent = if root_scope {
                 self.heap.alloc(Cell::Environment {
                     parent,
@@ -316,11 +320,6 @@ impl<H: Host> Vm<H> {
         if (source.contains("super.") || source.contains("super[")) && !self.direct_eval {
             return self.syntax_error_result(p, "super property is not valid in eval code");
         }
-        if source.trim_start().starts_with("switch (")
-            || (source.contains("switch (") && source.contains("function f"))
-        {
-            return Ok(Value::UNDEFINED);
-        }
         if source.contains("\n++")
             || source.contains("for(;false;)")
             || source.trim_start().starts_with("return")
@@ -328,6 +327,9 @@ impl<H: Host> Vm<H> {
             || source.trim_start().starts_with("continue")
         {
             return self.syntax_error_result(p, "invalid statement in eval code");
+        }
+        if crate::Engine::eval_requires_compiled_completion(source) {
+            return self.eval_global_script(p, source);
         }
         if is_empty_eval_statement(source.trim()) {
             return Ok(Value::UNDEFINED);
@@ -530,8 +532,7 @@ impl<H: Host> Vm<H> {
             if is_empty_eval_statement(statement) {
                 continue;
             }
-            if let Some(rest) = statement.strip_prefix("function ") {
-                let _ = rest;
+            if crate::Engine::eval_is_function_declaration(statement) {
                 continue;
             }
             if let Some(declarations) = statement
