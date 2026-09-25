@@ -69,24 +69,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
-            && source_text
-                .units()
-                .iter()
-                .any(|unit| crate::unicode::is_surrogate(u32::from(*unit)))
-            && let Some(literal) =
-                crate::Engine::eval_single_regexp_literal(source_text.host_string())
+            && let Some(pattern_units) = eval_unflagged_regexp_literal(source_text.units())
         {
-            let start = source_text.host_string()[..literal.span.start]
-                .encode_utf16()
-                .count();
-            let end = source_text.host_string()[..literal.span.end]
-                .encode_utf16()
-                .count();
-            if let Some(pattern) = regexp_literal_pattern(&source_text.units()[start..end]) {
-                let pattern = self.heap.alloc(Cell::String(JsString::from_units(pattern)));
-                let flags = self.heap.alloc(Cell::String(literal.flags.into()));
-                return self.construct_regexp_native(p, &[pattern, flags]);
-            }
+            let pattern = self
+                .heap
+                .alloc(Cell::String(JsString::from_units(pattern_units)));
+            return self.construct_regexp_native(p, &[pattern, Value::UNDEFINED]);
         }
         if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.host_string()))
         {
@@ -1598,6 +1586,47 @@ fn regexp_literal_pattern(literal: &[u16]) -> Option<&[u16]> {
         }
     }
     None
+}
+
+fn eval_unflagged_regexp_literal(source: &[u16]) -> Option<&[u16]> {
+    let slash = u16::from(b'/');
+    let backslash = u16::from(b'\\');
+    let left_bracket = u16::from(b'[');
+    let right_bracket = u16::from(b']');
+    if source.first().copied() != Some(slash)
+        || matches!(source.get(1), Some(unit) if *unit == slash || *unit == u16::from(b'*'))
+    {
+        return None;
+    }
+
+    let mut escaped = false;
+    let mut in_character_class = false;
+    for (index, unit) in source.iter().copied().enumerate().skip(1) {
+        if is_line_terminator_code_unit(unit) {
+            return None;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match unit {
+            unit if unit == backslash => escaped = true,
+            unit if unit == left_bracket => in_character_class = true,
+            unit if unit == right_bracket => in_character_class = false,
+            unit if unit == slash && !in_character_class => {
+                return (index + 1 == source.len()).then_some(&source[1..index]);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_line_terminator_code_unit(unit: u16) -> bool {
+    matches!(
+        char::from_u32(u32::from(unit)),
+        Some('\n' | '\r' | '\u{2028}' | '\u{2029}')
+    )
 }
 
 fn eval_new_expression(expression: &str) -> Option<(&str, Option<&str>)> {
