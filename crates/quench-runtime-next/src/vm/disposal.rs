@@ -28,12 +28,7 @@ impl<H: Host> Vm<H> {
             ("useAsync", Native::DisposableStackUseAsync),
             ("disposeAsync", Native::DisposableStackDisposeAsync),
         ] {
-            self.set_named(
-                p,
-                prototype,
-                name,
-                self.native_value(native),
-            )?;
+            self.set_named(p, prototype, name, self.native_value(native))?;
         }
         if let Some(symbol) = self.well_known_symbols.get("dispose").copied() {
             self.set_index(
@@ -64,9 +59,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
-        let stack = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(prototype)));
+        let stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let root = self.heap.root(stack);
         let entries = self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -141,6 +134,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if is_nullish(value) {
+            return Ok(value);
+        }
         let symbol = self
             .well_known_symbols
             .get("dispose")
@@ -163,6 +159,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if is_nullish(value) {
+            return Ok(value);
+        }
         let async_symbol = self
             .well_known_symbols
             .get("asyncDispose")
@@ -297,11 +296,10 @@ impl<H: Host> Vm<H> {
                 Ok(result) => results.push(result),
                 Err(error) => {
                     if first_error.is_none() {
-                        first_error = Some(
-                            error
-                                .thrown_value()
-                                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message()))),
-                        );
+                        first_error =
+                            Some(error.thrown_value().unwrap_or_else(|| {
+                                self.heap.alloc(Cell::Error(error.into_message()))
+                            }));
                     }
                 }
             }
@@ -324,4 +322,8 @@ impl<H: Host> Vm<H> {
             .filter(|value| matches!(self.heap.get(*value), Some(Cell::Array { .. })))
             .ok_or_else(|| JsError("DisposableStack entries are invalid".into()))
     }
+}
+
+fn is_nullish(value: Value) -> bool {
+    value.is_null() || value.is_undefined()
 }
