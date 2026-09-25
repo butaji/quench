@@ -302,9 +302,8 @@ impl FunctionCompiler<'_, '_> {
         }
         for item in &declaration.declarations {
             if let Some(init) = &item.init {
-                let reference = (self.function_id == 0
-                    && !self.owner.module_goal
-                    && declaration.kind == VariableDeclarationKind::Var)
+                let reference = (declaration.kind == VariableDeclarationKind::Var
+                    && self.with_depth != self.inherited_with_depth)
                     .then(|| self.resolve_binding_pattern(&item.id))
                     .flatten();
                 let value = self.initializer_value(init, &item.id);
