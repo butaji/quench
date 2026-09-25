@@ -25,6 +25,22 @@ enum UpdateTarget {
     Index(Register, Register),
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum StatementCompletion {
+    Ignored,
+    Track(Register),
+    Suppress(Register),
+}
+
+impl StatementCompletion {
+    pub(super) fn register(self) -> Option<Register> {
+        match self {
+            Self::Ignored => None,
+            Self::Track(register) | Self::Suppress(register) => Some(register),
+        }
+    }
+}
+
 struct ControlTarget {
     kind: ControlKind,
     label: Option<Atom>,
@@ -81,6 +97,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
     pub(super) parameter_arguments_slot: Option<u16>,
+    pub(super) statement_completion: StatementCompletion,
     pub(super) parameter_local_count: usize,
     pub(super) defer_instance_fields: bool,
     pub(super) super_call_binds_this: bool,
@@ -143,6 +160,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             parameter_context: false,
             parameter_eval_arguments_error: false,
             parameter_arguments_slot,
+            statement_completion: StatementCompletion::Ignored,
             parameter_local_count,
             defer_instance_fields,
             super_call_binds_this: false,
@@ -161,6 +179,32 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.next_reg += 1;
         self.max_reg = self.max_reg.max(self.next_reg);
         value
+    }
+
+    pub(super) fn clear_statement_completion(&mut self) {
+        let StatementCompletion::Track(target) = self.statement_completion else {
+            return;
+        };
+        let undefined = self.literal(Constant::Undefined);
+        self.emit(Op::Move, target, undefined, 0, 0);
+    }
+
+    fn record_statement_completion(&mut self, value: Register) {
+        if let StatementCompletion::Track(target) = self.statement_completion {
+            self.emit(Op::Move, target, value, 0, 0);
+        }
+    }
+
+    pub(super) fn scoped_statements_without_completion(&mut self, body: &[Statement<'_>]) {
+        let previous = self.statement_completion;
+        self.statement_completion = match previous {
+            StatementCompletion::Track(register) | StatementCompletion::Suppress(register) => {
+                StatementCompletion::Suppress(register)
+            }
+            StatementCompletion::Ignored => StatementCompletion::Ignored,
+        };
+        self.scoped_statements(body);
+        self.statement_completion = previous;
     }
 
     pub(super) fn emit(
@@ -512,7 +556,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn release_temporaries(&mut self) {
-        self.next_reg = 0;
+        self.next_reg = self
+            .statement_completion
+            .register()
+            .map_or(0, |register| register + 1);
     }
 
     fn resolve_lexical(&self, atom: Atom) -> Atom {
