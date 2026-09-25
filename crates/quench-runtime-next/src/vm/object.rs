@@ -221,6 +221,11 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        if self.atom_name(atom).starts_with("\0rqj:private:")
+            && matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
+        {
+            return self.get_private_proxy_field(p, object, atom);
+        }
         if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
             return self.get_property(p, object, atom);
         }
@@ -520,6 +525,18 @@ impl<H: Host> Vm<H> {
             target, handler, ..
         }) = self.heap.get(object).cloned()
         {
+            if self.atom_name(atom).starts_with("\0rqj:private:") {
+                if self.own_property(object, atom).is_none() {
+                    let extensible = self.object_is_extensible(p, &[object])?;
+                    if !self.truthy(extensible) {
+                        return Err(self.type_error(
+                            p,
+                            "Cannot add private field to a non-extensible object".into(),
+                        ));
+                    }
+                }
+                return self.set_shape_property(object, PropertyKey::string(atom), value);
+            }
             return self.proxy_set(p, target, handler, object, atom, value);
         }
         if let Some(attributes) = self.property_accessor(object, atom) {
