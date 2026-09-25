@@ -611,6 +611,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         });
     }
 
+    pub(super) fn initialize_lexical_scope(&mut self) {
+        let slots = self
+            .lexical_scopes
+            .last()
+            .into_iter()
+            .flat_map(|scope| scope.bindings.values())
+            .filter_map(|binding| self.local_slots.get(binding).copied())
+            .collect::<Vec<_>>();
+        for slot in slots {
+            self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
+        }
+    }
+
     pub(super) fn pop_lexical_scope(&mut self) {
         self.lexical_scopes.pop();
     }
@@ -621,6 +634,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             self.collect_lexical_binding(statement, &mut scope);
         }
         self.push_lexical_bindings(scope);
+        self.initialize_lexical_scope();
     }
 
     pub(super) fn push_switch_lexical_scope(&mut self, cases: &[SwitchCase<'_>]) {
@@ -629,6 +643,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             self.collect_lexical_binding(statement, &mut scope);
         }
         self.push_lexical_bindings(scope);
+        self.initialize_lexical_scope();
     }
 
     fn collect_lexical_binding(
