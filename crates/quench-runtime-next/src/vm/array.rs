@@ -593,6 +593,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
+        if length == 0 {
+            return Ok(Value::FALSE);
+        }
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         let from = args
             .get(1)
