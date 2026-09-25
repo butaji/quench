@@ -465,6 +465,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn function_native(
         &mut self,
         program: &ResidualProgram,
+        native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
         let function_realm = self
@@ -509,11 +510,18 @@ impl<H: Host> Vm<H> {
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
-        let residual = crate::Engine::specialize_dynamic_function(
+        let kind = match native {
+            Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
+            Native::GeneratorFunction => crate::compile::DynamicFunctionKind::Generator,
+            Native::AsyncGeneratorFunction => crate::compile::DynamicFunctionKind::AsyncGenerator,
+            _ => crate::compile::DynamicFunctionKind::Ordinary,
+        };
+        let residual = crate::Engine::specialize_dynamic_function_with_kind(
             &parameters,
             source,
             &source_name,
             &atom_prefix,
+            kind,
         )
         .map_err(|diagnostics| {
             let message = diagnostics
@@ -622,7 +630,7 @@ impl<H: Host> Vm<H> {
                 }
                 self.eval_source_simple(program, source, body_strict)
             }
-            _ => self.function_native(program, args),
+            _ => self.function_native(program, native, args),
         }
     }
 
