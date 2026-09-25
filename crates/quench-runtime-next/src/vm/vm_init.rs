@@ -19,6 +19,7 @@ impl<H: Host> Vm<H> {
             array_proto: Value::NULL,
             string_proto: Value::NULL,
             array_buffer_proto: Value::NULL,
+            shared_array_buffer_proto: Value::NULL,
             uint8_array_proto: Value::NULL,
             uint8_clamped_array_proto: Value::NULL,
             uint16_array_proto: Value::NULL,
