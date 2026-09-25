@@ -60,11 +60,53 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    pub(super) fn object_prototype_to_locale_string(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        self.require_object_coercible(p, this)?;
+        if this.as_number().is_some() || matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
+            let text = self.to_string(p, this)?;
+            return Ok(self.heap.alloc(Cell::String(text.into())));
+        }
+        for marker in ["\0rqj:number-value", "\0rqj:bigint-value"] {
+            if let Some(value) = self
+                .lookup_atom(marker)
+                .and_then(|atom| self.own_property(this, atom))
+            {
+                let text = self.to_string(p, value)?;
+                return Ok(self.heap.alloc(Cell::String(text.into())));
+            }
+        }
+        let to_string = self.intern_atom("toString");
+        let method = self.get_property(p, this, to_string)?;
+        if !self.is_function(method) {
+            return Err(self.type_error(p, "toString is not callable".into()));
+        }
+        self.call_value(p, method, this, &[])
+    }
+
     pub(super) fn object_prototype_to_string(
         &mut self,
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
+        let proxy_array =
+            matches!(self.heap.get(value), Some(Cell::Proxy { .. })) && self.is_array(p, value)?;
+        let boxed_brand = [
+            ("\0rqj:string-value", "String"),
+            ("\0rqj:boolean-value", "Boolean"),
+            ("\0rqj:number-value", "Number"),
+            ("\0rqj:bigint-value", "BigInt"),
+            ("\0rqj:symbol-value", "Symbol"),
+        ]
+        .into_iter()
+        .find_map(|(marker, brand)| {
+            self.lookup_atom(marker)
+                .and_then(|atom| self.own_property(value, atom))
+                .map(|_| brand)
+        });
         let brand = if value.is_undefined() || value.is_deleted() {
             "Undefined"
         } else if value.is_null() {
@@ -73,8 +115,18 @@ impl<H: Host> Vm<H> {
             "Boolean"
         } else if value.as_number().is_some() {
             "Number"
+        } else if self
+            .lookup_atom("\0rqj:error-brand")
+            .and_then(|atom| self.own_property(value, atom))
+            .is_some_and(|brand| brand == Value::TRUE)
+        {
+            "Error"
+        } else if let Some(brand) = boxed_brand {
+            brand
         } else {
             match self.heap.get(value) {
+                Some(Cell::Proxy { .. }) if proxy_array => "Array",
+                Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
                 Some(Cell::String(_)) => "String",
                 Some(Cell::BigInt(_)) => "BigInt",
                 Some(Cell::Symbol(_)) => "Symbol",
@@ -87,10 +139,7 @@ impl<H: Host> Vm<H> {
                 }
                 Some(Cell::Array { .. }) => "Array",
                 Some(Cell::Date { .. }) => "Date",
-                Some(Cell::Map { .. }) => "Map",
-                Some(Cell::Set { .. }) => "Set",
-                Some(Cell::WeakMap { .. }) => "WeakMap",
-                Some(Cell::WeakSet { .. }) => "WeakSet",
+                Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::Function { .. }) => "Function",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
                 Some(Cell::DataView { .. }) => "DataView",
@@ -252,6 +301,7 @@ impl<H: Host> Vm<H> {
         object: Value,
     ) -> Result<(), JsError> {
         for (name, native) in [
+            ("toLocaleString", Native::ObjectPrototypeToLocaleString),
             ("toString", Native::ObjectPrototypeToString),
             ("valueOf", Native::ObjectPrototypeValueOf),
             ("hasOwnProperty", Native::ObjectPrototypeHasOwnProperty),
