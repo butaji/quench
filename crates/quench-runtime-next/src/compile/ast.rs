@@ -653,6 +653,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     pub(super) fn push_lexical_scope(&mut self, body: &[Statement<'_>]) {
         let mut scope = FxHashMap::default();
         for statement in body {
+            if !self.strict && matches!(statement, Statement::FunctionDeclaration(_)) {
+                continue;
+            }
             self.collect_lexical_binding(statement, &mut scope);
         }
         self.push_lexical_bindings(scope);
@@ -689,7 +692,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     scope.insert(source, target);
                 }
             }
-            Statement::FunctionDeclaration(function) if self.strict => {
+            Statement::FunctionDeclaration(function) => {
                 if let Some(identifier) = &function.id {
                     let source = self.owner.atom(identifier.name.as_str());
                     let target =
@@ -762,9 +765,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         match pattern {
             BindingPattern::BindingIdentifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());
-                scope
-                    .entry(atom)
-                    .or_insert_with(|| self.hidden_local(identifier.name.as_str()));
+                scope.entry(atom).or_insert_with(|| {
+                    self.hidden_local(&format!("\0rqj:block-binding:{}", identifier.name))
+                });
             }
             BindingPattern::ObjectPattern(pattern) => {
                 for property in &pattern.properties {

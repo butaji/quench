@@ -162,7 +162,21 @@ impl Compiler<'_> {
                 ),
                 Statement::SwitchStatement(item) => {
                     for case in &item.cases {
-                        self.collect_locals_into(&case.consequent, output, seen, strict, true);
+                        for statement in &case.consequent {
+                            if matches!(statement, Statement::FunctionDeclaration(_))
+                                || matches!(statement, Statement::VariableDeclaration(declaration)
+                                    if super::is_lexical_binding_declaration(declaration.kind))
+                            {
+                                continue;
+                            }
+                            self.collect_locals_into(
+                                std::slice::from_ref(statement),
+                                output,
+                                seen,
+                                strict,
+                                true,
+                            );
+                        }
                     }
                 }
                 Statement::TryStatement(item) => {
