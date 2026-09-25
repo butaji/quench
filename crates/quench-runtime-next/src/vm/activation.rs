@@ -41,8 +41,15 @@ pub(crate) struct GeneratorRecord {
     pub(crate) requests: VecDeque<AsyncGeneratorRequest>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AsyncGeneratorOperation {
+    Next,
+    Return,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AsyncGeneratorRequest {
+    pub(crate) operation: AsyncGeneratorOperation,
     pub(crate) promise: Value,
     pub(crate) value: Value,
 }
