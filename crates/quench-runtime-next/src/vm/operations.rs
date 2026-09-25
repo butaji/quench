@@ -206,6 +206,9 @@ impl<H: Host> Vm<H> {
                 }
             }
             Native::ObjectPrototypeToString => self.object_prototype_to_string(p, this),
+            Native::ObjectPrototypeToLocaleString => {
+                self.object_prototype_to_locale_string(p, this)
+            }
             Native::ObjectPrototypeValueOf => self.box_object(this).map_err(|_| {
                 self.type_error(
                     p,

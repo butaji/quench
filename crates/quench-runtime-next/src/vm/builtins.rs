@@ -10,7 +10,7 @@ const NATIVES: &[Native] = &[
     Native::ObjectSetPrototypeOf, Native::ObjectHasOwn, Native::ObjectPreventExtensions,
     Native::ObjectIsExtensible, Native::ObjectSeal, Native::ObjectIsSealed,
     Native::ObjectFreeze, Native::ObjectIsFrozen,
-    Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf, Native::ObjectPrototypeLookupGetter, Native::ObjectPrototypeLookupSetter, Native::ObjectPrototypeToString, Native::ObjectPrototypeValueOf,
+    Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf, Native::ObjectPrototypeLookupGetter, Native::ObjectPrototypeLookupSetter, Native::ObjectPrototypeToLocaleString, Native::ObjectPrototypeToString, Native::ObjectPrototypeValueOf,
     Native::ReflectGet, Native::ReflectHas, Native::ReflectApply, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty, Native::ReflectDeleteProperty, Native::ReflectPreventExtensions, Native::ReflectIsExtensible,
     Native::ReflectSet,
     Native::SuperSet,
@@ -344,6 +344,14 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::Symbol(Some(format!("Symbol.{name}").into())));
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
+        }
+        for (prototype, tag) in [
+            (self.map_proto, "Map"),
+            (self.set_proto, "Set"),
+            (self.weak_map_proto, "WeakMap"),
+            (self.weak_set_proto, "WeakSet"),
+        ] {
+            self.install_builtin_to_string_tag(prototype, tag)?;
         }
         self.install_array_species()?;
         self.install_array_unscopables()?;

@@ -902,6 +902,7 @@ impl<H: Host> Vm<H> {
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)?;
         if native == Native::SuppressedError {
             for (name, value) in [
                 ("error", args.first().copied().unwrap_or(Value::UNDEFINED)),
