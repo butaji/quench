@@ -109,12 +109,16 @@ impl FunctionCompiler<'_, '_> {
                             )
                     )
                 });
+                if has_using {
+                    self.push_disposal_scope();
+                }
                 self.push_lexical_scope(&block.body);
                 self.emit_hoisted(&block.body);
                 self.statements(&block.body);
                 self.lexical_scopes.pop();
                 if has_using {
                     self.emit_disposal();
+                    self.pop_disposal_scope();
                 }
             }
             Statement::VariableDeclaration(item) => self.variables(item),
@@ -260,7 +264,8 @@ impl FunctionCompiler<'_, '_> {
                     .reject(declaration.span, "await using requires an async function");
                 return;
             }
-            let stack = self.ensure_disposable_stack();
+            let stack = self
+                .ensure_disposable_stack(declaration.kind == VariableDeclarationKind::AwaitUsing);
             for item in &declaration.declarations {
                 let value = if let Some(init) = &item.init {
                     self.expression(init)
@@ -363,12 +368,22 @@ impl FunctionCompiler<'_, '_> {
 
     fn for_statement_labeled(&mut self, item: &ForStatement<'_>, label: Option<Atom>) {
         self.clear_statement_completion();
-        let scoped = match item.init.as_ref() {
+        let disposal_error = matches!(
+            item.init.as_ref(),
             Some(ForStatementInit::VariableDeclaration(declaration))
                 if matches!(
                     declaration.kind,
-                    VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                ) =>
+                    VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+                )
+        )
+        .then(|| self.hidden_local("\0rqj:for-using-error"));
+        if disposal_error.is_some() {
+            self.push_disposal_scope();
+        }
+        let start = self.code.len() as u32;
+        let scoped = match item.init.as_ref() {
+            Some(ForStatementInit::VariableDeclaration(declaration))
+                if super::super::is_lexical_binding_declaration(declaration.kind) =>
             {
                 let mut scope = FxHashMap::default();
                 for item in &declaration.declarations {
@@ -398,6 +413,26 @@ impl FunctionCompiler<'_, '_> {
         self.patch_edges(&control.breaks, end);
         if scoped {
             self.lexical_scopes.pop();
+        }
+        if let Some(error_atom) = disposal_error {
+            self.emit_disposal();
+            let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
+            let exceptional_target = self.code.len() as u32;
+            let error = self.load_atom(error_atom);
+            self.emit_disposal();
+            self.emit(Op::Throw, error, 0, 0, 0);
+            let end_target = self.code.len() as u32;
+            self.patch_to(normal_exit, end_target);
+            self.handlers.push(crate::bytecode::Handler {
+                start,
+                end,
+                target: exceptional_target,
+                slot: self.local_slot(error_atom),
+                return_target: None,
+                return_slot: None,
+                with_depth: self.with_depth,
+            });
+            self.pop_disposal_scope();
         }
     }
 
