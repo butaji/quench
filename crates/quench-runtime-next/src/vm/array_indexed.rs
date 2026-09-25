@@ -359,10 +359,7 @@ impl<H: Host> Vm<H> {
         if number.is_nan() || number <= 0.0 {
             return Ok(0);
         }
-        Ok(number
-            .floor()
-            .min(9_007_199_254_740_991.0)
-            .min(usize::MAX as f64) as usize)
+        Ok(number.floor().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize)
     }
 
     pub(super) fn array_flat_map_native(
