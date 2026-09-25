@@ -683,6 +683,7 @@ impl<H: Host> Vm<H> {
         let constructors = [
             ("Error", Native::Error),
             ("AggregateError", Native::AggregateError),
+            ("SuppressedError", Native::SuppressedError),
             ("EvalError", Native::EvalError),
             ("RangeError", Native::RangeError),
             ("ReferenceError", Native::ReferenceError),
@@ -700,7 +701,7 @@ impl<H: Host> Vm<H> {
                     .alloc(Cell::Object(Self::empty_object(error_prototype)))
             };
             self.set_named(program, constructor, "prototype", prototype)?;
-            self.set_named(program, prototype, "constructor", constructor)?;
+            self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let constructor_name = self.heap.alloc(Cell::String(JsString::from_str(name)));
             self.set_named(program, constructor, "name", constructor_name)?;
             let name_atom = self.intern_atom("name");
@@ -717,7 +718,7 @@ impl<H: Host> Vm<H> {
                 },
             );
             let name_value = self.heap.alloc(Cell::String(JsString::from_str(name)));
-            self.set_named(program, prototype, "name", name_value)?;
+            self.set_builtin_value_named(prototype, "name", name_value)?;
             self.global(program, name, constructor)?;
         }
         let realm_constructor = self.native_value(Native::RealmTypeError);
@@ -751,6 +752,23 @@ impl<H: Host> Vm<H> {
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        if native == Native::SuppressedError {
+            for (name, value) in [
+                ("error", args.first().copied().unwrap_or(Value::UNDEFINED)),
+                (
+                    "suppressed",
+                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
+                ),
+            ] {
+                self.set_builtin_value_named(object, name, value)?;
+            }
+            if let Some(message) = args.get(2).copied().filter(|value| !value.is_undefined()) {
+                let message = self.to_string(program, message)?;
+                let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
+                self.set_builtin_value_named(object, "message", message)?;
+            }
+            return Ok(object);
+        }
         if let Some(value) = args.first().copied().filter(|value| !value.is_undefined()) {
             let message = self.to_string(program, value)?;
             let message_value = self.heap.alloc(Cell::String(JsString::from_str(&message)));

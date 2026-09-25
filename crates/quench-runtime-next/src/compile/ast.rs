@@ -711,10 +711,30 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn scoped_statements(&mut self, body: &[Statement<'_>]) {
+        let has_using = body.iter().any(|statement| {
+            matches!(
+                statement,
+                Statement::VariableDeclaration(declaration)
+                    if matches!(
+                        declaration.kind,
+                        VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+                    )
+            )
+        });
+        let disposal_error = has_using.then(|| self.hidden_local("\0rqj:using-error"));
+        if has_using {
+            self.push_disposal_scope();
+        }
         self.push_lexical_scope(body);
         self.emit_hoisted(body);
+        let disposal_body_start = self.code.len() as u32;
         self.statements(body);
+        let disposal_body_end = self.code.len() as u32;
         self.lexical_scopes.pop();
+        if let Some(error) = disposal_error {
+            self.emit_disposal_scope_exit(disposal_body_start, disposal_body_end, error);
+            self.pop_disposal_scope();
+        }
     }
 
     pub(super) fn capture_scopes(&mut self) -> Vec<Rc<FxHashMap<Atom, u16>>> {

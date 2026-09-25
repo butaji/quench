@@ -97,37 +97,7 @@ impl FunctionCompiler<'_, '_> {
                 let value = self.expression(&item.expression);
                 self.record_statement_completion(value);
             }
-            Statement::BlockStatement(block) => {
-                let has_using = block.body.iter().any(|statement| {
-                    matches!(
-                        statement,
-                        Statement::VariableDeclaration(declaration)
-                            if matches!(
-                                declaration.kind,
-                                VariableDeclarationKind::Using
-                                    | VariableDeclarationKind::AwaitUsing
-                            )
-                    )
-                });
-                let disposal_error = has_using.then(|| self.hidden_local("\0rqj:using-error"));
-                if has_using {
-                    self.push_disposal_scope();
-                }
-                self.push_lexical_scope(&block.body);
-                self.emit_hoisted(&block.body);
-                let disposal_body_start = self.code.len() as u32;
-                self.statements(&block.body);
-                let disposal_body_end = self.code.len() as u32;
-                self.lexical_scopes.pop();
-                if let Some(error_atom) = disposal_error {
-                    self.emit_disposal_scope_exit(
-                        disposal_body_start,
-                        disposal_body_end,
-                        error_atom,
-                    );
-                    self.pop_disposal_scope();
-                }
-            }
+            Statement::BlockStatement(block) => self.scoped_statements(&block.body),
             Statement::VariableDeclaration(item) => self.variables(item),
             Statement::ReturnStatement(item) => self.return_statement(item),
             Statement::IfStatement(item) => self.if_statement(item),

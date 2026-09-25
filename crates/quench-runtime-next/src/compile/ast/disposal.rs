@@ -16,10 +16,10 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn emit_disposal_scope_exit(&mut self, start: u32, end: u32, error: Atom) {
-        let stack_atom = self
+        let (stack_atom, asynchronous) = self
             .disposal_scopes
             .last()
-            .and_then(|scope| scope.stack)
+            .and_then(|scope| scope.stack.map(|stack| (stack, scope.asynchronous)))
             .expect("disposal handler has a stack local");
         self.emit_disposal();
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
@@ -27,7 +27,11 @@ impl FunctionCompiler<'_, '_> {
         let original_error = self.load_atom(error);
         let stack = self.load_atom(stack_atom);
         let skip_uninitialized_stack = self.emit(Op::JumpFalse, stack, 0, 0, 0);
-        self.emit_disposal();
+        if asynchronous {
+            self.emit_disposal();
+        } else {
+            self.emit_disposal_with_completion(stack, original_error);
+        }
         self.patch(skip_uninitialized_stack);
         self.emit(Op::Throw, original_error, 0, 0, 0);
         let end_target = self.code.len() as u32;
@@ -41,6 +45,17 @@ impl FunctionCompiler<'_, '_> {
             return_slot: None,
             with_depth: self.with_depth,
         });
+    }
+
+    fn emit_disposal_with_completion(&mut self, stack: Register, completion: Register) {
+        let method_atom = self.owner.atom("\0rqj:disposeWithCompletion");
+        let cache = self.owner.cache_site();
+        let site = self.owner.method_sites.len() as u32;
+        self.owner
+            .method_sites
+            .push((method_atom, cache, vec![completion], None));
+        let result = self.reg();
+        self.emit(Op::CallMethod, result, stack, 0, site);
     }
 
     pub(crate) fn emit_function_disposal_scope_exit(&mut self, start: u32, end: u32) -> bool {
