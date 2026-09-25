@@ -1694,59 +1694,25 @@ impl<'a> Compiler<'a> {
         function.dynamic_eval = options
             .defaults
             .is_some_and(early::parameters_contain_direct_eval);
-        if parent.is_none() {
-            let mut names = Vec::new();
+        let mut lexical_slots: Vec<_> = lexical_atoms
+            .iter()
+            .filter_map(|atom| function.local_slots.get(atom).copied())
+            .collect();
+        if parent.is_none() && module_goal {
             for statement in body {
-                match statement {
-                    Statement::VariableDeclaration(declaration)
-                        if is_lexical_binding_declaration(declaration.kind) =>
-                    {
-                        for item in &declaration.declarations {
-                            early::collect_pattern_names(&item.id, &mut names);
-                        }
-                    }
-                    Statement::ClassDeclaration(declaration) => {
-                        if let Some(name) = &declaration.id {
-                            names.push(name.name.to_string());
-                        }
-                    }
-                    Statement::ExportDeclaration(export) => match &export.declaration {
-                        Declaration::VariableDeclaration(declaration)
-                            if is_lexical_binding_declaration(declaration.kind) =>
-                        {
-                            for item in &declaration.declarations {
-                                early::collect_pattern_names(&item.id, &mut names);
-                            }
-                        }
-                        Declaration::ClassDeclaration(declaration) => {
-                            if let Some(name) = &declaration.id {
-                                names.push(name.name.to_string());
-                            }
-                        }
-                        _ => {}
-                    },
-                    Statement::ExportDefaultDeclaration(export) if module_goal => {
-                        if let Some(binding) =
-                            default_export_binding(&export.declaration, module_source)
-                        {
-                            names.push(binding);
-                        }
-                    }
-                    _ => {}
+                if let Statement::ExportDefaultDeclaration(export) = statement
+                    && let Some(binding) =
+                        default_export_binding(&export.declaration, module_source)
+                    && let Some(slot) = function.local_slots.get(&function.owner.atom(&binding))
+                {
+                    lexical_slots.push(*slot);
                 }
             }
-            let slots: Vec<_> = names
-                .iter()
-                .filter_map(|name| {
-                    function
-                        .local_slots
-                        .get(&function.owner.atom(name))
-                        .copied()
-                })
-                .collect();
-            for slot in slots {
-                function.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
-            }
+        }
+        lexical_slots.sort_unstable();
+        lexical_slots.dedup();
+        for slot in lexical_slots {
+            function.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
         }
         if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);
