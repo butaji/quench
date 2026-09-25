@@ -320,6 +320,7 @@ opcodes!(
     LoadCachedTemplateObject => Effect::READS_HEAP,
     DefineField => WRITE_THROW,
     ResolveNameThis => READ_THROW,
+    ValidateClassHeritage => READ_THROW,
 );
 #[derive(Clone, Debug)]
 pub struct Function {
