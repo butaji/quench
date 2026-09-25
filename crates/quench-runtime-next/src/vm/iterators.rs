@@ -38,6 +38,14 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         iterator: Value,
     ) -> Result<Value, JsError> {
+        if let Some(Cell::Iterator {
+            source,
+            kind: IteratorKind::AsyncFromSync,
+            ..
+        }) = self.heap.get(iterator)
+        {
+            return self.iterator_close(p, *source);
+        }
         let atom = self.intern_atom("return");
         let method = self.get_property(p, iterator, atom)?;
         if method.is_undefined() || method.is_null() {
