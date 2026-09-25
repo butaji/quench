@@ -146,6 +146,7 @@ impl<H: Host> Vm<H> {
                 },
             ));
         }
+        let private_target = object;
         let mut object = object;
         if object.as_bool().is_some() {
             match self.atom_name(atom) {
@@ -177,7 +178,7 @@ impl<H: Host> Vm<H> {
             Some(super::property_key::PropertyKey::string(atom)),
         )?;
         if private_name {
-            self.check_private_brand(p, object, atom)?;
+            self.check_private_brand(p, private_target, atom)?;
         }
         loop {
             self.evaluate_deferred_namespace_for_key(
@@ -335,6 +336,19 @@ impl<H: Host> Vm<H> {
             }
             if object.is_null() {
                 return if private_name {
+                    let home = self.private_brand_home(p, private_target, atom);
+                    if let Some(home) = home {
+                        if let Some(attributes) = self.property_accessor(home, atom) {
+                            if let Some(getter) = attributes.getter {
+                                return self.call_value(p, getter, receiver, &[]);
+                            }
+                            return Err(self
+                                .type_error(p, "private accessor does not have a getter".into()));
+                        }
+                        if let Some(value) = self.own_property(home, atom) {
+                            return Ok(value);
+                        }
+                    }
                     Err(self.type_error(p, "private member is not present on this object".into()))
                 } else {
                     Ok(Value::UNDEFINED)
