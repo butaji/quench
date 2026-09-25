@@ -580,7 +580,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let executor = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_function(executor) {
-            return Err(JsError("Promise resolver is not a function".into()));
+            return Err(self.type_error(p, "Promise resolver is not a function".into()));
         }
         let promise = self.promise_object();
         let resolve = self.native_with_env(Native::PromiseResolve, promise);

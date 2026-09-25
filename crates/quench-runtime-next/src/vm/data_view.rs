@@ -53,7 +53,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::ArrayBuffer {
                 bytes, detached, ..
             }) if !detached => bytes.len(),
-            _ => return Err(JsError("DataView buffer is invalid".into())),
+            _ => return Err(self.type_error(p, "DataView buffer is invalid".into())),
         };
         let offset = args
             .get(1)
