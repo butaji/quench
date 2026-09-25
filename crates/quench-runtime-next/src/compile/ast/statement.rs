@@ -192,8 +192,27 @@ impl FunctionCompiler<'_, '_> {
         }
         let close_fn = self.load_name("\0rqj:iterator-close");
         let iterators = self.iterator_closures.clone();
-        for atom in iterators.into_iter().rev() {
-            let iterator = self.load_atom(atom);
+        for closure in iterators.into_iter().rev() {
+            let iterator = self.load_atom(closure.iterator);
+            let ignored = self.reg();
+            self.emit(Op::Call, ignored, close_fn, iterator, 0);
+        }
+    }
+
+    fn close_iterators_leaving(&mut self, control_index: usize) {
+        let closures = self
+            .iterator_closures
+            .iter()
+            .rev()
+            .copied()
+            .filter(|closure| closure.control_depth > control_index)
+            .collect::<Vec<_>>();
+        if closures.is_empty() {
+            return;
+        }
+        let close_fn = self.load_name("\0rqj:iterator-close");
+        for closure in closures {
+            let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();
             self.emit(Op::Call, ignored, close_fn, iterator, 0);
         }
@@ -535,6 +554,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         };
         if self.finally_contexts.is_empty() {
+            self.close_iterators_leaving(index);
             let target_depth = self.controls[index].with_depth;
             self.emit_with_exits_to(target_depth);
         }
@@ -573,6 +593,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         };
         if self.finally_contexts.is_empty() {
+            self.close_iterators_leaving(index);
             let target_depth = self.controls[index].with_depth;
             self.emit_with_exits_to(target_depth);
         }
