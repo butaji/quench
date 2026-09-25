@@ -57,12 +57,6 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<Value, JsError> {
-        if self.typed_array_out_of_bounds(object) {
-            return Err(self.type_error(
-                p,
-                "cannot access typed array with an out-of-bounds backing buffer".into(),
-            ));
-        }
         if let Some(index) = key.as_int().filter(|index| *index >= 0)
             && let Some(value) = self.typed_array_get(object, index as usize)
         {
@@ -100,12 +94,6 @@ impl<H: Host> Vm<H> {
         if object.is_null() || object.is_undefined() {
             let atom = self.intern_atom("");
             return self.get_property(p, object, atom);
-        }
-        if self.typed_array_out_of_bounds(object) {
-            return Err(self.type_error(
-                p,
-                "cannot access typed array with an out-of-bounds backing buffer".into(),
-            ));
         }
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             if let Some(Cell::Proxy {
@@ -502,26 +490,6 @@ impl<H: Host> Vm<H> {
             || integrity.is_some_and(|object| !object.is_extensible()) && !existing
         {
             return Err(JsError("cannot write sealed or frozen array".into()));
-        }
-        Ok(())
-    }
-
-    pub(super) fn check_array_mutation(
-        &self,
-        object: Value,
-        writes: bool,
-        adds: bool,
-        removes: bool,
-    ) -> Result<(), JsError> {
-        if self.object_data(object).is_some_and(Object::is_frozen) && (writes || adds || removes) {
-            return Err(JsError("cannot mutate frozen array".into()));
-        }
-        if self
-            .object_data(object)
-            .is_some_and(|object| !object.is_extensible())
-            && (adds || removes)
-        {
-            return Err(JsError("cannot change sealed array length".into()));
         }
         Ok(())
     }

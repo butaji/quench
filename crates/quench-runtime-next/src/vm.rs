@@ -254,7 +254,7 @@ const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     proto: Value::UNDEFINED,
     target: None,
 };
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct PropertyAttributes {
     pub writable: bool,
     pub enumerable: bool,

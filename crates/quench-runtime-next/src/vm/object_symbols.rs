@@ -55,11 +55,12 @@ impl<H: Host> Vm<H> {
             return Err(JsError("proxy ownKeys trap is not callable".into()));
         }
         let result = self.call_value(p, trap, handler, &[target])?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(result) else {
-            return Err(JsError("proxy ownKeys trap must return an array".into()));
-        };
-        let mut keys = Vec::with_capacity(elements.len());
-        for key in elements.iter().copied() {
+        if !self.is_object_like(result) {
+            return Err(JsError("proxy ownKeys trap must return an object".into()));
+        }
+        let listed_keys = self.call_argument_list(p, result, false)?;
+        let mut keys = Vec::with_capacity(listed_keys.len());
+        for key in listed_keys {
             if !matches!(self.heap.get(key), Some(Cell::String(_) | Cell::Symbol(_))) {
                 return Err(JsError(
                     "proxy ownKeys result contains an invalid key".into(),

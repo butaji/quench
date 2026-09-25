@@ -2022,6 +2022,7 @@ impl<'a> Compiler<'a> {
             global_var_atoms: Vec::new(),
             global_function_atoms: Vec::new(),
             global_immutable_atoms: Vec::new(),
+            eval_sites: function.eval_sites,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,

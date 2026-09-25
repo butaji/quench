@@ -1,8 +1,8 @@
 use super::{
-    AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function, Handler, Instr, MethodSite,
-    ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan, ModuleReexport,
-    ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Superinstruction,
-    WideInstruction,
+    AtomTable, Constant, DispatchClass, EvalBinding, EvalSite, FieldBase, FieldSite, Function,
+    Handler, Instr, MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind,
+    ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase,
+    ObjectSite, Op, Superinstruction, WideInstruction,
 };
 
 const RESIDUAL_MAGIC: &[u8; 5] = b"RQJ\0\x1b";
@@ -150,6 +150,16 @@ pub(super) fn write_program(
         out.u32(function.global_immutable_atoms.len() as u32);
         for atom in &function.global_immutable_atoms {
             out.u32(*atom);
+        }
+        out.u32(function.eval_sites.len() as u32);
+        for site in &function.eval_sites {
+            out.u32(site.resume_pc);
+            out.u32(site.lexical_bindings.len() as u32);
+            for binding in &site.lexical_bindings {
+                out.u32(binding.atom);
+                out.u16(binding.slot);
+                out.u8(u8::from(binding.immutable));
+            }
         }
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
@@ -375,6 +385,24 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let global_var_atoms = input.list(|input| input.u32())?;
         let global_function_atoms = input.list(|input| input.u32())?;
         let global_immutable_atoms = input.list(|input| input.u32())?;
+        let eval_sites = input.list(|input| {
+            let resume_pc = input.u32()?;
+            let lexical_bindings = input.list(|input| {
+                Ok(EvalBinding {
+                    atom: input.u32()?,
+                    slot: input.u16()?,
+                    immutable: match input.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err("invalid eval binding mutability flag".into()),
+                    },
+                })
+            })?;
+            Ok(EvalSite {
+                resume_pc,
+                lexical_bindings,
+            })
+        })?;
         let registers = input.u16()?;
         let dispatch = match input.u8()? {
             0 => DispatchClass::General,
@@ -457,6 +485,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             global_var_atoms,
             global_function_atoms,
             global_immutable_atoms,
+            eval_sites,
             code,
             wide,
             registers,

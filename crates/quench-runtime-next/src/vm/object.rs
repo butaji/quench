@@ -39,6 +39,9 @@ impl<H: Host> Vm<H> {
             && let Some(slot) = self.property_shape_slot(data.shape(), key)
         {
             let shape = data.shape();
+            if self.shapes[shape as usize].descriptors[slot] == attributes {
+                return;
+            }
             let mut next = self.shapes[shape as usize].clone();
             next.descriptors[slot] = attributes;
             let next_id = self.shapes.len() as u32;
