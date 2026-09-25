@@ -430,6 +430,14 @@ impl FunctionCompiler<'_, '_> {
             let function = self.reg();
             self.emit(Op::MakeClosure, function, 0, 0, function_id);
             if let Some(accessor) = accessor_name {
+                if let Some(key) = computed_key {
+                    let prefix = match accessor {
+                        "get" => crate::bytecode::FUNCTION_NAME_PREFIX_GETTER,
+                        "set" => crate::bytecode::FUNCTION_NAME_PREFIX_SETTER,
+                        _ => crate::bytecode::FUNCTION_NAME_PREFIX_NONE,
+                    };
+                    self.emit(Op::SetFunctionNameKey, function, key, 0, prefix);
+                }
                 self.define_class_accessor(
                     target,
                     function,
@@ -557,6 +565,15 @@ impl FunctionCompiler<'_, '_> {
         computed_key: Option<Register>,
         name: Option<&str>,
     ) {
+        if let Some(key) = computed_key {
+            self.emit(
+                Op::SetFunctionNameKey,
+                function,
+                key,
+                0,
+                crate::bytecode::FUNCTION_NAME_PREFIX_NONE,
+            );
+        }
         let descriptor = self.reg();
         self.emit(Op::MakeObject, descriptor, 0, 0, 0);
         for (field, value) in [
@@ -904,11 +921,16 @@ impl Compiler<'_> {
         let name = if method.kind == MethodDefinitionKind::Constructor {
             None
         } else {
-            match &method.key {
+            let name = match &method.key {
                 PropertyKey::PrivateIdentifier(identifier) => {
                     Some(format!("#{}", identifier.name.as_str()))
                 }
                 _ => class_method_name(&method.key),
+            };
+            match (method.kind, name) {
+                (MethodDefinitionKind::Get, Some(name)) => Some(format!("get {name}")),
+                (MethodDefinitionKind::Set, Some(name)) => Some(format!("set {name}")),
+                (_, name) => name,
             }
         };
         self.compile_function(
