@@ -430,6 +430,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Native::ErrorToString => self.error_to_string(p, this),
+            Native::ArrayBufferSpecies => Ok(this),
             Native::NumberExponential => self.number_exponential(p, this, args),
             native if native.is_error_constructor() => self.construct_native(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),

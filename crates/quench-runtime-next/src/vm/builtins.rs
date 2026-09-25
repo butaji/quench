@@ -68,6 +68,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayFrom,
     Native::ArrayOf,
     Native::ArrayBuffer,
+    Native::ArrayBufferSpecies,
     Native::ArrayBufferSlice,
     Native::ArrayBufferTransfer,
     Native::ArrayBufferResize,
@@ -344,6 +345,7 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }
+        self.install_array_buffer_species(program)?;
         self.global(program, "Symbol", symbol)?;
         self.install_disposal(program)?;
         let string = self.native_value(Native::String);
