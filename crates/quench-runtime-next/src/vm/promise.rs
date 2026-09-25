@@ -3517,7 +3517,11 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         if self.promise.records.contains_key(&value) {
-            return Ok(value);
+            let constructor_atom = self.intern_atom("constructor");
+            let constructor = self.get_property(p, value, constructor_atom)?;
+            if constructor == self.native_value(Native::Promise) {
+                return Ok(value);
+            }
         }
         let promise = self.promise_object();
         self.promise_resolve_value(p, promise, value)?;
