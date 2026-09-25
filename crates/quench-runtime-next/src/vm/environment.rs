@@ -366,6 +366,21 @@ impl<H: Host> Vm<H> {
             let mirrors_global_var = !p.module
                 && self.frames[frame_index].function == 0
                 && p.functions[0].global_var_atoms.contains(&atom);
+            if mirrors_global_var
+                && !self.set_property_with_receiver(
+                    p,
+                    self.realm.globals,
+                    atom,
+                    value,
+                    self.realm.globals,
+                )?
+            {
+                return if strict {
+                    Err(self.type_error(p, "cannot assign to read-only global binding".into()))
+                } else {
+                    Ok(())
+                };
+            }
             if self.frames[frame_index].captured {
                 let env = self.frames[frame_index].env;
                 if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) {
@@ -375,9 +390,6 @@ impl<H: Host> Vm<H> {
                 self.frames[frame_index].locals[slot] = value;
             }
             self.mapped_argument_store(p, frame_index, slot, value);
-            if mirrors_global_var {
-                self.set_property_with_program(p, self.realm.globals, atom, value)?;
-            }
             return Ok(());
         }
         if let Some(frame_index) = self.frames.len().checked_sub(1)
@@ -1078,6 +1090,20 @@ impl<H: Host> Vm<H> {
         else {
             return Ok(false);
         };
+        let strict = root_function.strict;
+        if !self.set_property_with_receiver(
+            p,
+            self.realm.globals,
+            atom,
+            value,
+            self.realm.globals,
+        )? {
+            return if strict {
+                Err(self.type_error(p, "cannot assign to read-only global binding".into()))
+            } else {
+                Ok(true)
+            };
+        }
         if self.frames[root_index].captured {
             if let Some(Cell::Environment { slots, .. }) =
                 self.heap.get_mut(self.frames[root_index].env)
@@ -1087,7 +1113,6 @@ impl<H: Host> Vm<H> {
         } else {
             self.frames[root_index].locals[slot] = value;
         }
-        self.set_property_with_program(p, self.realm.globals, atom, value)?;
         self.set_property_attributes(
             self.realm.globals,
             PropertyKey::string(atom),

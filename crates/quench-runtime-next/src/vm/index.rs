@@ -22,16 +22,19 @@ fn detach_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
 
 impl<H: Host> Vm<H> {
     pub(super) fn primitive_prototype(&self, value: Value) -> Option<Value> {
-        let constructor = match self.heap.get(value) {
-            Some(Cell::String(_)) => return Some(self.string_proto),
-            Some(Cell::Symbol(_)) => Native::Symbol,
-            Some(Cell::BigInt(_)) => Native::BigInt,
-            _ if value.as_bool().is_some() => Native::Boolean,
-            _ if value.as_number().is_some() => Native::Number,
+        let name = match self.heap.get(value) {
+            Some(Cell::String(_)) => "String",
+            Some(Cell::Symbol(_)) => "Symbol",
+            Some(Cell::BigInt(_)) => "BigInt",
+            _ if value.as_bool().is_some() => "Boolean",
+            _ if value.as_number().is_some() => "Number",
             _ => return None,
         };
+        let constructor = self
+            .lookup_atom(name)
+            .and_then(|atom| self.own_property(self.realm.globals, atom))?;
         self.lookup_atom("prototype")
-            .and_then(|atom| self.own_property(self.native_value(constructor), atom))
+            .and_then(|atom| self.own_property(constructor, atom))
     }
 
     pub(super) fn require_object_coercible(
