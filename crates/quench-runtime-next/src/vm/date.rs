@@ -43,9 +43,14 @@ const DATE_PROTOTYPE_METHODS: &[(&str, Native)] = &[
     ("setUTCMilliseconds", Native::DateSetUTCMilliseconds),
     ("setYear", Native::DateSetYear),
     ("toLocaleString", Native::DateToLocaleString),
+    ("toDateString", Native::DateToDateString),
+    ("toTimeString", Native::DateToTimeString),
+    ("toLocaleDateString", Native::DateToLocaleDateString),
+    ("toLocaleTimeString", Native::DateToLocaleTimeString),
     ("toUTCString", Native::DateToUTCString),
     ("toISOString", Native::DateToISOString),
     ("toJSON", Native::DateToJSON),
+    ("toTemporalInstant", Native::DateToTemporalInstant),
 ];
 const SECONDS_PER_MINUTE: i32 = 60;
 const LEGACY_DATE_YEAR_OFFSET: i32 = 1900;
@@ -93,7 +98,7 @@ const DEFAULT_DATE_COMPONENTS: [f64; DATE_COMPONENT_COUNT] =
 pub(super) fn date_native_length(native: Native) -> Option<f64> {
     match native {
         Native::Date | Native::DateUTC => Some(DATE_COMPONENT_COUNT as f64),
-        Native::DateParse | Native::DateSetTime => Some(1.0),
+        Native::DateParse | Native::DateSetTime | Native::DateToPrimitive => Some(1.0),
         Native::DateNow => Some(0.0),
         _ => DateSetter::from_native(native)
             .map(|setter| setter.maximum_arguments as f64)
@@ -140,19 +145,95 @@ impl DateParts {
 impl<H: Host> Vm<H> {
     pub(super) fn install_date(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let date = self.native_value(Native::Date);
-        let prototype = self.object();
-        self.set_named(program, date, "prototype", prototype)?;
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        self.install_date_for_realm(program, self.realm.globals, date, prototype)
+    }
+
+    pub(super) fn install_date_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        constructor: Value,
+        prototype: Value,
+    ) -> Result<(), JsError> {
+        self.set_builtin_function_name(constructor, "Date")?;
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
         for (name, native) in DATE_PROTOTYPE_METHODS {
-            self.set_builtin_named(program, prototype, name, *native)?;
+            let method = self.native_with_realm(*native, global, global);
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(prototype, name, method)?;
         }
         for (name, native) in [
             ("now", Native::DateNow),
             ("parse", Native::DateParse),
             ("UTC", Native::DateUTC),
         ] {
-            self.set_builtin_named(program, date, name, native)?;
+            let method = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(constructor, name, method)?;
         }
-        self.global(program, "Date", date)
+        if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
+            let method = self.native_with_realm(Native::DateToPrimitive, global, global);
+            self.set_builtin_function_name(method, "[Symbol.toPrimitive]")?;
+            self.set_symbol_property(prototype, symbol, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        if self.well_known_symbols.contains_key("toStringTag") {
+            self.install_builtin_to_string_tag(prototype, "Date")?;
+        }
+        if global == self.realm.globals {
+            self.global(program, "Date", constructor)
+        } else {
+            let atom = self.intern_atom("Date");
+            self.set_property(global, atom, constructor)?;
+            self.set_property_attributes(
+                global,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            Ok(())
+        }
+    }
+
+    pub(super) fn date_call(&mut self) -> Result<Value, JsError> {
+        let milliseconds = HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
+        Ok(self
+            .heap
+            .alloc(Cell::String(format_date_string(milliseconds).into())))
     }
 
     pub(super) fn date_static_native(
@@ -164,10 +245,7 @@ impl<H: Host> Vm<H> {
         match native {
             Native::DateParse => {
                 let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let millis = chrono::DateTime::parse_from_rfc3339(&text)
-                    .ok()
-                    .map(|date| date.timestamp_millis() as f64)
-                    .unwrap_or(f64::NAN);
+                let millis = parse_date_string(&text);
                 Ok(Value::number(millis))
             }
             Native::DateUTC => Ok(Value::number(date_utc_constructor_value(self, p, args)?)),
@@ -191,13 +269,17 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if native == Native::DateToJSON {
+            return self.date_to_json(p, this);
+        }
+        if native == Native::DateToPrimitive {
+            return self.date_to_primitive(p, this, args);
+        }
         let Some(Cell::Date { milliseconds, .. }) = self.heap.get(this) else {
-            return Err(JsError(
-                "Date method called on incompatible receiver".into(),
-            ));
+            return Err(self.type_error(p, "Date method called on incompatible receiver".into()));
         };
         let milliseconds = *milliseconds;
-        if let Some(value) = self.date_setter(p, native, this, milliseconds, args)? {
+        if let Some(value) = self.date_setter(p, native, this, args)? {
             return Ok(Value::number(value));
         }
         if let Some(value) = date_getter(native, milliseconds) {
@@ -206,6 +288,31 @@ impl<H: Host> Vm<H> {
         match native {
             Native::DateToString if !milliseconds.is_finite() => {
                 Ok(self.heap.alloc(Cell::String("Invalid Date".into())))
+            }
+            Native::DateToDateString => Ok(self
+                .heap
+                .alloc(Cell::String(format_date_date_string(milliseconds).into()))),
+            Native::DateToTimeString => Ok(self
+                .heap
+                .alloc(Cell::String(format_date_time_string(milliseconds).into()))),
+            Native::DateToLocaleDateString | Native::DateToLocaleTimeString => {
+                if !milliseconds.is_finite() {
+                    return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
+                }
+                let Some(date) = date_local(milliseconds) else {
+                    return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
+                };
+                let text = if native == Native::DateToLocaleDateString {
+                    format!("{} {}, {}", date.month(), date.day(), date.year())
+                } else {
+                    format!(
+                        "{:02}:{:02}:{:02}",
+                        date.hour(),
+                        date.minute(),
+                        date.second()
+                    )
+                };
+                Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::DateToUTCString if !milliseconds.is_finite() => {
                 Ok(self.heap.alloc(Cell::String("Invalid Date".into())))
@@ -237,18 +344,82 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::String(format_date_string(milliseconds).into()))),
             Native::DateToISOString | Native::DateToJSON => {
                 if !milliseconds.is_finite() {
-                    return Err(JsError("Invalid time value".into()));
+                    return Err(self.range_error(p, "Invalid time value".into()));
                 }
                 let millis = milliseconds.trunc();
                 let date = Utc
                     .timestamp_millis_opt(millis as i64)
                     .single()
-                    .ok_or_else(|| JsError("Invalid time value".into()))?;
+                    .ok_or_else(|| self.range_error(p, "Invalid time value".into()))?;
                 let text = format_date_iso(date);
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }
+            Native::DateToTemporalInstant => {
+                if !milliseconds.is_finite() {
+                    return Err(self.range_error(p, "Invalid time value".into()));
+                }
+                let nanoseconds = format!("{:.0}", milliseconds.trunc() * 1_000_000.0);
+                let value = self.heap.alloc(Cell::BigInt(nanoseconds.into()));
+                let object = self
+                    .heap
+                    .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                let key = self.intern_atom("epochNanoseconds");
+                self.set_property(object, key, value)?;
+                Ok(object)
+            }
             _ => Err(JsError("invalid Date native".into())),
         }
+    }
+
+    fn date_to_json(&mut self, p: &ResidualProgram, receiver: Value) -> Result<Value, JsError> {
+        if receiver.is_null() || receiver.is_undefined() {
+            return Err(self.type_error(p, "Cannot convert undefined or null to object".into()));
+        }
+        let primitive = self.to_primitive(p, receiver, "number")?;
+        if matches!(primitive.as_number(), Some(number) if !number.is_finite()) {
+            return Ok(Value::NULL);
+        }
+        let key = self.intern_atom("toISOString");
+        let method = self.get_property(p, receiver, key)?;
+        self.call_value(p, method, receiver, &[])
+    }
+
+    fn date_to_primitive(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(
+                p,
+                "Date.prototype[Symbol.toPrimitive] requires an object".into(),
+            ));
+        }
+        let hint = match args.first().and_then(|value| self.heap.get(*value)) {
+            Some(Cell::String(hint))
+                if hint.host_string() == "string" || hint.host_string() == "default" =>
+            {
+                "string"
+            }
+            Some(Cell::String(hint)) if hint.host_string() == "number" => "number",
+            _ => return Err(self.type_error(p, "Invalid hint".into())),
+        };
+        for name in if hint == "string" {
+            ["toString", "valueOf"]
+        } else {
+            ["valueOf", "toString"]
+        } {
+            let atom = self.intern_atom(name);
+            let method = self.get_property(p, receiver, atom)?;
+            if self.is_function(method) {
+                let value = self.call_value(p, method, receiver, &[])?;
+                if !self.is_object_like(value) {
+                    return Ok(value);
+                }
+            }
+        }
+        Err(self.type_error(p, "Cannot convert object to primitive value".into()))
     }
 
     fn date_setter(
@@ -256,7 +427,6 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         native: Native,
         receiver: Value,
-        current: f64,
         args: &[Value],
     ) -> Result<Option<f64>, JsError> {
         if native == Native::DateSetTime {
@@ -268,6 +438,14 @@ impl<H: Host> Vm<H> {
         let Some(setter) = DateSetter::from_native(native) else {
             return Ok(None);
         };
+        let current = match self.heap.get(receiver) {
+            Some(Cell::Date { milliseconds, .. }) => *milliseconds,
+            _ => {
+                return Err(
+                    self.type_error(p, "Date method called on incompatible receiver".into())
+                );
+            }
+        };
         let values = args
             .iter()
             .copied()
@@ -275,7 +453,6 @@ impl<H: Host> Vm<H> {
             .map(|value| self.to_number(p, value))
             .collect::<Result<Vec<_>, _>>()?;
         if current.is_nan() && !setter.recovers_invalid_date {
-            self.store_date_time(receiver, f64::NAN);
             return Ok(Some(f64::NAN));
         }
         let base_time = if current.is_nan() {
@@ -347,7 +524,19 @@ impl<H: Host> Vm<H> {
         let milliseconds = if args.len() < DATE_CONSTRUCTOR_MULTI_ARGUMENT_THRESHOLD {
             match args.first().copied() {
                 None => HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
-                Some(value) => self.to_number(p, value)?,
+                Some(value) if matches!(self.heap.get(value), Some(Cell::Date { .. })) => {
+                    match self.heap.get(value) {
+                        Some(Cell::Date { milliseconds, .. }) => *milliseconds,
+                        _ => unreachable!(),
+                    }
+                }
+                Some(value) => {
+                    let primitive = self.to_primitive(p, value, "default")?;
+                    match self.heap.get(primitive) {
+                        Some(Cell::String(text)) => parse_date_string(text.host_string()),
+                        _ => time_clip(self.to_number(p, primitive)?),
+                    }
+                }
             }
         } else {
             let mut parts = DEFAULT_DATE_COMPONENTS;
@@ -661,7 +850,12 @@ fn finite_i64(value: f64) -> Option<i64> {
 
 fn time_clip(value: f64) -> f64 {
     if value.is_finite() && value.abs() <= DATE_TIME_CLIP_LIMIT_MS {
-        value.trunc()
+        let clipped = value.trunc();
+        if clipped == 0.0 {
+            EPOCH_MILLISECONDS
+        } else {
+            clipped
+        }
     } else {
         f64::NAN
     }
@@ -715,6 +909,66 @@ pub(super) fn format_date_string(milliseconds: f64) -> String {
         time_width = DATE_TIME_FIELD_WIDTH,
         offset_width = DATE_OFFSET_FIELD_WIDTH,
     )
+}
+
+fn format_date_date_string(milliseconds: f64) -> String {
+    let Some(date) = date_local(milliseconds) else {
+        return "Invalid Date".into();
+    };
+    format!(
+        "{} {} {:02} {}",
+        DATE_WEEKDAYS[date.weekday().num_days_from_sunday() as usize],
+        DATE_MONTHS[date.month0() as usize],
+        date.day(),
+        display_date_year(date.year()),
+    )
+}
+
+fn format_date_time_string(milliseconds: f64) -> String {
+    let Some(date) = date_local(milliseconds) else {
+        return "Invalid Date".into();
+    };
+    let offset = date.offset().fix().local_minus_utc() / SECONDS_PER_MINUTE;
+    let sign = if offset < 0 { '-' } else { '+' };
+    format!(
+        "{:02}:{:02}:{:02} GMT{sign}{:02}{:02}",
+        date.hour(),
+        date.minute(),
+        date.second(),
+        offset.unsigned_abs() / DATE_MINUTES_PER_HOUR,
+        offset.unsigned_abs() % DATE_MINUTES_PER_HOUR,
+    )
+}
+
+fn parse_date_string(text: &str) -> f64 {
+    if text.len() == DATE_YEAR_MINIMUM_WIDTH && text.bytes().all(|byte| byte.is_ascii_digit()) {
+        if let Ok(year) = text.parse::<i32>() {
+            return make_date_milliseconds(
+                [f64::from(year), 0.0, FIRST_DAY_OF_MONTH, 0.0, 0.0, 0.0, 0.0],
+                true,
+            );
+        }
+    }
+    chrono::DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|date| time_clip(date.timestamp_millis() as f64))
+        .or_else(|| {
+            chrono::DateTime::parse_from_str(text, "%a %b %e %Y %H:%M:%S GMT%z")
+                .ok()
+                .map(|date| time_clip(date.timestamp_millis() as f64))
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f")
+                .ok()
+                .and_then(|local| match Local.from_local_datetime(&local) {
+                    LocalResult::Single(date) => Some(time_clip(date.timestamp_millis() as f64)),
+                    LocalResult::Ambiguous(first, second) => Some(time_clip(
+                        first.timestamp_millis().min(second.timestamp_millis()) as f64,
+                    )),
+                    LocalResult::None => None,
+                })
+        })
+        .unwrap_or(f64::NAN)
 }
 
 fn display_date_year(year: i32) -> String {
