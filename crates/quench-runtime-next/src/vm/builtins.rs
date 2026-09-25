@@ -3,7 +3,7 @@ use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
     Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
@@ -220,7 +220,7 @@ const NATIVES: &[Native] = &[
     Native::RegExpHasIndices,
     Native::RegExpSource,
     Native::RegExpFlags,
-    Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf,
+    Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf, Native::BigIntToString, Native::BigIntAsIntN, Native::BigIntAsUintN,
     Native::Symbol, Native::SymbolToString, Native::SymbolValueOf,
     Native::SymbolFor,
     Native::SymbolKeyFor,
@@ -322,6 +322,11 @@ impl<H: Host> Vm<H> {
             );
         }
         self.global(program, "print", self.native_value(Native::Print))?;
+        self.global(
+            program,
+            "\0rqj:to-string",
+            self.native_value(Native::ToString),
+        )?;
         self.global(program, "eval", self.native_value(Native::Eval))?;
         self.global(
             program,
@@ -373,6 +378,10 @@ impl<H: Host> Vm<H> {
         if let Some(atomics) = self.own_property(self.realm.globals, atomics_name) {
             self.install_builtin_to_string_tag(atomics, "Atomics")?;
         }
+        let bigint = self.native_value(Native::BigInt);
+        let prototype_atom = self.intern_atom("prototype");
+        let bigint_prototype = self.get_property(program, bigint, prototype_atom)?;
+        self.install_builtin_to_string_tag(bigint_prototype, "BigInt")?;
         for (prototype, tag) in [
             (self.map_proto, "Map"),
             (self.set_proto, "Set"),

@@ -144,10 +144,12 @@ impl FunctionCompiler<'_, '_> {
         let mut result = self.literal(super::string::template_constant(&first.value));
         for (index, expression) in template.expressions.iter().enumerate() {
             let expression_value = self.expression(expression);
+            let expression_string =
+                self.call_template_intrinsic("\0rqj:to-string", &[expression_value]);
             result = self.emit_binary(
-                8,
+                BinaryOperator::Addition as u32,
                 Operand::register(result),
-                Operand::register(expression_value),
+                Operand::register(expression_string),
             );
             let Some(quasi) = template.quasis.get(index + 1) else {
                 break;
@@ -158,7 +160,11 @@ impl FunctionCompiler<'_, '_> {
                 return self.literal(Constant::Undefined);
             };
             let tail = self.literal(super::string::template_constant(&quasi.value));
-            result = self.emit_binary(8, Operand::register(result), Operand::register(tail));
+            result = self.emit_binary(
+                BinaryOperator::Addition as u32,
+                Operand::register(result),
+                Operand::register(tail),
+            );
         }
         result
     }

@@ -273,7 +273,12 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, self.native_value(Native::BigInt), prototype_atom)?;
+        let constructor_atom = self.intern_atom("BigInt");
+        let constructor = self
+            .active_native_env()
+            .and_then(|global| self.own_property(global, constructor_atom))
+            .unwrap_or_else(|| self.native_value(Native::BigInt));
+        let prototype = self.get_property(p, constructor, prototype_atom)?;
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let value_atom = self.intern_atom("\0rqj:bigint-value");
         self.set_property(object, value_atom, value)?;
@@ -347,17 +352,7 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::BooleanValueOf),
         )?;
         self.global(program, "Boolean", boolean)?;
-        let bigint = self.native_value(Native::BigInt);
-        let bigint_prototype = self.object();
-        self.set_builtin_value_named(bigint, "prototype", bigint_prototype)?;
-        self.set_builtin_value_named(bigint_prototype, "constructor", bigint)?;
-        self.set_named(
-            program,
-            bigint_prototype,
-            "valueOf",
-            self.native_value(Native::BigIntValueOf),
-        )?;
-        self.global(program, "BigInt", bigint)?;
+        self.install_bigint(program)?;
         for global in self.host.globals() {
             let native = match global.capability {
                 CapabilityId::Done => Native::HostDone,
@@ -744,7 +739,29 @@ impl<H: Host> Vm<H> {
         self.set_named(program, global, "eval", eval)?;
         let function = self.native_with_realm(Native::Function, global, global);
         self.set_named(program, global, "Function", function)?;
-        let object_prototype = self.object();
+        let object_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        let object_constructor = self.native_with_realm(Native::Object, global, global);
+        self.set_builtin_function_name(object_constructor, "Object")?;
+        self.set_builtin_value_named(object_constructor, "prototype", object_prototype)?;
+        self.set_builtin_value_named(object_prototype, "constructor", object_constructor)?;
+        let object_name = self.intern_atom("Object");
+        self.set_property(global, object_name, object_constructor)?;
+        self.set_property_attributes(
+            global,
+            PropertyKey::string(object_name),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let bigint = self.native_with_realm(Native::BigInt, global, global);
+        self.install_bigint_for_realm(program, global, object_prototype, bigint)?;
         let realm_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));

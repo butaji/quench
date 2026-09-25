@@ -8,7 +8,7 @@ use std::rc::Rc;
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, EvalScript, RealmTypeError, Eval, Function, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, FunctionCaller, DynamicFunction, DynamicDerivedClass, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag,
+    Print, HostDone, CreateRealm, EvalScript, RealmTypeError, Eval, ToString, Function, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, FunctionCaller, DynamicFunction, DynamicDerivedClass, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag,
     Object,
     ObjectKeys, ForInKeys, ForInKeyIsEnumerable, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen,
@@ -227,7 +227,7 @@ pub(crate) enum Native {
     RegExpFlags,
     String, Boolean, BooleanToString, BooleanValueOf,
     Symbol, SymbolToString, SymbolValueOf,
-    BigInt, BigIntValueOf,
+    BigInt, BigIntValueOf, BigIntToString, BigIntAsIntN, BigIntAsUintN,
     SymbolFor,
     SymbolKeyFor,
     StringCharCodeAt, StringSlice,
@@ -400,6 +400,13 @@ impl Native {
                 | Self::AtomicsWait
                 | Self::AtomicsWaitAsync
                 | Self::AtomicsPause
+        )
+    }
+
+    pub(crate) fn is_bigint_native(self) -> bool {
+        matches!(
+            self,
+            Self::BigIntValueOf | Self::BigIntToString | Self::BigIntAsIntN | Self::BigIntAsUintN
         )
     }
     pub(crate) fn is_data_view_native(self) -> bool {
