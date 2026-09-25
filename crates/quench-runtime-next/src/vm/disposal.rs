@@ -14,6 +14,7 @@ impl<H: Host> Vm<H> {
                 | Native::DisposableStackDispose
                 | Native::DisposableStackUseAsync
                 | Native::DisposableStackDisposeAsync
+                | Native::DisposableStackDisposeWithCompletion
         )
     }
 
@@ -46,6 +47,11 @@ impl<H: Host> Vm<H> {
                 self.native_value(Native::DisposableStackDisposeAsync),
             )?;
         }
+        self.set_builtin_value_named(
+            prototype,
+            "\0rqj:disposeWithCompletion",
+            self.native_value(Native::DisposableStackDisposeWithCompletion),
+        )?;
         self.set_named(p, constructor, "prototype", prototype)?;
         self.global(p, "DisposableStack", constructor)
     }
@@ -90,6 +96,11 @@ impl<H: Host> Vm<H> {
         if native == Native::DisposableStackDisposeAsync {
             self.require_stack(this)?;
             return self.stack_dispose_async(p, this);
+        }
+        if native == Native::DisposableStackDisposeWithCompletion {
+            self.require_stack(this)?;
+            let completion = args.first().copied().unwrap_or(Value::UNDEFINED);
+            return self.stack_dispose_with_completion(p, this, completion);
         }
         self.require_open_stack(this)?;
         match native {
@@ -234,12 +245,32 @@ impl<H: Host> Vm<H> {
     }
 
     fn stack_dispose(&mut self, p: &ResidualProgram, stack: Value) -> Result<Value, JsError> {
+        self.stack_dispose_resources(p, stack, None)
+    }
+
+    fn stack_dispose_with_completion(
+        &mut self,
+        p: &ResidualProgram,
+        stack: Value,
+        completion: Value,
+    ) -> Result<Value, JsError> {
+        self.stack_dispose_resources(p, stack, Some(completion))
+    }
+
+    fn stack_dispose_resources(
+        &mut self,
+        p: &ResidualProgram,
+        stack: Value,
+        mut completion: Option<Value>,
+    ) -> Result<Value, JsError> {
         let disposed_atom = self.intern_atom(DISPOSED);
         if self.truthy(
             self.own_property(stack, disposed_atom)
                 .unwrap_or(Value::FALSE),
         ) {
-            return Ok(Value::UNDEFINED);
+            return completion.map_or(Ok(Value::UNDEFINED), |value| {
+                Err(JsError::thrown(value, "Error".into()))
+            });
         }
         self.set_property(stack, disposed_atom, Value::TRUE)?;
         let entries = self.stack_entries(stack)?;
@@ -247,7 +278,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
             _ => return Err(JsError("DisposableStack entries are invalid".into())),
         };
-        let mut first_error = None;
         for entry in values.iter().rev().copied() {
             let Some(Cell::Array { elements, .. }) = self.heap.get(entry) else {
                 continue;
@@ -265,11 +295,21 @@ impl<H: Host> Vm<H> {
             } else {
                 self.call_value(p, callback, Value::UNDEFINED, &[])
             };
-            if first_error.is_none() {
-                first_error = result.err();
+            if let Err(error) = result {
+                let error = self.thrown_value_for(p, error);
+                completion = Some(match completion {
+                    Some(suppressed) => self.construct_error_native(
+                        p,
+                        Native::SuppressedError,
+                        &[error, suppressed],
+                    )?,
+                    None => error,
+                });
             }
         }
-        first_error.map_or(Ok(Value::UNDEFINED), Err)
+        completion.map_or(Ok(Value::UNDEFINED), |value| {
+            Err(JsError::thrown(value, "Error".into()))
+        })
     }
 
     fn stack_dispose_async(&mut self, p: &ResidualProgram, stack: Value) -> Result<Value, JsError> {

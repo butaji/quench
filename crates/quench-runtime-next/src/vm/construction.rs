@@ -128,6 +128,7 @@ impl<H: Host> Vm<H> {
                         | Native::Date
                         | Native::Error
                         | Native::AggregateError
+                        | Native::SuppressedError
                         | Native::EvalError
                         | Native::RangeError
                         | Native::ReferenceError
@@ -611,6 +612,7 @@ impl<H: Host> Vm<H> {
             Native::Symbol => Err(self.type_error(p, "Symbol is not a constructor".into())),
             Native::Error
             | Native::AggregateError
+            | Native::SuppressedError
             | Native::EvalError
             | Native::RangeError
             | Native::ReferenceError
