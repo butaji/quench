@@ -227,6 +227,9 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::AbstractModuleSource => 0.0,
         Native::AbstractModuleSourceToStringTag => 0.0,
         Native::AggregateError => 2.0,
+        Native::BigInt => 1.0,
+        Native::BigIntAsIntN | Native::BigIntAsUintN => 2.0,
+        Native::BigIntValueOf | Native::BigIntToString => 0.0,
         Native::SuppressedError => 3.0,
         Native::Error
         | Native::EvalError
@@ -238,6 +241,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
+        Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::ArrayBuffer | Native::ArrayBufferIsView | Native::DetachArrayBuffer => 1.0,
         Native::ArrayIteratorNext

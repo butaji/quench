@@ -54,8 +54,14 @@ impl<H: Host> Vm<H> {
             Some(Cell::BigInt(value)) => value
                 .parse::<num_bigint::BigInt>()
                 .map_err(|_| self.type_error(p, "invalid BigInt value".into())),
-            Some(Cell::String(value)) => crate::bigint::parse_string(&value.host_string())
-                .ok_or_else(|| self.type_error(p, "cannot convert string to BigInt".into())),
+            Some(Cell::String(value)) => {
+                let Some(value) = crate::bigint::parse_string(&value.host_string()) else {
+                    return self
+                        .syntax_error_result(p, "invalid BigInt value")
+                        .map(|_| num_bigint::BigInt::default());
+                };
+                Ok(value)
+            }
             _ => primitive
                 .as_bool()
                 .map(|value| num_bigint::BigInt::from(i32::from(value)))
@@ -280,14 +286,6 @@ impl<H: Host> Vm<H> {
                 let result = self.call_value(program, method, value, &[])?;
                 if !self.is_object_like(result) {
                     return Ok(result);
-                }
-            } else if name == "toString" && method.is_undefined() {
-                let owns_method = self.own_property(value, atom).is_some();
-                let has_prototype = self
-                    .object_data(value)
-                    .is_none_or(|object| !object.proto.is_null());
-                if !owns_method && has_prototype {
-                    return Ok(self.heap.alloc(Cell::String("[object Object]".into())));
                 }
             }
         }

@@ -63,6 +63,9 @@ impl<H: Host> Vm<H> {
         if native == Native::Test262Agent {
             return self.call_test262_agent(p, args);
         }
+        if native.is_bigint_native() {
+            return self.bigint_native(p, native, this, args);
+        }
         if native.is_promise_native() {
             return self.call_promise_native(p, native, this, args);
         }
@@ -115,6 +118,11 @@ impl<H: Host> Vm<H> {
             }
             Native::Eval => self.eval_native(p, args),
             Native::EvalScript => self.eval_script_native(p, args),
+            Native::ToString => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let value = self.to_string(p, value)?;
+                Ok(self.heap.alloc(Cell::String(value.into())))
+            }
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "ArrayBuffer constructor requires new".into()))
