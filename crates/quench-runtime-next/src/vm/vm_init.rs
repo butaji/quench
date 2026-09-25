@@ -39,6 +39,8 @@ impl<H: Host> Vm<H> {
             finalization_registry_proto: Value::NULL,
             iterator_proto: Value::NULL,
             async_iterator_proto: Value::NULL,
+            async_generator_proto: Value::NULL,
+            async_from_sync_iterator_proto: Value::NULL,
             regexp_proto: Value::NULL,
             natives: vec![],
             frames: vec![],
