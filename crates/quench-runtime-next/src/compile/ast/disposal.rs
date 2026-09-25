@@ -9,6 +9,50 @@ impl FunctionCompiler<'_, '_> {
         self.disposal_scopes.pop();
     }
 
+    pub(super) fn has_disposal_stack(&self) -> bool {
+        self.disposal_scopes
+            .last()
+            .is_some_and(|scope| scope.stack.is_some())
+    }
+
+    pub(super) fn emit_disposal_scope_exit(&mut self, start: u32, end: u32, error: Atom) {
+        let stack_atom = self
+            .disposal_scopes
+            .last()
+            .and_then(|scope| scope.stack)
+            .expect("disposal handler has a stack local");
+        self.emit_disposal();
+        let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
+        let exceptional_target = self.code.len() as u32;
+        let original_error = self.load_atom(error);
+        let stack = self.load_atom(stack_atom);
+        let skip_uninitialized_stack = self.emit(Op::JumpFalse, stack, 0, 0, 0);
+        self.emit_disposal();
+        self.patch(skip_uninitialized_stack);
+        self.emit(Op::Throw, original_error, 0, 0, 0);
+        let end_target = self.code.len() as u32;
+        self.patch_to(normal_exit, end_target);
+        self.handlers.push(crate::bytecode::Handler {
+            start,
+            end,
+            target: exceptional_target,
+            slot: self.local_slot(error),
+            return_target: None,
+            return_slot: None,
+            with_depth: self.with_depth,
+        });
+    }
+
+    pub(crate) fn emit_function_disposal_scope_exit(&mut self, start: u32, end: u32) -> bool {
+        if !self.has_disposal_stack() {
+            return false;
+        }
+        let error = self.hidden_local("\0rqj:function-using-error");
+        self.emit_disposal_scope_exit(start, end, error);
+        self.pop_disposal_scope();
+        true
+    }
+
     pub(super) fn ensure_disposable_stack(&mut self, asynchronous: bool) -> Register {
         let scope = self
             .disposal_scopes
