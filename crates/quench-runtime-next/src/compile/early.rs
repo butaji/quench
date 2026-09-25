@@ -548,14 +548,8 @@ pub(super) fn collect_var_names(statements: &[Statement<'_>]) -> Vec<String> {
 fn collect_nested_vars(statements: &[Statement<'_>], names: &mut FxHashSet<String>) {
     for statement in statements {
         match statement {
-            Statement::VariableDeclaration(declaration)
-                if declaration.kind == VariableDeclarationKind::Var =>
-            {
-                for item in &declaration.declarations {
-                    let mut declared = Vec::new();
-                    collect_pattern_names(&item.id, &mut declared);
-                    names.extend(declared);
-                }
+            Statement::VariableDeclaration(declaration) => {
+                collect_var_declaration(declaration, names)
             }
             Statement::BlockStatement(block) => collect_nested_vars(&block.body, names),
             Statement::WithStatement(statement) => {
@@ -570,13 +564,24 @@ fn collect_nested_vars(statements: &[Statement<'_>], names: &mut FxHashSet<Strin
             Statement::ForStatement(statement) => {
                 if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
                     &statement.init
-                    && declaration.kind == VariableDeclarationKind::Var
                 {
-                    for item in &declaration.declarations {
-                        let mut declared = Vec::new();
-                        collect_pattern_names(&item.id, &mut declared);
-                        names.extend(declared);
-                    }
+                    collect_var_declaration(declaration, names);
+                }
+                collect_nested_vars(std::slice::from_ref(&statement.body), names);
+            }
+            Statement::ForInStatement(statement) => {
+                if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) =
+                    &statement.left
+                {
+                    collect_var_declaration(declaration, names);
+                }
+                collect_nested_vars(std::slice::from_ref(&statement.body), names);
+            }
+            Statement::ForOfStatement(statement) => {
+                if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) =
+                    &statement.left
+                {
+                    collect_var_declaration(declaration, names);
                 }
                 collect_nested_vars(std::slice::from_ref(&statement.body), names);
             }
@@ -595,8 +600,30 @@ fn collect_nested_vars(statements: &[Statement<'_>], names: &mut FxHashSet<Strin
                     collect_nested_vars(&finalizer.body, names);
                 }
             }
+            Statement::SwitchStatement(statement) => {
+                for case in &statement.cases {
+                    collect_nested_vars(&case.consequent, names);
+                }
+            }
+            Statement::LabeledStatement(statement) => {
+                collect_nested_vars(std::slice::from_ref(&statement.body), names)
+            }
             _ => {}
         }
+    }
+}
+
+fn collect_var_declaration(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    names: &mut FxHashSet<String>,
+) {
+    if declaration.kind != VariableDeclarationKind::Var {
+        return;
+    }
+    for item in &declaration.declarations {
+        let mut declared = Vec::new();
+        collect_pattern_names(&item.id, &mut declared);
+        names.extend(declared);
     }
 }
 
