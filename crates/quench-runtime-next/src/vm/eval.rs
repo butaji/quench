@@ -195,6 +195,14 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .copied()
             {
+                if self.realm.global_lexical_declarations.contains(&atom)
+                    || self.direct_eval_lexical_binding(p, atom).is_some()
+                {
+                    return self.syntax_error_result(
+                        p,
+                        "eval var declaration conflicts with lexical binding",
+                    );
+                }
                 let globals = self.realm.globals;
                 let name = self.atom_name(atom).to_owned();
                 self.check_global_eval_declaration(p, globals, &name, false)?;
@@ -257,21 +265,30 @@ impl<H: Host> Vm<H> {
             .frames
             .last()
             .map_or(0, |frame| frame.dynamic_bindings.len());
-        let retained_var_bindings = if self.direct_eval && !inherited_strict {
-            if crate::Engine::eval_has_use_strict_directive(source) {
-                Vec::new()
-            } else {
-                crate::Engine::eval_var_names(source)
-                    .map(|names| names.declarations)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|name| self.intern_atom(&name))
-                    .collect()
-            }
+        let eval_source_strict =
+            inherited_strict || crate::Engine::eval_has_use_strict_directive(source);
+        let eval_var_names = if self.direct_eval && !eval_source_strict {
+            crate::Engine::eval_var_names(source)
+                .map(|names| names.declarations)
+                .unwrap_or_default()
         } else {
             Vec::new()
         };
-        let result = self.eval_source_simple_body(p, source, inherited_strict);
+        let check_lexical_conflicts = self.direct_eval && !eval_source_strict;
+        let mut retained_var_bindings = Vec::with_capacity(eval_var_names.len());
+        let mut lexical_conflict = false;
+        for name in eval_var_names {
+            let atom = self.intern_atom(&name);
+            lexical_conflict |= check_lexical_conflicts
+                && (self.realm.global_lexical_declarations.contains(&atom)
+                    || self.direct_eval_lexical_binding(p, atom).is_some());
+            retained_var_bindings.push(atom);
+        }
+        let result = if lexical_conflict {
+            self.syntax_error_result(p, "eval var declaration conflicts with lexical binding")
+        } else {
+            self.eval_source_simple_body(p, source, inherited_strict)
+        };
         if let Some(frame) = self.frames.last_mut() {
             let mut index = 0;
             frame.dynamic_bindings.retain(|(atom, _)| {
@@ -1317,6 +1334,9 @@ impl<H: Host> Vm<H> {
             if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
                 return self.checked_binding_read(p, atom, value);
             }
+            if let Some(value) = self.direct_eval_lexical_value(p, atom) {
+                return self.checked_binding_read(p, atom, value);
+            }
             if let Some(value) = self.load_eval_frame_local(p, atom) {
                 return self.checked_binding_read(p, atom, value);
             }
@@ -1356,6 +1376,66 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
+    fn direct_eval_lexical_binding(
+        &self,
+        p: &ResidualProgram,
+        atom: Atom,
+    ) -> Option<crate::bytecode::EvalBinding> {
+        let frame = self.frames.last()?;
+        let function = p.functions.get(frame.function as usize)?;
+        function
+            .eval_sites
+            .iter()
+            .find(|site| site.resume_pc as usize == frame.pc)?
+            .lexical_bindings
+            .iter()
+            .find(|binding| binding.atom == atom)
+            .copied()
+    }
+
+    fn direct_eval_lexical_value(&self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
+        let frame = self.frames.last()?;
+        let slot = usize::from(self.direct_eval_lexical_binding(p, atom)?.slot);
+        if frame.captured {
+            match self.heap.get(frame.env)? {
+                Cell::Environment { slots, .. } => slots.get(slot).copied(),
+                _ => None,
+            }
+        } else {
+            frame.locals.get(slot).copied()
+        }
+    }
+
+    fn store_direct_eval_lexical_value(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+        value: Value,
+    ) -> Result<bool, JsError> {
+        let Some(binding) = self.direct_eval_lexical_binding(p, atom) else {
+            return Ok(false);
+        };
+        if binding.immutable {
+            return Err(self.type_error(p, "assignment to immutable binding".into()));
+        }
+        let Some(frame) = self.frames.last_mut() else {
+            return Ok(false);
+        };
+        let slot = usize::from(binding.slot);
+        if frame.captured {
+            if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(frame.env)
+                && let Some(local) = slots.get_mut(slot)
+            {
+                *local = value;
+                return Ok(true);
+            }
+        } else if let Some(local) = frame.locals.get_mut(slot) {
+            *local = value;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     pub(super) fn syntax_error_result(
         &mut self,
         p: &ResidualProgram,
@@ -1390,6 +1470,21 @@ impl<H: Host> Vm<H> {
             if self.current_frame_has_lexical_alias(p, atom) {
                 return Err(self.type_error(p, "assignment to function name binding".into()));
             }
+            if self.direct_eval
+                && let Some(frame) = self.frames.last_mut()
+                && let Some((_, current)) = frame
+                    .dynamic_bindings
+                    .iter_mut()
+                    .rev()
+                    .find(|(candidate, _)| *candidate == atom)
+            {
+                *current = value;
+                self.sync_dynamic_bindings();
+                return Ok(());
+            }
+            if self.direct_eval && self.store_direct_eval_lexical_value(p, atom, value)? {
+                return Ok(());
+            }
             if !self.parameter_eval && self.store_frame_local(p, atom, value) {
                 return Ok(());
             }
@@ -1411,6 +1506,24 @@ impl<H: Host> Vm<H> {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
         if self.direct_eval {
+            if !declaration && self.current_frame_has_lexical_alias(p, atom) {
+                return Ok(());
+            }
+            if !declaration
+                && let Some(frame) = self.frames.last_mut()
+                && let Some((_, current)) = frame
+                    .dynamic_bindings
+                    .iter_mut()
+                    .rev()
+                    .find(|(candidate, _)| *candidate == atom)
+            {
+                *current = value;
+                self.sync_dynamic_bindings();
+                return Ok(());
+            }
+            if self.direct_eval && self.store_direct_eval_lexical_value(p, atom, value)? {
+                return Ok(());
+            }
             let global_frame = self.frames.last().is_some_and(|frame| frame.function == 0);
             if global_frame {
                 self.store_frame_local(p, atom, value);

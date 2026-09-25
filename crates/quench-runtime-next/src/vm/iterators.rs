@@ -313,6 +313,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn array_iterator_native(
         &mut self,
+        p: &ResidualProgram,
         native: Native,
         source: Value,
     ) -> Result<Value, JsError> {
@@ -325,12 +326,20 @@ impl<H: Host> Vm<H> {
             Native::Uint8ArrayEntries => IteratorKind::ArrayEntries,
             _ => return Err(JsError("invalid array iterator native".into())),
         };
-        if !matches!(
-            self.heap.get(source),
-            Some(Cell::Array { .. }) | Some(Cell::TypedArray { .. })
+        let source = if matches!(
+            native,
+            Native::Uint8ArrayKeys | Native::Uint8ArrayValues | Native::Uint8ArrayEntries
         ) {
-            return Err(JsError("array iterator receiver is not array".into()));
-        }
+            if self.typed_array_length(source).is_none() {
+                return Err(self.type_error(
+                    p,
+                    "typed array iterator called on incompatible receiver".into(),
+                ));
+            }
+            source
+        } else {
+            self.box_object_or_type_error(p, source)?
+        };
         Ok(self.heap.alloc(Cell::Iterator {
             object: Self::empty_object(self.iterator_proto),
             source,
@@ -553,25 +562,7 @@ impl<H: Host> Vm<H> {
                 _ => None,
             });
         }
-        let Some(Cell::Array { elements, .. }) = self.heap.get(source) else {
-            return Ok(None);
-        };
-        let element_length = elements.len();
-        let is_arguments = self
-            .object_data(source)
-            .is_some_and(Object::is_arguments_object);
-        let length = if is_arguments {
-            let length_atom = self.intern_atom("length");
-            let length_value = self.get_property(p, source, length_atom)?;
-            let length = self.to_number(p, length_value)?;
-            if length.is_nan() || length <= 0.0 {
-                0
-            } else {
-                length.floor().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize
-            }
-        } else {
-            self.heap.sparse_length(source).unwrap_or(element_length)
-        };
+        let length = self.array_like_length(p, source)?;
         if index >= length {
             return Ok(None);
         }

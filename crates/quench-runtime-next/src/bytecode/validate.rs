@@ -521,6 +521,7 @@ mod tests {
             global_var_atoms: vec![],
             global_function_atoms: vec![],
             global_immutable_atoms: vec![],
+            eval_sites: vec![],
             code,
             wide: vec![],
             registers,

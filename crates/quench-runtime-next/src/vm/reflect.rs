@@ -124,16 +124,12 @@ impl<H: Host> Vm<H> {
                 let arguments = if argument_array.is_undefined() {
                     vec![]
                 } else {
-                    match self.heap.get(argument_array) {
-                        Some(Cell::Array { elements, .. }) => {
-                            super::array::normalized_array_values(elements)
-                        }
-                        _ => {
-                            return Err(JsError(
-                                "Reflect.construct arguments must be an array".into(),
-                            ));
-                        }
+                    if !self.is_object_like(argument_array) {
+                        return Err(JsError(
+                            "Reflect.construct arguments must be an object".into(),
+                        ));
                     }
+                    self.call_argument_list(p, argument_array, false)?
                 };
                 let result =
                     self.construct_value_with_new_target(p, target, new_target, &arguments)?;

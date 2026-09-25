@@ -11,7 +11,7 @@ impl<H: Host> Vm<H> {
         if native.is_typed_array_method() {
             Some(self.typed_array_native(p, native, this, args))
         } else if native.is_typed_array_iterator() {
-            Some(self.array_iterator_native(native, this))
+            Some(self.array_iterator_native(p, native, this))
         } else {
             None
         }
