@@ -182,7 +182,7 @@ pub(crate) enum Native {
     DateSetUTCFullYear, DateSetHours, DateSetMinutes, DateSetSeconds, DateSetMilliseconds,
     DateSetUTCHours, DateSetUTCMinutes, DateSetUTCSeconds, DateSetUTCMilliseconds, DateSetYear,
     DateToString, DateToUTCString, DateToLocaleString, DateToISOString, DateToJSON, DateParse, DateUTC,
-    Error, AggregateError, SuppressedError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
+    Error, ErrorToString, AggregateError, SuppressedError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
     RegExp, RegExpToString,
     RegExpExec,
     RegExpTest,

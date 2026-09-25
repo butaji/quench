@@ -87,6 +87,39 @@ impl JsError {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn error_to_string(
+        &mut self,
+        program: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        if receiver.is_null() || receiver.is_undefined() {
+            return Err(self.type_error(
+                program,
+                "Error.prototype.toString called on nullish value".into(),
+            ));
+        }
+        let name_atom = self.intern_atom("name");
+        let message_atom = self.intern_atom("message");
+        let name = self.get_property(program, receiver, name_atom)?;
+        let name = if name.is_undefined() {
+            "Error".to_owned()
+        } else {
+            self.to_string(program, name)?
+        };
+        let message = self.get_property(program, receiver, message_atom)?;
+        let message = if message.is_undefined() {
+            String::new()
+        } else {
+            self.to_string(program, message)?
+        };
+        let text = match (name.is_empty(), message.is_empty()) {
+            (true, _) => message,
+            (false, true) => name,
+            (false, false) => format!("{name}: {message}"),
+        };
+        Ok(self.heap.alloc(Cell::String(JsString::from_str(&text))))
+    }
+
     pub(crate) fn format_error(&mut self, program: &ResidualProgram, error: &JsError) -> String {
         let Some(value) = error.thrown_value() else {
             return error.to_string();
@@ -721,6 +754,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(prototype, "name", name_value)?;
             self.global(program, name, constructor)?;
         }
+        self.set_builtin_named(program, error_prototype, "toString", Native::ErrorToString)?;
         let realm_constructor = self.native_value(Native::RealmTypeError);
         let realm_prototype = self
             .heap

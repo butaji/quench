@@ -180,7 +180,7 @@ const NATIVES: &[Native] = &[
     Native::DateSetYear, Native::DateValueOf, Native::DateToString, Native::DateToUTCString,
     Native::DateToLocaleString, Native::DateToISOString,
     Native::DateToJSON, Native::DateParse, Native::DateUTC,
-    Native::Error, Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
+    Native::Error, Native::ErrorToString, Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
     Native::RegExpToString,
     Native::RegExpExec,
