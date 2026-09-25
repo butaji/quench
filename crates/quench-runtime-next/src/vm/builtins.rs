@@ -3,7 +3,7 @@ use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
     Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
@@ -262,7 +262,6 @@ impl<H: Host> Vm<H> {
             let value = self.native(*native);
             self.natives.push((*native, value));
         }
-        self.install_abstract_module_source(program)?;
         self.install_object(program)?;
         self.install_console(program)?;
         self.install_array(program)?;
@@ -345,6 +344,7 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }
+        self.install_abstract_module_source(program)?;
         self.install_array_buffer_species(program)?;
         self.global(program, "Symbol", symbol)?;
         self.install_disposal(program)?;

@@ -225,6 +225,7 @@ fn native_length(kind: Native) -> Option<f64> {
     }
     Some(match kind {
         Native::AbstractModuleSource => 0.0,
+        Native::AbstractModuleSourceToStringTag => 0.0,
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
@@ -393,6 +394,19 @@ impl Default for PromiseRuntime {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn abstract_module_source_to_string_tag(&mut self, receiver: Value) -> Value {
+        if !self.is_object_like(receiver)
+            || !self
+                .promise
+                .module_sources
+                .values()
+                .any(|module_source| *module_source == receiver)
+        {
+            return Value::UNDEFINED;
+        }
+        self.heap.alloc(Cell::String("ModuleSource".into()))
+    }
+
     pub(super) fn call_native_guarded(
         &mut self,
         p: &ResidualProgram,
