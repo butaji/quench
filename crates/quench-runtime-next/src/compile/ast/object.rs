@@ -109,7 +109,7 @@ impl FunctionCompiler<'_, '_> {
                 if Self::anonymous_function_definition(&property.value) {
                     self.emit(Op::SetFunctionNameKey, item, property_key, 0, 0);
                 }
-                self.emit(Op::SetIndex, item, dst, property_key, 0);
+                self.emit(Op::DefineComputedField, item, dst, property_key, 0);
                 continue;
             }
             if let PropertyKey::StringLiteral(value) = &property.key {
@@ -120,7 +120,7 @@ impl FunctionCompiler<'_, '_> {
                     if Self::anonymous_function_definition(&property.value) {
                         self.emit(Op::SetFunctionNameKey, item, key, 0, 0);
                     }
-                    self.emit(Op::SetIndex, item, dst, key, 0);
+                    self.emit(Op::DefineComputedField, item, dst, key, 0);
                     continue;
                 }
             }
@@ -135,10 +135,10 @@ impl FunctionCompiler<'_, '_> {
                             let property_key = self.reg();
                             self.emit(Op::ToPropertyKey, property_key, key, 0, 0);
                             self.emit(Op::SetFunctionNameKey, item, property_key, 0, 0);
-                            self.emit(Op::SetIndex, item, dst, property_key, 0);
+                            self.emit(Op::DefineComputedField, item, dst, property_key, 0);
                             continue;
                         }
-                        self.emit(Op::SetIndex, item, dst, key, 0);
+                        self.emit(Op::DefineComputedField, item, dst, key, 0);
                         continue;
                     }
                     self.owner
