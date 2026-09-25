@@ -1908,7 +1908,7 @@ fn eval_source_has_no_tokens(source: &[u16]) -> bool {
                 offset += 1;
                 for &unit in &source[offset..] {
                     offset += 1;
-                    if matches!(unit, 0x000a | 0x000d | 0x2028 | 0x2029) {
+                    if is_line_terminator_code_unit(unit) {
                         break;
                     }
                 }
@@ -1916,14 +1916,14 @@ fn eval_source_has_no_tokens(source: &[u16]) -> bool {
             Some(unit) if unit == u16::from(b'*') => {
                 offset += 1;
                 let mut closed = false;
-                let mut previous = 0;
+                let mut previous_is_star = false;
                 for &unit in &source[offset..] {
                     offset += 1;
-                    if previous == u16::from(b'*') && unit == u16::from(b'/') {
+                    if previous_is_star && unit == u16::from(b'/') {
                         closed = true;
                         break;
                     }
-                    previous = unit;
+                    previous_is_star = unit == u16::from(b'*');
                 }
                 if !closed {
                     return false;
