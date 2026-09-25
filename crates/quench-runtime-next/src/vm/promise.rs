@@ -228,6 +228,8 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::AbstractModuleSourceToStringTag => 0.0,
         Native::AggregateError => 2.0,
         Native::BigInt => 1.0,
+        Native::Boolean => 1.0,
+        Native::BooleanToString | Native::BooleanValueOf => 0.0,
         Native::BigIntAsIntN | Native::BigIntAsUintN => 2.0,
         Native::BigIntValueOf | Native::BigIntToString => 0.0,
         Native::SuppressedError => 3.0,
