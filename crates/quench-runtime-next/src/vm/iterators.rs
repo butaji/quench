@@ -1,3 +1,4 @@
+use super::promise::PromiseState;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -361,8 +362,17 @@ impl<H: Host> Vm<H> {
         let done_atom = self.intern_atom("done");
         let done = self.get_property(p, result, done_atom)?;
         let value = self.get_property(p, result, value_atom)?;
-        let value_promise = self.promise_object();
-        self.promise_resolve_value(p, value_promise, value)?;
+        let value_promise = match self.promise_for_value(p, value) {
+            Ok(promise) => promise,
+            Err(error) => {
+                let promise = self.promise_object();
+                let reason = error
+                    .thrown_value()
+                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                return Ok(promise);
+            }
+        };
         let continuation = self.native_with_env(
             Native::AsyncFromSyncValue,
             if self.truthy(done) {
