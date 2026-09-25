@@ -242,6 +242,7 @@ impl<H: Host> Vm<H> {
             source,
             kind,
             index: 0,
+            done: false,
             generator: None,
         }))
     }
@@ -277,6 +278,7 @@ impl<H: Host> Vm<H> {
             source,
             kind,
             index: 0,
+            done: false,
             generator: None,
         }))
     }
@@ -307,6 +309,7 @@ impl<H: Host> Vm<H> {
             source: iterator,
             kind: IteratorKind::AsyncFromSync,
             index: 0,
+            done: false,
             generator: None,
         }))
     }
@@ -345,6 +348,7 @@ impl<H: Host> Vm<H> {
             source,
             kind,
             index: 0,
+            done: false,
             generator: None,
         }))
     }
@@ -432,8 +436,12 @@ impl<H: Host> Vm<H> {
                 source,
                 kind,
                 index,
+                done,
                 ..
-            }) => (*source, *kind, *index),
+            }) if !done => (*source, *kind, *index),
+            Some(Cell::Iterator { done: true, .. }) => {
+                return self.iterator_result(Value::UNDEFINED, true);
+            }
             _ => {
                 let atom = self.intern_atom("next");
                 let method = self.get_property(p, this, atom)?;
@@ -525,6 +533,9 @@ impl<H: Host> Vm<H> {
             }
             self.iterator_result(value, false)
         } else {
+            if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(this) {
+                *done = true;
+            }
             self.iterator_result(Value::UNDEFINED, true)
         }
     }

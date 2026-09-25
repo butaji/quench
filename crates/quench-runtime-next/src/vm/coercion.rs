@@ -295,6 +295,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn strict_equal(&self, a: Value, b: Value) -> bool {
+        if let (Some(left), Some(right)) = (a.as_number(), b.as_number()) {
+            return left == right;
+        }
         if a == b {
             return true;
         }
