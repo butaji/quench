@@ -240,6 +240,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::Object => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::ArrayBuffer | Native::ArrayBufferIsView | Native::DetachArrayBuffer => 1.0,
+        Native::ArrayIteratorNext => 0.0,
         Native::ArrayBufferSlice | Native::ArrayBufferSliceToImmutable => 2.0,
         Native::ArrayBufferResize => 1.0,
         Native::ArrayBufferTransfer

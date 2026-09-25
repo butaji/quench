@@ -42,6 +42,7 @@ impl<H: Host> Vm<H> {
                     self.array_proto,
                     self.array_buffer_proto,
                     self.shared_array_buffer_proto,
+                    self.array_iterator_proto,
                     self.uint8_array_proto,
                     self.uint8_clamped_array_proto,
                     self.uint16_array_proto,

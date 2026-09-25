@@ -24,6 +24,7 @@ impl<H: Host> Vm<H> {
                 | Native::SetEntries
                 | Native::SetForEach
                 | Native::IteratorNext
+                | Native::ArrayIteratorNext
                 | Native::IteratorClose
                 | Native::IteratorSelf
                 | Native::IteratorReturn
@@ -367,6 +368,7 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             }
             Native::IteratorNext => self.iterator_next_with_args(p, this, args),
+            Native::ArrayIteratorNext => self.array_iterator_next(p, this, args),
             Native::IteratorClose => self.iterator_close(p, this),
             Native::IteratorSelf => Ok(this),
             Native::IteratorReturn => self.generator_return(p, this, args),
