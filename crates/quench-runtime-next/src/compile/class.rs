@@ -274,7 +274,11 @@ impl FunctionCompiler<'_, '_> {
             );
             self.patch(skip_constructor_prototype);
             self.set_prototype(prototype, base_prototype);
+            let set_constructor_parent = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
+            let skip_constructor_parent = self.emit(Op::Jump, 0, 0, 0, 0);
+            self.patch(set_constructor_parent);
             self.set_prototype(class_value, base);
+            self.patch(skip_constructor_parent);
         }
 
         for element in &class.body.body {
