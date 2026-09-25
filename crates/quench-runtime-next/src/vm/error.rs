@@ -529,8 +529,7 @@ impl<H: Host> Vm<H> {
         }
         let prototype_atom = self.intern_atom("prototype");
         self.set_property(function, prototype_atom, prototype)?;
-        let constructor_atom = self.intern_atom("constructor");
-        self.set_property(prototype, constructor_atom, function)?;
+        self.set_builtin_value_named(prototype, "constructor", function)?;
         if let Some(object) = self.object_data_mut(function) {
             object.proto = base;
         }

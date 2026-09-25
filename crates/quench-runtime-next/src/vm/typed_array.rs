@@ -34,13 +34,13 @@ impl<H: Host> Vm<H> {
         self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
         let name = self.heap.alloc(Cell::String("Uint8Array".into()));
         self.set_named(program, uint8_array, "name", name)?;
-        self.set_named(
+        self.set_named_constant(
             program,
             uint8_array,
             "BYTES_PER_ELEMENT",
             Value::number(1.0),
         )?;
-        self.set_named(
+        self.set_named_constant(
             program,
             self.uint8_array_proto,
             "BYTES_PER_ELEMENT",
@@ -61,12 +61,7 @@ impl<H: Host> Vm<H> {
             ("values", Native::Uint8ArrayValues),
             ("entries", Native::Uint8ArrayEntries),
         ] {
-            self.set_named(
-                program,
-                self.uint8_array_proto,
-                name,
-                self.native_value(native),
-            )?;
+            self.set_builtin_named(program, self.uint8_array_proto, name, native)?;
         }
         self.global(program, "Uint8Array", uint8_array)?;
         for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
