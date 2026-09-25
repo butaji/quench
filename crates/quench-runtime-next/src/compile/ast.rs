@@ -777,13 +777,22 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn push_catch_binding(&mut self, handler: &CatchClause<'_>, binding: Option<Atom>) {
         let mut scope = FxHashMap::default();
-        if let (Some(BindingPattern::BindingIdentifier(identifier)), Some(binding)) = (
-            handler.param.as_ref().map(|parameter| &parameter.pattern),
-            binding,
-        ) {
-            scope.insert(self.owner.atom(identifier.name.as_str()), binding);
+        let mut requires_initialization = false;
+        if let Some(parameter) = &handler.param {
+            match (&parameter.pattern, binding) {
+                (BindingPattern::BindingIdentifier(identifier), Some(binding)) => {
+                    scope.insert(self.owner.atom(identifier.name.as_str()), binding);
+                }
+                (pattern, _) => {
+                    self.map_pattern_lexicals(pattern, &mut scope);
+                    requires_initialization = true;
+                }
+            }
         }
         self.push_lexical_bindings(scope);
+        if requires_initialization {
+            self.initialize_lexical_scope();
+        }
     }
 
     fn map_pattern_lexicals(
