@@ -564,7 +564,7 @@ impl<H: Host> Vm<H> {
             Native::Function
             | Native::AsyncFunction
             | Native::GeneratorFunction
-            | Native::AsyncGeneratorFunction => self.function_native(p, args),
+            | Native::AsyncGeneratorFunction => self.function_native(p, native, args),
             Native::Object => {
                 if let Some(value) = args.first().copied()
                     && self.object_data(value).is_some()
