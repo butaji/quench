@@ -302,8 +302,17 @@ impl FunctionCompiler<'_, '_> {
         }
         for item in &declaration.declarations {
             if let Some(init) = &item.init {
+                let reference = (self.function_id == 0
+                    && !self.owner.module_goal
+                    && declaration.kind == VariableDeclarationKind::Var)
+                    .then(|| self.resolve_binding_pattern(&item.id))
+                    .flatten();
                 let value = self.initializer_value(init, &item.id);
-                self.bind_pattern(&item.id, value);
+                if let Some(reference) = reference {
+                    self.bind_pattern_with_reference(&item.id, value, Some(reference));
+                } else {
+                    self.bind_pattern(&item.id, value);
+                }
             } else if declaration.kind == VariableDeclarationKind::Let {
                 // `let x;` initializes the binding to undefined at this point.
                 // Leaving the slot in its hoisted TDZ state makes later

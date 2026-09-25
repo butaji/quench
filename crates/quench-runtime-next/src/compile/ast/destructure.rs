@@ -617,7 +617,7 @@ impl FunctionCompiler<'_, '_> {
         self.bind_pattern_with_reference(pattern, value, None);
     }
 
-    fn bind_pattern_with_reference(
+    pub(super) fn bind_pattern_with_reference(
         &mut self,
         pattern: &BindingPattern<'_>,
         value: Register,
@@ -732,7 +732,10 @@ impl FunctionCompiler<'_, '_> {
         self.patch(skip_undefined);
     }
 
-    fn resolve_binding_pattern(&mut self, pattern: &BindingPattern<'_>) -> Option<Register> {
+    pub(super) fn resolve_binding_pattern(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+    ) -> Option<Register> {
         let target = match pattern {
             BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
             BindingPattern::AssignmentPattern(assignment) => match &assignment.left {
