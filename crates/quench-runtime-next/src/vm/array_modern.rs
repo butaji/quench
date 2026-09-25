@@ -10,7 +10,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::ArrayToReversed => self.array_to_reversed_native(this),
+            Native::ArrayToReversed => self.array_to_reversed_native(p, this),
             Native::ArrayToSpliced => self.array_to_spliced_native(p, this, args),
             Native::ArraySort => self.array_sort_native(p, this, args, true),
             Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
@@ -42,9 +42,20 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn array_to_reversed_native(&mut self, this: Value) -> Result<Value, JsError> {
-        let mut values = self.array_values(this)?;
-        values.reverse();
+    fn array_to_reversed_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
+        if length > u32::MAX as usize {
+            return Err(self.range_error(p, "invalid array length".into()));
+        }
+        let mut values = Vec::with_capacity(length);
+        for index in (0..length).rev() {
+            values.push(self.get_index(p, object, Value::number(index as f64))?);
+        }
         Ok(self.new_array(values))
     }
 
@@ -491,28 +502,45 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let values = self.array_values(this)?;
-        let length = values.len();
-        let start_number =
-            self.to_number(p, args.first().copied().unwrap_or(Value::number(0.0)))?;
-        let start = if start_number.is_nan() {
-            0
-        } else if start_number.is_sign_negative() {
-            length.saturating_sub(start_number.abs().trunc() as usize)
-        } else {
-            (start_number.trunc() as usize).min(length)
-        };
-        let delete_count = args
-            .get(1)
-            .map(|value| self.to_number(p, *value))
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
+        let start = args
+            .first()
+            .copied()
+            .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
-            .unwrap_or((length - start) as f64)
-            .max(0.0)
-            .trunc() as usize;
-        let delete_count = delete_count.min(length - start);
-        let mut updated = values[..start].to_vec();
+            .unwrap_or(0);
+        let remaining = length - start;
+        let delete_count = match args.get(1).copied() {
+            None if args.is_empty() => 0,
+            None => length - start,
+            Some(value) => {
+                let number = self.to_number(p, value)?;
+                if number.is_nan() || number <= 0.0 {
+                    0
+                } else if number.is_infinite() {
+                    remaining
+                } else {
+                    (number.trunc() as usize).min(remaining)
+                }
+            }
+        };
+        let insert_count = args.len().saturating_sub(2);
+        let result_length = length - delete_count + insert_count;
+        if result_length as f64 > MAX_SAFE_INTEGER {
+            return Err(self.type_error(p, "array-like length exceeds safe integer".into()));
+        }
+        if result_length > u32::MAX as usize {
+            return Err(self.range_error(p, "invalid array length".into()));
+        }
+        let mut updated = Vec::with_capacity(result_length);
+        for index in 0..start {
+            updated.push(self.get_index(p, object, Value::number(index as f64))?);
+        }
         updated.extend(args.iter().copied().skip(2));
-        updated.extend(values[start + delete_count..].iter().copied());
+        for index in start + delete_count..length {
+            updated.push(self.get_index(p, object, Value::number(index as f64))?);
+        }
         Ok(self.new_array(updated))
     }
 
@@ -523,13 +551,67 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         mutate: bool,
     ) -> Result<Value, JsError> {
-        let mut values = self.array_values(this)?;
         let comparator = args.first().copied().filter(|value| !value.is_undefined());
         if let Some(value) = comparator
             && !matches!(self.heap.get(value), Some(Cell::Function { .. }))
         {
-            return Err(JsError("sort comparator is not callable".into()));
+            return Err(self.type_error(p, "sort comparator is not callable".into()));
         }
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
+        if !mutate && length > u32::MAX as usize {
+            return Err(self.range_error(p, "invalid array length".into()));
+        }
+
+        let mut values = Vec::new();
+        let mut undefined_count = 0;
+        for index in 0..length {
+            let key = Value::number(index as f64);
+            if !mutate || self.has_property(p, object, key)? {
+                let value = self.get_index(p, object, key)?;
+                if value.is_undefined() {
+                    undefined_count += 1;
+                } else {
+                    values.push(value);
+                }
+            }
+        }
+
+        self.sort_values(p, &mut values, comparator)?;
+        if mutate {
+            let sorted_count = values.len();
+            for (index, value) in values.into_iter().enumerate() {
+                self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
+            }
+            for index in sorted_count..sorted_count + undefined_count {
+                self.set_index_mode(
+                    p,
+                    object,
+                    Value::number(index as f64),
+                    Value::UNDEFINED,
+                    true,
+                )?;
+            }
+            for index in sorted_count + undefined_count..length {
+                let deleted =
+                    self.object_delete_property(p, &[object, Value::number(index as f64)])?;
+                if !self.truthy(deleted) {
+                    return Err(self.type_error(p, "cannot delete array-like element".into()));
+                }
+            }
+            Ok(object)
+        } else {
+            values.resize(length, Value::UNDEFINED);
+            Ok(self.new_array(values))
+        }
+    }
+
+    fn sort_values(
+        &mut self,
+        p: &ResidualProgram,
+        values: &mut [Value],
+        comparator: Option<Value>,
+    ) -> Result<(), JsError> {
         for index in 1..values.len() {
             let value = values[index];
             let mut position = index;
@@ -541,17 +623,7 @@ impl<H: Host> Vm<H> {
             }
             values[position] = value;
         }
-        if mutate {
-            if !values.is_empty() {
-                self.check_array_mutation(this, true, false, false)?;
-            }
-            for (index, value) in values.into_iter().enumerate() {
-                self.set_array_element(this, index, value);
-            }
-            Ok(this)
-        } else {
-            Ok(self.new_array(values))
-        }
+        Ok(())
     }
 
     fn sort_compare(

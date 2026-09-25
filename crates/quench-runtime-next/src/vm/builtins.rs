@@ -413,6 +413,7 @@ impl<H: Host> Vm<H> {
     }
     fn install_json(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let json = self.object();
+        self.install_builtin_to_string_tag(json, "JSON")?;
         self.set_named(program, json, "parse", self.native_value(Native::JsonParse))?;
         self.set_named(
             program,
@@ -473,6 +474,7 @@ impl<H: Host> Vm<H> {
     }
     fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let math = self.object();
+        self.install_builtin_to_string_tag(math, "Math")?;
         for (name, value) in [
             ("E", std::f64::consts::E),
             ("LN10", std::f64::consts::LN_10),
@@ -520,6 +522,30 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(program, "Math", math)
     }
+
+    fn install_builtin_to_string_tag(&mut self, object: Value, tag: &str) -> Result<(), JsError> {
+        let symbol = self
+            .well_known_symbols
+            .get("toStringTag")
+            .copied()
+            .ok_or_else(|| JsError("Symbol.toStringTag is not initialized".into()))?;
+        let value = self.heap.alloc(Cell::String(tag.into()));
+        self.set_symbol_property(object, symbol, value)?;
+        self.set_property_attributes(
+            object,
+            PropertyKey::symbol(symbol),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+
     pub(super) fn empty_object(proto: Value) -> Object {
         Object {
             proto,

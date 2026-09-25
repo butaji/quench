@@ -1,13 +1,55 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+const ARRAY_LENGTH_MODULUS: f64 = u32::MAX as f64 + 1.0;
+
+fn array_length_uint32(number: f64) -> u32 {
+    if !number.is_finite() || number == 0.0 {
+        0
+    } else {
+        number.trunc().rem_euclid(ARRAY_LENGTH_MODULUS) as u32
+    }
+}
+
 impl<H: Host> Vm<H> {
+    pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
+        self.array_descriptor(target, index).is_some()
+            || matches!(self.heap.get(target), Some(Cell::Array { elements, .. })
+                if elements.get(index).is_some_and(|value| !value.is_deleted())
+                    || self.heap.sparse_get(target, index).is_some_and(|value| !value.is_deleted()))
+    }
+
     pub(super) fn define_array_length(
         &mut self,
         p: &ResidualProgram,
         target: Value,
         descriptor: Value,
-    ) -> Result<Value, JsError> {
+    ) -> Result<bool, JsError> {
+        if !matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+            return Err(self.type_error(p, "array receiver is not array".into()));
+        }
+        let descriptor_value = self.descriptor_field(p, descriptor, "value")?;
+        let requested_len = if let Some(value) = descriptor_value {
+            let uint32 = array_length_uint32(self.to_number(p, value)?);
+            let number_len = self.to_number(p, value)?;
+            if number_len != f64::from(uint32) {
+                return Err(self.range_error(p, "invalid array length".into()));
+            }
+            Some(uint32 as usize)
+        } else {
+            None
+        };
+        if self.descriptor_field(p, descriptor, "get")?.is_some()
+            || self.descriptor_field(p, descriptor, "set")?.is_some()
+            || self
+                .descriptor_field(p, descriptor, "configurable")?
+                .is_some_and(|value| self.truthy(value))
+            || self
+                .descriptor_field(p, descriptor, "enumerable")?
+                .is_some_and(|value| self.truthy(value))
+        {
+            return Ok(false);
+        }
         let (current_len, current_writable) = match self.heap.get(target) {
             Some(Cell::Array { elements, .. }) => (
                 self.heap
@@ -20,36 +62,12 @@ impl<H: Host> Vm<H> {
             ),
             _ => return Err(self.type_error(p, "array receiver is not array".into())),
         };
-        let descriptor_value = self.descriptor_field(p, descriptor, "value")?;
-        if self.descriptor_field(p, descriptor, "get")?.is_some()
-            || self.descriptor_field(p, descriptor, "set")?.is_some()
-            || self
-                .descriptor_field(p, descriptor, "configurable")?
-                .is_some_and(|value| self.truthy(value))
-            || self
-                .descriptor_field(p, descriptor, "enumerable")?
-                .is_some_and(|value| self.truthy(value))
-        {
-            return Err(self.type_error(p, "invalid array length descriptor".into()));
-        }
-        let next_len = if let Some(value) = descriptor_value {
-            let number = self.to_number(p, value)?;
-            if !number.is_finite()
-                || number < 0.0
-                || number.fract() != 0.0
-                || number > u32::MAX as f64
-            {
-                return Err(self.range_error(p, "invalid array length".into()));
-            }
-            number as usize
-        } else {
-            current_len
-        };
+        let next_len = requested_len.unwrap_or(current_len);
         let writable = self
             .descriptor_field(p, descriptor, "writable")?
             .map_or(current_writable, |value| self.truthy(value));
         if !current_writable && (next_len != current_len || writable) {
-            return Err(self.type_error(p, "cannot redefine non-writable array length".into()));
+            return Ok(false);
         }
         if next_len < current_len {
             let blocked_index = self
@@ -102,9 +120,7 @@ impl<H: Host> Vm<H> {
                         },
                     );
                 }
-                return Err(
-                    self.type_error(p, "cannot delete non-configurable array element".into())
-                );
+                return Ok(false);
             }
             if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
                 Rc::make_mut(elements).truncate(next_len);
@@ -136,7 +152,19 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        Ok(target)
+        Ok(true)
+    }
+
+    pub(super) fn set_array_length(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        value: Value,
+    ) -> Result<bool, JsError> {
+        let descriptor = self.object();
+        let value_atom = self.intern_atom("value");
+        self.set_property(descriptor, value_atom, value)?;
+        self.define_array_length(p, target, descriptor)
     }
 
     pub(super) fn array_present_indices(&self, target: Value) -> Vec<usize> {
