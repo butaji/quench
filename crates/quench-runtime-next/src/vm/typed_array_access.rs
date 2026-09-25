@@ -124,11 +124,10 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
+        let detached = self.array_buffer_detached(*buffer);
         let out = if *length_tracking {
             match self.heap.get(*buffer) {
-                Some(Cell::ArrayBuffer {
-                    bytes, detached, ..
-                }) => *detached || *offset > bytes.len(),
+                Some(Cell::ArrayBuffer { bytes, .. }) => detached || *offset > bytes.len(),
                 _ => true,
             }
         } else {

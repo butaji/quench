@@ -57,7 +57,7 @@ impl<H: Host> Vm<H> {
                 length_tracking: self.array_buffer_resizable(source) && args.get(2).is_none(),
             }));
         }
-        let values = self.typed_array_values(source);
+        let values = self.typed_array_source_values(p, source)?;
         let length = values.as_ref().map_or_else(
             || {
                 self.to_number(p, source).map(|value| {
@@ -116,6 +116,61 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Float32 => self.float32_array_proto,
             TypedArrayKind::Float64 => self.float64_array_proto,
         }
+    }
+
+    fn typed_array_source_values(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+    ) -> Result<Option<Vec<Value>>, JsError> {
+        if matches!(self.heap.get(source), Some(Cell::TypedArray { .. })) {
+            return Ok(self.typed_array_values(source));
+        }
+        if !self.is_object_like(source) {
+            return Ok(None);
+        }
+
+        if let Some(iterator_symbol) = self.well_known_symbols.get("iterator").copied() {
+            let method = self.get_index(p, source, iterator_symbol)?;
+            if !method.is_undefined() && !method.is_null() {
+                if !self.is_function(method) {
+                    return Err(self.type_error(p, "iterator method is not callable".into()));
+                }
+                let iterator = self.call_value(p, method, source, &[])?;
+                if !self.is_object_like(iterator) {
+                    return Err(
+                        self.type_error(p, "iterator method did not return an object".into())
+                    );
+                }
+                let done_atom = self.intern_atom("done");
+                let value_atom = self.intern_atom("value");
+                let mut values = Vec::new();
+                loop {
+                    let step = match self.iterator_next(p, iterator) {
+                        Ok(step) => step,
+                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                    };
+                    let done = match self.get_property(p, step, done_atom) {
+                        Ok(done) => done,
+                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                    };
+                    if self.truthy(done) {
+                        return Ok(Some(values));
+                    }
+                    let value = match self.get_property(p, step, value_atom) {
+                        Ok(value) => value,
+                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                    };
+                    values.push(value);
+                }
+            }
+        }
+
+        let length = self.array_like_length(p, source)?;
+        (0..length)
+            .map(|index| self.get_index(p, source, Value::number(index as f64)))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
     }
 }
 

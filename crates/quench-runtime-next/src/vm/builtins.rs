@@ -86,6 +86,7 @@ const NATIVES: &[Native] = &[
     Native::SharedArrayBufferMaxByteLengthGetter,
     Native::ArrayBufferIsView,
     Native::DetachArrayBuffer,
+    Native::ArrayIteratorNext,
     Native::SharedArrayBuffer,
     Native::SharedArrayBufferGrow,
     Native::AtomicsLoad,

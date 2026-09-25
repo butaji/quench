@@ -86,6 +86,7 @@ pub(crate) enum Native {
     SharedArrayBufferMaxByteLengthGetter,
     ArrayBufferIsView,
     DetachArrayBuffer,
+    ArrayIteratorNext,
     SharedArrayBuffer,
     SharedArrayBufferGrow,
     AtomicsLoad,
