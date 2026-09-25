@@ -329,13 +329,7 @@ impl<H: Host> Vm<H> {
                         .primitive_prototype(object)
                         .unwrap_or(self.object_proto)
                 }
-                Some(Cell::Date { object: x, .. }) => {
-                    let native = self.date_property_native(atom);
-                    if !native.is_undefined() {
-                        return Ok(native);
-                    }
-                    object = x.proto;
-                }
+                Some(Cell::Date { object: x, .. }) => object = x.proto,
                 Some(Cell::Object(x))
                 | Some(Cell::Array { object: x, .. })
                 | Some(Cell::RegExp { object: x, .. }) => object = x.proto,
