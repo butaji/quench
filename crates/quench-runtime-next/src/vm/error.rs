@@ -378,6 +378,19 @@ impl<H: Host> Vm<H> {
                     self.set_named(
                         program,
                         realm,
+                        "detachArrayBuffer",
+                        self.native_value(Native::DetachArrayBuffer),
+                    )?;
+                    let detach_name = self.heap.alloc(Cell::String("detachArrayBuffer".into()));
+                    self.set_named(
+                        program,
+                        self.native_value(Native::DetachArrayBuffer),
+                        "name",
+                        detach_name,
+                    )?;
+                    self.set_named(
+                        program,
+                        realm,
                         "AbstractModuleSource",
                         self.native_value(Native::AbstractModuleSource),
                     )?;
@@ -773,6 +786,16 @@ impl<H: Host> Vm<H> {
             );
         }
         self.set_named(program, global, "Array", array)?;
+        let array_buffer = self.native_with_realm(Native::ArrayBuffer, global, global);
+        let array_buffer_prototype = self.object();
+        self.object_data_mut(array_buffer_prototype)
+            .expect("realm ArrayBuffer prototype")
+            .proto = self.array_buffer_proto;
+        self.set_builtin_value_named(array_buffer, "prototype", array_buffer_prototype)?;
+        self.set_builtin_value_named(array_buffer_prototype, "constructor", array_buffer)?;
+        let array_buffer_name = self.heap.alloc(Cell::String("ArrayBuffer".into()));
+        self.set_builtin_value_named(array_buffer, "name", array_buffer_name)?;
+        self.set_named(program, global, "ArrayBuffer", array_buffer)?;
         for (name, native) in [
             ("Number", Native::Number),
             ("String", Native::String),
