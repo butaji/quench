@@ -74,13 +74,8 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
-            _ => return Err(JsError("lastIndexOf receiver is not array".into())),
-        };
+        let object = self.box_object(this)?;
+        let length = self.array_like_length(p, object)?;
         if length == 0 {
             return Ok(Value::number(-1.0));
         }
@@ -88,12 +83,13 @@ impl<H: Host> Vm<H> {
             None => length as isize - 1,
             Some(value) => {
                 let number = self.to_number(p, *value)?;
-                if number.is_nan() || number.is_sign_negative() && number.is_infinite() {
+                if number.is_nan() || number == 0.0 {
+                    0
+                } else if number == f64::NEG_INFINITY {
                     return Ok(Value::number(-1.0));
-                }
-                if number.is_infinite() {
+                } else if number == f64::INFINITY {
                     length as isize - 1
-                } else if number.is_sign_negative() {
+                } else if number < 0.0 {
                     (length as f64 + number.trunc()).floor() as isize
                 } else {
                     (number.trunc() as usize).min(length - 1) as isize
@@ -105,13 +101,12 @@ impl<H: Host> Vm<H> {
         }
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         for index in (0..=from as usize).rev() {
-            let value = elements
-                .get(index)
-                .copied()
-                .or_else(|| self.heap.sparse_get(this, index))
-                .unwrap_or(Value::UNDEFINED);
-            if self.array_strict_equal(value, search) {
-                return Ok(Value::number(index as f64));
+            let key = Value::number(index as f64);
+            if self.has_property(p, object, key)? {
+                let value = self.get_index(p, object, key)?;
+                if self.array_strict_equal(value, search) {
+                    return Ok(Value::number(index as f64));
+                }
             }
         }
         Ok(Value::number(-1.0))
@@ -123,13 +118,8 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
-            _ => return Err(JsError("indexOf receiver is not array".into())),
-        };
+        let object = self.box_object(this)?;
+        let length = self.array_like_length(p, object)?;
         if length == 0 {
             return Ok(Value::number(-1.0));
         }
@@ -137,11 +127,11 @@ impl<H: Host> Vm<H> {
             None => 0,
             Some(value) => {
                 let number = self.to_number(p, *value)?;
-                if number.is_nan() || number.is_sign_negative() && number.is_infinite() {
+                if number.is_nan() || number == 0.0 || number == f64::NEG_INFINITY {
                     0
                 } else if number.is_infinite() {
                     return Ok(Value::number(-1.0));
-                } else if number.is_sign_negative() {
+                } else if number < 0.0 {
                     length.saturating_sub(number.abs().trunc() as usize)
                 } else {
                     (number.trunc() as usize).min(length)
@@ -150,13 +140,12 @@ impl<H: Host> Vm<H> {
         };
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         for index in start..length {
-            let value = elements
-                .get(index)
-                .copied()
-                .or_else(|| self.heap.sparse_get(this, index))
-                .unwrap_or(Value::UNDEFINED);
-            if self.array_strict_equal(value, search) {
-                return Ok(Value::number(index as f64));
+            let key = Value::number(index as f64);
+            if self.has_property(p, object, key)? {
+                let value = self.get_index(p, object, key)?;
+                if self.array_strict_equal(value, search) {
+                    return Ok(Value::number(index as f64));
+                }
             }
         }
         Ok(Value::number(-1.0))
@@ -415,53 +404,47 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
-            _ => return Err(JsError("reduce receiver is not array".into())),
-        };
+        let object = self.box_object(this)?;
+        let length = self.array_like_length(p, object)?;
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
-            return Err(JsError("reduce callback is not callable".into()));
+            return Err(self.type_error(p, "reduce callback is not callable".into()));
         }
         if length == 0 && args.get(1).is_none() {
             return Err(JsError(
                 "reduce of empty array with no initial value".into(),
             ));
         }
-        let values = (0..length)
-            .map(|index| {
-                elements
-                    .get(index)
-                    .copied()
-                    .or_else(|| self.heap.sparse_get(this, index))
-                    .unwrap_or(Value::UNDEFINED)
-            })
-            .collect::<Vec<_>>();
         let reverse = matches!(native, Native::ArrayReduceRight);
-        let (mut accumulator, start) = if let Some(initial) = args.get(1).copied() {
-            (initial, if reverse { length } else { 0 })
-        } else if reverse {
-            (values[length - 1], length - 1)
-        } else {
-            (values[0], 1)
+        let mut index = if reverse { length } else { 0 };
+        let mut accumulator = args.get(1).copied();
+        while accumulator.is_none() && if reverse { index > 0 } else { index < length } {
+            if reverse {
+                index -= 1;
+            }
+            let key = Value::number(index as f64);
+            if self.has_property(p, object, key)? {
+                accumulator = Some(self.get_index(p, object, key)?);
+            }
+            if !reverse {
+                index += 1;
+            }
+        }
+        let Some(mut accumulator) = accumulator else {
+            return Err(self.type_error(p, "reduce of empty array with no initial value".into()));
         };
-        if reverse {
-            for index in (0..start).rev() {
-                let callback_args = [
-                    accumulator,
-                    values[index],
-                    Value::number(index as f64),
-                    this,
-                ];
+        while if reverse { index > 0 } else { index < length } {
+            if reverse {
+                index -= 1;
+            }
+            let key = Value::number(index as f64);
+            if self.has_property(p, object, key)? {
+                let value = self.get_index(p, object, key)?;
+                let callback_args = [accumulator, value, key, object];
                 accumulator = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
             }
-        } else {
-            for (offset, value) in values.iter().copied().enumerate().skip(start) {
-                let callback_args = [accumulator, value, Value::number(offset as f64), this];
-                accumulator = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
+            if !reverse {
+                index += 1;
             }
         }
         Ok(accumulator)

@@ -1,6 +1,8 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+const MAX_DENSE_ARRAY_HOLE_GAP: usize = 1024;
+
 #[inline(always)]
 pub(super) fn mutable_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
     if Rc::strong_count(elements) == 1 {
@@ -327,8 +329,8 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "profile-aggregate")]
             let kind = self.heap.get(object).and_then(|cell| match cell {
                 Cell::Array { elements, .. } => {
-                    let sparse = self.heap.sparse_length(object).is_some()
-                        || index > 1024 && index > elements.len().saturating_mul(4).max(16);
+                    let sparse =
+                        self.array_index_uses_sparse_storage(object, index, elements.len());
                     Some(if sparse {
                         2
                     } else {
@@ -428,8 +430,7 @@ impl<H: Host> Vm<H> {
             self.sync_mapped_argument(object, index, value);
             return true;
         }
-        let sparse = self.heap.sparse_length(object).is_some()
-            || index > 1024 && index > dense_len.saturating_mul(4).max(16);
+        let sparse = self.array_index_uses_sparse_storage(object, index, dense_len);
         if sparse {
             self.heap.sparse_set(object, index, value);
         } else if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) {
@@ -442,6 +443,16 @@ impl<H: Host> Vm<H> {
         }
         self.sync_mapped_argument(object, index, value);
         true
+    }
+
+    fn array_index_uses_sparse_storage(
+        &self,
+        object: Value,
+        index: usize,
+        dense_length: usize,
+    ) -> bool {
+        self.heap.sparse_length(object).is_some()
+            || index.saturating_sub(dense_length) > MAX_DENSE_ARRAY_HOLE_GAP
     }
 
     pub(super) fn check_array_element_write(
