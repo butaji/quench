@@ -311,7 +311,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         }
         Op::StoreResolvedName => instruction.a() == register || instruction.b() == register,
         Op::SetFunctionNameKey => instruction.a() == register || instruction.b() == register,
-        Op::ResolveName | Op::ResolveNameThis | Op::DeleteName => false,
+        Op::ResolveName | Op::DeleteName => false,
         Op::LoadImportMeta => false,
         Op::GetField if instruction.b() == FieldBase::NESTED => {
             fields

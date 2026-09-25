@@ -109,7 +109,7 @@ fn uses(
             bit(instruction.a())
         }
         Op::StoreResolvedName => bit(instruction.a()) | bit(instruction.b()),
-        Op::ResolveName | Op::ResolveNameThis | Op::DeleteName => 0,
+        Op::ResolveName | Op::DeleteName | Op::LoadNameCall => 0,
         Op::GetIterator
         | Op::GetAsyncIterator
         | Op::IteratorClose
@@ -177,6 +177,7 @@ fn uses(
 
 fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
     match instruction.op() {
+        Op::LoadNameCall => bit(instruction.a()) | bit(instruction.b()),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply if instruction.writes_numeric_local() => {
             0
         }
@@ -187,7 +188,6 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::LoadName
         | Op::LoadNameTypeof
         | Op::ResolveName
-        | Op::ResolveNameThis
         | Op::ToPropertyKey
         | Op::ToNumeric
         | Op::LoadThis
