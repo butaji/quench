@@ -268,7 +268,7 @@ impl FunctionCompiler<'_, '_> {
                 .ensure_disposable_stack(declaration.kind == VariableDeclarationKind::AwaitUsing);
             for item in &declaration.declarations {
                 let value = if let Some(init) = &item.init {
-                    self.expression(init)
+                    self.initializer_value(init, &item.id)
                 } else {
                     self.literal(Constant::Undefined)
                 };
@@ -284,21 +284,7 @@ impl FunctionCompiler<'_, '_> {
         }
         for item in &declaration.declarations {
             if let Some(init) = &item.init {
-                let value = match (init, &item.id) {
-                    (
-                        Expression::ClassExpression(class),
-                        BindingPattern::BindingIdentifier(identifier),
-                    ) if class.id.is_none() => {
-                        self.named_class_expression(class, identifier.name.as_str())
-                    }
-                    _ => self.expression(init),
-                };
-                if Self::anonymous_function_definition(init)
-                    && let BindingPattern::BindingIdentifier(identifier) = &item.id
-                {
-                    let name = self.owner.atom(identifier.name.as_str());
-                    self.emit(Op::SetFunctionName, value, 0, 0, name);
-                }
+                let value = self.initializer_value(init, &item.id);
                 self.bind_pattern(&item.id, value);
             } else if declaration.kind == VariableDeclarationKind::Let {
                 // `let x;` initializes the binding to undefined at this point.
@@ -309,6 +295,27 @@ impl FunctionCompiler<'_, '_> {
                 self.bind_pattern(&item.id, value);
             }
         }
+    }
+
+    fn initializer_value(
+        &mut self,
+        initializer: &Expression<'_>,
+        binding: &BindingPattern<'_>,
+    ) -> Register {
+        let value = match (initializer, binding) {
+            (
+                Expression::ClassExpression(class),
+                BindingPattern::BindingIdentifier(identifier),
+            ) if class.id.is_none() => self.named_class_expression(class, identifier.name.as_str()),
+            _ => self.expression(initializer),
+        };
+        if is_anonymous_function_definition(initializer)
+            && let BindingPattern::BindingIdentifier(identifier) = binding
+        {
+            let name = self.owner.atom(identifier.name.as_str());
+            self.emit(Op::SetFunctionName, value, 0, 0, name);
+        }
+        value
     }
 
     fn if_statement(&mut self, item: &IfStatement<'_>) {
