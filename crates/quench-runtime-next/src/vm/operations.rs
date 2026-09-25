@@ -144,6 +144,7 @@ impl<H: Host> Vm<H> {
             | Native::DateToJSON => self.date_native(p, native, this, args),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
+            Native::RegExpToString => self.regexp_to_string_native(p, this),
             Native::RegExpGlobal
             | Native::RegExpIgnoreCase
             | Native::RegExpMultiline
