@@ -84,11 +84,10 @@ impl<H: Host> Vm<H> {
             "prototype",
             self.iterator_proto,
         )?;
-        self.set_builtin_named(
-            program,
+        self.set_builtin_value_named(
             generator_function_proto,
             "constructor",
-            Native::GeneratorFunction,
+            self.native_value(Native::GeneratorFunction),
         )?;
         self.set_named(
             program,
@@ -96,36 +95,49 @@ impl<H: Host> Vm<H> {
             "prototype",
             self.async_generator_proto,
         )?;
-        self.set_builtin_named(
-            program,
+        self.set_builtin_value_named(
             async_function_proto,
             "constructor",
-            Native::AsyncFunction,
-        )?;
-        self.set_builtin_named(
-            program,
-            async_generator_function_proto,
-            "constructor",
-            Native::AsyncGeneratorFunction,
-        )?;
-        self.set_named(
-            program,
             self.native_value(Native::AsyncFunction),
-            "prototype",
-            async_function_proto,
         )?;
-        self.set_named(
-            program,
-            self.native_value(Native::GeneratorFunction),
-            "prototype",
-            generator_function_proto,
-        )?;
-        self.set_named(
-            program,
-            self.native_value(Native::AsyncGeneratorFunction),
-            "prototype",
+        self.set_builtin_value_named(
             async_generator_function_proto,
+            "constructor",
+            self.native_value(Native::AsyncGeneratorFunction),
         )?;
+        for (native, prototype, name) in [
+            (Native::AsyncFunction, async_function_proto, "AsyncFunction"),
+            (
+                Native::GeneratorFunction,
+                generator_function_proto,
+                "GeneratorFunction",
+            ),
+            (
+                Native::AsyncGeneratorFunction,
+                async_generator_function_proto,
+                "AsyncGeneratorFunction",
+            ),
+        ] {
+            let constructor = self.native_value(native);
+            self.set_builtin_function_name(constructor, name)?;
+            self.object_data_mut(constructor)
+                .expect("function constructor")
+                .proto = self.native_value(Native::Function);
+            self.set_builtin_value_named(constructor, "prototype", prototype)?;
+            let prototype_atom = self.intern_atom("prototype");
+            self.set_property_attributes(
+                constructor,
+                PropertyKey::string(prototype_atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         self.set_named(
             program,
             self.iterator_proto,
@@ -147,6 +159,18 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn install_iterator_self(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        let prototype_atom = self.intern_atom("prototype");
+        for (native, tag) in [
+            (Native::AsyncFunction, "AsyncFunction"),
+            (Native::GeneratorFunction, "GeneratorFunction"),
+            (Native::AsyncGeneratorFunction, "AsyncGeneratorFunction"),
+        ] {
+            let constructor = self.native_value(native);
+            let prototype = self
+                .own_property(constructor, prototype_atom)
+                .unwrap_or(self.object_proto);
+            self.install_builtin_to_string_tag(prototype, tag)?;
+        }
         self.array_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
