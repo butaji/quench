@@ -99,6 +99,10 @@ const NATIVES: &[Native] = &[
     Native::AtomicsExchange,
     Native::AtomicsCompareExchange,
     Native::AtomicsIsLockFree,
+    Native::AtomicsNotify,
+    Native::AtomicsWait,
+    Native::AtomicsWaitAsync,
+    Native::AtomicsPause,
     Native::Uint8Array,
     Native::Uint8ClampedArray,
     Native::Uint16Array,
@@ -363,6 +367,10 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::Symbol(Some(format!("Symbol.{name}").into())));
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
+        }
+        let atomics_name = self.intern_atom("Atomics");
+        if let Some(atomics) = self.own_property(self.realm.globals, atomics_name) {
+            self.install_builtin_to_string_tag(atomics, "Atomics")?;
         }
         for (prototype, tag) in [
             (self.map_proto, "Map"),

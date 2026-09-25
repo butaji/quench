@@ -99,6 +99,10 @@ pub(crate) enum Native {
     AtomicsExchange,
     AtomicsCompareExchange,
     AtomicsIsLockFree,
+    AtomicsNotify,
+    AtomicsWait,
+    AtomicsWaitAsync,
+    AtomicsPause,
     Uint8Array,
     Uint8ClampedArray,
     Uint16Array,
@@ -391,6 +395,10 @@ impl Native {
                 | Self::AtomicsExchange
                 | Self::AtomicsCompareExchange
                 | Self::AtomicsIsLockFree
+                | Self::AtomicsNotify
+                | Self::AtomicsWait
+                | Self::AtomicsWaitAsync
+                | Self::AtomicsPause
         )
     }
     pub(crate) fn is_data_view_native(self) -> bool {
