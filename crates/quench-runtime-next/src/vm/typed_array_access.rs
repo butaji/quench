@@ -310,6 +310,9 @@ impl<H: Host> Vm<H> {
             }
             bytes
         });
+        if index >= self.typed_array_length(object).unwrap_or(0) {
+            return Ok(true);
+        }
         if self.array_buffer_out_of_bounds(buffer, offset, kind.width() * (index + 1)) {
             return Err(JsError(
                 "typed array backing buffer is out of bounds".into(),
