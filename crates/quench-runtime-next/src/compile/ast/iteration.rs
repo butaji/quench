@@ -1,4 +1,41 @@
 use super::*;
+use oxc_ast_visit::{Visit, walk};
+use oxc_syntax::scope::ScopeFlags;
+
+struct IterationClosureFinder(bool);
+
+impl<'a> Visit<'a> for IterationClosureFinder {
+    fn visit_function(&mut self, _: &oxc_ast::ast::Function<'a>, _: ScopeFlags) {
+        self.0 = true;
+    }
+
+    fn visit_arrow_function_expression(&mut self, _: &oxc_ast::ast::ArrowFunctionExpression<'a>) {
+        self.0 = true;
+    }
+
+    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+        if matches!(&call.callee, oxc_ast::ast::Expression::Identifier(identifier) if identifier.name == "eval")
+        {
+            self.0 = true;
+        } else {
+            walk::walk_call_expression(self, call);
+        }
+    }
+}
+
+fn iteration_may_capture_bindings(
+    left: &ForStatementLeft<'_>,
+    right: &Expression<'_>,
+    body: &Statement<'_>,
+) -> bool {
+    let mut finder = IterationClosureFinder(false);
+    if let ForStatementLeft::VariableDeclaration(declaration) = left {
+        finder.visit_variable_declaration(declaration);
+    }
+    finder.visit_expression(right);
+    finder.visit_statement(body);
+    finder.0
+}
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn for_of_statement(&mut self, item: &ForOfStatement<'_>) {
@@ -18,7 +55,15 @@ impl FunctionCompiler<'_, '_> {
         }
         let scoped = self.push_iteration_scope(&item.left);
         let source = self.expression(&item.right);
-        self.for_iterable(&item.left, &item.body, source, item.r#await, label);
+        let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body);
+        self.for_iterable(
+            &item.left,
+            &item.body,
+            source,
+            item.r#await,
+            clone_environment,
+            label,
+        );
         if scoped {
             self.lexical_scopes.pop();
         }
@@ -49,7 +94,15 @@ impl FunctionCompiler<'_, '_> {
             this,
             crate::bytecode::ImmediateLayout::call_immediate(base, 1, false, false),
         );
-        self.for_iterable(&item.left, &item.body, source, false, label);
+        let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body);
+        self.for_iterable(
+            &item.left,
+            &item.body,
+            source,
+            false,
+            clone_environment,
+            label,
+        );
         if scoped {
             self.lexical_scopes.pop();
         }
@@ -61,6 +114,7 @@ impl FunctionCompiler<'_, '_> {
         body: &Statement<'_>,
         source: Register,
         await_values: bool,
+        clone_environment: bool,
         label: Option<Atom>,
     ) {
         let iterator_atom = self.hidden_local("\0rqj:for-of:iterator");
@@ -143,11 +197,13 @@ impl FunctionCompiler<'_, '_> {
             iterator: iterator_atom,
             control_depth: self.controls.len(),
         });
-        if matches!(
-            left,
-            ForStatementLeft::VariableDeclaration(declaration)
-                if declaration.kind != VariableDeclarationKind::Var
-        ) {
+        if clone_environment
+            && matches!(
+                left,
+                ForStatementLeft::VariableDeclaration(declaration)
+                    if declaration.kind != VariableDeclarationKind::Var
+            )
+        {
             self.emit(Op::CloneEnv, 0, 0, 0, 0);
         }
         self.bind_for_of_left(left, value);
