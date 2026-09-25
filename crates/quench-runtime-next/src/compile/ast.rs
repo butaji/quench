@@ -85,6 +85,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) next_reg: Register,
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
+    function_scope: FxHashSet<Atom>,
     pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
     pub(super) function_id: u32,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
@@ -126,6 +127,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     pub(super) fn new(
         owner: &'a mut Compiler<'b>,
         locals: Vec<Atom>,
+        function_scope: FxHashSet<Atom>,
         scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
         function_id: u32,
         super_flags: (bool, bool),
@@ -154,6 +156,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             next_reg: 0,
             max_reg: 0,
             local_slots,
+            function_scope,
             scopes,
             function_id,
             handlers: vec![],
@@ -751,7 +754,17 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         if self.dynamic_eval {
             return Vec::new();
         }
-        let mut scope = (*self.local_slots).clone();
+        let mut scope: FxHashMap<Atom, u16> = self
+            .function_scope
+            .iter()
+            .filter_map(|atom| self.local_slots.get(atom).map(|slot| (*atom, *slot)))
+            .collect();
+        scope.extend(
+            self.local_slots
+                .iter()
+                .filter(|(atom, _)| self.is_compiler_binding(**atom))
+                .map(|(atom, slot)| (*atom, *slot)),
+        );
         if self.parameter_context {
             scope.retain(|_, slot| {
                 usize::from(*slot) < self.parameter_local_count
