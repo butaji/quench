@@ -578,13 +578,20 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .map_or(0, |register| register + 1);
     }
 
-    fn resolve_lexical(&self, atom: Atom) -> Atom {
+    fn active_lexical_binding(&self, atom: Atom) -> Option<Atom> {
         self.lexical_scopes
             .iter()
             .rev()
             .filter(|scope| self.with_depth == 0 || scope.with_depth >= self.with_depth)
             .find_map(|scope| scope.bindings.get(&atom).copied())
-            .unwrap_or(atom)
+    }
+
+    fn resolve_lexical(&self, atom: Atom) -> Atom {
+        self.active_lexical_binding(atom).unwrap_or(atom)
+    }
+
+    fn is_compiler_binding(&self, atom: Atom) -> bool {
+        self.owner.atoms[atom as usize].starts_with('\0')
     }
 
     pub(super) fn needs_strict_global_reference_capture(&mut self, atom: Atom) -> bool {

@@ -168,14 +168,18 @@ impl FunctionCompiler<'_, '_> {
         destination
     }
     pub(crate) fn load_atom(&mut self, atom: Atom) -> Register {
-        let atom = self.resolve_lexical(atom);
+        let compiler_binding = self.is_compiler_binding(atom);
+        let lexical = self.active_lexical_binding(atom);
+        let atom = lexical.unwrap_or(atom);
         let dst = self.reg();
         if self.parameter_context
             && atom == self.owner.atom("arguments")
             && let Some(slot) = self.parameter_arguments_slot
         {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
-        } else if self.with_depth == self.inherited_with_depth
+        } else if (self.with_depth == self.inherited_with_depth
+            || lexical.is_some()
+            || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
@@ -222,7 +226,9 @@ impl FunctionCompiler<'_, '_> {
                 .iter()
                 .rev()
                 .any(|scope| scope.immutable.contains(&source_atom));
-        let atom = self.resolve_lexical(atom);
+        let compiler_binding = self.is_compiler_binding(source_atom);
+        let lexical = self.active_lexical_binding(source_atom);
+        let atom = lexical.unwrap_or(source_atom);
         if self.owner.atoms[atom as usize]
             .as_ref()
             .contains("\0rqj:class-binding:")
@@ -234,7 +240,10 @@ impl FunctionCompiler<'_, '_> {
             self.throw_immutable_binding(atom);
             return;
         }
-        if (self.with_depth == self.inherited_with_depth || initializing)
+        if (self.with_depth == self.inherited_with_depth
+            || lexical.is_some()
+            || compiler_binding
+            || initializing)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             self.emit(
@@ -667,8 +676,13 @@ impl FunctionCompiler<'_, '_> {
         self.emit_binary(value.operator as u32, left, right)
     }
     fn local_operand(&mut self, name: &str) -> Option<Operand> {
-        let atom = self.owner.atom(name);
-        let atom = self.resolve_lexical(atom);
+        let source = self.owner.atom(name);
+        let compiler_binding = self.is_compiler_binding(source);
+        let lexical = self.active_lexical_binding(source);
+        if lexical.is_none() && !compiler_binding && self.with_depth != self.inherited_with_depth {
+            return None;
+        }
+        let atom = lexical.unwrap_or(source);
         self.local_slots.get(&atom).copied().map(Operand::local)
     }
 
