@@ -287,7 +287,10 @@ impl<H: Host> Vm<H> {
                     if atom == self.length_atom {
                         return Ok(Value::number(v.units().len() as f64));
                     }
-                    return self.get_property_with_receiver(p, self.string_proto, atom, object);
+                    let prototype = self
+                        .primitive_prototype(object)
+                        .unwrap_or(self.string_proto);
+                    return self.get_property_with_receiver(p, prototype, atom, object);
                 }
                 Some(Cell::Symbol(description)) => {
                     let description = description.clone();

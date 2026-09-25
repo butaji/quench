@@ -217,18 +217,15 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
-        let (constructor, marker) = match self.heap.get(value) {
-            Some(Cell::String(_)) => (Native::String, "\0rqj:string-value"),
-            Some(Cell::Symbol(_)) => (Native::Symbol, "\0rqj:symbol-value"),
-            Some(Cell::BigInt(_)) => (Native::BigInt, "\0rqj:bigint-value"),
-            _ if value.as_number().is_some() => (Native::Number, "\0rqj:number-value"),
-            _ if value.as_bool().is_some() => (Native::Boolean, "\0rqj:boolean-value"),
+        let marker = match self.heap.get(value) {
+            Some(Cell::String(_)) => "\0rqj:string-value",
+            Some(Cell::Symbol(_)) => "\0rqj:symbol-value",
+            Some(Cell::BigInt(_)) => "\0rqj:bigint-value",
+            _ if value.as_number().is_some() => "\0rqj:number-value",
+            _ if value.as_bool().is_some() => "\0rqj:boolean-value",
             _ => return Ok(self.object()),
         };
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self
-            .own_property(self.native_value(constructor), prototype_atom)
-            .unwrap_or(self.object_proto);
+        let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
             for (index, unit) in text.units().iter().copied().enumerate() {
@@ -289,16 +286,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.global(program, "globalThis", self.realm.globals)?;
         let function = self.native_value(Native::Function);
-        self.set_named(program, function, "prototype", self.function_proto)?;
-        self.set_named(program, self.function_proto, "constructor", function)?;
-        self.set_named(
-            program,
+        self.set_builtin_value_named(function, "prototype", self.function_proto)?;
+        self.set_builtin_value_named(self.function_proto, "constructor", function)?;
+        self.set_builtin_value_named(
             self.function_proto,
             "length",
             Value::number(FUNCTION_PROTOTYPE_LENGTH),
         )?;
         let length = self.intern_atom("length");
-        self.set_named(program, function, "length", Value::number(1.0))?;
+        self.set_builtin_value_named(function, "length", Value::number(1.0))?;
         self.set_property_attributes(
             function,
             PropertyKey::string(length),
@@ -314,8 +310,8 @@ impl<H: Host> Vm<H> {
         self.global(program, "Function", function)?;
         let symbol = self.native_value(Native::Symbol);
         let symbol_prototype = self.object();
-        self.set_named(program, symbol, "prototype", symbol_prototype)?;
-        self.set_named(program, symbol_prototype, "constructor", symbol)?;
+        self.set_builtin_value_named(symbol, "prototype", symbol_prototype)?;
+        self.set_builtin_value_named(symbol_prototype, "constructor", symbol)?;
         self.set_named(
             program,
             symbol_prototype,
@@ -325,8 +321,8 @@ impl<H: Host> Vm<H> {
         for native in [Native::String, Native::Number] {
             let constructor = self.native_value(native);
             let prototype = self.object();
-            self.set_named(program, constructor, "prototype", prototype)?;
-            self.set_named(program, prototype, "constructor", constructor)?;
+            self.set_builtin_value_named(constructor, "prototype", prototype)?;
+            self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let value_of = match native {
                 Native::String => Native::StringValueOf,
                 Native::Number => Native::NumberValueOf,
@@ -336,8 +332,8 @@ impl<H: Host> Vm<H> {
         }
         let boolean = self.native_value(Native::Boolean);
         let boolean_prototype = self.object();
-        self.set_named(program, boolean, "prototype", boolean_prototype)?;
-        self.set_named(program, boolean_prototype, "constructor", boolean)?;
+        self.set_builtin_value_named(boolean, "prototype", boolean_prototype)?;
+        self.set_builtin_value_named(boolean_prototype, "constructor", boolean)?;
         self.set_named(
             program,
             boolean_prototype,
@@ -353,8 +349,8 @@ impl<H: Host> Vm<H> {
         self.global(program, "Boolean", boolean)?;
         let bigint = self.native_value(Native::BigInt);
         let bigint_prototype = self.object();
-        self.set_named(program, bigint, "prototype", bigint_prototype)?;
-        self.set_named(program, bigint_prototype, "constructor", bigint)?;
+        self.set_builtin_value_named(bigint, "prototype", bigint_prototype)?;
+        self.set_builtin_value_named(bigint_prototype, "constructor", bigint)?;
         self.set_named(
             program,
             bigint_prototype,
@@ -708,6 +704,18 @@ impl<H: Host> Vm<H> {
             self.set_named(program, object, name, method)?;
         }
         self.set_named(program, global, "Object", object)?;
+        for (name, native) in [
+            ("Number", Native::Number),
+            ("String", Native::String),
+            ("Boolean", Native::Boolean),
+            ("Symbol", Native::Symbol),
+        ] {
+            let constructor = self.native_with_realm(native, global, global);
+            let prototype = self.object();
+            self.set_builtin_value_named(constructor, "prototype", prototype)?;
+            self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            self.set_builtin_value_named(global, name, constructor)?;
+        }
         for (name, native) in [
             ("parseFloat", Native::NumberParseFloat),
             ("parseInt", Native::ParseInt),
