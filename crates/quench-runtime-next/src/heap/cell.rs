@@ -220,6 +220,7 @@ pub(crate) enum Native {
     MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, MathAcos, MathAsin, MathAtan, MathCos, MathExp, MathSin, MathTan, MathAtan2, NumberString, Number, NumberValueOf,
     NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, NumberParseFloat, GlobalIsNaN, GlobalIsFinite,
     NumberFixed,
+    NumberExponential,
     NumberPrecision,
     Promise,
     PromiseResolve,

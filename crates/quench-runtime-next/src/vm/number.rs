@@ -6,6 +6,7 @@ const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
 const BINARY_RADIX: u32 = 2;
 const OCTAL_RADIX: u32 = 8;
 const HEXADECIMAL_RADIX: u32 = 16;
+const MAX_NUMBER_FORMAT_DIGITS: usize = 100;
 
 pub(super) fn parse_number_string(text: &str) -> f64 {
     let text =
@@ -43,6 +44,12 @@ impl<H: Host> Vm<H> {
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
         self.set_builtin_named(program, prototype, "toFixed", Native::NumberFixed)?;
+        self.set_builtin_named(
+            program,
+            prototype,
+            "toExponential",
+            Native::NumberExponential,
+        )?;
         self.set_builtin_named(program, prototype, "toPrecision", Native::NumberPrecision)?;
         for (name, native) in [
             ("isNaN", Native::NumberIsNaN),
@@ -67,6 +74,48 @@ impl<H: Host> Vm<H> {
             self.set_named_constant(program, number, name, Value::number(value))?;
         }
         self.global(program, "Number", number)
+    }
+
+    pub(super) fn number_exponential(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let number = self.to_number(p, receiver)?;
+        let digits = match args.first().copied() {
+            None | Some(Value::UNDEFINED) => None,
+            Some(value) => {
+                let value = self.to_number(p, value)?;
+                let digits = if value.is_nan() || value == 0.0 {
+                    0
+                } else if !value.is_finite() || value.trunc() < 0.0 {
+                    return Err(self.range_error(p, "toExponential() argument out of range".into()));
+                } else {
+                    value.trunc() as usize
+                };
+                if digits > MAX_NUMBER_FORMAT_DIGITS {
+                    return Err(self.range_error(p, "toExponential() argument out of range".into()));
+                }
+                Some(digits)
+            }
+        };
+        let text = if number.is_nan() {
+            "NaN".to_owned()
+        } else if number.is_infinite() {
+            if number.is_sign_negative() {
+                "-Infinity".to_owned()
+            } else {
+                "Infinity".to_owned()
+            }
+        } else {
+            let scientific = match digits {
+                Some(digits) => format!("{number:.digits$e}"),
+                None => format!("{number:e}"),
+            };
+            normalize_exponent_sign(&scientific)
+        };
+        Ok(self.heap.alloc(Cell::String(text.into())))
     }
 
     pub(super) fn call_number_native(
@@ -114,6 +163,16 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("invalid Number native".into())),
         })
     }
+}
+
+fn normalize_exponent_sign(text: &str) -> String {
+    let Some((mantissa, exponent)) = text.split_once('e') else {
+        return text.to_owned();
+    };
+    let Ok(exponent) = exponent.parse::<i32>() else {
+        return text.to_owned();
+    };
+    format!("{mantissa}e{exponent:+}")
 }
 
 pub(super) fn parse_float(text: &str) -> f64 {
