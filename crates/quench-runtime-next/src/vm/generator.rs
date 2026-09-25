@@ -359,7 +359,14 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(*iterator)
         {
-            return self.return_from_async_from_sync(p, *generator, *source, value);
+            return self.return_from_async_from_sync(
+                p,
+                *generator,
+                *iterator,
+                *source,
+                destination.as_number().unwrap_or(0.0) as u16,
+                value,
+            );
         }
         self.async_generator_delegate(
             p,
@@ -560,7 +567,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         generator: Value,
+        adapter: Value,
         iterator: Value,
+        destination: u16,
         value: Value,
     ) -> Result<Value, JsError> {
         let promise = self.promise_object();
@@ -595,17 +604,20 @@ impl<H: Host> Vm<H> {
             self.fail_async_generator(p, generator, promise, error)?;
             return Ok(promise);
         }
-        let done_atom = self.intern_atom("done");
-        let done = self.get_property(p, result, done_atom)?;
-        let done = self.truthy(done);
-        let value_atom = self.intern_atom("value");
-        let result_value = self.get_property(p, result, value_atom)?;
-        if done {
-            self.close_generator(generator)?;
-        }
-        let result = self.iterator_result(result_value, done)?;
-        self.promise_resolve_value(p, promise, result)?;
-        Ok(promise)
+        let unwrapped = self.async_from_sync_result(p, adapter, result, false)?;
+        let env = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(vec![
+                generator,
+                Value::number(f64::from(destination)),
+                Value::FALSE,
+                Value::FALSE,
+                Value::TRUE,
+            ]),
+        });
+        let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
+        let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
+        self.promise_then(p, unwrapped, fulfilled, rejected)
     }
 
     fn close_suspended_iterators(
@@ -680,6 +692,7 @@ impl<H: Host> Vm<H> {
             }) => (*source, true),
             _ => (iterator, false),
         };
+        let async_from_sync = adapter;
         let name = if throwing { "throw" } else { "return" };
         let atom = self.intern_atom(name);
         let operation = (|| {
@@ -724,7 +737,10 @@ impl<H: Host> Vm<H> {
             // result and its `value` before async-generator delegation sees it.
             // Reuse the same adapter operation as ordinary `for await` steps.
             let (result, adapter) = if adapter {
-                (self.async_from_sync_result(p, result)?, false)
+                (
+                    self.async_from_sync_result(p, iterator, result, throwing)?,
+                    false,
+                )
             } else {
                 (result, false)
             };
@@ -736,6 +752,11 @@ impl<H: Host> Vm<H> {
                     Value::number(f64::from(destination)),
                     Value::number(if throwing { 1.0 } else { 0.0 }),
                     Value::number(if adapter { 1.0 } else { 0.0 }),
+                    if async_from_sync {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    },
                 ]),
             });
             let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
@@ -745,12 +766,21 @@ impl<H: Host> Vm<H> {
         match operation {
             Ok(promise) => Ok(promise),
             Err(error) => {
-                let promise = self.promise_object();
-                let reason = error
-                    .thrown_value()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
-                Ok(promise)
+                if async_from_sync {
+                    if let Some(record) = self.generator_record_mut(generator) {
+                        record.running = false;
+                        record.done = true;
+                        record.continuation = None;
+                    }
+                    let promise = self.promise_object();
+                    let reason = error
+                        .thrown_value()
+                        .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                    self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                    Ok(promise)
+                } else {
+                    self.resume_async_generator_with_throw(p, generator, error)
+                }
             }
         }
     }
@@ -767,7 +797,8 @@ impl<H: Host> Vm<H> {
         let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
             return Err(JsError("async delegate reaction state is invalid".into()));
         };
-        let [generator, destination, throwing, adapter] = elements.as_slice() else {
+        let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
+        else {
             return Err(JsError("async delegate reaction state is malformed".into()));
         };
         let (generator, destination, throwing, adapter) =
@@ -847,11 +878,26 @@ impl<H: Host> Vm<H> {
             .first()
             .copied()
             .ok_or_else(|| JsError("async delegate rejection state is malformed".into()))?;
-        self.resume_async_generator_with_throw(
-            p,
-            generator,
-            JsError::thrown(reason, "delegated async iterator rejected".into()),
-        )
+        let async_from_sync = elements.get(4).is_some_and(|value| self.truthy(*value));
+        let error = JsError::thrown(reason, "delegated async iterator rejected".into());
+        if async_from_sync {
+            self.fail_async_generator_delegate(generator, error)
+        } else {
+            self.resume_async_generator_with_throw(p, generator, error)
+        }
+    }
+
+    fn fail_async_generator_delegate(
+        &mut self,
+        generator: Value,
+        error: JsError,
+    ) -> Result<Value, JsError> {
+        if let Some(record) = self.generator_record_mut(generator) {
+            record.running = false;
+            record.done = true;
+            record.continuation = None;
+        }
+        Err(error)
     }
 
     fn resume_async_generator_with_throw(

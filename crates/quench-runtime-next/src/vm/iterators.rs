@@ -423,46 +423,122 @@ impl<H: Host> Vm<H> {
         if !async_from_sync {
             return Ok(result);
         }
-        self.async_from_sync_result(p, result)
+        self.async_from_sync_result(p, iterator, result, true)
     }
 
     pub(super) fn async_from_sync_result(
         &mut self,
         p: &ResidualProgram,
+        iterator: Value,
         result: Value,
+        close_on_rejection: bool,
     ) -> Result<Value, JsError> {
+        if !self.is_object_like(result) {
+            let error =
+                self.type_error(p, "async-from-sync iterator result is not an object".into());
+            return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
+        }
         let value_atom = self.intern_atom("value");
         let done_atom = self.intern_atom("done");
-        let done = self.get_property(p, result, done_atom)?;
-        let value = self.get_property(p, result, value_atom)?;
+        let done = match self.get_property(p, result, done_atom) {
+            Ok(done) => done,
+            Err(error) => {
+                return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
+            }
+        };
+        let done = self.truthy(done);
+        let value = match self.get_property(p, result, value_atom) {
+            Ok(value) => value,
+            Err(error) => {
+                return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
+            }
+        };
         let value_promise = match self.promise_for_value(p, value) {
             Ok(promise) => promise,
             Err(error) => {
-                let promise = self.promise_object();
-                let reason = error
-                    .thrown_value()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
-                return Ok(promise);
+                return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
             }
         };
-        let continuation = self.native_with_env(
-            Native::AsyncFromSyncValue,
-            if self.truthy(done) {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            },
-        );
-        self.promise_then(p, value_promise, continuation, Value::UNDEFINED)
+        let env = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(vec![
+                if done { Value::TRUE } else { Value::FALSE },
+                iterator,
+                if close_on_rejection {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            ]),
+        });
+        let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
+        let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
+        self.promise_then(p, value_promise, fulfilled, rejected)
     }
 
     pub(super) fn async_from_sync_value(&mut self, args: &[Value]) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let done = self
-            .active_native_env()
-            .is_some_and(|done| self.truthy(done));
+        let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
+        let (done, iterator) = match self.heap.get(env) {
+            Some(Cell::Array { elements, .. }) => (
+                elements.first().is_some_and(|done| self.truthy(*done)),
+                elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+            ),
+            _ => (false, Value::UNDEFINED),
+        };
+        if done {
+            if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(iterator) {
+                *done = true;
+            }
+        }
         self.iterator_result(value, done)
+    }
+
+    pub(super) fn async_from_sync_value_rejected(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let reason = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
+        let (iterator, close_on_rejection) = match self.heap.get(env) {
+            Some(Cell::Array { elements, .. }) => (
+                elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+                elements.get(2).is_some_and(|close| self.truthy(*close)),
+            ),
+            _ => (Value::UNDEFINED, false),
+        };
+        if close_on_rejection {
+            let _ = self.iterator_close(p, iterator);
+            if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(iterator) {
+                *done = true;
+            }
+        }
+        Err(JsError::thrown(
+            reason,
+            "async-from-sync value rejected".into(),
+        ))
+    }
+
+    fn async_from_sync_reject(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+        error: JsError,
+        close: bool,
+    ) -> Result<Value, JsError> {
+        if close {
+            let _ = self.iterator_close(p, iterator);
+            if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(iterator) {
+                *done = true;
+            }
+        }
+        let reason = error
+            .thrown_value()
+            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+        let promise = self.promise_object();
+        self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+        Ok(promise)
     }
 
     pub(super) fn iterator_next_with_args(
@@ -506,7 +582,7 @@ impl<H: Host> Vm<H> {
             if !self.is_object_like(result) {
                 return Err(self.type_error(p, "iterator next result is not an object".into()));
             }
-            return self.async_from_sync_result(p, result);
+            return self.async_from_sync_result(p, this, result, true);
         }
         let selected = match kind {
             IteratorKind::Array

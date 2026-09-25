@@ -66,6 +66,9 @@ impl<H: Host> Vm<H> {
         if native == Native::AsyncFromSyncValue {
             return self.async_from_sync_value(args);
         }
+        if native == Native::AsyncFromSyncValueRejected {
+            return self.async_from_sync_value_rejected(p, args);
+        }
         if native == Native::AsyncGeneratorReturnResult {
             return self.iterator_result(args.first().copied().unwrap_or(Value::UNDEFINED), true);
         }
