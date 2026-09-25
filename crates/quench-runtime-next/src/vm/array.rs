@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+
 pub(super) fn normalized_array_values(elements: &[Value]) -> Vec<Value> {
     elements
         .iter()
@@ -267,40 +269,98 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn array_push_native(
         &mut self,
+        p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
-            return Err(JsError("push receiver is not array".into()));
-        };
-        let mut length = self.heap.sparse_length(this).unwrap_or(elements.len());
-        if !args.is_empty() {
-            self.check_array_mutation(this, false, true, false)?;
-        }
-        for value in args {
-            self.set_array_element(this, length, *value);
-            length += 1;
-        }
-        Ok(Value::number(length as f64))
+        self.array_push_with_array_like_semantics(p, this, args)
     }
 
-    pub(super) fn array_pop_native(&mut self, this: Value) -> Result<Value, JsError> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
-            return Err(JsError("pop receiver is not array".into()));
-        };
-        let dense_len = elements.len();
-        if self.heap.sparse_length(this).unwrap_or(dense_len) > 0 {
-            self.check_array_mutation(this, false, false, true)?;
+    fn array_push_with_array_like_semantics(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let object = self.box_object(this)?;
+        let length = self.array_like_length(p, object)?;
+        let final_length = length
+            .checked_add(args.len())
+            .filter(|length| *length as f64 <= MAX_SAFE_INTEGER)
+            .ok_or_else(|| self.type_error(p, "array-like length exceeds safe integer".into()))?;
+        for (offset, value) in args.iter().copied().enumerate() {
+            self.set_index_mode(
+                p,
+                object,
+                Value::number((length + offset) as f64),
+                value,
+                true,
+            )?;
         }
-        if self.heap.sparse_length(this).is_some() {
-            return Ok(self.heap.sparse_pop(this, dense_len));
+        self.set_array_like_length(p, object, final_length)?;
+        Ok(Value::number(final_length as f64))
+    }
+
+    pub(super) fn array_pop_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        self.array_pop_with_array_like_semantics(p, this)
+    }
+
+    fn array_pop_with_array_like_semantics(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let object = self.box_object(this)?;
+        let length = self.array_like_length(p, object)?;
+        if length == 0 {
+            self.set_array_like_length(p, object, 0)?;
+            return Ok(Value::UNDEFINED);
         }
-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) else {
-            unreachable!()
-        };
-        Ok(super::index::mutable_array_elements(elements)
-            .pop()
-            .unwrap_or(Value::UNDEFINED))
+        let last = length - 1;
+        let value = self.get_index(p, object, Value::number(last as f64))?;
+        let deleted = self.object_delete_property(p, &[object, Value::number(last as f64)])?;
+        if !self.truthy(deleted) {
+            return Err(self.type_error(p, "cannot delete array-like element".into()));
+        }
+        self.set_array_like_length(p, object, last)?;
+        Ok(value)
+    }
+
+    fn set_array_like_length(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        length: usize,
+    ) -> Result<(), JsError> {
+        let atom = self.intern_atom("length");
+        if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && !self
+                .object_data(object)
+                .is_some_and(Object::is_arguments_object)
+        {
+            if self
+                .property_attributes(object, PropertyKey::string(atom))
+                .is_some_and(|attributes| !attributes.writable)
+            {
+                return Err(self.type_error(p, "array length is not writable".into()));
+            }
+            let descriptor = self.object();
+            let value = self.intern_atom("value");
+            self.set_property(descriptor, value, Value::number(length as f64))?;
+            self.define_array_length(p, object, descriptor)?;
+            return Ok(());
+        }
+        let success =
+            self.set_property_with_receiver(p, object, atom, Value::number(length as f64), object)?;
+        if success {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "cannot set array-like length".into()))
+        }
     }
 
     pub(super) fn array_slice_native(
@@ -309,40 +369,102 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let elements = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => Rc::clone(elements),
-            _ => return Err(JsError("slice receiver is not array".into())),
-        };
-        let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-        let mut relative = |value: Value| -> Result<usize, JsError> {
-            let number = self.to_number(p, value)?;
-            if number.is_nan() {
-                return Ok(0);
-            }
-            if number.is_infinite() {
-                return Ok(if number.is_sign_negative() { 0 } else { length });
-            }
-            let number = number.trunc();
-            if number.is_sign_negative() {
-                Ok(length.saturating_sub((-number) as usize))
-            } else {
-                Ok((number as usize).min(length))
-            }
-        };
-        let start = relative(args.first().copied().unwrap_or(Value::number(0.0)))?;
+        let object = self.box_object(this)?;
+        let length = self.array_like_length(p, object)?;
+        let start = args
+            .first()
+            .copied()
+            .filter(|value| !value.is_undefined())
+            .map(|value| self.array_relative_index(p, value, length))
+            .transpose()?
+            .unwrap_or(0);
         let end = args
             .get(1)
             .copied()
-            .map(relative)
+            .filter(|value| !value.is_undefined())
+            .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(length);
-        let values = (start.min(end)..end)
-            .map(|index| self.array_value_at(this, index))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+        let count = end.saturating_sub(start);
+        if count > MAX_ARRAY_LENGTH {
+            return Err(self.range_error(p, "invalid array length".into()));
+        }
+        let result = self.array_species_create(p, object, count)?;
+        for (destination, source) in (start..end).enumerate() {
+            let key = Value::number(source as f64);
+            if self.has_property(p, object, key)? {
+                let value = self.get_index(p, object, key)?;
+                self.create_data_property_or_throw(p, result, destination, value)?;
+            }
+        }
+        Ok(result)
+    }
+
+    fn array_species_create(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        length: usize,
+    ) -> Result<Value, JsError> {
+        let mut constructor = if self.is_array(p, source)? {
+            let atom = self.intern_atom("constructor");
+            self.get_property(p, source, atom)?
+        } else {
+            Value::UNDEFINED
+        };
+        if self.is_object_like(constructor) {
+            let species = self
+                .well_known_symbols
+                .get("species")
+                .copied()
+                .ok_or_else(|| JsError("Symbol.species is not initialized".into()))?;
+            constructor = self.get_index(p, constructor, species)?;
+            if constructor.is_null() {
+                constructor = Value::UNDEFINED;
+            }
+        }
+        if constructor.is_undefined() {
+            constructor = self.native_value(Native::Array);
+        }
+        if !self.is_constructable(p, constructor) {
+            return Err(self.type_error(p, "array species is not a constructor".into()));
+        }
+        self.construct_value(p, constructor, &[Value::number(length as f64)])
+    }
+
+    fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
+        match self.heap.get(value) {
+            Some(Cell::Array { .. }) => Ok(true),
+            Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
+                Err(self.type_error(p, "revoked proxy".into()))
+            }
+            Some(Cell::Proxy { target, .. }) => self.is_array(p, *target),
+            _ => Ok(false),
+        }
+    }
+
+    fn array_relative_index(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        length: usize,
+    ) -> Result<usize, JsError> {
+        let number = self.to_number(p, value)?;
+        if number.is_nan() || number == 0.0 {
+            return Ok(0);
+        }
+        if number == f64::NEG_INFINITY {
+            return Ok(0);
+        }
+        if number == f64::INFINITY {
+            return Ok(length);
+        }
+        let integer = number.trunc();
+        Ok(if integer.is_sign_negative() {
+            length.saturating_sub((-integer) as usize)
+        } else {
+            (integer as usize).min(length)
+        })
     }
 
     pub(super) fn array_includes_native(

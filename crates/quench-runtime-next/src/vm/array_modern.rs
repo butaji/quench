@@ -453,7 +453,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn create_data_property_or_throw(
+    pub(super) fn create_data_property_or_throw(
         &mut self,
         p: &ResidualProgram,
         target: Value,
