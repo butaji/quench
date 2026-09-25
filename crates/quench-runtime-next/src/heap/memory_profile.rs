@@ -179,6 +179,7 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::WeakRef { .. } => 0,
         Cell::FinalizationRegistry { .. } => 0,
         Cell::Iterator { .. } | Cell::Proxy { .. } => 0,
+        Cell::ArrayFromAsyncState(_) => 0,
         Cell::Environment {
             slots,
             with_objects,
