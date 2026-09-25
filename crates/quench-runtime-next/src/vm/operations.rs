@@ -319,7 +319,9 @@ impl<H: Host> Vm<H> {
             | Native::ArrayToSpliced
             | Native::ArraySort
             | Native::ArrayToSorted
-            | Native::ArrayToString => self.array_modern_native(p, native, this, args),
+            | Native::ArrayToString
+            | Native::ArrayToLocaleString
+            | Native::ArraySpecies => self.array_modern_native(p, native, this, args),
             Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
                 self.array_iterator_native(native, this)
             }

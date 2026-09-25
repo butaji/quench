@@ -61,7 +61,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayToSpliced,
     Native::ArraySort,
     Native::ArrayToSorted,
-    Native::ArrayToString,
+    Native::ArrayToString, Native::ArrayToLocaleString, Native::ArraySpecies,
     Native::ArrayKeys,
     Native::ArrayValues,
     Native::ArrayEntries,
@@ -344,6 +344,8 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }
+        self.install_array_species()?;
+        self.install_array_unscopables()?;
         self.install_abstract_module_source(program)?;
         self.install_array_buffer_species(program)?;
         self.global(program, "Symbol", symbol)?;
@@ -650,7 +652,38 @@ impl<H: Host> Vm<H> {
         name: &str,
         native: Native,
     ) -> Result<(), JsError> {
-        self.set_builtin_value_named(object, name, self.native_value(native))
+        let function = self.native_value(native);
+        self.set_builtin_function_name(function, name)?;
+        self.set_builtin_value_named(object, name, function)
+    }
+
+    pub(super) fn set_builtin_function_name(
+        &mut self,
+        function: Value,
+        name: &str,
+    ) -> Result<(), JsError> {
+        let atom = self.intern_atom("name");
+        let current = self.own_property(function, atom);
+        if current.is_some_and(|value| {
+            !matches!(self.heap.get(value), Some(Cell::String(text)) if text.units().is_empty())
+        }) {
+            return Ok(());
+        }
+        let value = self.heap.alloc(Cell::String(JsString::from_str(name)));
+        self.set_property(function, atom, value)?;
+        self.set_property_attributes(
+            function,
+            PropertyKey::string(atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
     }
 
     pub(super) fn set_builtin_value_named(
