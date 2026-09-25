@@ -1,7 +1,5 @@
 use super::*;
 
-const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
-
 impl<H: Host> Vm<H> {
     pub(super) fn array_length(&self, array: Value) -> Option<usize> {
         match self.heap.get(array) {
@@ -426,7 +424,7 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
-    fn set_array_like_length(
+    pub(super) fn set_array_like_length(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -540,6 +538,13 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
         match self.heap.get(value) {
+            Some(Cell::Array { .. })
+                if self
+                    .object_data(value)
+                    .is_some_and(Object::is_arguments_object) =>
+            {
+                Ok(false)
+            }
             Some(Cell::Array { .. }) => Ok(true),
             Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
                 Err(self.type_error(p, "revoked proxy".into()))

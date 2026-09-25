@@ -14,6 +14,7 @@ use std::rc::Rc;
 
 const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
 pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 pub(crate) mod activation;
 mod activation_lifecycle;
