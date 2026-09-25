@@ -144,6 +144,15 @@ pub(crate) enum Native {
     DataViewSetFloat32,
     DataViewGetFloat64,
     DataViewSetFloat64,
+    DataViewGetFloat16,
+    DataViewSetFloat16,
+    DataViewGetBigInt64,
+    DataViewSetBigInt64,
+    DataViewGetBigUint64,
+    DataViewSetBigUint64,
+    DataViewBufferGetter,
+    DataViewByteLengthGetter,
+    DataViewByteOffsetGetter,
     Map,
     MapGet,
     MapSet,
@@ -428,6 +437,15 @@ impl Native {
                 | Self::DataViewSetFloat32
                 | Self::DataViewGetFloat64
                 | Self::DataViewSetFloat64
+                | Self::DataViewGetFloat16
+                | Self::DataViewSetFloat16
+                | Self::DataViewGetBigInt64
+                | Self::DataViewSetBigInt64
+                | Self::DataViewGetBigUint64
+                | Self::DataViewSetBigUint64
+                | Self::DataViewBufferGetter
+                | Self::DataViewByteLengthGetter
+                | Self::DataViewByteOffsetGetter
         )
     }
 

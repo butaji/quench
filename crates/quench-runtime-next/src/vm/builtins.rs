@@ -144,6 +144,15 @@ const NATIVES: &[Native] = &[
     Native::DataViewSetFloat32,
     Native::DataViewGetFloat64,
     Native::DataViewSetFloat64,
+    Native::DataViewGetFloat16,
+    Native::DataViewSetFloat16,
+    Native::DataViewGetBigInt64,
+    Native::DataViewSetBigInt64,
+    Native::DataViewGetBigUint64,
+    Native::DataViewSetBigUint64,
+    Native::DataViewBufferGetter,
+    Native::DataViewByteLengthGetter,
+    Native::DataViewByteOffsetGetter,
     Native::Map,
     Native::MapGet,
     Native::MapSet,
@@ -385,6 +394,9 @@ impl<H: Host> Vm<H> {
         let boolean = self.native_value(Native::Boolean);
         let boolean_prototype = self.get_property(program, boolean, prototype_atom)?;
         self.install_builtin_to_string_tag(boolean_prototype, "Boolean")?;
+        let data_view = self.native_value(Native::DataView);
+        let data_view_prototype = self.get_property(program, data_view, prototype_atom)?;
+        self.install_builtin_to_string_tag(data_view_prototype, "DataView")?;
         for (prototype, tag) in [
             (self.map_proto, "Map"),
             (self.set_proto, "Set"),

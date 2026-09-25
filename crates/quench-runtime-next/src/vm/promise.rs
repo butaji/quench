@@ -230,6 +230,32 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::BigInt => 1.0,
         Native::Boolean => 1.0,
         Native::BooleanToString | Native::BooleanValueOf => 0.0,
+        Native::DataView => 1.0,
+        Native::DataViewGetBigInt64
+        | Native::DataViewGetBigUint64
+        | Native::DataViewGetFloat16
+        | Native::DataViewGetFloat32
+        | Native::DataViewGetFloat64
+        | Native::DataViewGetInt8
+        | Native::DataViewGetInt16
+        | Native::DataViewGetInt32
+        | Native::DataViewGetUint8
+        | Native::DataViewGetUint16
+        | Native::DataViewGetUint32 => 1.0,
+        Native::DataViewSetBigInt64
+        | Native::DataViewSetBigUint64
+        | Native::DataViewSetFloat16
+        | Native::DataViewSetFloat32
+        | Native::DataViewSetFloat64
+        | Native::DataViewSetInt8
+        | Native::DataViewSetInt16
+        | Native::DataViewSetInt32
+        | Native::DataViewSetUint8
+        | Native::DataViewSetUint16
+        | Native::DataViewSetUint32 => 2.0,
+        Native::DataViewBufferGetter
+        | Native::DataViewByteLengthGetter
+        | Native::DataViewByteOffsetGetter => 0.0,
         Native::BigIntAsIntN | Native::BigIntAsUintN => 2.0,
         Native::BigIntValueOf | Native::BigIntToString => 0.0,
         Native::SuppressedError => 3.0,

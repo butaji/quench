@@ -748,6 +748,11 @@ impl<H: Host> Vm<H> {
         self.install_boolean_for_realm(program, global, object_prototype, boolean)?;
         let bigint = self.native_with_realm(Native::BigInt, global, global);
         self.install_bigint_for_realm(program, global, object_prototype, bigint)?;
+        let data_view = self.native_with_realm(Native::DataView, global, global);
+        let data_view_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.install_data_view_for_realm(program, global, data_view, data_view_prototype)?;
         let realm_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));

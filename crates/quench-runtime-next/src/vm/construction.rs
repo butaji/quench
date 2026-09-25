@@ -570,14 +570,18 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.intern_atom("prototype");
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
-            if native != Native::Boolean {
+            let Some(intrinsic) = (match native {
+                Native::Boolean => Some("Boolean"),
+                Native::DataView => Some("DataView"),
+                _ => None,
+            }) else {
                 return Ok(());
-            }
+            };
             let realm = match self.heap.get(new_target) {
                 Some(Cell::Function { realm, .. }) => *realm,
                 _ => self.realm.globals,
             };
-            let constructor_atom = self.intern_atom("Boolean");
+            let constructor_atom = self.intern_atom(intrinsic);
             let constructor = self.get_property(p, realm, constructor_atom)?;
             let prototype = self.get_property(p, constructor, prototype_atom)?;
             if self.object_data(prototype).is_none() {
@@ -588,6 +592,16 @@ impl<H: Host> Vm<H> {
             prototype
         };
         self.object_set_prototype_of(p, result, prototype)?;
+        if native == Native::DataView
+            && let Some((buffer, offset, length)) = self.data_view_view(result)
+            && (self.array_buffer_detached(buffer)
+                || self.array_buffer_out_of_bounds(buffer, offset, length))
+        {
+            return Err(self.type_error(
+                p,
+                "DataView buffer became invalid during construction".into(),
+            ));
+        }
         Ok(())
     }
 
