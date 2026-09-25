@@ -827,6 +827,11 @@ fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
             self.0 = true;
         }
 
+        fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+            self.0 |= declaration.kind == VariableDeclarationKind::AwaitUsing;
+            oxc_ast_visit::walk::walk_variable_declaration(self, declaration);
+        }
+
         fn visit_function(
             &mut self,
             _: &oxc_ast::ast::Function<'a>,
@@ -995,6 +1000,25 @@ fn default_export_binding(
 
 fn same_module_path(module_name: &str, specifier: &str) -> bool {
     crate::module_identity::resolves_to(module_name, specifier)
+}
+
+pub(super) fn is_lexical_binding_declaration(kind: VariableDeclarationKind) -> bool {
+    matches!(
+        kind,
+        VariableDeclarationKind::Let
+            | VariableDeclarationKind::Const
+            | VariableDeclarationKind::Using
+            | VariableDeclarationKind::AwaitUsing
+    )
+}
+
+fn is_immutable_binding_declaration(kind: VariableDeclarationKind) -> bool {
+    matches!(
+        kind,
+        VariableDeclarationKind::Const
+            | VariableDeclarationKind::Using
+            | VariableDeclarationKind::AwaitUsing
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1248,14 +1272,11 @@ impl<'a> Compiler<'a> {
         for statement in &program.body {
             match statement {
                 Statement::VariableDeclaration(declaration)
-                    if matches!(
-                        declaration.kind,
-                        VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                    ) =>
+                    if is_lexical_binding_declaration(declaration.kind) =>
                 {
                     for declarator in &declaration.declarations {
                         early::collect_pattern_names(&declarator.id, &mut global_lexical_names);
-                        if declaration.kind == VariableDeclarationKind::Const {
+                        if is_immutable_binding_declaration(declaration.kind) {
                             early::collect_pattern_names(
                                 &declarator.id,
                                 &mut global_immutable_names,
@@ -1276,14 +1297,11 @@ impl<'a> Compiler<'a> {
                 }
                 Statement::ExportDeclaration(export) => match &export.declaration {
                     Declaration::VariableDeclaration(declaration)
-                        if matches!(
-                            declaration.kind,
-                            VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                        ) =>
+                        if is_lexical_binding_declaration(declaration.kind) =>
                     {
                         for declarator in &declaration.declarations {
                             early::collect_pattern_names(&declarator.id, &mut global_lexical_names);
-                            if declaration.kind == VariableDeclarationKind::Const {
+                            if is_immutable_binding_declaration(declaration.kind) {
                                 early::collect_pattern_names(
                                     &declarator.id,
                                     &mut global_immutable_names,
@@ -1543,10 +1561,7 @@ impl<'a> Compiler<'a> {
         for statement in body {
             match statement {
                 Statement::VariableDeclaration(declaration)
-                    if matches!(
-                        declaration.kind,
-                        VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                    ) =>
+                    if is_lexical_binding_declaration(declaration.kind) =>
                 {
                     for item in &declaration.declarations {
                         early::collect_pattern_names(&item.id, &mut names);
@@ -1559,10 +1574,7 @@ impl<'a> Compiler<'a> {
                 }
                 Statement::ExportDeclaration(export) => match &export.declaration {
                     Declaration::VariableDeclaration(declaration)
-                        if matches!(
-                            declaration.kind,
-                            VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                        ) =>
+                        if is_lexical_binding_declaration(declaration.kind) =>
                     {
                         for item in &declaration.declarations {
                             early::collect_pattern_names(&item.id, &mut names);
@@ -1687,10 +1699,7 @@ impl<'a> Compiler<'a> {
             for statement in body {
                 match statement {
                     Statement::VariableDeclaration(declaration)
-                        if matches!(
-                            declaration.kind,
-                            VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                        ) =>
+                        if is_lexical_binding_declaration(declaration.kind) =>
                     {
                         for item in &declaration.declarations {
                             early::collect_pattern_names(&item.id, &mut names);
@@ -1703,10 +1712,7 @@ impl<'a> Compiler<'a> {
                     }
                     Statement::ExportDeclaration(export) => match &export.declaration {
                         Declaration::VariableDeclaration(declaration)
-                            if matches!(
-                                declaration.kind,
-                                VariableDeclarationKind::Let | VariableDeclarationKind::Const
-                            ) =>
+                            if is_lexical_binding_declaration(declaration.kind) =>
                         {
                             for item in &declaration.declarations {
                                 early::collect_pattern_names(&item.id, &mut names);

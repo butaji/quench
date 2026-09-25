@@ -1,12 +1,28 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
-    pub(super) fn ensure_disposable_stack(&mut self) -> Register {
-        if let Some(atom) = self.disposable_stack {
+    pub(super) fn push_disposal_scope(&mut self) {
+        self.disposal_scopes.push(DisposalScope::default());
+    }
+
+    pub(super) fn pop_disposal_scope(&mut self) {
+        self.disposal_scopes.pop();
+    }
+
+    pub(super) fn ensure_disposable_stack(&mut self, asynchronous: bool) -> Register {
+        let scope = self
+            .disposal_scopes
+            .last_mut()
+            .expect("function disposal scope is present");
+        scope.asynchronous |= asynchronous;
+        if let Some(atom) = scope.stack {
             return self.load_atom(atom);
         }
         let atom = self.hidden_local("\0rqj:disposable-stack");
-        self.disposable_stack = Some(atom);
+        self.disposal_scopes
+            .last_mut()
+            .expect("function disposal scope is present")
+            .stack = Some(atom);
         let constructor = self.load_name("DisposableStack");
         let stack = self.reg();
         self.emit(Op::Construct, stack, constructor, 0, 0);
@@ -15,11 +31,15 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(crate) fn emit_disposal(&mut self) {
-        let Some(atom) = self.disposable_stack else {
+        let Some(scope) = self.disposal_scopes.last_mut() else {
             return;
         };
+        let Some(atom) = scope.stack else {
+            return;
+        };
+        let asynchronous = scope.asynchronous;
         let stack = self.load_atom(atom);
-        let method_atom = self.owner.atom(if self.async_function {
+        let method_atom = self.owner.atom(if asynchronous {
             "disposeAsync"
         } else {
             "dispose"
@@ -31,7 +51,7 @@ impl FunctionCompiler<'_, '_> {
             .push((method_atom, cache, Vec::new(), None));
         let result = self.reg();
         self.emit(Op::CallMethod, result, stack, 0, site);
-        if self.async_function {
+        if asynchronous {
             let awaited = self.reg();
             self.emit(Op::Await, awaited, result, 0, 0);
         }
