@@ -40,7 +40,12 @@ impl FunctionCompiler<'_, '_> {
         let heritage = class
             .heritage
             .as_ref()
-            .map(|heritage| self.expression(&heritage.expression));
+            .map(|heritage| {
+                let outer_strict = std::mem::replace(&mut self.strict, true);
+                let value = self.expression(&heritage.expression);
+                self.strict = outer_strict;
+                value
+            });
         if let Some(heritage) = heritage {
             self.emit(Op::ValidateClassHeritage, heritage, 0, 0, 0);
         }
