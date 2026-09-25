@@ -66,8 +66,8 @@ impl<H: Host> Vm<H> {
         let name_value = self.heap.alloc(Cell::String(name.into()));
         self.set_named(program, constructor, "name", name_value)?;
         let width = Value::number(kind.width() as f64);
-        self.set_named(program, constructor, "BYTES_PER_ELEMENT", width)?;
-        self.set_named(program, proto, "BYTES_PER_ELEMENT", width)?;
+        self.set_named_constant(program, constructor, "BYTES_PER_ELEMENT", width)?;
+        self.set_named_constant(program, proto, "BYTES_PER_ELEMENT", width)?;
         self.global(program, name, constructor)
     }
 }

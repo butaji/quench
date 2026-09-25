@@ -304,7 +304,7 @@ impl<H: Host> Vm<H> {
             (false, false) => function,
         };
         if !p.functions[id as usize].is_generator {
-            self.set_property(prototype, constructor_atom, constructor)?;
+            self.set_builtin_value_named(prototype, "constructor", constructor)?;
         }
         if p.functions[id as usize].is_async || p.functions[id as usize].is_generator {
             self.set_property(function, constructor_atom, constructor)?;

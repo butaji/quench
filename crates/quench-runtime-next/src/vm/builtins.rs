@@ -640,13 +640,22 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn set_builtin_named(
         &mut self,
-        program: &ResidualProgram,
+        _program: &ResidualProgram,
         object: Value,
         name: &str,
         native: Native,
     ) -> Result<(), JsError> {
-        self.set_named(program, object, name, self.native_value(native))?;
+        self.set_builtin_value_named(object, name, self.native_value(native))
+    }
+
+    pub(super) fn set_builtin_value_named(
+        &mut self,
+        object: Value,
+        name: &str,
+        value: Value,
+    ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
+        self.set_property(object, atom, value)?;
         self.set_property_attributes(
             object,
             property_key::PropertyKey::string(atom),
