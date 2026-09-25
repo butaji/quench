@@ -15,6 +15,7 @@ impl FunctionCompiler<'_, '_> {
                 .reject(item.span, "try without catch is unsupported");
             return;
         };
+        self.clear_statement_completion();
         let (slot, binding) = self.catch_slot(handler);
         let start = self.code.len() as u32;
         self.scoped_statements(&item.block.body);
@@ -30,6 +31,7 @@ impl FunctionCompiler<'_, '_> {
             return_slot: None,
             with_depth: self.with_depth,
         });
+        self.clear_statement_completion();
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
         self.scoped_statements(&handler.body.body);
@@ -38,6 +40,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn try_finally_statement(&mut self, item: &TryStatement<'_>, finalizer: &BlockStatement<'_>) {
+        self.clear_statement_completion();
         let error_atom = self.hidden_local("\0rqj:finally-error");
         let return_atom = self.hidden_local("\0rqj:finally-return");
         self.finally_contexts.push(FinallyContext {
@@ -52,14 +55,14 @@ impl FunctionCompiler<'_, '_> {
             .pop()
             .expect("try body finally context");
         let end = self.code.len() as u32;
-        self.scoped_statements(&finalizer.body);
+        self.scoped_statements_without_completion(&finalizer.body);
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let exceptional_target = self.code.len() as u32;
-        self.scoped_statements(&finalizer.body);
+        self.scoped_statements_without_completion(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
         let return_target = self.code.len() as u32;
-        self.scoped_statements(&finalizer.body);
+        self.scoped_statements_without_completion(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
         self.patch_edges(&context.return_edges, return_target);
@@ -83,6 +86,7 @@ impl FunctionCompiler<'_, '_> {
         handler: &CatchClause<'_>,
         finalizer: &BlockStatement<'_>,
     ) {
+        self.clear_statement_completion();
         let (catch_slot, binding) = self.catch_slot(handler);
         let error_atom = self.hidden_local("\0rqj:finally-error");
         let return_atom = self.hidden_local("\0rqj:finally-return");
@@ -106,6 +110,7 @@ impl FunctionCompiler<'_, '_> {
             return_slot: None,
             with_depth: self.with_depth,
         });
+        self.clear_statement_completion();
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
         let catch_start = self.code.len() as u32;
@@ -118,14 +123,14 @@ impl FunctionCompiler<'_, '_> {
         let catch_end = self.code.len() as u32;
         let catch_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let finalizer_target = self.code.len() as u32;
-        self.scoped_statements(&finalizer.body);
+        self.scoped_statements_without_completion(&finalizer.body);
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let exceptional_target = self.code.len() as u32;
-        self.scoped_statements(&finalizer.body);
+        self.scoped_statements_without_completion(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
         let return_target = self.code.len() as u32;
-        self.scoped_statements(&finalizer.body);
+        self.scoped_statements_without_completion(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
         self.handlers[body_handler].return_target = Some(return_target);
@@ -165,7 +170,7 @@ impl FunctionCompiler<'_, '_> {
                 continue;
             }
             let path = self.code.len() as u32;
-            self.scoped_statements(&finalizer.body);
+            self.scoped_statements_without_completion(&finalizer.body);
             let tail = self.emit(Op::Jump, 0, 0, 0, 0);
             paths.push((abrupt.control, abrupt.continue_edge, path, tail));
             self.patch_to(abrupt.edge, path);

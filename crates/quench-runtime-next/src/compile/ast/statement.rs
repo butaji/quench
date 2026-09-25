@@ -94,7 +94,8 @@ impl FunctionCompiler<'_, '_> {
                 self.class_declaration(item);
             }
             Statement::ExpressionStatement(item) => {
-                self.expression(&item.expression);
+                let value = self.expression(&item.expression);
+                self.record_statement_completion(value);
             }
             Statement::BlockStatement(block) => {
                 let has_using = block.body.iter().any(|statement| {
@@ -143,6 +144,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn with_statement(&mut self, item: &WithStatement<'_>) {
+        self.clear_statement_completion();
         let object = self.expression(&item.object);
         let enter = self.load_name("\0rqj:with-enter");
         let argument = self.reg();
@@ -305,6 +307,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn if_statement(&mut self, item: &IfStatement<'_>) {
+        self.clear_statement_completion();
         let alternate = self.condition(&item.test);
         self.statement(&item.consequent);
         if let Some(other) = &item.alternate {
@@ -322,6 +325,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn while_statement_labeled(&mut self, item: &WhileStatement<'_>, label: Option<Atom>) {
+        self.clear_statement_completion();
         let head = self.code.len() as u32;
         let condition_end = self.condition(&item.test);
         self.push_control(ControlKind::Loop, label);
@@ -339,6 +343,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn do_while_statement_labeled(&mut self, item: &DoWhileStatement<'_>, label: Option<Atom>) {
+        self.clear_statement_completion();
         let head = self.code.len() as u32;
         self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
@@ -357,6 +362,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn for_statement_labeled(&mut self, item: &ForStatement<'_>, label: Option<Atom>) {
+        self.clear_statement_completion();
         let scoped = match item.init.as_ref() {
             Some(ForStatementInit::VariableDeclaration(declaration))
                 if matches!(
@@ -405,6 +411,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn switch_statement(&mut self, item: &SwitchStatement<'_>) {
+        self.clear_statement_completion();
         let discriminant = self.expression(&item.discriminant);
         self.push_switch_lexical_scope(&item.cases);
         for case in &item.cases {

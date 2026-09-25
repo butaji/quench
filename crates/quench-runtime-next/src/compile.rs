@@ -28,7 +28,7 @@ mod rewrite;
 mod sequence;
 mod string;
 mod template;
-use ast::FunctionCompiler;
+use ast::{FunctionCompiler, StatementCompletion};
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     source: String,
@@ -222,6 +222,37 @@ impl Engine {
             });
         }
         Some(statements)
+    }
+
+    pub(crate) fn eval_requires_compiled_completion(source: &str) -> bool {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        parsed.diagnostics.is_empty()
+            && parsed.program.body.iter().any(|statement| {
+                matches!(
+                    statement,
+                    Statement::DoWhileStatement(_)
+                        | Statement::ForStatement(_)
+                        | Statement::ForInStatement(_)
+                        | Statement::ForOfStatement(_)
+                        | Statement::WhileStatement(_)
+                        | Statement::SwitchStatement(_)
+                        | Statement::IfStatement(_)
+                        | Statement::TryStatement(_)
+                        | Statement::LabeledStatement(_)
+                        | Statement::WithStatement(_)
+                )
+            })
+    }
+
+    pub(crate) fn eval_is_function_declaration(source: &str) -> bool {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        parsed.diagnostics.is_empty()
+            && matches!(
+                parsed.program.body.as_slice(),
+                [Statement::FunctionDeclaration(_)]
+            )
     }
 
     pub(crate) fn eval_block_statement(source: &str) -> Option<&str> {
@@ -475,6 +506,8 @@ impl Engine {
             &[],
             SourceType::script(),
             false,
+            false,
+            false,
         )
     }
     pub fn specialize_unspecialized(
@@ -487,6 +520,8 @@ impl Engine {
             SpecializationMode::Disabled,
             &[],
             SourceType::script(),
+            false,
+            false,
             false,
         )
     }
@@ -505,6 +540,25 @@ impl Engine {
             atom_prefix,
             SourceType::unambiguous(),
             false,
+            false,
+            false,
+        )
+    }
+    pub(crate) fn specialize_eval_unspecialized_with_atom_prefix(
+        source: &str,
+        name: &str,
+        atom_prefix: &[String],
+        inherited_strict: bool,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode(
+            source,
+            name,
+            SpecializationMode::Disabled,
+            atom_prefix,
+            SourceType::unambiguous(),
+            false,
+            true,
+            inherited_strict,
         )
     }
     pub fn specialize_module_unspecialized(
@@ -526,6 +580,8 @@ impl Engine {
             atom_prefix,
             SourceType::mjs(),
             true,
+            false,
+            false,
         )
     }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -547,6 +603,8 @@ impl Engine {
             atom_prefix,
             SourceType::script(),
             false,
+            false,
+            false,
         )
     }
     fn specialize_module_with_mode(
@@ -554,7 +612,16 @@ impl Engine {
         name: &str,
         mode: SpecializationMode,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode(source, name, mode, &[], SourceType::mjs(), true)
+        Self::specialize_with_mode(
+            source,
+            name,
+            mode,
+            &[],
+            SourceType::mjs(),
+            true,
+            false,
+            false,
+        )
     }
     fn specialize_with_mode(
         source: &str,
@@ -563,6 +630,8 @@ impl Engine {
         atom_prefix: &[String],
         source_type: SourceType,
         module_goal: bool,
+        capture_script_completion: bool,
+        inherited_strict: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
@@ -593,9 +662,10 @@ impl Engine {
                 .collect());
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
-        let program =
-            Compiler::new_with_mode(name, &normalized, mode, atom_prefix, private_name_ids)
-                .program(&parsed.program, module_goal);
+        let mut compiler =
+            Compiler::new_with_mode(name, &normalized, mode, atom_prefix, private_name_ids);
+        compiler.capture_script_completion = capture_script_completion;
+        let program = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
             eprintln!(
@@ -939,6 +1009,7 @@ struct Compiler<'a> {
     mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
+    capture_script_completion: bool,
     atoms: Vec<Rc<str>>,
     atom_index: FxHashMap<Rc<str>, Atom>,
     private_name_ids: FxHashMap<(u32, u32), u32>,
@@ -1072,6 +1143,7 @@ impl<'a> Compiler<'a> {
             mode,
             root_strict: false,
             module_goal: false,
+            capture_script_completion: false,
             atoms,
             atom_index,
             private_name_ids,
@@ -1092,6 +1164,7 @@ impl<'a> Compiler<'a> {
         mut self,
         program: &Program<'_>,
         module_goal: bool,
+        inherited_strict: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         self.module_goal = module_goal;
         let module_requests = if module_goal {
@@ -1108,6 +1181,7 @@ impl<'a> Compiler<'a> {
             .then(|| Engine::module_link_plan(&program.body, self.source))
             .flatten();
         self.root_strict = module_goal
+            || inherited_strict
             || program
                 .directives
                 .iter()
@@ -1570,6 +1644,7 @@ impl<'a> Compiler<'a> {
                 slot
             });
         let module_goal = self.module_goal;
+        let capture_script_completion = parent.is_none() && self.capture_script_completion;
         let module_source = self.source;
         let arguments_slot = if has_arguments_binding {
             parameter_arguments_slot
@@ -1598,6 +1673,12 @@ impl<'a> Compiler<'a> {
         function.super_home_atom = options.super_home_atom;
         function.super_call_binds_this = options.derived_constructor;
         function.strict = root_strict;
+        if capture_script_completion {
+            let completion = function.reg();
+            let undefined = function.literal(Constant::Undefined);
+            function.emit(Op::Move, completion, undefined, 0, 0);
+            function.statement_completion = StatementCompletion::Track(completion);
+        }
         function.dynamic_eval = options
             .defaults
             .is_some_and(early::parameters_contain_direct_eval);
@@ -1699,8 +1780,11 @@ impl<'a> Compiler<'a> {
             }
         }
         function.emit_disposal();
-        let undefined = function.literal(Constant::Undefined);
-        function.emit(Op::Return, undefined, 0, 0, 0);
+        let result = function
+            .statement_completion
+            .register()
+            .unwrap_or_else(|| function.literal(Constant::Undefined));
+        function.emit(Op::Return, result, 0, 0, 0);
         let arguments_slot = arguments_slot.filter(|slot| {
             function.code.iter().any(|instruction| {
                 instruction.op() == Op::LoadLocal && instruction.imm() == u32::from(*slot)

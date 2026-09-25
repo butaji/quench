@@ -10,6 +10,7 @@ impl FunctionCompiler<'_, '_> {
         item: &ForOfStatement<'_>,
         label: Option<Atom>,
     ) {
+        self.clear_statement_completion();
         if item.r#await && !self.async_function {
             self.owner
                 .reject(item.span, "for-await-of requires an async function");
@@ -32,6 +33,7 @@ impl FunctionCompiler<'_, '_> {
         item: &ForInStatement<'_>,
         label: Option<Atom>,
     ) {
+        self.clear_statement_completion();
         let scoped = self.push_iteration_scope(&item.left);
         let object = self.expression(&item.right);
         let keys = self.load_name("\0rqj:for-in-keys");
