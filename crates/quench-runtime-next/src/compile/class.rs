@@ -244,6 +244,9 @@ impl FunctionCompiler<'_, '_> {
             if let Some(name) = name {
                 let target = if is_static { class_value } else { prototype };
                 let atom = self.owner.private_name_atom(name);
+                if self.owner.private_name_is_overridden(atom) {
+                    continue;
+                }
                 self.emit(Op::MarkPrivateName, 0, target, target, atom);
             }
         }

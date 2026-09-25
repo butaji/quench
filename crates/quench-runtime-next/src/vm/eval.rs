@@ -115,6 +115,23 @@ impl<H: Host> Vm<H> {
         if inherited_strict && (trimmed.contains("arguments =") || trimmed.contains("arguments=")) {
             return self.syntax_error_result(p, "'arguments' is not allowed in strict mode");
         }
+        if self.direct_eval && text.contains('#') {
+            let private_names = self
+                .direct_eval_private_names(p)
+                .map_or_else(Vec::new, |(_, names)| names);
+            let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
+                .map(|atom| self.atom_name(atom as u32).to_owned())
+                .collect::<Vec<_>>();
+            let body = private_eval_method_body(&text, &private_names, false);
+            crate::Engine::specialize_dynamic_function_with_private_names(
+                "",
+                &body,
+                "<private-eval-validation>",
+                &atom_prefix,
+                &private_names,
+            )
+            .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?;
+        }
         let result = self.eval_source_simple(p, trimmed, inherited_strict);
         let global_direct_eval = self.direct_eval
             && self
@@ -993,16 +1010,31 @@ impl<H: Host> Vm<H> {
         } else {
             format!("return ({expression});")
         };
-        let residual =
-            crate::Engine::specialize_dynamic_function("", &body, source_name, &atom_prefix)
-                .map_err(|diagnostics| {
-                    let message = diagnostics
-                        .first()
-                        .map_or("invalid eval expression".to_owned(), ToString::to_string);
-                    self.syntax_error_result(p, &message)
-                        .expect_err("dynamic eval syntax errors must throw")
-                        .mark_eval_parser_diagnostic()
-                })?;
+        let mut private_eval_context = None;
+        let residual = match crate::Engine::specialize_dynamic_function(
+            "",
+            &body,
+            source_name,
+            &atom_prefix,
+        ) {
+            Ok(residual) => residual,
+            Err(diagnostics) if self.direct_eval => {
+                let Some((home, private_names)) = self.direct_eval_private_names(p) else {
+                    return Err(self.mark_eval_syntax_error(p, diagnostics));
+                };
+                private_eval_context = Some((home, private_names.clone()));
+                let body = private_eval_method_body(expression, &private_names, true);
+                crate::Engine::specialize_dynamic_function_with_private_names(
+                    "",
+                    &body,
+                    source_name,
+                    &atom_prefix,
+                    &private_names,
+                )
+                .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?
+            }
+            Err(diagnostics) => return Err(self.mark_eval_syntax_error(p, diagnostics)),
+        };
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
@@ -1026,7 +1058,7 @@ impl<H: Host> Vm<H> {
             .frames
             .last()
             .map_or(self.realm.globals, |frame| frame.this);
-        let parent_environment = if self.direct_eval {
+        let mut parent_environment = if self.direct_eval {
             let root_scope = self
                 .frames
                 .last()
@@ -1052,6 +1084,25 @@ impl<H: Host> Vm<H> {
         } else {
             Value::NULL
         };
+        if let Some((home, names)) = private_eval_context {
+            let bindings = names
+                .iter()
+                .map(|(_, identity)| {
+                    let private_atom = self.intern_atom(identity);
+                    let binding = self.private_home_binding_atom(private_atom);
+                    (binding, home)
+                })
+                .collect();
+            parent_environment = self.heap.alloc(Cell::Environment {
+                parent: parent_environment,
+                program: None,
+                root_eval_scope: false,
+                function: u32::MAX,
+                slots: Box::new([]),
+                dynamic_bindings: bindings,
+                with_objects: Vec::new(),
+            });
+        }
         let active_program = std::mem::replace(&mut self.active_program, program_id);
         let direct_eval = std::mem::replace(&mut self.direct_eval, false);
         let parameter_eval = std::mem::replace(&mut self.parameter_eval, false);
@@ -1063,6 +1114,60 @@ impl<H: Host> Vm<H> {
         self.direct_eval = direct_eval;
         self.parameter_eval = parameter_eval;
         result
+    }
+
+    pub(super) fn private_home_binding_atom(&mut self, private: Atom) -> Atom {
+        self.intern_atom(&format!("\0rqj:private-home:{private}"))
+    }
+
+    fn mark_eval_syntax_error(
+        &mut self,
+        p: &ResidualProgram,
+        diagnostics: Vec<crate::compile::Diagnostic>,
+    ) -> JsError {
+        let message = diagnostics
+            .first()
+            .map_or("invalid eval expression".to_owned(), ToString::to_string);
+        self.syntax_error_result(p, &message)
+            .expect_err("dynamic eval syntax errors must throw")
+            .mark_eval_parser_diagnostic()
+    }
+
+    fn direct_eval_private_names(
+        &mut self,
+        p: &ResidualProgram,
+    ) -> Option<(Value, Vec<(String, String)>)> {
+        let Some(frame) = self.frames.last() else {
+            return None;
+        };
+        let Some(home_atom) = p
+            .functions
+            .get(frame.function as usize)
+            .and_then(|function| function.super_home_atom)
+        else {
+            return None;
+        };
+        let home = self
+            .load_eval_capture_atom(p, home_atom)
+            .or_else(|| self.load_eval_frame_local(p, home_atom));
+        let Some(home) = home else {
+            return None;
+        };
+        let names = self
+            .object_data(home)
+            .into_iter()
+            .flat_map(|object| &object.private_names)
+            .filter_map(|brand| {
+                let identity = self.atom_name(brand.name).to_owned();
+                private_identity_label(&identity).map(|label| (label, identity))
+            })
+            .fold(Vec::new(), |mut names, binding| {
+                if !names.iter().any(|(label, _)| label == &binding.0) {
+                    names.push(binding);
+                }
+                names
+            });
+        (!names.is_empty()).then_some((home, names))
     }
 
     fn eval_super_context(&mut self, p: &ResidualProgram) -> Option<(Value, Value)> {
@@ -1575,6 +1680,32 @@ impl<H: Host> Vm<H> {
         }
         false
     }
+}
+
+fn private_identity_label(identity: &str) -> Option<String> {
+    let identity = identity.strip_prefix("\0rqj:private:")?;
+    let (_, label) = identity.rsplit_once(':')?;
+    (!label.is_empty()).then(|| label.to_owned())
+}
+
+fn private_eval_method_body(
+    source: &str,
+    private_names: &[(String, String)],
+    expression: bool,
+) -> String {
+    let declarations = private_names
+        .iter()
+        .map(|(label, _)| format!("#{label};"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let statements = if expression {
+        format!("return ({source});")
+    } else {
+        source.to_owned()
+    };
+    format!(
+        "return (class {{\n{declarations}\n__eval() {{ {statements}\n}} }}).prototype.__eval.call(this);"
+    )
 }
 
 fn regexp_literal_pattern(literal: &[u16]) -> Option<&[u16]> {
