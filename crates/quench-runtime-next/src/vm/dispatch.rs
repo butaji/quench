@@ -229,6 +229,11 @@ impl<H: Host> Vm<H> {
                 let v = self.load_name(p, i.imm(), i.c())?;
                 self.write(f, i.a(), v);
             }
+            Op::LoadNameCall => {
+                let (callee, this) = self.load_name_call(p, i.imm(), i.c())?;
+                self.write(f, i.a(), callee);
+                self.write(f, i.b(), this);
+            }
             Op::LoadNameTypeof => {
                 let v = self.load_name_typeof(p, i.imm(), i.c())?;
                 self.write(f, i.a(), v);
@@ -431,10 +436,6 @@ impl<H: Host> Vm<H> {
             }
             Op::ResolveName => {
                 let value = self.resolve_name(p, i.imm(), i.b() != 0)?;
-                self.write(f, i.a(), value);
-            }
-            Op::ResolveNameThis => {
-                let value = self.resolve_name_this(p, i.imm())?;
                 self.write(f, i.a(), value);
             }
             Op::ValidateClassHeritage => {
