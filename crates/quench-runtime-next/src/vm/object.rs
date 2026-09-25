@@ -92,11 +92,31 @@ impl<H: Host> Vm<H> {
             PropertyKey::Symbol(_) => {}
         }
     }
+    pub(super) fn checked_this_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+    ) -> Result<Value, JsError> {
+        let value = self.frames[frame].this;
+        if value.is_deleted() {
+            return Err(self.reference_error(
+                p,
+                "Must call super constructor before accessing 'this'".into(),
+            ));
+        }
+        Ok(value)
+    }
+
     #[inline(always)]
-    pub(super) fn resolve_field_base(&self, frame: usize, base: FieldBase) -> Value {
+    pub(super) fn resolve_field_base(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        base: FieldBase,
+    ) -> Result<Value, JsError> {
         match base.register_index() {
-            Some(register) => self.read(frame, register),
-            None => self.frames[frame].this,
+            Some(register) => Ok(self.read(frame, register)),
+            None => self.checked_this_binding(p, frame),
         }
     }
 }
