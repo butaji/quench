@@ -394,10 +394,9 @@ impl FunctionCompiler<'_, '_> {
                 if super::super::is_lexical_binding_declaration(declaration.kind) =>
             {
                 let mut scope = FxHashMap::default();
-                for item in &declaration.declarations {
-                    self.map_pattern_lexicals(&item.id, &mut scope);
-                }
-                self.push_lexical_bindings(scope);
+                let mut immutable = FxHashSet::default();
+                self.map_declaration_lexicals(declaration, &mut scope, &mut immutable);
+                self.push_immutable_lexical_bindings(scope, immutable);
                 self.initialize_lexical_scope();
                 true
             }
