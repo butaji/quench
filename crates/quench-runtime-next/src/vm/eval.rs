@@ -358,6 +358,9 @@ impl<H: Host> Vm<H> {
         };
         let source_strict =
             inherited_strict || crate::Engine::eval_has_use_strict_directive(source);
+        if source_strict && crate::Engine::eval_strict_eval_early_error(source) {
+            return self.syntax_error_result(p, "assignment to eval is not allowed in strict mode");
+        }
         if source_strict
             && let Some(error) = crate::Engine::eval_strict_binding_early_error(source, true)
         {
