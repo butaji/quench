@@ -198,7 +198,7 @@ impl FunctionCompiler<'_, '_> {
     fn return_expression(&mut self, expression: &Expression<'_>) {
         if !self.finally_contexts.is_empty() {
             let value = self.expression(expression);
-            self.emit_return(value);
+            self.emit_return_value(value);
             return;
         }
         match expression {
@@ -211,7 +211,7 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => {
                 let value = self.expression(expression);
-                self.emit_return(value);
+                self.emit_return_value(value);
             }
         }
     }
@@ -229,6 +229,17 @@ impl FunctionCompiler<'_, '_> {
             .expect("finally context remains active")
             .return_edges
             .push(edge);
+    }
+
+    fn emit_return_value(&mut self, value: Register) {
+        let value = if self.async_function && self.generator {
+            let awaited = self.reg();
+            self.emit(Op::Await, awaited, value, 0, 0);
+            awaited
+        } else {
+            value
+        };
+        self.emit_return(value);
     }
 
     fn return_logical(&mut self, value: &LogicalExpression<'_>) {
