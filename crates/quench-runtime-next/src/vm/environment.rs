@@ -1073,4 +1073,48 @@ impl<H: Host> Vm<H> {
         );
         Ok(true)
     }
+
+    pub(super) fn mirror_global_var_property_write(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+    ) {
+        if object != self.realm.globals || p.module {
+            return;
+        }
+        let Some(root_index) = self
+            .frames
+            .iter()
+            .rposition(|frame| frame.program == self.active_program && frame.function == 0)
+        else {
+            return;
+        };
+        let Some(root_program) = self.programs.get(self.frames[root_index].program) else {
+            return;
+        };
+        let Some(root_function) = root_program.functions.first() else {
+            return;
+        };
+        if !root_function.global_var_atoms.contains(&atom) {
+            return;
+        }
+        let Some(slot) = root_function
+            .local_atoms
+            .iter()
+            .position(|candidate| *candidate == atom)
+        else {
+            return;
+        };
+        if self.frames[root_index].captured {
+            if let Some(Cell::Environment { slots, .. }) =
+                self.heap.get_mut(self.frames[root_index].env)
+            {
+                slots[slot] = value;
+            }
+        } else {
+            self.frames[root_index].locals[slot] = value;
+        }
+    }
 }
