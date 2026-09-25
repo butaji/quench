@@ -311,21 +311,6 @@ impl Heap {
         elements.values.retain(|index, _| *index < length);
         elements.length = length;
     }
-    pub(crate) fn sparse_pop(&mut self, array: Value, dense_len: usize) -> Value {
-        let index = array.heap_index().unwrap();
-        let arrays = self.sparse_arrays.as_mut().unwrap();
-        let elements = arrays.get_mut(&index).unwrap();
-        debug_assert!(elements.length > dense_len);
-        elements.length -= 1;
-        let value = elements
-            .values
-            .remove(&elements.length)
-            .unwrap_or(Value::UNDEFINED);
-        if elements.length == dense_len {
-            arrays.remove(&index);
-        }
-        value
-    }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
         self.properties
             .get(object.properties, slot)

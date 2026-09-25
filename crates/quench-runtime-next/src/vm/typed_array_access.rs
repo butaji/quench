@@ -1,7 +1,7 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn typed_array_values(&self, source: Value) -> Option<Vec<Value>> {
+    pub(super) fn typed_array_values(&mut self, source: Value) -> Option<Vec<Value>> {
         if let Some(length) = self.typed_array_length(source) {
             return Some(
                 (0..length)
@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    pub(super) fn typed_array_get(&self, object: Value, index: usize) -> Option<Value> {
+    pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
         let (buffer, offset, kind) = match self.heap.get(object) {
             Some(Cell::TypedArray {
                 buffer,
@@ -43,42 +43,41 @@ impl<H: Host> Vm<H> {
         if index >= length {
             return Some(Value::UNDEFINED);
         }
-        let value = match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { bytes, .. }) => {
-                let start = offset + index * kind.width();
-                let end = start + kind.width();
-                bytes.get(start..end).map(|bytes| {
-                    Value::number(match kind {
-                        TypedArrayKind::Uint8 => bytes[0] as f64,
-                        TypedArrayKind::Uint8Clamped => bytes[0] as f64,
-                        TypedArrayKind::Uint16 => u16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
-                        TypedArrayKind::Uint32 => {
-                            u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-                        }
-                        TypedArrayKind::Int8 => bytes[0] as i8 as f64,
-                        TypedArrayKind::Int16 => i16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
-                        TypedArrayKind::Int32 => {
-                            i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-                        }
-                        TypedArrayKind::BigInt64 => {
-                            i64::from_ne_bytes(bytes[..8].try_into().unwrap()) as f64
-                        }
-                        TypedArrayKind::BigUint64 => {
-                            u64::from_ne_bytes(bytes[..8].try_into().unwrap()) as f64
-                        }
-                        TypedArrayKind::Float32 => {
-                            f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
-                        }
-                        TypedArrayKind::Float64 => f64::from_ne_bytes([
-                            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
-                            bytes[7],
-                        ]),
-                    })
-                })
-            }
-            _ => None,
+        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
+            return Some(Value::UNDEFINED);
         };
-        Some(value.unwrap_or(Value::UNDEFINED))
+        let bytes = Rc::clone(bytes);
+        let start = offset + index * kind.width();
+        let Some(bytes) = bytes.get(start..start + kind.width()) else {
+            return Some(Value::UNDEFINED);
+        };
+        Some(match kind {
+            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::BigInt(
+                i64::from_ne_bytes(bytes[..8].try_into().unwrap()).to_string(),
+            )),
+            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::BigInt(
+                u64::from_ne_bytes(bytes[..8].try_into().unwrap()).to_string(),
+            )),
+            _ => Value::number(match kind {
+                TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => bytes[0] as f64,
+                TypedArrayKind::Uint16 => u16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
+                TypedArrayKind::Uint32 => {
+                    u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+                }
+                TypedArrayKind::Int8 => bytes[0] as i8 as f64,
+                TypedArrayKind::Int16 => i16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
+                TypedArrayKind::Int32 => {
+                    i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+                }
+                TypedArrayKind::Float32 => {
+                    f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+                }
+                TypedArrayKind::Float64 => f64::from_ne_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ]),
+                TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => unreachable!(),
+            }),
+        })
     }
 
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
@@ -291,7 +290,26 @@ impl<H: Host> Vm<H> {
         if index >= length {
             return Ok(true);
         }
-        let value = self.to_number(p, value)?;
+        let bigint = match kind {
+            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => Some(self.to_bigint(p, value)?),
+            _ => None,
+        };
+        let number = bigint
+            .is_none()
+            .then(|| self.to_number(p, value))
+            .transpose()?;
+        let bigint_bytes = bigint.map(|value| {
+            let fill = if value.sign() == num_bigint::Sign::Minus {
+                u8::MAX
+            } else {
+                0
+            };
+            let mut bytes = [fill; 8];
+            for (target, source) in bytes.iter_mut().zip(value.to_signed_bytes_le()) {
+                *target = source;
+            }
+            bytes
+        });
         if self.array_buffer_out_of_bounds(buffer, offset, kind.width() * (index + 1)) {
             return Err(JsError(
                 "typed array backing buffer is out of bounds".into(),
@@ -300,6 +318,7 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
             let bytes = Rc::make_mut(bytes);
             let start = offset + index * kind.width();
+            let value = number.unwrap_or(0.0);
             match kind {
                 TypedArrayKind::Uint8 => bytes[start] = Self::uint8_from_value(value),
                 TypedArrayKind::Uint8Clamped => {
@@ -315,7 +334,7 @@ impl<H: Host> Vm<H> {
                 TypedArrayKind::Int32 => bytes[start..start + 4]
                     .copy_from_slice(&Self::uint32_from_value(value).to_ne_bytes()),
                 TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
-                    bytes[start..start + 8].copy_from_slice(&(value.trunc() as i64).to_ne_bytes())
+                    bytes[start..start + 8].copy_from_slice(&bigint_bytes.unwrap())
                 }
                 TypedArrayKind::Float32 => {
                     bytes[start..start + 4].copy_from_slice(&(value as f32).to_ne_bytes())

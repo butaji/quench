@@ -334,7 +334,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn array_like_length(&mut self, p: &ResidualProgram, object: Value) -> Result<usize, JsError> {
+    pub(super) fn array_like_length(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+    ) -> Result<usize, JsError> {
         if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
             return Ok(self
                 .heap
