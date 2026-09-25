@@ -847,7 +847,7 @@ impl<H: Host> Vm<H> {
 
     fn resume_generator(
         &mut self,
-        p: &ResidualProgram,
+        _p: &ResidualProgram,
         generator: Value,
         args: &[Value],
         initial_error: Option<JsError>,
@@ -871,6 +871,10 @@ impl<H: Host> Vm<H> {
             return self.iterator_result(Value::UNDEFINED, true);
         }
         let continuation = continuation.ok_or_else(|| JsError("generator is suspended".into()))?;
+        let execution_program = self
+            .programs
+            .get(continuation.program)
+            .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
         if let Some(record) = self.generator_record_mut(generator) {
             record.running = true;
         }
@@ -900,9 +904,15 @@ impl<H: Host> Vm<H> {
             }
             frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
         }
+        let previous_program = std::mem::replace(&mut self.active_program, continuation.program);
         self.frames.push(frame);
-        let result = self.run_frame_general_with_error(p, self.frames.len() - 1, initial_error);
+        let result = self.run_frame_general_with_error(
+            &execution_program,
+            self.frames.len() - 1,
+            initial_error,
+        );
         let frame = self.frames.pop().expect("generator frame exists");
+        self.active_program = previous_program;
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -1041,6 +1051,18 @@ impl<H: Host> Vm<H> {
             record.running = true;
             continuation
         };
+        let execution_program = match self.programs.get(continuation.program) {
+            Some(program) => program,
+            None => {
+                self.fail_async_generator(
+                    p,
+                    generator,
+                    promise,
+                    JsError("async generator continuation program is unavailable".into()),
+                )?;
+                return Ok(promise);
+            }
+        };
         let mut frame = Frame {
             program: continuation.program,
             function: continuation.function,
@@ -1066,9 +1088,11 @@ impl<H: Host> Vm<H> {
             }
             frame.registers[register as usize] = value;
         }
+        let previous_program = std::mem::replace(&mut self.active_program, continuation.program);
         self.frames.push(frame);
-        let result = self.run_frame_general(p, self.frames.len() - 1);
+        let result = self.run_frame_general(&execution_program, self.frames.len() - 1);
         let frame = self.frames.pop().expect("async generator frame exists");
+        self.active_program = previous_program;
         match result {
             Err(error) => {
                 self.frame_pool.push(Self::recycle_frame(frame));

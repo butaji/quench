@@ -54,6 +54,14 @@ impl fmt::Display for Diagnostic {
     }
 }
 pub struct Engine;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DynamicFunctionKind {
+    Ordinary,
+    Async,
+    Generator,
+    AsyncGenerator,
+}
 pub(crate) struct EvalRegExpLiteral {
     pub(crate) span: Range<usize>,
     pub(crate) flags: String,
@@ -595,7 +603,28 @@ impl Engine {
         name: &str,
         atom_prefix: &[String],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let source = format!("(function anonymous({parameters}) {{{body}\n}})");
+        Self::specialize_dynamic_function_with_kind(
+            parameters,
+            body,
+            name,
+            atom_prefix,
+            DynamicFunctionKind::Ordinary,
+        )
+    }
+    pub(crate) fn specialize_dynamic_function_with_kind(
+        parameters: &str,
+        body: &str,
+        name: &str,
+        atom_prefix: &[String],
+        kind: DynamicFunctionKind,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let prefix = match kind {
+            DynamicFunctionKind::Ordinary => "function",
+            DynamicFunctionKind::Async => "async function",
+            DynamicFunctionKind::Generator => "function*",
+            DynamicFunctionKind::AsyncGenerator => "async function*",
+        };
+        let source = format!("({prefix} anonymous({parameters}) {{{body}\n}})");
         Self::specialize_with_mode(
             &source,
             name,
