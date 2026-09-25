@@ -122,7 +122,6 @@ impl<H: Host> Vm<H> {
             }
             Native::Uint8ArrayFill => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let value = Value::number(self.to_number(p, value)?);
                 let start = self.typed_array_relative_index(p, args.get(1), length)?;
                 let end = if args.get(2).is_none() {
                     length

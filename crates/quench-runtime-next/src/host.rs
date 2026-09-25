@@ -48,6 +48,11 @@ pub trait Host {
     }
 
     fn done(&mut self, _text: Option<&str>) {}
+
+    /// Whether the active embedding permits a synchronous Atomics.wait.
+    fn can_block(&self) -> bool {
+        false
+    }
 }
 
 /// Borrowed capability context. It exposes typed host effects without

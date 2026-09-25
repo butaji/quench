@@ -247,6 +247,19 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::AsyncGeneratorNext | Native::AsyncGeneratorReturn | Native::AsyncGeneratorThrow => {
             1.0
         }
+        Native::AtomicsAdd
+        | Native::AtomicsAnd
+        | Native::AtomicsOr
+        | Native::AtomicsSub
+        | Native::AtomicsXor
+        | Native::AtomicsExchange
+        | Native::AtomicsNotify => 3.0,
+        Native::AtomicsCompareExchange => 4.0,
+        Native::AtomicsIsLockFree => 1.0,
+        Native::AtomicsLoad => 2.0,
+        Native::AtomicsStore => 3.0,
+        Native::AtomicsWait | Native::AtomicsWaitAsync => 4.0,
+        Native::AtomicsPause => 0.0,
         Native::AsyncDisposableStack
         | Native::AsyncDisposableStackMove
         | Native::AsyncDisposableStackDisposeAsync

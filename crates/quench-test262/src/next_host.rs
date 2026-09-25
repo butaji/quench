@@ -29,6 +29,7 @@ static ASYNC_GLOBALS: [HostGlobal; 2] = [
 #[derive(Debug, Default)]
 pub struct RuntimeNextHost {
     async_test: bool,
+    can_block: bool,
     done: Option<String>,
 }
 
@@ -59,6 +60,10 @@ impl Host for RuntimeNextHost {
 
     fn done(&mut self, text: Option<&str>) {
         self.done = Some(text.unwrap_or_default().to_string());
+    }
+
+    fn can_block(&self) -> bool {
+        self.can_block
     }
 
     fn resolve_dynamic_import(
@@ -155,6 +160,7 @@ impl RuntimeNextHost {
 impl Test262Host for RuntimeNextHost {
     fn configure(&mut self, metadata: &crate::TestMetadata) {
         self.async_test = metadata.is_async;
+        self.can_block = metadata.can_block;
     }
 
     fn run_script(&mut self, source: &str) -> Result<(), String> {
