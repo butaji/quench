@@ -260,7 +260,7 @@ pub(crate) enum Native {
     PromiseFinallyJob,
     PromiseFinallyContinuationJob,
     PromiseAggregateJob,
-    PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
+    PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

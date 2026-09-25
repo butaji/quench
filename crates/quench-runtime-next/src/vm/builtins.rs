@@ -269,7 +269,8 @@ const NATIVES: &[Native] = &[
     Native::PromiseFinally, Native::PromiseAll, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAny,
     Native::PromiseReactionJob, Native::PromiseThenableJob,
     Native::PromiseFinallyJob, Native::PromiseFinallyContinuationJob, Native::PromiseAggregateJob,
-    Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncGeneratorDelegateFulfilled,
+    Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncFromSyncValue,
+    Native::AsyncFromSyncValueRejected, Native::AsyncGeneratorDelegateFulfilled,
     Native::AsyncGeneratorDelegateRejected, ];
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
