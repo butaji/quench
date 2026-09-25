@@ -321,7 +321,8 @@ impl<H: Host> Vm<H> {
         // Preserve that reference even if evaluating the RHS removed the
         // binding before PutValue (the specification's captured Reference).
         if object != self.realm.globals {
-            if strict && !self.has_property(p, object, key)? {
+            let still_exists = self.has_property(p, object, key)?;
+            if strict && !still_exists {
                 return Err(
                     self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
                 );
@@ -435,6 +436,28 @@ impl<H: Host> Vm<H> {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
         Ok(self.resolve_name_reference(p, atom)?.0)
+    }
+
+    pub(super) fn load_resolved_name(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        strict: bool,
+    ) -> Result<Value, JsError> {
+        if object == self.realm.globals {
+            return self.load_name_without_with(p, atom, 0);
+        }
+        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        if !self.has_property(p, object, key)? {
+            if strict {
+                return Err(
+                    self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
+                );
+            }
+            return Ok(Value::UNDEFINED);
+        }
+        self.get_property(p, object, atom)
     }
 
     fn has_name_binding(&mut self, p: &ResidualProgram, atom: Atom) -> Result<bool, JsError> {

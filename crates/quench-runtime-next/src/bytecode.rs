@@ -262,6 +262,7 @@ opcodes!(
     LoadNameCall => READ_THROW,
     LoadNameTypeof => Effect::READS_HEAP,
     ResolveName => READ_THROW,
+    LoadResolvedName => READ_THROW,
     DeleteName => READ_THROW,
     StoreName => WRITE_THROW,
     StoreResolvedName => WRITE_THROW,
