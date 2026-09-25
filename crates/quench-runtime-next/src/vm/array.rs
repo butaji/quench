@@ -1,5 +1,7 @@
 use super::*;
 
+const DEFAULT_FLAT_DEPTH: usize = 1;
+
 impl<H: Host> Vm<H> {
     pub(super) fn array_length(&self, array: Value) -> Option<usize> {
         match self.heap.get(array) {
@@ -272,14 +274,18 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = self.box_object_or_type_error(p, this)?;
-        let depth = match self.to_number(p, args.first().copied().unwrap_or(Value::number(1.0)))? {
-            value if value.is_nan() || value <= 0.0 => 0,
-            value if value.is_infinite() => usize::MAX,
-            value => value.trunc() as usize,
+        let source_length = self.array_like_length(p, source)?;
+        let depth = match args.first().copied() {
+            None | Some(Value::UNDEFINED) => DEFAULT_FLAT_DEPTH,
+            Some(value) => match self.to_number(p, value)? {
+                value if value.is_nan() || value <= 0.0 => 0,
+                value if value.is_infinite() => usize::MAX,
+                value => value.trunc() as usize,
+            },
         };
         let target = self.array_species_create(p, source, 0)?;
         let mut values = Vec::new();
-        self.flatten_into(p, source, depth, &mut values)?;
+        self.flatten_into(p, source, source_length, depth, &mut values)?;
         for (index, value) in values.into_iter().enumerate() {
             self.create_data_property_or_throw(p, target, index, value)?;
         }
@@ -290,18 +296,19 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         source: Value,
+        source_length: usize,
         depth: usize,
         output: &mut Vec<Value>,
     ) -> Result<(), JsError> {
-        let length = self.array_like_length(p, source)?;
-        for index in 0..length {
+        for index in 0..source_length {
             let key = Value::number(index as f64);
             if !self.has_property(p, source, key)? {
                 continue;
             }
             let value = self.get_index(p, source, key)?;
             if depth > 0 && self.is_array(p, value)? {
-                self.flatten_into(p, value, depth - 1, output)?;
+                let nested_length = self.array_like_length(p, value)?;
+                self.flatten_into(p, value, nested_length, depth - 1, output)?;
             } else {
                 output.push(value);
             }

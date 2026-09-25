@@ -54,6 +54,7 @@ impl<H: Host> Vm<H> {
             let trap_atom = self.intern_atom("has");
             let trap = self.get_property(p, handler, trap_atom)?;
             if self.is_function(trap) {
+                let key = self.to_property_key(p, key)?;
                 let result = self.call_value(p, trap, handler, &[target, key])?;
                 return Ok(self.truthy(result));
             }
