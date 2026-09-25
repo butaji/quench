@@ -29,6 +29,9 @@ impl<H: Host> Vm<H> {
                 | Native::IteratorSelf
                 | Native::IteratorReturn
                 | Native::IteratorThrow
+                | Native::AsyncGeneratorNext
+                | Native::AsyncGeneratorReturn
+                | Native::AsyncGeneratorThrow
                 | Native::WeakMapGet
                 | Native::WeakMapSet
                 | Native::WeakMapHas
@@ -373,6 +376,9 @@ impl<H: Host> Vm<H> {
             Native::IteratorSelf => Ok(this),
             Native::IteratorReturn => self.generator_return(p, this, args),
             Native::IteratorThrow => self.generator_throw(p, this, args),
+            Native::AsyncGeneratorNext
+            | Native::AsyncGeneratorReturn
+            | Native::AsyncGeneratorThrow => self.async_generator_method(p, native, this, args),
             Native::WeakMapGet => {
                 let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let Some(index) = self.weak_map_entry_index(this, key) else {
