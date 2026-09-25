@@ -626,7 +626,18 @@ impl<H: Host> Vm<H> {
             Op::DefineField => {
                 let object = self.read(f, i.b());
                 let value = self.read(f, i.a());
-                self.define_object_literal_data_property(p, object, i.imm(), value)?;
+                self.define_class_field(p, object, PropertyKey::string(i.imm()), value)?;
+            }
+            Op::DefineComputedField => {
+                let object = self.read(f, i.b());
+                let key = self.read(f, i.c());
+                let key = self.to_property_key(p, key)?;
+                let key = match self.heap.get(key).cloned() {
+                    Some(Cell::String(text)) => PropertyKey::string(self.intern_js_atom(&text)),
+                    Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
+                    _ => return Err(JsError::validation("invalid class field key".into())),
+                };
+                self.define_class_field(p, object, key, self.read(f, i.a()))?;
             }
             Op::SetThisField => {
                 let this = self.checked_this_binding(p, f)?;

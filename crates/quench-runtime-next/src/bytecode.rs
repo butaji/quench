@@ -295,6 +295,7 @@ opcodes!(
     CopyDataProperties => CALL_EFFECT,
     MarkPrivateName => Effect::WRITES_HEAP,
     SetField => WRITE_THROW,
+    DefineComputedField => WRITE_THROW,
     SetThisField => WRITE_THROW,
     SetIndex => WRITE_THROW,
     Binary => READ_THROW, @ NumericReturnable,

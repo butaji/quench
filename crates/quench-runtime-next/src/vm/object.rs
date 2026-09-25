@@ -498,26 +498,6 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    pub(super) fn define_object_literal_data_property(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        atom: Atom,
-        value: Value,
-    ) -> Result<(), JsError> {
-        self.evaluate_deferred_namespace_for_key(p, object, Some(PropertyKey::string(atom)))?;
-        let key = PropertyKey::string(atom);
-        if self
-            .property_attributes(object, key)
-            .is_some_and(|attributes| attributes.accessor)
-        {
-            self.remove_property_attributes(object, key);
-        }
-        self.set_shape_property(object, key, value)?;
-        self.set_property_attributes(object, key, DEFAULT_PROPERTY_ATTRIBUTES);
-        Ok(())
-    }
-
     pub(super) fn set_field_cached(
         &mut self,
         p: &ResidualProgram,

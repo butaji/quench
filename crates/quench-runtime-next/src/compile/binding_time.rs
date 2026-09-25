@@ -84,6 +84,7 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
             | Op::StoreName
             | Op::SetField
             | Op::DefineField
+            | Op::DefineComputedField
             | Op::SetThisField
             | Op::SetIndex
             | Op::Jump

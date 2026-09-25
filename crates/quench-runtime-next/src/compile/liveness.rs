@@ -135,6 +135,9 @@ fn uses(
                 mask | uses(*nested, methods, fields, superinstructions)
             }),
         Op::SetField | Op::DefineField => bit(instruction.a()) | bit(instruction.b()),
+        Op::DefineComputedField => {
+            bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c())
+        }
         Op::SetThisField => bit(instruction.a()),
         Op::InitializeThis => bit(instruction.a()),
         Op::YieldStar => {
