@@ -97,6 +97,7 @@ impl<H: Host> Vm<H> {
             return self.data_view_native(p, native, this, args);
         }
         match native {
+            Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),
             Native::AbstractModuleSourceToStringTag => {
                 Ok(self.abstract_module_source_to_string_tag(this))
             }
