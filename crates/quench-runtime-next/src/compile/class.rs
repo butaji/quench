@@ -19,24 +19,21 @@ impl FunctionCompiler<'_, '_> {
         bind_name: bool,
         inferred_name: Option<&str>,
     ) -> Register {
-        let class_binding = (!bind_name)
-            .then_some(class.id.as_ref())
-            .flatten()
-            .map(|identifier| {
-                let source = self.owner.atom(identifier.name.as_str());
-                let binding = self.hidden_local(&format!(
-                    "{}\0rqj:class-binding:{}",
-                    identifier.name.as_str(),
-                    self.function_id
-                ));
-                let slot = self.local_slots[&binding];
-                self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
-                self.push_immutable_lexical_bindings(
-                    FxHashMap::from_iter([(source, binding)]),
-                    FxHashSet::from_iter([source]),
-                );
-                binding
-            });
+        let class_binding = class.id.as_ref().map(|identifier| {
+            let source = self.owner.atom(identifier.name.as_str());
+            let binding = self.hidden_local(&format!(
+                "{}\0rqj:class-binding:{}",
+                identifier.name.as_str(),
+                self.function_id
+            ));
+            let slot = self.local_slots[&binding];
+            self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
+            self.push_immutable_lexical_bindings(
+                FxHashMap::from_iter([(source, binding)]),
+                FxHashSet::from_iter([source]),
+            );
+            binding
+        });
         let heritage = class.heritage.as_ref().map(|heritage| {
             let outer_strict = std::mem::replace(&mut self.strict, true);
             let value = self.expression(&heritage.expression);
@@ -210,16 +207,6 @@ impl FunctionCompiler<'_, '_> {
         }
         if let Some(binding) = class_binding {
             self.initialize_class_binding(binding, class_value);
-        }
-
-        if bind_name {
-            if let Some(name) = &class.id {
-                let atom = self.owner.atom(name.name.as_str());
-                self.store_atom(atom, class_value);
-            } else {
-                self.owner
-                    .reject(class.span, "class declaration requires a name");
-            }
         }
 
         let prototype = self.reg();
@@ -542,6 +529,15 @@ impl FunctionCompiler<'_, '_> {
         }
         if class_binding.is_some() {
             self.pop_lexical_scope();
+        }
+        if bind_name {
+            if let Some(name) = &class.id {
+                let atom = self.owner.atom(name.name.as_str());
+                self.store_atom(atom, class_value);
+            } else {
+                self.owner
+                    .reject(class.span, "class declaration requires a name");
+            }
         }
         class_value
     }
