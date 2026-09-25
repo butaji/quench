@@ -227,6 +227,7 @@ impl FunctionCompiler<'_, '_> {
         }
         let break_close = self.emit(Op::Jump, 0, 0, 0, 0);
         let update = self.code.len() as u32;
+        self.resolve_control_destinations(&control, break_cleanup, Some(iteration_cleanup));
         self.patch_instruction(skip_break_cleanup, update);
         self.emit(Op::Jump, 0, 0, 0, head);
         let close = self.code.len() as u32;
