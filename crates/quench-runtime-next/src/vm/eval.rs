@@ -76,7 +76,7 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::String(JsString::from_units(pattern_units)));
             return self.construct_regexp_native(p, &[pattern, Value::UNDEFINED]);
         }
-        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.host_string()))
+        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.units()))
         {
             return Ok(Value::UNDEFINED);
         }
@@ -1892,32 +1892,38 @@ fn strip_eval_comments(source: &str) -> Cow<'_, str> {
     }
 }
 
-fn eval_source_has_no_tokens(source: &str) -> bool {
-    let mut input = source.chars().peekable();
-    while let Some(character) = input.next() {
-        if is_ecmascript_whitespace(character) {
+fn eval_source_has_no_tokens(source: &[u16]) -> bool {
+    let mut offset = 0;
+    while let Some(&unit) = source.get(offset) {
+        if char::from_u32(u32::from(unit)).is_some_and(is_ecmascript_whitespace) {
+            offset += 1;
             continue;
         }
-        if character != '/' {
+        if unit != u16::from(b'/') {
             return false;
         }
-        match input.next() {
-            Some('/') => {
-                for character in input.by_ref() {
-                    if matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
+        offset += 1;
+        match source.get(offset).copied() {
+            Some(unit) if unit == u16::from(b'/') => {
+                offset += 1;
+                for &unit in &source[offset..] {
+                    offset += 1;
+                    if matches!(unit, 0x000a | 0x000d | 0x2028 | 0x2029) {
                         break;
                     }
                 }
             }
-            Some('*') => {
-                let mut previous = '\0';
+            Some(unit) if unit == u16::from(b'*') => {
+                offset += 1;
                 let mut closed = false;
-                for character in input.by_ref() {
-                    if previous == '*' && character == '/' {
+                let mut previous = 0;
+                for &unit in &source[offset..] {
+                    offset += 1;
+                    if previous == u16::from(b'*') && unit == u16::from(b'/') {
                         closed = true;
                         break;
                     }
-                    previous = character;
+                    previous = unit;
                 }
                 if !closed {
                     return false;
