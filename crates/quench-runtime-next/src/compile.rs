@@ -135,6 +135,27 @@ impl Engine {
         Some(names)
     }
 
+    pub(crate) fn eval_directives(source: &str) -> Option<Vec<String>> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() {
+            return None;
+        }
+        Some(
+            parsed
+                .program
+                .directives
+                .iter()
+                .map(|directive| directive.directive.to_string())
+                .collect(),
+        )
+    }
+
+    pub(crate) fn eval_has_use_strict_directive(source: &str) -> bool {
+        Self::eval_directives(source)
+            .is_some_and(|directives| directives.iter().any(|directive| directive == "use strict"))
+    }
+
     pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
@@ -193,7 +214,12 @@ impl Engine {
                 Statement::ExpressionStatement(expression) => expression.expression.span(),
                 _ => statement.span(),
             };
-            statements.push(source.get(span.start as usize..span.end as usize)?);
+            let text = source.get(span.start as usize..span.end as usize)?;
+            statements.push(if matches!(statement, Statement::VariableDeclaration(_)) {
+                text.strip_suffix(';').unwrap_or(text)
+            } else {
+                text
+            });
         }
         Some(statements)
     }
