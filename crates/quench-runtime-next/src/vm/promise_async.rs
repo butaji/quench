@@ -316,8 +316,8 @@ impl<H: Host> Vm<H> {
             super::FrameOutcome::Yield {
                 value,
                 destination,
+                delegated_result,
                 frame: None,
-                ..
             } => {
                 if let Some(generator) = resume.generator {
                     self.async_generator_yield(
@@ -327,6 +327,7 @@ impl<H: Host> Vm<H> {
                         frame,
                         value,
                         destination,
+                        delegated_result.is_some(),
                     )?;
                 } else {
                     self.frame_pool.push(Self::recycle_frame(frame));

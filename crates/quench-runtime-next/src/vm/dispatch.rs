@@ -607,7 +607,7 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::Yield {
                         value,
                         destination: i.a(),
-                        delegated_result: (!asynchronous).then_some(result),
+                        delegated_result: Some(result),
                     });
                 }
             }
