@@ -8,6 +8,7 @@ use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
+use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -18,6 +19,7 @@ pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 pub(crate) mod activation;
 mod activation_lifecycle;
+mod agent;
 mod arguments;
 mod array;
 mod array_buffer;
@@ -314,6 +316,7 @@ pub struct Vm<H> {
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     promise: PromiseRuntime,
+    test262_agent: Test262AgentState,
     programs: ProgramStore,
     active_program: ProgramId,
     profile: Profile,

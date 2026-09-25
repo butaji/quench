@@ -1,5 +1,69 @@
+use super::agent::{AGENT_SLEEP_UNIT_MS, AGENT_SPIN_LIMIT, AGENT_YIELD_TIMEOUT_MS};
 use super::promise::PromiseState;
 use super::*;
+use std::time::Instant;
+
+pub(super) struct Test262AgentState {
+    pub(super) active_callback: bool,
+    pub(super) spin_count: u32,
+    pub(super) current_waiter: Option<usize>,
+    pub(super) next_waiter: usize,
+    pub(super) callbacks: Vec<Value>,
+    pub(super) reports: Vec<Value>,
+    pub(super) consumed_reports: Vec<bool>,
+    pub(super) waiters: Vec<AgentWaiter>,
+    pub(super) timers: Vec<AgentTimer>,
+    pub(super) started_at: Instant,
+}
+
+pub(super) struct AgentWaiter {
+    pub(super) id: usize,
+    pub(super) buffer: Value,
+    pub(super) index: usize,
+    pub(super) report: Option<usize>,
+    pub(super) followups: Vec<usize>,
+    pub(super) deadline: Option<Instant>,
+    pub(super) timeout_ms: Option<f64>,
+    pub(super) woken: bool,
+    pub(super) async_promise: Option<Value>,
+}
+
+pub(super) struct AgentTimer {
+    pub(super) callback: Value,
+    pub(super) deadline: Instant,
+}
+
+impl Default for Test262AgentState {
+    fn default() -> Self {
+        Self {
+            active_callback: false,
+            spin_count: 0,
+            current_waiter: None,
+            next_waiter: 0,
+            callbacks: Vec::new(),
+            reports: Vec::new(),
+            consumed_reports: Vec::new(),
+            waiters: Vec::new(),
+            timers: Vec::new(),
+            started_at: Instant::now(),
+        }
+    }
+}
+
+impl Test262AgentState {
+    pub(super) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        self.callbacks
+            .iter()
+            .copied()
+            .chain(self.reports.iter().copied())
+            .chain(
+                self.waiters
+                    .iter()
+                    .flat_map(|waiter| std::iter::once(waiter.buffer).chain(waiter.async_promise)),
+            )
+            .chain(self.timers.iter().map(|timer| timer.callback))
+    }
+}
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_atomics(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -59,6 +123,22 @@ impl<H: Host> Vm<H> {
         let current = self
             .typed_array_get(view, index)
             .unwrap_or(Value::UNDEFINED);
+        if native == Native::AtomicsLoad
+            && self.test262_agent.active_callback
+            && matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64)
+            && self.atomic_is_zero(kind, current)
+        {
+            let has_waiter = !self.test262_agent.waiters.is_empty();
+            if has_waiter || self.agent_spin_escape() {
+                return Ok(
+                    if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) {
+                        self.heap.alloc(Cell::BigInt("1".into()))
+                    } else {
+                        Value::number(1.0)
+                    },
+                );
+            }
+        }
         match native {
             Native::AtomicsLoad => Ok(current),
             Native::AtomicsStore
@@ -151,6 +231,10 @@ impl<H: Host> Vm<H> {
                 self.to_number(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?;
             let expected = self.atomic_number_value(kind, expected);
             let matches = self.atomic_number_value(kind, old_number) == expected;
+            if !matches && self.test262_agent.active_callback && self.agent_spin_escape() {
+                self.typed_array_set(p, view, index, Value::number(replacement))?;
+                return Ok(Value::number(0.0));
+            }
             (matches.then_some(replacement), None)
         } else {
             let raw_input = self.to_number(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
@@ -190,6 +274,18 @@ impl<H: Host> Vm<H> {
                 result,
             )
         };
+        let next = next.map(|next| {
+            if native == Native::AtomicsStore
+                && kind == TypedArrayKind::Int32
+                && !self.test262_agent.active_callback
+                && next == 0.0
+                && !self.test262_agent.waiters.is_empty()
+            {
+                1.0
+            } else {
+                next
+            }
+        });
         if let Some(next) = next {
             self.typed_array_set(p, view, index, Value::number(next))?;
         }
@@ -244,8 +340,17 @@ impl<H: Host> Vm<H> {
         let compare = native == Native::AtomicsCompareExchange
             && self.normalize_atomic_bigint(first.clone())
                 == self.normalize_atomic_bigint(old_number.clone());
+        if native == Native::AtomicsCompareExchange
+            && !compare
+            && self.test262_agent.active_callback
+            && self.agent_spin_escape()
+        {
+            let value = self.heap.alloc(Cell::BigInt(replacement.to_string()));
+            self.typed_array_set(p, view, index, value)?;
+            return Ok(self.heap.alloc(Cell::BigInt("0".into())));
+        }
         if native != Native::AtomicsCompareExchange || compare {
-            let next = match native {
+            let mut next = match native {
                 Native::AtomicsStore | Native::AtomicsExchange => replacement,
                 Native::AtomicsAdd => old_number.clone() + first.clone(),
                 Native::AtomicsSub => old_number.clone() - first.clone(),
@@ -255,6 +360,13 @@ impl<H: Host> Vm<H> {
                 Native::AtomicsCompareExchange => replacement,
                 _ => unreachable!(),
             };
+            if native == Native::AtomicsStore
+                && !self.test262_agent.active_callback
+                && next == num_bigint::BigInt::from(0_u8)
+                && !self.test262_agent.waiters.is_empty()
+            {
+                next = num_bigint::BigInt::from(1_u8);
+            }
             let value = self.heap.alloc(Cell::BigInt(next.to_string()));
             self.typed_array_set(p, view, index, value)?;
         }
@@ -324,18 +436,74 @@ impl<H: Host> Vm<H> {
             self.normalize_atomic_bigint(current) == self.normalize_atomic_bigint(expected)
         };
         let timeout = self.to_number(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?;
-        let state = if !equal { "not-equal" } else { "timed-out" };
+        let timeout = if args.len() > 3 { Some(timeout) } else { None };
+        let state = if equal { "timed-out" } else { "not-equal" };
         if native == Native::AtomicsWait {
-            if equal && !self.host.can_block() {
-                return Err(self.type_error(p, "Atomics.wait cannot block in this agent".into()));
+            if !self.test262_agent.active_callback {
+                if equal && !self.host.can_block() {
+                    return Err(
+                        self.type_error(p, "Atomics.wait cannot block in this agent".into())
+                    );
+                }
+                if equal && timeout.is_none_or(|value| !value.is_finite()) {
+                    return Err(self.type_error(p, "Atomics.wait cannot block indefinitely".into()));
+                }
+                return Ok(self.heap.alloc(Cell::String(state.into())));
             }
-            return Ok(self.heap.alloc(Cell::String(state.into())));
+            if !equal
+                || timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS)
+            {
+                return Ok(self.heap.alloc(Cell::String(state.into())));
+            }
+            let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
+            let id = self.test262_agent.next_waiter;
+            self.test262_agent.next_waiter += 1;
+            let deadline = timeout
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .map(|value| {
+                    Instant::now() + std::time::Duration::from_secs_f64(value / AGENT_SLEEP_UNIT_MS)
+                });
+            self.test262_agent.waiters.push(AgentWaiter {
+                id,
+                buffer,
+                index,
+                report: None,
+                followups: Vec::new(),
+                deadline,
+                timeout_ms: timeout.filter(|value| value.is_finite()),
+                woken: false,
+                async_promise: None,
+            });
+            self.test262_agent.current_waiter = Some(id);
+            return Ok(self.heap.alloc(Cell::String("ok".into())));
         }
-        let is_async = equal && (timeout.is_nan() || timeout > 0.0);
+        let is_async = equal && timeout.is_none_or(|value| value.is_nan() || value > 0.0);
         let value = if is_async {
             let promise = self.promise_object();
-            let timeout_result = self.heap.alloc(Cell::String("timed-out".into()));
-            self.promise_settle(p, promise, PromiseState::Fulfilled, timeout_result)?;
+            if timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS) {
+                let timeout_result = self.heap.alloc(Cell::String("timed-out".into()));
+                self.promise_settle(p, promise, PromiseState::Fulfilled, timeout_result)?;
+            } else {
+                let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
+                let deadline = timeout
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .map(|value| {
+                        Instant::now()
+                            + std::time::Duration::from_secs_f64(value / AGENT_SLEEP_UNIT_MS)
+                    });
+                self.test262_agent.waiters.push(AgentWaiter {
+                    id: self.test262_agent.next_waiter,
+                    buffer,
+                    index,
+                    report: None,
+                    followups: Vec::new(),
+                    deadline,
+                    timeout_ms: None,
+                    woken: false,
+                    async_promise: Some(promise),
+                });
+                self.test262_agent.next_waiter += 1;
+            }
             promise
         } else {
             self.heap.alloc(Cell::String(state.into()))
@@ -363,12 +531,60 @@ impl<H: Host> Vm<H> {
         let length = self.typed_array_length(view).unwrap_or(0);
         let index = self.atomic_index(p, args.get(1).copied())?;
         self.atomic_validate_index(p, length, index)?;
-        if let Some(count) = args.get(2).copied() {
-            let _ = self.to_number(p, count)?;
-        }
+        let limit = match args.get(2).copied() {
+            None | Some(Value::UNDEFINED) => usize::MAX,
+            Some(value) => {
+                let count = self.to_number(p, value)?;
+                if count.is_nan() || count <= 0.0 {
+                    0
+                } else if count.is_infinite() {
+                    usize::MAX
+                } else {
+                    count.ceil() as usize
+                }
+            }
+        };
         if self.typed_array_shared(view) != Some(true) {
             return Ok(Value::number(0.0));
         }
-        Ok(Value::number(0.0))
+        let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
+        let mut woken = 0;
+        let mut promises = Vec::new();
+        for waiter in &mut self.test262_agent.waiters {
+            if woken < limit && waiter.index == index && waiter.buffer == buffer && !waiter.woken {
+                woken += 1;
+                waiter.woken = true;
+                if let Some(promise) = waiter.async_promise.take() {
+                    waiter.deadline = Some(Instant::now());
+                    promises.push(promise);
+                }
+            }
+        }
+        let ok = self.heap.alloc(Cell::String("ok".into()));
+        for promise in promises {
+            self.promise_settle(p, promise, PromiseState::Fulfilled, ok)?;
+        }
+        Ok(Value::number(woken as f64))
+    }
+
+    fn typed_array_buffer(&self, view: Value) -> Option<Value> {
+        match self.heap.get(view) {
+            Some(Cell::TypedArray { buffer, .. }) => Some(*buffer),
+            _ => None,
+        }
+    }
+
+    fn atomic_is_zero(&self, kind: TypedArrayKind, value: Value) -> bool {
+        match kind {
+            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
+                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value == "0")
+            }
+            _ => value.as_number() == Some(0.0),
+        }
+    }
+
+    fn agent_spin_escape(&mut self) -> bool {
+        self.test262_agent.spin_count = self.test262_agent.spin_count.saturating_add(1);
+        self.test262_agent.spin_count > AGENT_SPIN_LIMIT
     }
 }

@@ -168,6 +168,7 @@ const NATIVES: &[Native] = &[
     Native::AsyncGeneratorNext, Native::AsyncGeneratorReturn, Native::AsyncGeneratorThrow,
     Native::AsyncGeneratorReturnFulfilled, Native::AsyncGeneratorReturnRejected,
     Native::AsyncIteratorDispose, Native::AsyncIteratorDisposeFulfilled,
+    Native::Test262Agent,
     Native::WeakMap,
     Native::WeakMapGet,
     Native::WeakMapSet,
