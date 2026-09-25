@@ -508,11 +508,24 @@ impl<H: Host> Vm<H> {
                 _ => None,
             });
         }
-        let length = match self.heap.get(source) {
-            Some(Cell::Array { elements, .. }) => {
-                self.heap.sparse_length(source).unwrap_or(elements.len())
+        let Some(Cell::Array { elements, .. }) = self.heap.get(source) else {
+            return Ok(None);
+        };
+        let element_length = elements.len();
+        let is_arguments = self
+            .object_data(source)
+            .is_some_and(Object::is_arguments_object);
+        let length = if is_arguments {
+            let length_atom = self.intern_atom("length");
+            let length_value = self.get_property(p, source, length_atom)?;
+            let length = self.to_number(p, length_value)?;
+            if length.is_nan() || length <= 0.0 {
+                0
+            } else {
+                length.floor().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize
             }
-            _ => return Ok(None),
+        } else {
+            self.heap.sparse_length(source).unwrap_or(element_length)
         };
         if index >= length {
             return Ok(None);
