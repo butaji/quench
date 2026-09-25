@@ -676,7 +676,9 @@ impl<H: Host> Vm<H> {
                 "cannot write inherited non-writable property".into(),
             ));
         }
-        self.set_property(object, atom, value)
+        self.set_property(object, atom, value)?;
+        self.mirror_global_var_property_write(p, object, atom, value);
+        Ok(())
     }
     pub(super) fn property_accessor(
         &self,
