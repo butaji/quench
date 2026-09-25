@@ -32,6 +32,7 @@ impl FunctionCompiler<'_, '_> {
             with_depth: self.with_depth,
         });
         self.clear_statement_completion();
+        self.initialize_inactive_catch_aliases(handler);
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
         self.scoped_statements(&handler.body.body);
@@ -111,6 +112,7 @@ impl FunctionCompiler<'_, '_> {
             with_depth: self.with_depth,
         });
         self.clear_statement_completion();
+        self.initialize_inactive_catch_aliases(handler);
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
         let catch_start = self.code.len() as u32;
@@ -157,6 +159,23 @@ impl FunctionCompiler<'_, '_> {
             let value = self.load_atom(atom);
             let parameter = handler.param.as_ref().unwrap();
             self.bind_pattern(&parameter.pattern, value);
+        }
+    }
+
+    fn initialize_inactive_catch_aliases(&mut self, handler: &CatchClause<'_>) {
+        let Some(parameter) = &handler.param else {
+            return;
+        };
+        let mut names = Vec::new();
+        super::super::early::collect_pattern_names(&parameter.pattern, &mut names);
+        for name in names {
+            let atom = self.owner.atom(&name);
+            if self.function_scope.contains(&atom) {
+                continue;
+            }
+            if let Some(slot) = self.local_slot(atom) {
+                self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
+            }
         }
     }
 
