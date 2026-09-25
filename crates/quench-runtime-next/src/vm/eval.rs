@@ -1571,6 +1571,9 @@ impl<H: Host> Vm<H> {
                 } else {
                     frame.locals.get(slot).copied()
                 }?;
+                if value.is_deleted() {
+                    continue;
+                }
                 best = Some((candidate_name.to_owned(), value));
             }
         }
