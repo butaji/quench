@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -98,6 +99,31 @@ impl<H: Host> Vm<H> {
         self.global(program, "SharedArrayBuffer", shared_array_buffer)
     }
 
+    pub(super) fn install_array_buffer_species(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        let Some(species) = self.well_known_symbols.get("species").copied() else {
+            return Ok(());
+        };
+        let array_buffer = self.native_value(Native::ArrayBuffer);
+        let getter = self.native_value(Native::ArrayBufferSpecies);
+        self.set_index(program, array_buffer, species, getter)?;
+        self.set_property_attributes(
+            array_buffer,
+            PropertyKey::symbol(species),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+
     pub(super) fn array_buffer_detached(&self, buffer: Value) -> bool {
         matches!(
             self.heap.get(buffer),
@@ -189,6 +215,7 @@ impl<H: Host> Vm<H> {
             }) if !shared && !detached => Rc::clone(bytes),
             _ => return Err(JsError("ArrayBuffer.slice receiver is invalid".into())),
         };
+        let source_bytes = Rc::clone(&bytes);
         let length = bytes.len();
         let relative = |number: f64| {
             if number.is_nan() {
@@ -213,15 +240,65 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .map(relative)
             .unwrap_or(length);
-        Ok(self.heap.alloc(Cell::ArrayBuffer {
-            object: Self::empty_object(self.array_buffer_proto),
-            bytes: Rc::new(bytes[start.min(end)..end].to_vec()),
-            shared: false,
-            detached: false,
-            max_byte_length: end.saturating_sub(start),
-            resizable: false,
-            immutable: false,
-        }))
+        let count = end.saturating_sub(start);
+        let constructor_atom = self.intern_atom("constructor");
+        let constructor = self.get_property(p, this, constructor_atom)?;
+        let species = if constructor.is_undefined() {
+            self.native_value(Native::ArrayBuffer)
+        } else {
+            if constructor.is_null() || self.object_data(constructor).is_none() {
+                return Err(self.type_error(p, "ArrayBuffer constructor must be an object".into()));
+            }
+            let species = self
+                .well_known_symbols
+                .get("species")
+                .copied()
+                .map(|key| self.get_index(p, constructor, key))
+                .transpose()?
+                .unwrap_or(Value::UNDEFINED);
+            if species.is_null() || species.is_undefined() {
+                self.native_value(Native::ArrayBuffer)
+            } else {
+                species
+            }
+        };
+        if !self.is_constructable(p, species) {
+            return Err(self.type_error(p, "ArrayBuffer species is not a constructor".into()));
+        }
+        let result = self.construct_value_with_new_target(
+            p,
+            species,
+            species,
+            &[Value::number(count as f64)],
+        )?;
+        let (result_bytes, result_shared, result_detached, result_immutable) =
+            match self.heap.get(result) {
+                Some(Cell::ArrayBuffer {
+                    bytes,
+                    shared,
+                    detached,
+                    immutable,
+                    ..
+                }) => (Rc::clone(bytes), *shared, *detached, *immutable),
+                _ => {
+                    return Err(
+                        self.type_error(p, "ArrayBuffer species must return an ArrayBuffer".into())
+                    );
+                }
+            };
+        if result == this || result_shared || result_detached || result_immutable {
+            return Err(self.type_error(p, "ArrayBuffer species returned an invalid buffer".into()));
+        }
+        if result_bytes.len() < count {
+            return Err(self.type_error(p, "ArrayBuffer species returned a short buffer".into()));
+        }
+        if let Some(Cell::ArrayBuffer {
+            bytes: destination, ..
+        }) = self.heap.get_mut(result)
+        {
+            Rc::make_mut(destination)[..count].copy_from_slice(&source_bytes[start.min(end)..end]);
+        }
+        Ok(result)
     }
 
     pub(super) fn array_buffer_transfer_native(
