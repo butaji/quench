@@ -40,6 +40,8 @@ impl<H: Host> Vm<H> {
                 | Native::DisposableStackDisposeAsyncWithCompletion
                 | Native::DisposableStackAsyncDisposalFulfilled
                 | Native::DisposableStackAsyncDisposalRejected
+                | Native::AsyncIteratorDispose
+                | Native::AsyncIteratorDisposeFulfilled
         )
     }
 
@@ -226,6 +228,12 @@ impl<H: Host> Vm<H> {
             self.require_async_stack(p, this)?;
             return self.stack_disposed(this);
         }
+        if native == Native::AsyncIteratorDispose {
+            return self.async_iterator_dispose(p, this);
+        }
+        if native == Native::AsyncIteratorDisposeFulfilled {
+            return Ok(Value::UNDEFINED);
+        }
         if matches!(
             native,
             Native::AsyncDisposableStackUse
@@ -291,6 +299,59 @@ impl<H: Host> Vm<H> {
             Native::DisposableStackDefer => self.stack_defer(p, this, args, false),
             _ => Err(JsError("invalid disposal native".into())),
         }
+    }
+
+    fn async_iterator_dispose(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        let return_atom = self.intern_atom("return");
+        let method = match self.get_property(p, receiver, return_atom) {
+            Ok(method) => method,
+            Err(error) => {
+                let reason = self.thrown_value_for(p, error);
+                let promise = self.promise_object();
+                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                return Ok(promise);
+            }
+        };
+        if method.is_undefined() || method.is_null() {
+            let promise = self.promise_object();
+            self.promise_settle(p, promise, PromiseState::Fulfilled, Value::UNDEFINED)?;
+            return Ok(promise);
+        }
+        if !self.is_function(method) {
+            let error = self.type_error(p, "AsyncIterator return is not callable".into());
+            let reason = self.thrown_value_for(p, error);
+            let promise = self.promise_object();
+            self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+            return Ok(promise);
+        }
+        let result = match self.call_value(p, method, receiver, &[Value::UNDEFINED]) {
+            Ok(result) => result,
+            Err(error) => {
+                let reason = self.thrown_value_for(p, error);
+                let promise = self.promise_object();
+                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                return Ok(promise);
+            }
+        };
+        let awaited = match self.promise_for_value(p, result) {
+            Ok(promise) => promise,
+            Err(error) => {
+                let reason = self.thrown_value_for(p, error);
+                let promise = self.promise_object();
+                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                return Ok(promise);
+            }
+        };
+        self.promise_then(
+            p,
+            awaited,
+            self.native_value(Native::AsyncIteratorDisposeFulfilled),
+            Value::UNDEFINED,
+        )
     }
 
     fn require_stack(&mut self, p: &ResidualProgram, stack: Value) -> Result<(), JsError> {

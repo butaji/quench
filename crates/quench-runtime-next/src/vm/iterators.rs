@@ -191,6 +191,11 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(self.object_proto);
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
+        self.install_async_iterator_prototype(
+            self.async_iterator_proto,
+            self.iterator_proto,
+            None,
+        )?;
         let async_generator_function_prototype = self
             .own_property(
                 self.native_value(Native::AsyncGeneratorFunction),
@@ -278,15 +283,52 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let Some(async_iterator) = self.well_known_symbols.get("asyncIterator").copied() else {
-            return Ok(());
-        };
-        self.set_index(
-            p,
-            self.async_iterator_proto,
-            async_iterator,
-            self.native_value(Native::IteratorSelf),
-        )
+        Ok(())
+    }
+
+    pub(super) fn install_async_iterator_prototype(
+        &mut self,
+        prototype: Value,
+        parent: Value,
+        realm: Option<Value>,
+    ) -> Result<(), JsError> {
+        self.object_data_mut(prototype)
+            .expect("async iterator prototype is an object")
+            .proto = parent;
+        for (symbol_name, native, function_name) in [
+            (
+                "asyncIterator",
+                Native::AsyncIteratorSelf,
+                "[Symbol.asyncIterator]",
+            ),
+            (
+                "asyncDispose",
+                Native::AsyncIteratorDispose,
+                "[Symbol.asyncDispose]",
+            ),
+        ] {
+            let Some(symbol) = self.well_known_symbols.get(symbol_name).copied() else {
+                continue;
+            };
+            let method = realm
+                .map(|realm| self.native_with_realm(native, realm, realm))
+                .unwrap_or_else(|| self.native_value(native));
+            self.set_builtin_function_name(method, function_name)?;
+            self.set_symbol_property(prototype, symbol, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        Ok(())
     }
 
     pub(super) fn install_async_generator_prototype(
@@ -322,8 +364,9 @@ impl<H: Host> Vm<H> {
         );
         if let Some(async_iterator) = self.well_known_symbols.get("asyncIterator").copied() {
             let method = realm
-                .map(|realm| self.native_with_realm(Native::IteratorSelf, realm, realm))
-                .unwrap_or_else(|| self.native_value(Native::IteratorSelf));
+                .map(|realm| self.native_with_realm(Native::AsyncIteratorSelf, realm, realm))
+                .unwrap_or_else(|| self.native_value(Native::AsyncIteratorSelf));
+            self.set_builtin_function_name(method, "[Symbol.asyncIterator]")?;
             self.set_symbol_property(prototype, async_iterator, method)?;
             self.set_property_attributes(
                 prototype,
