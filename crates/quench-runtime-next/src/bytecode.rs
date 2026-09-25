@@ -498,6 +498,7 @@ pub struct ModuleImportBinding {
 pub(crate) struct ModuleLinkPlan {
     pub locals: Vec<(String, String)>,
     pub reexports: Vec<ModuleReexport>,
+    pub hoisted_functions: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -661,8 +662,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 22;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0015_0000;
+    pub const FORMAT_VERSION: u8 = 23;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0016_0000;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()
