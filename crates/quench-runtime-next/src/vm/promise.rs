@@ -787,9 +787,13 @@ impl<H: Host> Vm<H> {
                 Err(message) => return Err(self.type_error(p, message)),
                 Ok(Some(module)) => {
                     if phase == crate::bytecode::ModuleRequestPhase::Source {
-                        let source = self.module_source_value(&module);
-                        self.promise_resolve_value(p, promise, source)?;
-                        return Ok(Value::UNDEFINED);
+                        return self.syntax_error_result(
+                            p,
+                            &format!(
+                                "Source phase import object is not defined for module '{}'",
+                                module.name
+                            ),
+                        );
                     }
                     let module_type = module_type.as_deref().unwrap_or("javascript");
                     let cache_key = module_cache_key(&module.name, module_type);
