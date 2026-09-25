@@ -491,12 +491,12 @@ impl<H: Host> Vm<H> {
             let Some(function) = p.functions.get(continuation.function as usize) else {
                 return Err(JsError("generator function is invalid".into()));
             };
+            let suspended_instruction = continuation.pc.saturating_sub(1) as u32;
             function
                 .handlers
                 .iter()
                 .filter(|handler| {
-                    continuation.pc as u32 >= handler.start
-                        && (continuation.pc as u32) < handler.end
+                    suspended_instruction >= handler.start && suspended_instruction < handler.end
                 })
                 .filter_map(|handler| {
                     Some((

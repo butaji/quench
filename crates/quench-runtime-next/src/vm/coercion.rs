@@ -142,7 +142,11 @@ impl<H: Host> Vm<H> {
             Some(Cell::String(value)) => {
                 return Ok(super::number::parse_number_string(&value.host_string()));
             }
-            Some(Cell::BigInt(value)) => return Ok(value.parse().unwrap_or(f64::NAN)),
+            Some(Cell::BigInt(_)) => {
+                return Err(
+                    self.type_error(program, "cannot convert a BigInt value to a number".into())
+                );
+            }
             _ => {}
         }
         if let Some(atom) = self.lookup_atom("valueOf") {

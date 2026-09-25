@@ -84,6 +84,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_named(program, array, "from", Native::ArrayFrom)?;
+        self.set_builtin_named(program, array, "fromAsync", Native::ArrayFromAsync)?;
         self.set_builtin_named(program, array, "of", Native::ArrayOf)?;
         self.set_builtin_named(program, array, "isArray", Native::ArrayIsArray)?;
         self.global(program, "Array", array)
