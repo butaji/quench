@@ -422,7 +422,7 @@ impl<H: Host> Vm<H> {
             let result = self.construct_native_with_new_target(p, native, args, new_target);
             self.realm.globals = previous_global;
             let result = result?;
-            if native != Native::Proxy {
+            if !matches!(native, Native::Proxy | Native::Array) {
                 self.set_constructed_prototype(p, result, new_target)?;
             }
             return Ok(result);
@@ -489,6 +489,30 @@ impl<H: Host> Vm<H> {
             object_prototype
         } else {
             self.object_proto
+        })
+    }
+
+    fn array_prototype_from_new_target(
+        &mut self,
+        p: &ResidualProgram,
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        if self.object_data(prototype).is_some() {
+            return Ok(prototype);
+        }
+        let realm = match self.heap.get(new_target) {
+            Some(Cell::Function { realm, .. }) => *realm,
+            _ => self.realm.globals,
+        };
+        let array_atom = self.intern_atom("Array");
+        let array = self.get_property(p, realm, array_atom)?;
+        let prototype = self.get_property(p, array, prototype_atom)?;
+        Ok(if self.object_data(prototype).is_some() {
+            prototype
+        } else {
+            self.array_proto
         })
     }
 
@@ -594,7 +618,7 @@ impl<H: Host> Vm<H> {
                     handler,
                 }))
             }
-            Native::Array => self.construct_array_native(p, args),
+            Native::Array => self.construct_array_native(p, args, new_target),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 self.construct_buffer_native(p, native, args)
             }
@@ -659,7 +683,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
+        new_target: Value,
     ) -> Result<Value, JsError> {
+        let prototype = self.array_prototype_from_new_target(p, new_target)?;
         if let [length] = args
             && let Some(length) = length.as_number()
         {
@@ -671,7 +697,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.range_error(p, "Invalid array length".into()));
             }
             let array = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: Self::empty_object(prototype),
                 elements: Rc::new(Vec::new()),
             });
             self.heap.sparse_set_length(array, length as usize);
@@ -679,7 +705,7 @@ impl<H: Host> Vm<H> {
         }
 
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: Self::empty_object(prototype),
             elements: Rc::new(args.to_vec()),
         }))
     }
