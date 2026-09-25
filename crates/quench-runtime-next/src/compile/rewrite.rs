@@ -191,6 +191,7 @@ fn fuse_const_array_object2(
         || code[0].a() > REGISTER_MASK
         || code[1].a() > REGISTER_MASK
         || code[2].a() > REGISTER_MASK
+        || code[3].a() > REGISTER_MASK
         || !([code[3].b(), code[3].c()].contains(&code[0].a())
             && [code[3].b(), code[3].c()].contains(&code[2].a()))
     {

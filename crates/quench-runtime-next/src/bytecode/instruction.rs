@@ -303,6 +303,10 @@ impl Instr {
     }
 
     pub(crate) fn set_op(&mut self, value: Op) {
+        if self.is_wide() {
+            assert_eq!(value, Op::Wide, "wide instruction reference is immutable");
+            return;
+        }
         *self = Self::new(value, self.a(), self.b(), self.c(), self.imm());
     }
 
