@@ -398,6 +398,7 @@ impl FunctionCompiler<'_, '_> {
                     self.map_pattern_lexicals(&item.id, &mut scope);
                 }
                 self.push_lexical_bindings(scope);
+                self.initialize_lexical_scope();
                 true
             }
             _ => false,
