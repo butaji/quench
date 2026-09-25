@@ -66,6 +66,12 @@ impl<H: Host> Vm<H> {
         if native == Native::AsyncFromSyncValue {
             return self.async_from_sync_value(args);
         }
+        if native == Native::AsyncGeneratorReturnResult {
+            return self.iterator_result(args.first().copied().unwrap_or(Value::UNDEFINED), true);
+        }
+        if native == Native::AsyncGeneratorDelegateReturnStart {
+            return self.async_generator_delegate_return_start(p, args);
+        }
         if native.is_object_static() {
             return self.call_object_native(p, native, args);
         }

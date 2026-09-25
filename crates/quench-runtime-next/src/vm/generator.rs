@@ -1,5 +1,7 @@
-use super::activation::{AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord};
-use super::promise::PromiseState;
+use super::activation::{
+    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord,
+};
+use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -212,27 +214,26 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.generator_kind(generator)?;
-        if kind == IteratorKind::AsyncGenerator
-            && let Some((iterator, _)) = self.yield_star_iterator(p, generator)
-            && let Some(Cell::Iterator {
-                source,
-                kind: IteratorKind::AsyncFromSync,
-                ..
-            }) = self.heap.get(iterator)
-        {
-            return self.return_from_async_from_sync(p, generator, *source, value);
-        }
-        if kind == IteratorKind::AsyncGenerator
-            && let Some((iterator, destination)) = self.yield_star_iterator(p, generator)
-        {
-            return self.async_generator_delegate(
-                p,
-                generator,
-                iterator,
-                destination,
-                value,
-                false,
-            );
+        if kind == IteratorKind::AsyncGenerator {
+            let promise = self.promise_object();
+            let running = self
+                .generator_record_mut(generator)
+                .ok_or_else(|| JsError("async generator receiver is invalid".into()))?
+                .running;
+            if running {
+                self.generator_record_mut(generator)
+                    .expect("async generator record exists")
+                    .requests
+                    .push_back(AsyncGeneratorRequest {
+                        operation: AsyncGeneratorOperation::Return,
+                        promise,
+                        value,
+                    });
+                return Ok(promise);
+            }
+            let completion = self.async_generator_return_ready(p, generator, value)?;
+            self.forward_promise(p, completion, promise)?;
+            return Ok(promise);
         }
         if kind == IteratorKind::Generator
             && let Some((iterator, _)) = self.yield_star_iterator(p, generator)
@@ -242,7 +243,6 @@ impl<H: Host> Vm<H> {
         if kind == IteratorKind::Generator {
             return self.complete_generator_return(p, generator, value);
         }
-        let promise = (kind == IteratorKind::AsyncGenerator).then(|| self.promise_object());
         let continuation = {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
@@ -262,22 +262,142 @@ impl<H: Host> Vm<H> {
             .map(|continuation| self.close_suspended_iterators(p, continuation))
             .unwrap_or(Ok(()));
         if let Err(error) = cleanup {
-            if let Some(promise) = promise {
+            return Err(error);
+        }
+        let result = self.iterator_result(value, true)?;
+        Ok(result)
+    }
+
+    fn async_generator_return_ready(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        if let Some((iterator, destination)) = self.yield_star_iterator(p, generator) {
+            let awaited = match self.promise_for_value(p, value) {
+                Ok(promise) => promise,
+                Err(error) => {
+                    let promise = self.promise_object();
+                    let reason = error
+                        .thrown_value()
+                        .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                    self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                    return Ok(promise);
+                }
+            };
+            let environment = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(vec![
+                    generator,
+                    iterator,
+                    Value::number(f64::from(destination)),
+                ]),
+            });
+            let start =
+                self.native_with_env(Native::AsyncGeneratorDelegateReturnStart, environment);
+            return self.promise_then(p, awaited, start, Value::UNDEFINED);
+        }
+        let continuation = {
+            let Some(record) = self.generator_record_mut(generator) else {
+                return Err(JsError("async generator receiver is invalid".into()));
+            };
+            if record.running {
+                return Err(JsError("async generator is already running".into()));
+            }
+            record.done = true;
+            record.continuation.take()
+        };
+        if let Some(continuation) = continuation
+            && let Err(error) = self.close_suspended_iterators(p, &continuation)
+        {
+            let promise = self.promise_object();
+            let reason = error
+                .thrown_value()
+                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+            self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+            return Ok(promise);
+        }
+        let awaited = match self.promise_for_value(p, value) {
+            Ok(promise) => promise,
+            Err(error) => {
+                let promise = self.promise_object();
                 let reason = error
                     .thrown_value()
                     .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
                 self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
                 return Ok(promise);
             }
-            return Err(error);
+        };
+        self.promise_then(
+            p,
+            awaited,
+            self.native_value(Native::AsyncGeneratorReturnResult),
+            Value::UNDEFINED,
+        )
+    }
+
+    pub(super) fn async_generator_delegate_return_start(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let environment = self
+            .active_native_env()
+            .ok_or_else(|| JsError("async delegate return without state".into()))?;
+        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+            return Err(JsError("async delegate return state is invalid".into()));
+        };
+        let [generator, iterator, destination] = elements.as_slice() else {
+            return Err(JsError("async delegate return state is malformed".into()));
+        };
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::Iterator {
+            source,
+            kind: IteratorKind::AsyncFromSync,
+            ..
+        }) = self.heap.get(*iterator)
+        {
+            return self.return_from_async_from_sync(p, *generator, *source, value);
         }
-        let result = self.iterator_result(value, true)?;
-        if let Some(promise) = promise {
-            self.promise_resolve_value(p, promise, result)?;
-            Ok(promise)
+        self.async_generator_delegate(
+            p,
+            *generator,
+            *iterator,
+            destination.as_number().unwrap_or(0.0) as u16,
+            value,
+            false,
+        )
+    }
+
+    fn forward_promise(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        target: Value,
+    ) -> Result<(), JsError> {
+        let record = self
+            .promise
+            .records
+            .get(&source)
+            .cloned()
+            .ok_or_else(|| JsError("async generator request result is not a Promise".into()))?;
+        let reaction = PromiseReaction {
+            on_fulfilled: Value::UNDEFINED,
+            on_rejected: Value::UNDEFINED,
+            next: target,
+        };
+        if record.state == PromiseState::Pending {
+            self.promise
+                .records
+                .get_mut(&source)
+                .expect("source Promise record exists")
+                .reactions
+                .push(reaction);
         } else {
-            Ok(result)
+            self.enqueue_promise_reaction(p, reaction, record.state, record.result);
         }
+        Ok(())
     }
 
     fn yield_star_iterator(&self, p: &ResidualProgram, generator: Value) -> Option<(Value, u16)> {
@@ -1012,7 +1132,21 @@ impl<H: Host> Vm<H> {
             let Some(request) = request else {
                 return Ok(());
             };
-            self.async_generator_next_with_promise(p, generator, request.value, request.promise)?;
+            match request.operation {
+                AsyncGeneratorOperation::Next => {
+                    self.async_generator_next_with_promise(
+                        p,
+                        generator,
+                        request.value,
+                        request.promise,
+                    )?;
+                }
+                AsyncGeneratorOperation::Return => {
+                    let completion =
+                        self.async_generator_return_ready(p, generator, request.value)?;
+                    self.forward_promise(p, completion, request.promise)?;
+                }
+            }
             if self
                 .generator_record_mut(generator)
                 .is_some_and(|record| record.running)
@@ -1034,9 +1168,11 @@ impl<H: Host> Vm<H> {
                 return Err(JsError("async generator receiver is invalid".into()));
             };
             if record.running {
-                record
-                    .requests
-                    .push_back(AsyncGeneratorRequest { promise, value });
+                record.requests.push_back(AsyncGeneratorRequest {
+                    operation: AsyncGeneratorOperation::Next,
+                    promise,
+                    value,
+                });
                 return Ok(promise);
             }
             if record.done {
