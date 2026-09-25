@@ -25,9 +25,6 @@ impl<H: Host> Vm<H> {
         });
         self.set_property(env, args_atom, bound_args)?;
         let function = self.native_with_env(Native::FunctionBoundCall, env);
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.object();
-        self.set_property(function, prototype_atom, prototype)?;
         Ok(function)
     }
 

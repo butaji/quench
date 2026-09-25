@@ -41,6 +41,9 @@ impl FunctionCompiler<'_, '_> {
             .heritage
             .as_ref()
             .map(|heritage| self.expression(&heritage.expression));
+        if let Some(heritage) = heritage {
+            self.emit(Op::ValidateClassHeritage, heritage, 0, 0, 0);
+        }
         let super_atom = heritage.map(|_| {
             let atom = self.hidden_local(&format!("\0rqj:class-super:{}", class.span.start));
             let super_binding = self.owner.atom("\0rqj:super");

@@ -85,6 +85,14 @@ impl<H: Host> Vm<H> {
                         })
                     })
                 }
+                FunctionKind::Native(Native::FunctionBoundCall) => {
+                    let Cell::Function { env, .. } = cell else {
+                        return false;
+                    };
+                    self.lookup_atom("\0rqj:bound-target")
+                        .and_then(|atom| self.own_property(*env, atom))
+                        .is_some_and(|target| self.is_constructable(p, target))
+                }
                 FunctionKind::Native(native) => matches!(
                     native,
                     Native::Function
@@ -132,6 +140,7 @@ impl<H: Host> Vm<H> {
                         | Native::Boolean
                         | Native::Number
                         | Native::Promise
+                        | Native::Symbol
                 ),
             },
             _ => false,
@@ -377,6 +386,32 @@ impl<H: Host> Vm<H> {
             };
             return self.construct_value_with_new_target(p, base, new_target, args);
         }
+        if let FunctionKind::Native(Native::FunctionBoundCall) = kind {
+            let env = match self.heap.get(callee) {
+                Some(Cell::Function { env, .. }) => *env,
+                _ => return Err(self.type_error(p, "invalid bound function".into())),
+            };
+            let target_atom = self.intern_atom("\0rqj:bound-target");
+            let args_atom = self.intern_atom("\0rqj:bound-args");
+            let target = self
+                .own_property(env, target_atom)
+                .ok_or_else(|| self.type_error(p, "invalid bound function".into()))?;
+            let bound_args = self
+                .own_property(env, args_atom)
+                .and_then(|value| match self.heap.get(value) {
+                    Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let mut arguments = bound_args;
+            arguments.extend_from_slice(args);
+            let new_target = if new_target == callee {
+                target
+            } else {
+                new_target
+            };
+            return self.construct_value_with_new_target(p, target, new_target, &arguments);
+        }
         if let FunctionKind::Native(native) = kind {
             let realm = match self.heap.get(callee) {
                 Some(Cell::Function { realm, .. }) => *realm,
@@ -573,6 +608,7 @@ impl<H: Host> Vm<H> {
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args),
             Native::Date => self.date_construct_native(p, args),
+            Native::Symbol => Err(self.type_error(p, "Symbol is not a constructor".into())),
             Native::Error
             | Native::AggregateError
             | Native::EvalError
