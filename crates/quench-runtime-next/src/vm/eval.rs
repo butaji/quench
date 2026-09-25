@@ -310,18 +310,14 @@ impl<H: Host> Vm<H> {
         if (source.contains("super.") || source.contains("super[")) && !self.direct_eval {
             return self.syntax_error_result(p, "super property is not valid in eval code");
         }
-        if source.trim_start().starts_with("switch (")
-            || (source.contains("switch (") && source.contains("function f"))
+        if self.direct_eval
+            && self
+                .frames
+                .last()
+                .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID)
+            && crate::Engine::eval_requires_program_execution(source)
         {
-            return Ok(Value::UNDEFINED);
-        }
-        if source.contains("\n++")
-            || source.contains("for(;false;)")
-            || source.trim_start().starts_with("return")
-            || source.trim_start().starts_with("break")
-            || source.trim_start().starts_with("continue")
-        {
-            return self.syntax_error_result(p, "invalid statement in eval code");
+            return self.eval_global_script(p, source);
         }
         if is_empty_eval_statement(source.trim()) {
             return Ok(Value::UNDEFINED);
