@@ -230,6 +230,7 @@ impl<H: Host> Vm<H> {
         }
         let result = self.run_frame_general(p, self.frames.len() - 1);
         let frame = self.frames.pop().unwrap();
+        self.with_stack.truncate(frame.with_base);
         self.persist_global_lexical_bindings(p, &frame);
         match result? {
             FrameOutcome::Complete(value) => {
@@ -592,6 +593,8 @@ impl<H: Host> Vm<H> {
             let Some(handler) = handler else {
                 return Err(error);
             };
+            let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
+            self.with_stack.truncate(with_depth);
             if let Some(slot) = handler.slot {
                 let value = self.thrown_value_for(p, error);
                 if self.frames[frame].captured {
@@ -669,6 +672,8 @@ impl<H: Host> Vm<H> {
                         self.frames[frame].pc = pc;
                         return Err(error);
                     };
+                    let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
+                    self.with_stack.truncate(with_depth);
                     if let Some(slot) = handler.slot {
                         let value = self.thrown_value_for(p, error);
                         if self.frames[frame].captured {

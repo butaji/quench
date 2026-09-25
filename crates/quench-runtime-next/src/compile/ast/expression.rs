@@ -175,7 +175,7 @@ impl FunctionCompiler<'_, '_> {
             && let Some(slot) = self.parameter_arguments_slot
         {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
-        } else if self.with_depth == 0
+        } else if self.with_depth == self.inherited_with_depth
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
@@ -226,7 +226,7 @@ impl FunctionCompiler<'_, '_> {
             self.throw_immutable_binding(atom);
             return;
         }
-        if self.with_depth == 0
+        if (self.with_depth == self.inherited_with_depth || initializing)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             self.emit(
@@ -240,7 +240,7 @@ impl FunctionCompiler<'_, '_> {
                 let cache = self.owner.cache_site();
                 self.emit(Op::StoreName, value, 0, cache, atom);
             }
-        } else if self.with_depth == 0
+        } else if (self.with_depth == 0 || initializing)
             && let Some((depth, slot)) = self
                 .scopes
                 .iter()

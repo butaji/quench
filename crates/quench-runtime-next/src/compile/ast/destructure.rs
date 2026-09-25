@@ -819,6 +819,7 @@ impl FunctionCompiler<'_, '_> {
             slot: self.local_slot(error_atom),
             return_target: None,
             return_slot: None,
+            with_depth: self.with_depth,
         });
         let original_error = self.load_atom(error_atom);
         let done = self.literal(Constant::Boolean(true));
@@ -910,6 +911,7 @@ impl FunctionCompiler<'_, '_> {
             slot: self.local_slot(error_atom),
             return_target: None,
             return_slot: None,
+            with_depth: self.with_depth,
         });
 
         let close = self.emit(Op::JumpFalse, iterator.done, 0, 0, 0);
@@ -928,6 +930,7 @@ impl FunctionCompiler<'_, '_> {
             slot: self.local_slot(ignored_atom),
             return_target: None,
             return_slot: None,
+            with_depth: self.with_depth,
         });
         let rethrow_target = self.code.len() as u32;
         let original_error = self.load_atom(error_atom);
