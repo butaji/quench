@@ -241,7 +241,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::ObjectIsSealed
         | Native::ObjectIsExtensible
         | Native::ObjectGetPrototypeOf => 1.0,
-        Native::ObjectHasOwn => 2.0,
+        Native::ObjectHasOwn | Native::ForInKeyIsEnumerable => 2.0,
         Native::ObjectGetOwnPropertyDescriptor | Native::ObjectIs => 2.0,
         Native::ObjectCreate => 2.0,
         Native::ObjectDefineProperties | Native::ObjectAssign => 2.0,
