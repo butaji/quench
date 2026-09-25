@@ -373,6 +373,7 @@ impl<H: Host> Vm<H> {
         let Some(frame_index) = self.frames.len().checked_sub(1) else {
             return None;
         };
+        let private_home_binding = self.private_home_binding_atom(atom);
         let mut function = Some(self.frames[frame_index].function);
         let mut home_atoms = Vec::new();
         while let Some(id) = function
@@ -391,9 +392,25 @@ impl<H: Host> Vm<H> {
             parent,
             function,
             slots,
+            dynamic_bindings,
             ..
         }) = self.heap.get(environment)
         {
+            if let Some((_, home)) = dynamic_bindings
+                .iter()
+                .rev()
+                .find(|(binding, _)| *binding == private_home_binding)
+            {
+                return self
+                    .object_data(target)
+                    .is_some_and(|object| {
+                        object.private_names.contains(&PrivateBrand {
+                            home: *home,
+                            name: atom,
+                        })
+                    })
+                    .then_some(*home);
+            }
             if *function != u32::MAX {
                 let visible_homes = p
                     .functions

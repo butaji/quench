@@ -607,6 +607,26 @@ impl Engine {
             false,
         )
     }
+    pub(crate) fn specialize_dynamic_function_with_private_names(
+        parameters: &str,
+        body: &str,
+        name: &str,
+        atom_prefix: &[String],
+        private_names: &[(String, String)],
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let source = format!("(function anonymous({parameters}) {{{body}\n}})");
+        Self::specialize_with_mode_and_private_names(
+            &source,
+            name,
+            SpecializationMode::Disabled,
+            atom_prefix,
+            SourceType::script(),
+            false,
+            false,
+            false,
+            private_names,
+        )
+    }
     fn specialize_module_with_mode(
         source: &str,
         name: &str,
@@ -632,6 +652,29 @@ impl Engine {
         module_goal: bool,
         capture_script_completion: bool,
         inherited_strict: bool,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode_and_private_names(
+            source,
+            name,
+            mode,
+            atom_prefix,
+            source_type,
+            module_goal,
+            capture_script_completion,
+            inherited_strict,
+            &[],
+        )
+    }
+    fn specialize_with_mode_and_private_names(
+        source: &str,
+        name: &str,
+        mode: SpecializationMode,
+        atom_prefix: &[String],
+        source_type: SourceType,
+        module_goal: bool,
+        capture_script_completion: bool,
+        inherited_strict: bool,
+        private_name_overrides: &[(String, String)],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
@@ -662,8 +705,11 @@ impl Engine {
                 .collect());
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
+        let private_name_labels = private_name_labels(&semantic.semantic);
         let mut compiler =
             Compiler::new_with_mode(name, &normalized, mode, atom_prefix, private_name_ids);
+        compiler.private_name_labels = private_name_labels;
+        compiler.private_name_overrides = private_name_overrides.iter().cloned().collect();
         compiler.capture_script_completion = capture_script_completion;
         let program = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
@@ -1053,6 +1099,8 @@ struct Compiler<'a> {
     atoms: Vec<Rc<str>>,
     atom_index: FxHashMap<Rc<str>, Atom>,
     private_name_ids: FxHashMap<(u32, u32), u32>,
+    private_name_labels: FxHashMap<(u32, u32), String>,
+    private_name_overrides: FxHashMap<String, String>,
     constants: Vec<Constant>,
     constant_index: FxHashMap<ConstantKey, u32>,
     functions: Vec<Option<BcFunction>>,
@@ -1103,6 +1151,28 @@ fn private_name_ids(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32, u3
         }
     }
     names
+}
+
+fn private_name_labels(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32, u32), String> {
+    let classes = semantic.classes();
+    let mut labels = FxHashMap::default();
+    for (class_id, _) in classes.iter_enumerated() {
+        for element in &classes.elements[class_id] {
+            if element.is_private {
+                labels.insert(
+                    (element.span.start, element.span.end),
+                    element.name.to_string(),
+                );
+            }
+        }
+        for reference in classes.iter_private_identifiers(class_id) {
+            labels.insert(
+                (reference.span.start, reference.span.end),
+                reference.name.to_string(),
+            );
+        }
+    }
+    labels
 }
 
 #[derive(Default)]
@@ -1187,6 +1257,8 @@ impl<'a> Compiler<'a> {
             atoms,
             atom_index,
             private_name_ids,
+            private_name_labels: FxHashMap::default(),
+            private_name_overrides: FxHashMap::default(),
             constants: vec![],
             constant_index: FxHashMap::default(),
             functions: vec![],
@@ -1481,13 +1553,49 @@ impl<'a> Compiler<'a> {
 
     fn private_name_atom(&mut self, span: Span) -> Atom {
         let name = match self.private_name_ids.get(&(span.start, span.end)) {
-            Some(id) => format!("\0rqj:private:{}:{id}", self.source),
+            Some(id) => {
+                let label = self.private_name_label(span, *id);
+                let identity = format!("\0rqj:private:{}:{id}:{label}", self.source);
+                if let Some(override_name) = self.private_name_overrides.get(&label) {
+                    override_name.clone()
+                } else {
+                    identity
+                }
+            }
             None => {
                 self.reject(span, "OXC did not resolve a private name identity");
                 "\0rqj:private:unresolved".to_owned()
             }
         };
         self.atom(&name)
+    }
+
+    fn private_name_is_overridden(&self, atom: Atom) -> bool {
+        self.private_name_overrides
+            .values()
+            .any(|name| self.atom_index.get(name.as_str()) == Some(&atom))
+    }
+
+    fn private_name_label(&self, span: Span, id: u32) -> String {
+        if let Some(label) = self.private_name_labels.get(&(span.start, span.end)) {
+            return label.clone();
+        }
+        let label = |span: Span| {
+            let source = self.text.get(span.start as usize..span.end as usize)?;
+            let source = source.strip_prefix('#').unwrap_or(source);
+            (!source.is_empty()).then(|| source.to_owned())
+        };
+        label(span)
+            .or_else(|| {
+                self.private_name_ids
+                    .iter()
+                    .find_map(|((start, end), candidate)| {
+                        (*candidate == id)
+                            .then(|| label(Span::new(*start, *end)))
+                            .flatten()
+                    })
+            })
+            .unwrap_or_default()
     }
 
     fn reserve_auto_accessor_name(&mut self, span: Span) {
