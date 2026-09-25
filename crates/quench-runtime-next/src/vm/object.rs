@@ -514,6 +514,14 @@ impl<H: Host> Vm<H> {
                 self.set_property(descriptor, field, Value::TRUE)?;
             }
         }
+        if atom == self.length_atom
+            && matches!(self.heap.get(receiver), Some(Cell::Array { .. }))
+            && !self
+                .object_data(receiver)
+                .is_some_and(Object::is_arguments_object)
+        {
+            return self.define_array_length(p, receiver, descriptor);
+        }
         if let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(receiver).cloned()
@@ -656,6 +664,19 @@ impl<H: Host> Vm<H> {
                 Ok(())
             };
         }
+        if atom == self.length_atom
+            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && !self
+                .object_data(object)
+                .is_some_and(Object::is_arguments_object)
+        {
+            let succeeded = self.set_array_length(p, object, value)?;
+            return if succeeded || !strict {
+                Ok(())
+            } else {
+                Err(self.type_error(p, "cannot delete non-configurable array element".into()))
+            };
+        }
         if !self.specialized {
             return self.set_property_with_program(p, object, atom, value);
         }
@@ -725,6 +746,17 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
+        self.set_property_with_program_mode(p, object, atom, value, false)
+    }
+
+    pub(super) fn set_property_with_program_mode(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        strict: bool,
+    ) -> Result<(), JsError> {
         self.evaluate_deferred_namespace_for_key(p, object, Some(PropertyKey::string(atom)))?;
         if atom == self.length_atom
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
@@ -732,10 +764,9 @@ impl<H: Host> Vm<H> {
                 .object_data(object)
                 .is_some_and(Object::is_arguments_object)
         {
-            let descriptor = self.object();
-            let value_atom = self.intern_atom("value");
-            self.set_property(descriptor, value_atom, value)?;
-            self.define_array_length(p, object, descriptor)?;
+            if !self.set_array_length(p, object, value)? && strict {
+                return Err(self.type_error(p, "cannot set array length".into()));
+            }
             return Ok(());
         }
         if let Some(Cell::Proxy {

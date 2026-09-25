@@ -630,10 +630,8 @@ impl<H: Host> Vm<H> {
                     } else {
                         if strict {
                             if self.direct_eval
-                                && let Some((_, binding)) = self
-                                    .frames
-                                    .last_mut()
-                                    .and_then(|frame| {
+                                && let Some((_, binding)) =
+                                    self.frames.last_mut().and_then(|frame| {
                                         frame
                                             .dynamic_bindings
                                             .iter_mut()
@@ -1386,7 +1384,7 @@ impl<H: Host> Vm<H> {
             let with_objects = self.with_stack[with_base..].to_vec();
             for object in with_objects.into_iter().rev() {
                 if self.with_binding(p, object, key, atom)? {
-                    return self.set_property_with_program(p, object, atom, value);
+                    return self.set_property_with_program_mode(p, object, atom, value, true);
                 }
             }
             if self.current_frame_has_lexical_alias(p, atom) {
@@ -1461,7 +1459,7 @@ impl<H: Host> Vm<H> {
         let with_objects = self.with_stack[with_base..].to_vec();
         for object in with_objects.into_iter().rev() {
             if self.with_binding(p, object, key, atom)? {
-                return self.set_property_with_program(p, object, atom, value);
+                return self.set_property_with_program_mode(p, object, atom, value, true);
             }
         }
         if self.direct_eval {

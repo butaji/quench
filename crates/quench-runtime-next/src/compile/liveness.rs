@@ -150,6 +150,7 @@ fn uses(
                 | bit(next_method)
         }
         Op::SetIndex => bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c()),
+        Op::DefineArrayElement => bit(instruction.a()) | bit(instruction.b()),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
             operand(instruction.b(), fields) | operand(instruction.c(), fields)
         }

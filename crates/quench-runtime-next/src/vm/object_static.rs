@@ -78,6 +78,13 @@ impl<H: Host> Vm<H> {
                 Some(Cell::String(_)) => "String",
                 Some(Cell::BigInt(_)) => "BigInt",
                 Some(Cell::Symbol(_)) => "Symbol",
+                Some(Cell::Array { .. })
+                    if self
+                        .object_data(value)
+                        .is_some_and(Object::is_arguments_object) =>
+                {
+                    "Arguments"
+                }
                 Some(Cell::Array { .. }) => "Array",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::Map { .. }) => "Map",
@@ -464,6 +471,15 @@ impl<H: Host> Vm<H> {
         self.box_primitive_object(value)
     }
 
+    pub(super) fn box_object_or_type_error(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        self.require_object_coercible(p, value)?;
+        self.box_object(value)
+    }
+
     pub(super) fn object_define_property(
         &mut self,
         p: &ResidualProgram,
@@ -523,7 +539,11 @@ impl<H: Host> Vm<H> {
         if key.host_string() == "length"
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))
         {
-            return self.define_array_length(p, target, descriptor);
+            return if self.define_array_length(p, target, descriptor)? {
+                Ok(target)
+            } else {
+                Err(self.type_error(p, "cannot redefine array length".into()))
+            };
         }
         if let Some(index) = array_index(key.host_string()).map(|index| index as usize)
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))

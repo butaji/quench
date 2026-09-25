@@ -64,7 +64,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
-        let object = self.box_object(this)?;
+        let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
             self.set_array_like_length(p, object, 0)?;
@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let object = self.box_object(this)?;
+        let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let new_length = length
             .checked_add(args.len())
@@ -137,50 +137,96 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let values = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => {
-                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-                (0..length)
-                    .map(|index| self.array_value_at(this, index))
-                    .collect::<Vec<_>>()
-            }
-            _ => return Err(JsError("splice receiver is not array".into())),
-        };
-        let length = values.len();
-        let start_number =
-            self.to_number(p, args.first().copied().unwrap_or(Value::number(0.0)))?;
-        let start = if start_number.is_nan() {
-            0
-        } else if start_number.is_sign_negative() {
-            length.saturating_sub(start_number.abs().trunc() as usize)
-        } else {
-            (start_number.trunc() as usize).min(length)
-        };
-        let delete_count = args
-            .get(1)
-            .map(|value| self.to_number(p, *value))
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
+        let start = args
+            .first()
+            .copied()
+            .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
-            .unwrap_or((length - start) as f64)
-            .max(0.0)
-            .trunc() as usize;
-        let delete_count = delete_count.min(length - start);
-        let removed = values[start..start + delete_count].to_vec();
-        let mut updated = values[..start].to_vec();
-        updated.extend(args.iter().copied().skip(2));
-        updated.extend(values[start + delete_count..].iter().copied());
-        self.check_array_mutation(
-            this,
-            !updated.is_empty(),
-            updated.len() > length,
-            updated.len() < length,
-        )?;
-        if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
-            *elements = Rc::new(updated);
+            .unwrap_or(0);
+        let available = length - start;
+        let delete_count = match args.get(1).copied() {
+            None if args.len() == 1 => available,
+            None => 0,
+            Some(value) => {
+                let number = self.to_number(p, value)?;
+                if number.is_nan() || number <= 0.0 {
+                    0
+                } else if number.is_infinite() {
+                    available
+                } else {
+                    (number.trunc() as usize).min(available)
+                }
+            }
+        };
+        let removed = self.array_species_create(p, object, delete_count)?;
+        for offset in 0..delete_count {
+            let source_index = start + offset;
+            let source = Value::number(source_index as f64);
+            if self.has_property(p, object, source)? {
+                let value = self.get_index(p, object, source)?;
+                self.create_data_property_or_throw(p, removed, offset, value)?;
+            }
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(removed),
-        }))
+        self.set_array_like_length(p, removed, delete_count)?;
+
+        let items = args.iter().copied().skip(2).collect::<Vec<_>>();
+        let new_length = length
+            .checked_sub(delete_count)
+            .and_then(|length| length.checked_add(items.len()))
+            .filter(|length| *length as f64 <= MAX_SAFE_INTEGER)
+            .ok_or_else(|| self.type_error(p, "splice result exceeds safe integer".into()))?;
+        if items.len() < delete_count {
+            for index in start..(length - delete_count) {
+                self.move_array_like_property(
+                    p,
+                    object,
+                    index + items.len(),
+                    index + delete_count,
+                )?;
+            }
+            for index in (new_length..length).rev() {
+                self.delete_array_like_property(p, object, Value::number(index as f64))?;
+            }
+        } else if items.len() > delete_count {
+            for index in (start..(length - delete_count)).rev() {
+                self.move_array_like_property(
+                    p,
+                    object,
+                    index + items.len(),
+                    index + delete_count,
+                )?;
+            }
+        }
+        for (offset, value) in items.into_iter().enumerate() {
+            self.set_index_mode(
+                p,
+                object,
+                Value::number((start + offset) as f64),
+                value,
+                true,
+            )?;
+        }
+        self.set_array_like_length(p, object, new_length)?;
+        Ok(removed)
+    }
+
+    fn move_array_like_property(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        destination: usize,
+        source: usize,
+    ) -> Result<(), JsError> {
+        let source_key = Value::number(source as f64);
+        let destination_key = Value::number(destination as f64);
+        if self.has_property(p, object, source_key)? {
+            let value = self.get_index(p, object, source_key)?;
+            self.set_index_mode(p, object, destination_key, value, true)
+        } else {
+            self.delete_array_like_property(p, object, destination_key)
+        }
     }
 
     pub(super) fn array_fill_native(
@@ -310,7 +356,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let object = self.box_object(this)?;
+        let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let final_length = length
             .checked_add(args.len())
@@ -342,7 +388,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
-        let object = self.box_object(this)?;
+        let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
             self.set_array_like_length(p, object, 0)?;
@@ -376,10 +422,9 @@ impl<H: Host> Vm<H> {
             {
                 return Err(self.type_error(p, "array length is not writable".into()));
             }
-            let descriptor = self.object();
-            let value = self.intern_atom("value");
-            self.set_property(descriptor, value, Value::number(length as f64))?;
-            self.define_array_length(p, object, descriptor)?;
+            if !self.set_array_length(p, object, Value::number(length as f64))? {
+                return Err(self.type_error(p, "cannot set array length".into()));
+            }
             return Ok(());
         }
         let success =
@@ -397,7 +442,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let object = self.box_object(this)?;
+        let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let start = args
             .first()
@@ -471,7 +516,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn array_relative_index(
+    pub(super) fn array_relative_index(
         &mut self,
         p: &ResidualProgram,
         value: Value,

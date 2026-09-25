@@ -299,6 +299,7 @@ opcodes!(
     DefineComputedField => WRITE_THROW,
     SetThisField => WRITE_THROW,
     SetIndex => WRITE_THROW,
+    DefineArrayElement => WRITE_THROW,
     Binary => READ_THROW, @ NumericReturnable,
     IncDec => READ_THROW,
     Unary => READ_THROW,

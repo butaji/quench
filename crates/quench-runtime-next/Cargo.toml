@@ -21,7 +21,7 @@ profile-memory = []
 reference = []
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 oxc_allocator = "=0.150.0"
 oxc_ast = "=0.150.0"
 oxc_ast_visit = "=0.150.0"

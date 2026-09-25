@@ -37,9 +37,8 @@ impl FunctionCompiler<'_, '_> {
             let Some(expr) = item.as_expression() else {
                 continue;
             };
-            let key = self.literal(Constant::Number(index as f64));
             let item = self.expression(expr);
-            self.emit(Op::SetIndex, item, dst, key, 0);
+            self.emit(Op::DefineArrayElement, item, dst, 0, index as u32);
         }
         dst
     }

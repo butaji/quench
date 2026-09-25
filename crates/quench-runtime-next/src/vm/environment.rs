@@ -333,7 +333,7 @@ impl<H: Host> Vm<H> {
                 }
                 return Ok(());
             }
-            return self.set_property_with_program(p, object, atom, value);
+            return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
         let with_base = self
             .frames
@@ -349,7 +349,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if is_with_binding {
-            return self.set_property_with_program(p, object, atom, value);
+            return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
 
         if let Some(frame_index) = self.frames.len().checked_sub(1)
@@ -407,7 +407,7 @@ impl<H: Host> Vm<H> {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
         let _ = object;
-        self.set_property_with_program(p, self.realm.globals, atom, value)
+        self.set_property_with_program_mode(p, self.realm.globals, atom, value, strict)
     }
 
     pub(super) fn dynamic_binding(&self, frame: usize, atom: Atom) -> Option<Value> {

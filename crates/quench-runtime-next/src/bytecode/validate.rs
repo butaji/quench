@@ -242,6 +242,11 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} indexed store is invalid"));
                     }
+                    Op::DefineArrayElement
+                        if !register(instruction.a()) || !register(instruction.b()) =>
+                    {
+                        return Err(format!("function {index} array literal element is invalid"));
+                    }
                     Op::Binary | Op::NumericAdd | Op::NumericMultiply
                         if !destination(instruction.a())
                             || !operand_in_bounds(

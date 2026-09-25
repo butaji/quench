@@ -357,6 +357,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
                 || instruction.b() == register
                 || instruction.c() == register
         }
+        Op::DefineArrayElement => instruction.a() == register || instruction.b() == register,
         Op::Binary | Op::JumpBinaryFalse => operand(instruction.b()) || operand(instruction.c()),
         Op::IncDec | Op::Unary | Op::Move => instruction.b() == register,
         Op::JumpFalse | Op::Return | Op::Throw => instruction.a() == register,
