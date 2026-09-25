@@ -485,6 +485,9 @@ impl<H: Host> Vm<H> {
         kind: IteratorKind,
         index: usize,
     ) -> Result<Option<(Value, Option<Value>)>, JsError> {
+        if self.typed_array_out_of_bounds(source) {
+            return Err(self.type_error(p, "typed array is out of bounds".into()));
+        }
         if let Some(length) = self.typed_array_length(source) {
             if index >= length {
                 return Ok(None);
