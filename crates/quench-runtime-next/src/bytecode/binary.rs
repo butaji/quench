@@ -50,6 +50,11 @@ pub(super) fn write_program(
                 out.string(local);
                 out.string(exported);
             }
+            out.u32(plan.hoisted_functions.len() as u32);
+            for (binding, function) in &plan.hoisted_functions {
+                out.string(binding);
+                out.string(function);
+            }
             out.u32(plan.reexports.len() as u32);
             for reexport in &plan.reexports {
                 out.u8(reexport.kind().binary_tag());
@@ -268,6 +273,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         MODULE_LINK_PLAN_NONE => None,
         MODULE_LINK_PLAN_SOME => Some(ModuleLinkPlan {
             locals: input.list(|input| Ok((input.string()?, input.string()?)))?,
+            hoisted_functions: input.list(|input| Ok((input.string()?, input.string()?)))?,
             reexports: input.list(|input| {
                 let kind = ModuleReexportKind::from_binary_tag(input.u8()?)
                     .ok_or_else(|| "invalid residual module re-export kind".to_string())?;

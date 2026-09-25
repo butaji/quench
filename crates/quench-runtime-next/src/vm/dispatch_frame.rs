@@ -160,6 +160,13 @@ impl<H: Host> Vm<H> {
             self.call_this_value(this, function.strict)?
         };
         frame.captured = false;
+        if id == super::ROOT_FUNCTION_ID
+            && self.programs.is_module(frame.program)
+            && let Some(environment) = self.programs.module_environment(frame.program)
+        {
+            frame.env = environment;
+            frame.captured = true;
+        }
         frame.with_base = self.with_stack.len();
         self.with_stack.extend(self.captured_with_objects(parent));
         if id == super::ROOT_FUNCTION_ID {
@@ -168,10 +175,21 @@ impl<H: Host> Vm<H> {
                     super::program_store::ModuleImport::Value(value)
                     | super::program_store::ModuleImport::Binding(_, _, value) => value,
                 };
-                let Some(local) = frame.locals.get_mut(usize::from(slot)) else {
+                let index = usize::from(slot);
+                if frame.locals.get(index).is_none() {
                     return Err(JsError("module import slot is out of bounds".into()));
-                };
-                *local = value;
+                }
+                if frame.captured {
+                    let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(frame.env) else {
+                        return Err(JsError("module environment is unavailable".into()));
+                    };
+                    *slots
+                        .get_mut(index)
+                        .ok_or_else(|| JsError("module import slot is out of bounds".into()))? =
+                        value;
+                } else {
+                    frame.locals[index] = value;
+                }
             }
         }
         let new_target_atom = self.intern_atom("\0rqj:new-target");
