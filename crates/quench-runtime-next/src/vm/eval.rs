@@ -248,9 +248,27 @@ impl<H: Host> Vm<H> {
             .frames
             .last()
             .map_or(0, |frame| frame.dynamic_bindings.len());
+        let retained_var_bindings = if self.direct_eval && !inherited_strict {
+            if crate::Engine::eval_has_use_strict_directive(source) {
+                Vec::new()
+            } else {
+                crate::Engine::eval_var_declared_names(source)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|name| self.intern_atom(&name))
+                    .collect()
+            }
+        } else {
+            Vec::new()
+        };
         let result = self.eval_source_simple_body(p, source, inherited_strict);
         if let Some(frame) = self.frames.last_mut() {
-            frame.dynamic_bindings.truncate(binding_count);
+            let mut index = 0;
+            frame.dynamic_bindings.retain(|(atom, _)| {
+                let keep = index < binding_count || retained_var_bindings.contains(atom);
+                index += 1;
+                keep
+            });
         }
         self.sync_dynamic_bindings();
         result
@@ -331,10 +349,8 @@ impl<H: Host> Vm<H> {
         } else {
             split_statements(source)
         };
-        let source_strict = inherited_strict
-            || statements
-                .first()
-                .is_some_and(|statement| is_use_strict(statement));
+        let source_strict =
+            inherited_strict || crate::Engine::eval_has_use_strict_directive(source);
         if source_strict
             && source.contains("function")
             && !source.contains("super")
@@ -428,7 +444,9 @@ impl<H: Host> Vm<H> {
                 );
             }
         }
-        if !self.direct_eval || self.frames.last().is_some_and(|frame| frame.function == 0) {
+        if !source_strict
+            && (!self.direct_eval || self.frames.last().is_some_and(|frame| frame.function == 0))
+        {
             let globals = self.realm.globals;
             for statement in &statements {
                 let statement = statement.trim();
@@ -509,7 +527,10 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let mut result = Value::UNDEFINED;
+        let mut result = crate::Engine::eval_directives(source)
+            .and_then(|directives| directives.last().cloned())
+            .map(|directive| self.heap.alloc(Cell::String(directive.into())))
+            .unwrap_or(Value::UNDEFINED);
         for statement in statements {
             let statement = statement.trim();
             if statement.is_empty() || is_use_strict(statement) {
