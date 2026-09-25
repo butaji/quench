@@ -109,15 +109,22 @@ impl FunctionCompiler<'_, '_> {
                             )
                     )
                 });
+                let disposal_error = has_using.then(|| self.hidden_local("\0rqj:using-error"));
                 if has_using {
                     self.push_disposal_scope();
                 }
                 self.push_lexical_scope(&block.body);
                 self.emit_hoisted(&block.body);
+                let disposal_body_start = self.code.len() as u32;
                 self.statements(&block.body);
+                let disposal_body_end = self.code.len() as u32;
                 self.lexical_scopes.pop();
-                if has_using {
-                    self.emit_disposal();
+                if let Some(error_atom) = disposal_error {
+                    self.emit_disposal_scope_exit(
+                        disposal_body_start,
+                        disposal_body_end,
+                        error_atom,
+                    );
                     self.pop_disposal_scope();
                 }
             }

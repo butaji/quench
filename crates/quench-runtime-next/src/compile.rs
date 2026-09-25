@@ -1859,6 +1859,7 @@ impl<'a> Compiler<'a> {
             function
                 .emit_instance_fields(fields, options.instance_private_methods.unwrap_or_default());
         }
+        let disposal_body_start = function.code.len() as u32;
         function.statements(body);
         if options.defer_instance_fields {
             let edges = std::mem::take(&mut function.deferred_instance_field_edges);
@@ -1879,7 +1880,8 @@ impl<'a> Compiler<'a> {
                 function.patch(skip_blocks);
             }
         }
-        function.emit_disposal();
+        let disposal_body_end = function.code.len() as u32;
+        function.emit_function_disposal_scope_exit(disposal_body_start, disposal_body_end);
         let result = function
             .statement_completion
             .register()
