@@ -753,6 +753,11 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_data_view_for_realm(program, global, data_view, data_view_prototype)?;
+        let date = self.native_with_realm(Native::Date, global, global);
+        let date_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.install_date_for_realm(program, global, date, date_prototype)?;
         let realm_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));

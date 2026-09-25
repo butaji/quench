@@ -135,6 +135,7 @@ impl<H: Host> Vm<H> {
                 HostContext::new(&mut self.host).invoke(CapabilityId::WriteLine, Some(&text));
                 Ok(Value::UNDEFINED)
             }
+            Native::Date => self.date_call(),
             Native::DateNow => Ok(Value::number(
                 HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
             )),
@@ -175,10 +176,16 @@ impl<H: Host> Vm<H> {
             | Native::DateSetUTCMilliseconds
             | Native::DateSetYear
             | Native::DateToString
+            | Native::DateToDateString
+            | Native::DateToTimeString
             | Native::DateToUTCString
             | Native::DateToLocaleString
+            | Native::DateToLocaleDateString
+            | Native::DateToLocaleTimeString
             | Native::DateToISOString
-            | Native::DateToJSON => self.date_native(p, native, this, args),
+            | Native::DateToJSON
+            | Native::DateToPrimitive
+            | Native::DateToTemporalInstant => self.date_native(p, native, this, args),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::RegExpToString => self.regexp_to_string_native(p, this),
@@ -436,13 +443,6 @@ impl<H: Host> Vm<H> {
                 self.call_symbol_value_native(p, native, this)
             }
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
-            Native::Date => {
-                let milliseconds =
-                    HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
-                Ok(self.heap.alloc(Cell::String(
-                    super::date::format_date_string(milliseconds).into(),
-                )))
-            }
             Native::Object
             | Native::Array
             | Native::Map

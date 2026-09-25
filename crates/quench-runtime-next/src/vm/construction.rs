@@ -590,6 +590,7 @@ impl<H: Host> Vm<H> {
             let Some(intrinsic) = (match native {
                 Native::Boolean => Some("Boolean"),
                 Native::DataView => Some("DataView"),
+                Native::Date => Some("Date"),
                 _ => None,
             }) else {
                 return Ok(());
