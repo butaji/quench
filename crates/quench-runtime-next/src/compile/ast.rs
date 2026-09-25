@@ -30,6 +30,7 @@ pub(super) enum StatementCompletion {
     Ignored,
     Track(Register),
     Suppress(Register),
+    Finally { current: Register, target: Register },
 }
 
 impl StatementCompletion {
@@ -37,6 +38,7 @@ impl StatementCompletion {
         match self {
             Self::Ignored => None,
             Self::Track(register) | Self::Suppress(register) => Some(register),
+            Self::Finally { current, .. } => Some(current),
         }
     }
 }
@@ -201,16 +203,24 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn clear_statement_completion(&mut self) {
-        let StatementCompletion::Track(target) = self.statement_completion else {
-            return;
+        let target = match self.statement_completion {
+            StatementCompletion::Track(target) => target,
+            StatementCompletion::Finally { current, .. } => current,
+            StatementCompletion::Ignored | StatementCompletion::Suppress(_) => return,
         };
         let undefined = self.literal(Constant::Undefined);
         self.emit(Op::Move, target, undefined, 0, 0);
     }
 
     fn record_statement_completion(&mut self, value: Register) {
-        if let StatementCompletion::Track(target) = self.statement_completion {
-            self.emit(Op::Move, target, value, 0, 0);
+        match self.statement_completion {
+            StatementCompletion::Track(target) => {
+                self.emit(Op::Move, target, value, 0, 0);
+            }
+            StatementCompletion::Finally { current, .. } => {
+                self.emit(Op::Move, current, value, 0, 0);
+            }
+            StatementCompletion::Ignored | StatementCompletion::Suppress(_) => {}
         }
     }
 
@@ -220,6 +230,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             StatementCompletion::Track(register) | StatementCompletion::Suppress(register) => {
                 StatementCompletion::Suppress(register)
             }
+            StatementCompletion::Finally { current, .. } => StatementCompletion::Suppress(current),
             StatementCompletion::Ignored => StatementCompletion::Ignored,
         };
         self.scoped_statements(body);
