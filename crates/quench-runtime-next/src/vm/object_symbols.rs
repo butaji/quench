@@ -230,6 +230,7 @@ impl<H: Host> Vm<H> {
             }));
         }
         let target = self.box_object(self.proxy_target(object))?;
+        self.evaluate_deferred_namespace_for_key(p, target, None)?;
         let values = self.ordinary_own_key_values(target);
         Ok(self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),

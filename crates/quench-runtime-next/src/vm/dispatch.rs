@@ -603,7 +603,7 @@ impl<H: Host> Vm<H> {
             Op::DefineField => {
                 let object = self.read(f, i.b());
                 let value = self.read(f, i.a());
-                self.define_object_literal_data_property(object, i.imm(), value)?;
+                self.define_object_literal_data_property(p, object, i.imm(), value)?;
             }
             Op::SetThisField => self.set_field_cached(
                 p,
