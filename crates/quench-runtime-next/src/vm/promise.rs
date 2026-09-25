@@ -1359,11 +1359,12 @@ impl<H: Host> Vm<H> {
         }
         names.sort_by_key(|name| name.encode_utf16().collect::<Vec<_>>());
         names.dedup();
-        let namespace = self.module_namespace(
+        let namespace = self.module_namespace_with_tag(
             names
                 .into_iter()
                 .map(|name| (name, Value::UNDEFINED))
                 .collect(),
+            "Deferred Module",
         )?;
         let Some(object) = self.object_data_mut(namespace) else {
             return Err(self.type_error(p, "module namespace allocation failed".into()));
@@ -1420,9 +1421,6 @@ impl<H: Host> Vm<H> {
         if record.begin_deferred_evaluation().is_none() {
             return Ok(namespace);
         }
-        if let Some(object) = self.object_data_mut(namespace) {
-            object.deferred_module = None;
-        }
         let result = self.evaluate_javascript_module(p, &module);
         match result {
             Ok(evaluated) => {
@@ -1439,6 +1437,32 @@ impl<H: Host> Vm<H> {
                 Ok(namespace)
             }
         }
+    }
+
+    pub(super) fn evaluate_deferred_namespace_for_key(
+        &mut self,
+        p: &ResidualProgram,
+        namespace: Value,
+        key: Option<crate::vm::property_key::PropertyKey>,
+    ) -> Result<(), JsError> {
+        let triggers_evaluation = match key {
+            None => true,
+            Some(crate::vm::property_key::PropertyKey::String(atom)) => {
+                self.atom_name(atom) != "then"
+            }
+            Some(
+                crate::vm::property_key::PropertyKey::Symbol(_)
+                | crate::vm::property_key::PropertyKey::Private(_),
+            ) => false,
+        };
+        if triggers_evaluation
+            && self
+                .object_data(namespace)
+                .is_some_and(|object| object.deferred_module.is_some())
+        {
+            self.evaluate_deferred_module_namespace(p, namespace)?;
+        }
+        Ok(())
     }
 
     fn ready_for_sync_execution(
@@ -3351,6 +3375,14 @@ impl<H: Host> Vm<H> {
     }
 
     fn module_namespace(&mut self, exports: Vec<(String, Value)>) -> Result<Value, JsError> {
+        self.module_namespace_with_tag(exports, "Module")
+    }
+
+    fn module_namespace_with_tag(
+        &mut self,
+        exports: Vec<(String, Value)>,
+        namespace_tag: &str,
+    ) -> Result<Value, JsError> {
         let namespace = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
@@ -3373,12 +3405,14 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(tag) = self.well_known_symbols.get("toStringTag").copied() {
-            let module = self.heap.alloc(Cell::String("Module".into()));
-            self.set_symbol_property(namespace, tag, module)?;
+        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+            let module = self
+                .heap
+                .alloc(Cell::String(namespace_tag.to_string().into()));
+            self.set_symbol_property(namespace, symbol, module)?;
             self.set_property_attributes(
                 namespace,
-                crate::vm::property_key::PropertyKey::symbol(tag),
+                crate::vm::property_key::PropertyKey::symbol(symbol),
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,

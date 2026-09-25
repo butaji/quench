@@ -308,7 +308,10 @@ impl Engine {
                 locals.push((local, exported));
                 continue;
             };
-            if import.phase == ModuleRequestPhase::Source {
+            if matches!(
+                import.phase,
+                ModuleRequestPhase::Source | ModuleRequestPhase::Defer
+            ) {
                 locals.push((local, exported));
                 continue;
             }

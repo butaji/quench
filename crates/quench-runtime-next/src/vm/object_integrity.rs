@@ -112,6 +112,8 @@ impl<H: Host> Vm<H> {
             return Ok(Value::TRUE);
         }
         let key = self.coerce_js_string(p, key_value)?;
+        let atom = self.intern_js_atom(&key);
+        self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
         if key.host_string() == "length"
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))
             && !self
@@ -126,7 +128,6 @@ impl<H: Host> Vm<H> {
         {
             return Ok(self.delete_array_index(target, index));
         }
-        let atom = self.intern_js_atom(&key);
         let Some(slot) = self
             .shape_slot(self.object_data(target).unwrap().shape(), atom)
             .filter(|_| self.own_property(target, atom).is_some())

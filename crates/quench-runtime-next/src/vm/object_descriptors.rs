@@ -143,6 +143,8 @@ impl<H: Host> Vm<H> {
             return Ok(descriptor);
         }
         let key = self.coerce_js_string(p, key_value)?;
+        let atom = self.intern_js_atom(&key);
+        self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
         if key.host_string() == "length"
             && let Some(Cell::Array { elements, .. }) = self.heap.get(target)
             && !self
@@ -240,7 +242,6 @@ impl<H: Host> Vm<H> {
                 return Ok(descriptor);
             }
         }
-        let atom = self.intern_js_atom(&key);
         let module_binding = self.module_binding_value(target, atom);
         if module_binding.is_some_and(Value::is_deleted) {
             return Err(self.reference_error(

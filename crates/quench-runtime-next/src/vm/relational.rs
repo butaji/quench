@@ -69,8 +69,13 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
+        let property_key = atom.map_or_else(
+            || super::property_key::PropertyKey::symbol(symbol_key.expect("symbol key")),
+            super::property_key::PropertyKey::string,
+        );
         let mut current = object;
         loop {
+            self.evaluate_deferred_namespace_for_key(p, current, Some(property_key))?;
             if symbol_key.is_some_and(|key| self.symbol_property(current, key).is_some()) {
                 return Ok(true);
             }

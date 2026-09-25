@@ -224,7 +224,11 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    pub(super) fn array_buffer_transfer_native(&mut self, this: Value) -> Result<Value, JsError> {
+    pub(super) fn array_buffer_transfer_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
         let (bytes, shared, detached, immutable) = match self.heap.get(this) {
             Some(Cell::ArrayBuffer {
                 bytes,
@@ -233,10 +237,10 @@ impl<H: Host> Vm<H> {
                 immutable,
                 ..
             }) => (Rc::clone(bytes), *shared, *detached, *immutable),
-            _ => return Err(JsError("ArrayBuffer.transfer receiver is invalid".into())),
+            _ => return Err(self.type_error(p, "ArrayBuffer.transfer receiver is invalid".into())),
         };
         if shared || detached || immutable {
-            return Err(JsError("ArrayBuffer cannot be transferred".into()));
+            return Err(self.type_error(p, "ArrayBuffer cannot be transferred".into()));
         }
         let length = bytes.len();
         let result = self.heap.alloc(Cell::ArrayBuffer {
@@ -271,25 +275,31 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let requested = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         if requested.is_nan() || requested.is_sign_negative() || requested.is_infinite() {
-            return Err(JsError("ArrayBuffer resize length is invalid".into()));
+            return Err(self.type_error(p, "ArrayBuffer resize length is invalid".into()));
         }
         let requested = requested.trunc() as usize;
-        let (before, after) = {
-            let Some(Cell::ArrayBuffer {
-                bytes,
-                shared,
-                detached,
+        let valid_receiver = matches!(self.heap.get(this), Some(Cell::ArrayBuffer { .. }));
+        if !valid_receiver {
+            return Err(self.type_error(p, "ArrayBuffer.resize receiver is invalid".into()));
+        }
+        let can_resize = matches!(
+            self.heap.get(this),
+            Some(Cell::ArrayBuffer {
+                shared: false,
+                detached: false,
+                immutable: false,
+                resizable: true,
                 max_byte_length,
-                resizable,
-                immutable,
                 ..
-            }) = self.heap.get_mut(this)
-            else {
-                return Err(JsError("ArrayBuffer.resize receiver is invalid".into()));
+            }) if requested <= *max_byte_length
+        );
+        if !can_resize {
+            return Err(self.type_error(p, "ArrayBuffer is not resizable".into()));
+        }
+        let (before, after) = {
+            let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(this) else {
+                unreachable!("receiver validated before mutation");
             };
-            if *shared || *detached || *immutable || !*resizable || requested > *max_byte_length {
-                return Err(JsError("ArrayBuffer is not resizable".into()));
-            }
             let before = bytes.capacity();
             Rc::make_mut(bytes).resize(requested, 0);
             (before, bytes.capacity())
@@ -339,6 +349,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn array_buffer_transfer_fixed_native(
         &mut self,
+        p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
         let (bytes, shared, detached, immutable) = match self.heap.get(this) {
@@ -350,13 +361,14 @@ impl<H: Host> Vm<H> {
                 ..
             }) => (Rc::clone(bytes), *shared, *detached, *immutable),
             _ => {
-                return Err(JsError(
+                return Err(self.type_error(
+                    p,
                     "ArrayBuffer.transferToFixedLength receiver is invalid".into(),
                 ));
             }
         };
         if shared || detached || immutable {
-            return Err(JsError("ArrayBuffer cannot be transferred".into()));
+            return Err(self.type_error(p, "ArrayBuffer cannot be transferred".into()));
         }
         let length = bytes.len();
         let result = self.heap.alloc(Cell::ArrayBuffer {

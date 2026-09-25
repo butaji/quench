@@ -441,6 +441,11 @@ impl<H: Host> Vm<H> {
             return self.define_array_property(p, target, index, descriptor);
         }
         let atom = self.intern_js_atom(&key);
+        self.evaluate_deferred_namespace_for_key(
+            p,
+            target,
+            Some(crate::vm::property_key::PropertyKey::string(atom)),
+        )?;
         if self
             .object_data(target)
             .is_some_and(Object::is_module_namespace)

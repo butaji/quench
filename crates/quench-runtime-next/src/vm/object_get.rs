@@ -171,17 +171,20 @@ impl<H: Host> Vm<H> {
                 .primitive_prototype(object)
                 .unwrap_or(self.object_proto);
         }
-        if self.atom_name(atom) != "then"
-            && self
-                .object_data(object)
-                .is_some_and(|object| object.deferred_module.is_some())
-        {
-            self.evaluate_deferred_module_namespace(p, object)?;
-        }
+        self.evaluate_deferred_namespace_for_key(
+            p,
+            object,
+            Some(super::property_key::PropertyKey::string(atom)),
+        )?;
         if private_name {
             self.check_private_brand(p, object, atom)?;
         }
         loop {
+            self.evaluate_deferred_namespace_for_key(
+                p,
+                object,
+                Some(super::property_key::PropertyKey::string(atom)),
+            )?;
             if let Some(Cell::Proxy {
                 target, handler, ..
             }) = self.heap.get(object).cloned()

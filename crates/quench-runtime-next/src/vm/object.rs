@@ -376,6 +376,7 @@ impl<H: Host> Vm<H> {
                 .proxy_set(p, target, handler, receiver, atom, value)
                 .map(|()| true);
         }
+        self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
 
         let mut current = target;
         let mut found = None;
@@ -474,10 +475,12 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn define_object_literal_data_property(
         &mut self,
+        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
+        self.evaluate_deferred_namespace_for_key(p, object, Some(PropertyKey::string(atom)))?;
         let key = PropertyKey::string(atom);
         if self
             .property_attributes(object, key)
@@ -626,6 +629,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
+        self.evaluate_deferred_namespace_for_key(p, object, Some(PropertyKey::string(atom)))?;
         if atom == self.length_atom
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
             && !self
