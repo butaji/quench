@@ -163,6 +163,8 @@ const NATIVES: &[Native] = &[
     Native::FinalizationRegistryUnregister,
     Native::DisposableStack, Native::DisposableStackUse, Native::DisposableStackAdopt, Native::DisposableStackDefer, Native::DisposableStackDispose,
     Native::DisposableStackUseAsync, Native::DisposableStackDisposeAsync, Native::DisposableStackDisposeWithCompletion,
+    Native::DisposableStackDisposeAsyncWithCompletion, Native::DisposableStackAsyncDisposalFulfilled,
+    Native::DisposableStackAsyncDisposalRejected,
     Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall, Native::FunctionToString, Native::FunctionCaller, Native::AsyncFunction, Native::GeneratorFunction, Native::AsyncGeneratorFunction,
     Native::Date, Native::DateNow, Native::DateGetTime, Native::DateGetFullYear,
     Native::DateGetMonth, Native::DateGetDate, Native::DateGetDay, Native::DateGetHours,

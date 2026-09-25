@@ -27,11 +27,7 @@ impl FunctionCompiler<'_, '_> {
         let original_error = self.load_atom(error);
         let stack = self.load_atom(stack_atom);
         let skip_uninitialized_stack = self.emit(Op::JumpFalse, stack, 0, 0, 0);
-        if asynchronous {
-            self.emit_disposal();
-        } else {
-            self.emit_disposal_with_completion(stack, original_error);
-        }
+        self.emit_disposal_with_completion(stack, original_error, asynchronous);
         self.patch(skip_uninitialized_stack);
         self.emit(Op::Throw, original_error, 0, 0, 0);
         let end_target = self.code.len() as u32;
@@ -47,8 +43,18 @@ impl FunctionCompiler<'_, '_> {
         });
     }
 
-    fn emit_disposal_with_completion(&mut self, stack: Register, completion: Register) {
-        let method_atom = self.owner.atom("\0rqj:disposeWithCompletion");
+    fn emit_disposal_with_completion(
+        &mut self,
+        stack: Register,
+        completion: Register,
+        asynchronous: bool,
+    ) {
+        let method = if asynchronous {
+            "\0rqj:disposeAsyncWithCompletion"
+        } else {
+            "\0rqj:disposeWithCompletion"
+        };
+        let method_atom = self.owner.atom(method);
         let cache = self.owner.cache_site();
         let site = self.owner.method_sites.len() as u32;
         self.owner
@@ -56,6 +62,10 @@ impl FunctionCompiler<'_, '_> {
             .push((method_atom, cache, vec![completion], None));
         let result = self.reg();
         self.emit(Op::CallMethod, result, stack, 0, site);
+        if asynchronous {
+            let awaited = self.reg();
+            self.emit(Op::Await, awaited, result, 0, 0);
+        }
     }
 
     pub(crate) fn emit_function_disposal_scope_exit(&mut self, start: u32, end: u32) -> bool {
