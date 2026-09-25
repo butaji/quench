@@ -238,6 +238,49 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
+        Native::ArrayFrom | Native::ArrayIsArray => 1.0,
+        Native::ArraySpecies => 0.0,
+        Native::ArrayOf
+        | Native::ArrayPop
+        | Native::ArrayShift
+        | Native::ArrayFlat
+        | Native::ArrayReverse
+        | Native::ArrayToReversed
+        | Native::ArrayToString
+        | Native::ArrayToLocaleString
+        | Native::ArrayKeys
+        | Native::ArrayValues
+        | Native::ArrayEntries => 0.0,
+        Native::ArrayJoin
+        | Native::ArrayConcat
+        | Native::ArrayMap
+        | Native::ArrayFilter
+        | Native::ArraySome
+        | Native::ArrayEvery
+        | Native::ArrayFind
+        | Native::ArrayFindIndex
+        | Native::ArrayFindLast
+        | Native::ArrayFindLastIndex
+        | Native::ArrayGroup
+        | Native::ArrayGroupToMap
+        | Native::ArrayIncludes
+        | Native::ArrayIndexOf
+        | Native::ArrayLastIndexOf
+        | Native::ArrayFlatMap
+        | Native::ArrayAt
+        | Native::ArraySort
+        | Native::ArrayForEach
+        | Native::ArrayReduce
+        | Native::ArrayReduceRight
+        | Native::ArrayPush
+        | Native::ArrayUnshift
+        | Native::ArrayFill
+        | Native::ArrayToSorted => 1.0,
+        Native::ArrayCopyWithin
+        | Native::ArrayToSpliced
+        | Native::ArrayWith
+        | Native::ArraySlice
+        | Native::ArraySplice => 2.0,
         Native::ObjectKeys
         | Native::ObjectValues
         | Native::ObjectEntries
