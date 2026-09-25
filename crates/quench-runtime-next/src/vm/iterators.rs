@@ -147,6 +147,21 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn install_iterator_self(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        self.array_iterator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+        self.set_builtin_named(
+            p,
+            self.array_iterator_proto,
+            "next",
+            Native::ArrayIteratorNext,
+        )?;
+        self.set_builtin_value_named(
+            self.array_iterator_proto,
+            "constructor",
+            self.native_value(Native::Array),
+        )?;
+        self.install_builtin_to_string_tag(self.array_iterator_proto, "Array Iterator")?;
         self.install_collection_iterators()?;
         let Some(iterator) = self.well_known_symbols.get("iterator").copied() else {
             return Ok(());
@@ -344,7 +359,7 @@ impl<H: Host> Vm<H> {
             self.box_object_or_type_error(p, source)?
         };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.iterator_proto),
+            object: Self::empty_object(self.array_iterator_proto),
             source,
             kind,
             index: 0,
@@ -359,6 +374,31 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         self.iterator_next_with_args(p, this, &[])
+    }
+
+    pub(super) fn array_iterator_next(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let is_array_iterator = matches!(
+            self.heap.get(this),
+            Some(Cell::Iterator {
+                kind: IteratorKind::Array
+                    | IteratorKind::ArrayKeys
+                    | IteratorKind::ArrayValues
+                    | IteratorKind::ArrayEntries,
+                ..
+            })
+        );
+        if !is_array_iterator {
+            return Err(self.type_error(
+                p,
+                "Array Iterator next called on incompatible receiver".into(),
+            ));
+        }
+        self.iterator_next_with_args(p, this, args)
     }
 
     pub(super) fn iterator_next_with_cached_method(
