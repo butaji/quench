@@ -277,6 +277,7 @@ opcodes!(
     IteratorClose => READ_THROW,
     SpreadToArray => CALL_EFFECT,
     RequireObjectCoercible => READ_THROW,
+    RequireIteratorResult => READ_THROW,
     SuperCallCheck => READ_THROW,
     IteratorCleanupPush => Effect::CONTROL,
     IteratorCleanupPop => Effect::CONTROL,

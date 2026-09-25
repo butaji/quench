@@ -478,6 +478,11 @@ impl<H: Host> Vm<H> {
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.b()))?;
             }
+            Op::RequireIteratorResult => {
+                if !self.is_object_like(self.read(f, i.b())) {
+                    return Err(self.type_error(p, "iterator next result is not an object".into()));
+                }
+            }
             Op::SuperCallCheck => self.check_super_call(p)?,
             Op::IteratorClose => {
                 self.iterator_close(p, self.read(f, i.b()))?;
