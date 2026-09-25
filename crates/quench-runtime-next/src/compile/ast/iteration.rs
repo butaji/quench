@@ -77,16 +77,24 @@ impl FunctionCompiler<'_, '_> {
             0,
         );
         self.store_atom(iterator_atom, iterator);
-        let head = self.code.len() as u32;
         let iterator = self.load_atom(iterator_atom);
         let next_atom = self.owner.atom("next");
         let next_cache = self.owner.cache_site();
-        let method_site = self.owner.method_sites.len() as u32;
-        self.owner
-            .method_sites
-            .push((next_atom, next_cache, Vec::new(), None));
+        let next_method = self.reg();
+        self.emit(
+            Op::GetField,
+            next_method,
+            FieldBase::register(iterator).0,
+            next_cache,
+            next_atom,
+        );
+        let next_method_atom = self.hidden_local("\0rqj:for-of:next-method");
+        self.store_atom(next_method_atom, next_method);
+        let head = self.code.len() as u32;
+        let iterator = self.load_atom(iterator_atom);
+        let next_method = self.load_atom(next_method_atom);
         let mut result = self.reg();
-        self.emit(Op::CallMethod, result, iterator, 0, method_site);
+        self.emit(Op::Call, result, next_method, iterator, 0);
         if await_values {
             let awaited = self.reg();
             self.emit(Op::Await, awaited, result, 0, 0);
