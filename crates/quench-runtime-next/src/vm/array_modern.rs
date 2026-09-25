@@ -13,7 +13,10 @@ impl<H: Host> Vm<H> {
             Native::ArrayToSpliced => self.array_to_spliced_native(p, this, args),
             Native::ArraySort => self.array_sort_native(p, this, args, true),
             Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
-            Native::ArrayToString => self.array_to_string_native(p, this),
+            Native::ArraySpecies => Ok(this),
+            Native::ArrayToString | Native::ArrayToLocaleString => {
+                self.array_to_string_native(p, this)
+            }
             Native::ArrayFrom => self.array_from_native(p, args),
             Native::ArrayOf => Ok(self.new_array(args.to_vec())),
             _ => unreachable!("non-modern native routed to modern array dispatch"),
