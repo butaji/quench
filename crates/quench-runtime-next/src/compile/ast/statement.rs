@@ -410,6 +410,9 @@ impl FunctionCompiler<'_, '_> {
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
         self.patch_edges(&control.continues, update);
+        if scoped {
+            self.emit(Op::CloneEnv, 0, 0, 0, 0);
+        }
         if let Some(expression) = &item.update {
             self.expression(expression);
         }
