@@ -773,6 +773,16 @@ impl<H: Host> Vm<H> {
                 let program = self.programs.get(program_id).ok_or_else(|| {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;
+                if program
+                    .functions
+                    .get(id as usize)
+                    .is_some_and(|function| function.is_class_constructor)
+                    && self.construct_target.is_none()
+                {
+                    return Err(
+                        self.type_error(p, "class constructor cannot be called without new".into())
+                    );
+                }
                 let active_program = std::mem::replace(&mut self.active_program, program_id);
                 let realm = match self.heap.get(callee) {
                     Some(Cell::Function { realm, .. }) => *realm,
