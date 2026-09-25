@@ -280,10 +280,7 @@ impl<H: Host> Vm<H> {
                 let env = self.promote_frame_environment(f);
                 let module_root = p.module
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
-                    && self
-                        .programs
-                        .module_environment(self.frames[f].program)
-                        == Some(env);
+                    && self.programs.module_environment(self.frames[f].program) == Some(env);
                 let v = if module_root {
                     self.function_values
                         .get(&(self.frames[f].program, i.imm()))

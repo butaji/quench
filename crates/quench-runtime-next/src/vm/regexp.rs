@@ -96,6 +96,12 @@ impl<H: Host> Vm<H> {
             "test",
             self.native_value(Native::RegExpTest),
         )?;
+        self.set_named(
+            program,
+            self.regexp_proto,
+            "toString",
+            self.native_value(Native::RegExpToString),
+        )?;
         for (name, native) in REGEXP_FLAG_ACCESSORS {
             let getter = self.native_value(*native);
             let atom = self.intern_atom(name);
@@ -240,6 +246,28 @@ impl<H: Host> Vm<H> {
             },
         );
         Ok(object)
+    }
+
+    pub(super) fn regexp_to_string_native(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        if receiver.is_null() || receiver.is_undefined() {
+            return Err(self.type_error(
+                p,
+                "RegExp.prototype.toString called on incompatible receiver".into(),
+            ));
+        }
+        let source_atom = self.intern_atom("source");
+        let flags_atom = self.intern_atom("flags");
+        let source = self.get_property(p, receiver, source_atom)?;
+        let source = self.to_string(p, source)?;
+        let flags = self.get_property(p, receiver, flags_atom)?;
+        let flags = self.to_string(p, flags)?;
+        Ok(self
+            .heap
+            .alloc(Cell::String(format!("/{source}/{flags}").into())))
     }
 
     pub(super) fn regexp_native(
