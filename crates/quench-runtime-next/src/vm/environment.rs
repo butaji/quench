@@ -327,6 +327,12 @@ impl<H: Host> Vm<H> {
                     self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
                 );
             }
+            if let Some(success) = self.set_through_typed_array_prototype(p, object, atom, value)? {
+                if !success && strict {
+                    return Err(self.type_error(p, "cannot write typed array index".into()));
+                }
+                return Ok(());
+            }
             return self.set_property_with_program(p, object, atom, value);
         }
         let with_base = self

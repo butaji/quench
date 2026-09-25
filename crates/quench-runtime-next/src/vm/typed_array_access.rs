@@ -222,6 +222,52 @@ impl<H: Host> Vm<H> {
         None
     }
 
+    pub(super) fn set_through_typed_array_prototype(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        atom: Atom,
+        value: Value,
+    ) -> Result<Option<bool>, JsError> {
+        let name = self.atom_name(atom);
+        let Some(number) = name
+            .parse::<f64>()
+            .ok()
+            .filter(|number| crate::number_to_string::format(*number) == name || name == "-0")
+        else {
+            return Ok(None);
+        };
+        let index = name
+            .parse::<usize>()
+            .ok()
+            .filter(|index| index.to_string() == name && number == *index as f64);
+        let key = self.heap.alloc(Cell::String(name.into()));
+        let mut current = self
+            .object_data(receiver)
+            .map_or(Value::NULL, |data| data.proto);
+        let mut visited = std::collections::HashSet::new();
+        while !current.is_null() && visited.insert(current) {
+            match self.heap.get(current) {
+                Some(Cell::TypedArray { .. }) => {
+                    return match index {
+                        Some(index) => self.typed_array_set(p, current, index, value).map(Some),
+                        None => Ok(Some(false)),
+                    };
+                }
+                Some(Cell::Proxy { .. }) => return Ok(None),
+                _ => {}
+            }
+            if !self
+                .object_get_own_property_descriptor(p, &[current, key])?
+                .is_undefined()
+            {
+                return Ok(None);
+            }
+            current = self.object_get_prototype_of(p, current)?;
+        }
+        Ok(None)
+    }
+
     pub(super) fn typed_array_set(
         &mut self,
         p: &ResidualProgram,
