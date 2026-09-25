@@ -303,10 +303,11 @@ impl FunctionCompiler<'_, '_> {
         binding: &BindingPattern<'_>,
     ) -> Register {
         let value = match (initializer, binding) {
-            (
-                Expression::ClassExpression(class),
-                BindingPattern::BindingIdentifier(identifier),
-            ) if class.id.is_none() => self.named_class_expression(class, identifier.name.as_str()),
+            (Expression::ClassExpression(class), BindingPattern::BindingIdentifier(identifier))
+                if class.id.is_none() =>
+            {
+                self.named_class_expression(class, identifier.name.as_str())
+            }
             _ => self.expression(initializer),
         };
         if is_anonymous_function_definition(initializer)
