@@ -464,7 +464,7 @@ impl<H: Host> Vm<H> {
                 native,
                 Native::Proxy | Native::Array | Native::ArrayBuffer | Native::SharedArrayBuffer
             ) {
-                self.set_constructed_prototype(p, result, new_target)?;
+                self.set_constructed_prototype(p, result, new_target, native)?;
             }
             return Ok(result);
         }
@@ -562,15 +562,31 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         result: Value,
         new_target: Value,
+        native: Native,
     ) -> Result<(), JsError> {
         if self.object_data(result).is_none() {
             return Ok(());
         }
         let prototype_atom = self.intern_atom("prototype");
         let prototype = self.get_property(p, new_target, prototype_atom)?;
-        if prototype.is_null() || self.object_data(prototype).is_none() {
-            return Ok(());
-        }
+        let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
+            if native != Native::Boolean {
+                return Ok(());
+            }
+            let realm = match self.heap.get(new_target) {
+                Some(Cell::Function { realm, .. }) => *realm,
+                _ => self.realm.globals,
+            };
+            let constructor_atom = self.intern_atom("Boolean");
+            let constructor = self.get_property(p, realm, constructor_atom)?;
+            let prototype = self.get_property(p, constructor, prototype_atom)?;
+            if self.object_data(prototype).is_none() {
+                return Ok(());
+            }
+            prototype
+        } else {
+            prototype
+        };
         self.object_set_prototype_of(p, result, prototype)?;
         Ok(())
     }

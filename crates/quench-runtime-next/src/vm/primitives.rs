@@ -64,30 +64,25 @@ impl<H: Host> Vm<H> {
                     })
                 }
             }
-            Native::BooleanValueOf => {
-                if this.as_bool().is_some() {
-                    Ok(this)
-                } else {
-                    let value_atom = self.intern_atom("\0rqj:boolean-value");
-                    self.own_property(this, value_atom).ok_or_else(|| {
-                        JsError("Boolean.prototype.valueOf called on incompatible receiver".into())
-                    })
-                }
-            }
+            Native::BooleanValueOf => self.boolean_prototype_value(this).ok_or_else(|| {
+                self.type_error(
+                    p,
+                    "Boolean.prototype.valueOf called on incompatible receiver".into(),
+                )
+            }),
             Native::BooleanToString => {
-                let value = if let Some(value) = this.as_bool() {
-                    Some(value)
-                } else {
-                    let value_atom = self.intern_atom("\0rqj:boolean-value");
-                    self.own_property(this, value_atom).and_then(Value::as_bool)
-                };
-                match value {
-                    Some(true) => Ok(self.heap.alloc(Cell::String("true".into()))),
-                    Some(false) => Ok(self.heap.alloc(Cell::String("false".into()))),
-                    None => Err(JsError(
+                let value = self.boolean_prototype_value(this).ok_or_else(|| {
+                    self.type_error(
+                        p,
                         "Boolean.prototype.toString called on incompatible receiver".into(),
-                    )),
-                }
+                    )
+                })?;
+                let text = if value == Value::TRUE {
+                    "true"
+                } else {
+                    "false"
+                };
+                Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::StringCharCodeAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
