@@ -55,14 +55,14 @@ impl FunctionCompiler<'_, '_> {
             .pop()
             .expect("try body finally context");
         let end = self.code.len() as u32;
-        self.scoped_statements_without_completion(&finalizer.body);
+        self.scoped_finalizer_statements(&finalizer.body);
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let exceptional_target = self.code.len() as u32;
-        self.scoped_statements_without_completion(&finalizer.body);
+        self.scoped_finalizer_statements(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
         let return_target = self.code.len() as u32;
-        self.scoped_statements_without_completion(&finalizer.body);
+        self.scoped_finalizer_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
         self.patch_edges(&context.return_edges, return_target);
@@ -123,14 +123,14 @@ impl FunctionCompiler<'_, '_> {
         let catch_end = self.code.len() as u32;
         let catch_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let finalizer_target = self.code.len() as u32;
-        self.scoped_statements_without_completion(&finalizer.body);
+        self.scoped_finalizer_statements(&finalizer.body);
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let exceptional_target = self.code.len() as u32;
-        self.scoped_statements_without_completion(&finalizer.body);
+        self.scoped_finalizer_statements(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
         let return_target = self.code.len() as u32;
-        self.scoped_statements_without_completion(&finalizer.body);
+        self.scoped_finalizer_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
         self.handlers[body_handler].return_target = Some(return_target);
@@ -172,7 +172,7 @@ impl FunctionCompiler<'_, '_> {
                 continue;
             }
             let path = self.code.len() as u32;
-            self.scoped_statements_without_completion(&finalizer.body);
+            self.scoped_finalizer_statements(&finalizer.body);
             let tail = self.emit(Op::Jump, 0, 0, 0, 0);
             paths.push((
                 abrupt.control,
@@ -198,6 +198,33 @@ impl FunctionCompiler<'_, '_> {
                     "finally completion outlived its control target",
                 );
             }
+        }
+    }
+
+    fn scoped_finalizer_statements(&mut self, body: &[Statement<'_>]) {
+        let previous = self.statement_completion;
+        let target = match previous {
+            StatementCompletion::Track(target) | StatementCompletion::Suppress(target) => target,
+            StatementCompletion::Finally { current, .. } => current,
+            StatementCompletion::Ignored => {
+                self.scoped_statements_without_completion(body);
+                return;
+            }
+        };
+        let completion = self.reg();
+        let undefined = self.literal(Constant::Undefined);
+        self.emit(Op::Move, completion, undefined, 0, 0);
+        self.statement_completion = StatementCompletion::Finally {
+            current: completion,
+            target,
+        };
+        self.scoped_statements(body);
+        self.statement_completion = previous;
+    }
+
+    pub(super) fn record_finalizer_abrupt_completion(&mut self) {
+        if let StatementCompletion::Finally { current, target } = self.statement_completion {
+            self.emit(Op::Move, target, current, 0, 0);
         }
     }
 

@@ -562,6 +562,7 @@ impl FunctionCompiler<'_, '_> {
             let target_depth = self.controls[index].with_depth;
             self.emit_with_exits_to(target_depth);
         }
+        self.record_finalizer_abrupt_completion();
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
         if !self.finally_contexts.is_empty() {
             let destination = Rc::new(std::cell::Cell::new(None));
@@ -607,6 +608,7 @@ impl FunctionCompiler<'_, '_> {
             let target_depth = self.controls[index].with_depth;
             self.emit_with_exits_to(target_depth);
         }
+        self.record_finalizer_abrupt_completion();
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
         if !self.finally_contexts.is_empty() {
             let destination = Rc::new(std::cell::Cell::new(None));
