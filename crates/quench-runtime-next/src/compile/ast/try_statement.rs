@@ -28,6 +28,7 @@ impl FunctionCompiler<'_, '_> {
             slot,
             return_target: None,
             return_slot: None,
+            with_depth: self.with_depth,
         });
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
@@ -72,6 +73,7 @@ impl FunctionCompiler<'_, '_> {
             slot: self.local_slot(error_atom),
             return_target: Some(return_target),
             return_slot: self.local_slot(return_atom),
+            with_depth: self.with_depth,
         });
     }
 
@@ -102,6 +104,7 @@ impl FunctionCompiler<'_, '_> {
             slot: catch_slot,
             return_target: None,
             return_slot: None,
+            with_depth: self.with_depth,
         });
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
@@ -140,6 +143,7 @@ impl FunctionCompiler<'_, '_> {
             slot: self.local_slot(error_atom),
             return_target: Some(return_target),
             return_slot: self.local_slot(return_atom),
+            with_depth: self.with_depth,
         });
     }
 

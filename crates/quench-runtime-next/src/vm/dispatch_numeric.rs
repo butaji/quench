@@ -333,6 +333,8 @@ impl<H: Host> Vm<H> {
                     let Some(handler) = handler else {
                         return Err(error);
                     };
+                    let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
+                    self.with_stack.truncate(with_depth);
                     if let Some(slot) = handler.slot {
                         let value = error
                             .thrown_value()

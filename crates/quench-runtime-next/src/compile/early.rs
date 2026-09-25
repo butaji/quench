@@ -545,6 +545,9 @@ fn collect_nested_vars(statements: &[Statement<'_>], names: &mut FxHashSet<Strin
                 }
             }
             Statement::BlockStatement(block) => collect_nested_vars(&block.body, names),
+            Statement::WithStatement(statement) => {
+                collect_nested_vars(std::slice::from_ref(&statement.body), names)
+            }
             Statement::IfStatement(statement) => {
                 collect_nested_vars(std::slice::from_ref(&statement.consequent), names);
                 if let Some(alternate) = &statement.alternate {
