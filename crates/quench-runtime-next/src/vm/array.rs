@@ -59,48 +59,76 @@ impl<H: Host> Vm<H> {
         Ok(this)
     }
 
-    pub(super) fn array_shift_native(&mut self, this: Value) -> Result<Value, JsError> {
-        let values = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => {
-                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-                (0..length)
-                    .map(|index| self.array_value_at(this, index))
-                    .collect::<Vec<_>>()
+    pub(super) fn array_shift_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let object = self.box_object(this)?;
+        let length = self.array_like_length(p, object)?;
+        if length == 0 {
+            self.set_array_like_length(p, object, 0)?;
+            return Ok(Value::UNDEFINED);
+        }
+        let first = self.get_index(p, object, Value::number(0.0))?;
+        for index in 1..length {
+            let source = Value::number(index as f64);
+            let destination = Value::number((index - 1) as f64);
+            if self.has_property(p, object, source)? {
+                let value = self.get_index(p, object, source)?;
+                self.set_index_mode(p, object, destination, value, true)?;
+            } else {
+                self.delete_array_like_property(p, object, destination)?;
             }
-            _ => return Err(JsError("shift receiver is not array".into())),
-        };
-        let first = values.first().copied().unwrap_or(Value::UNDEFINED);
-        if !values.is_empty() {
-            self.check_array_mutation(this, false, false, true)?;
         }
-        if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
-            *elements = Rc::new(values.into_iter().skip(1).collect());
-        }
+        self.delete_array_like_property(p, object, Value::number((length - 1) as f64))?;
+        self.set_array_like_length(p, object, length - 1)?;
         Ok(first)
     }
 
     pub(super) fn array_unshift_native(
         &mut self,
+        p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let values = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => {
-                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-                (0..length)
-                    .map(|index| self.array_value_at(this, index))
-                    .collect::<Vec<_>>()
+        let object = self.box_object(this)?;
+        let length = self.array_like_length(p, object)?;
+        let new_length = length
+            .checked_add(args.len())
+            .filter(|length| *length as f64 <= MAX_SAFE_INTEGER)
+            .ok_or_else(|| self.type_error(p, "array-like length exceeds safe integer".into()))?;
+        if !args.is_empty() {
+            for index in (1..=length).rev() {
+                let source = Value::number((index - 1) as f64);
+                let destination = Value::number((index + args.len() - 1) as f64);
+                if self.has_property(p, object, source)? {
+                    let value = self.get_index(p, object, source)?;
+                    self.set_index_mode(p, object, destination, value, true)?;
+                } else {
+                    self.delete_array_like_property(p, object, destination)?;
+                }
             }
-            _ => return Err(JsError("unshift receiver is not array".into())),
-        };
-        let mut updated = args.to_vec();
-        updated.extend(values);
-        let length = updated.len();
-        self.check_array_mutation(this, true, !args.is_empty(), true)?;
-        if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(this) {
-            *elements = Rc::new(updated);
+            for (index, value) in args.iter().copied().enumerate() {
+                self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
+            }
         }
-        Ok(Value::number(length as f64))
+        self.set_array_like_length(p, object, new_length)?;
+        Ok(Value::number(new_length as f64))
+    }
+
+    fn delete_array_like_property(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        key: Value,
+    ) -> Result<(), JsError> {
+        let deleted = self.object_delete_property(p, &[object, key])?;
+        if self.truthy(deleted) {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "cannot delete array-like property".into()))
+        }
     }
 
     pub(super) fn array_splice_native(
