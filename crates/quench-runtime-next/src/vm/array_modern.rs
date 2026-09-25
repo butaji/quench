@@ -15,9 +15,8 @@ impl<H: Host> Vm<H> {
             Native::ArraySort => self.array_sort_native(p, this, args, true),
             Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
             Native::ArraySpecies => Ok(this),
-            Native::ArrayToString | Native::ArrayToLocaleString => {
-                self.array_to_string_native(p, this)
-            }
+            Native::ArrayToString => self.array_to_string_native(p, this),
+            Native::ArrayToLocaleString => self.array_to_locale_string_native(p, this),
             Native::ArrayFrom => self.array_from_native(p, args),
             Native::ArrayFromAsync => self.array_from_async_native(p, this, args),
             Native::ArrayOf => Ok(self.new_array(args.to_vec())),
@@ -64,7 +63,41 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
-        self.array_join_native(p, this, &[])
+        self.require_object_coercible(p, this)?;
+        let join = self.intern_atom("join");
+        let method = self.get_property(p, this, join)?;
+        if self.is_function(method) {
+            self.call_value(p, method, this, &[])
+        } else {
+            self.object_prototype_to_string(p, this)
+        }
+    }
+
+    fn array_to_locale_string_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
+        let to_locale_string = self.intern_atom("toLocaleString");
+        let mut result = String::new();
+        for index in 0..length {
+            if index != 0 {
+                result.push(',');
+            }
+            let value = self.get_index(p, object, Value::number(index as f64))?;
+            if value.is_null() || value.is_undefined() {
+                continue;
+            }
+            let method = self.get_property(p, value, to_locale_string)?;
+            if !self.is_function(method) {
+                return Err(self.type_error(p, "toLocaleString is not callable".into()));
+            }
+            let element = self.call_value(p, method, value, &[])?;
+            result.push_str(&self.to_string(p, element)?);
+        }
+        Ok(self.heap.alloc(Cell::String(result.into())))
     }
 
     fn array_from_native(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {

@@ -150,8 +150,18 @@ impl<H: Host> Vm<H> {
         let mut object = object;
         if object.as_bool().is_some() {
             match self.atom_name(atom) {
-                "toString" => return Ok(self.native_value(Native::BooleanToString)),
-                "valueOf" => return Ok(self.native_value(Native::BooleanValueOf)),
+                "toString" | "valueOf"
+                    if self
+                        .primitive_prototype(object)
+                        .and_then(|prototype| self.own_property(prototype, atom))
+                        .is_none() =>
+                {
+                    return Ok(self.native_value(if self.atom_name(atom) == "toString" {
+                        Native::BooleanToString
+                    } else {
+                        Native::BooleanValueOf
+                    }));
+                }
                 _ => {
                     object = self
                         .primitive_prototype(object)
@@ -159,18 +169,25 @@ impl<H: Host> Vm<H> {
                 }
             }
         } else if object.as_number().is_some() {
-            if self.lookup_atom("toString") == Some(atom) {
-                return Ok(self.native_value(Native::NumberString));
-            }
-            if atom == self.to_fixed_atom {
-                return Ok(self.native_value(Native::NumberFixed));
-            }
-            if atom == self.to_precision_atom {
-                return Ok(self.native_value(Native::NumberPrecision));
-            }
-            object = self
+            let prototype = self
                 .primitive_prototype(object)
                 .unwrap_or(self.object_proto);
+            let method = self.own_property(prototype, atom);
+            let builtin = if self.lookup_atom("toString") == Some(atom) {
+                Some(Native::NumberString)
+            } else if atom == self.to_fixed_atom {
+                Some(Native::NumberFixed)
+            } else if atom == self.to_precision_atom {
+                Some(Native::NumberPrecision)
+            } else {
+                None
+            };
+            if method.is_none()
+                && let Some(builtin) = builtin
+            {
+                return Ok(self.native_value(builtin));
+            }
+            object = prototype;
         }
         self.evaluate_deferred_namespace_for_key(
             p,
