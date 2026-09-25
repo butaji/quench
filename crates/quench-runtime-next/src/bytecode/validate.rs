@@ -194,6 +194,15 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} field definition is invalid"));
                     }
+                    Op::DefineComputedField
+                        if !register(instruction.a())
+                            || !register(instruction.b())
+                            || !register(instruction.c()) =>
+                    {
+                        return Err(format!(
+                            "function {index} computed field definition is invalid"
+                        ));
+                    }
                     Op::SetThisField
                         if !register(instruction.a())
                             || !atom(instruction.imm())

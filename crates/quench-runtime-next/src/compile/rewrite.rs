@@ -335,6 +335,11 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::SetField | Op::DefineField => {
             instruction.a() == register || instruction.b() == register
         }
+        Op::DefineComputedField => {
+            instruction.a() == register
+                || instruction.b() == register
+                || instruction.c() == register
+        }
         Op::SetThisField => instruction.a() == register,
         Op::InitializeThis => instruction.a() == register,
         Op::YieldStar => {

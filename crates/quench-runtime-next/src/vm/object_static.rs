@@ -2,6 +2,64 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn define_class_field(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: PropertyKey,
+        value: Value,
+    ) -> Result<(), JsError> {
+        if let PropertyKey::String(atom) = key
+            && let Some(Cell::Object(object)) = self.heap.get(target)
+            && !object.module_namespace
+        {
+            let exists = self.own_property(target, atom).is_some();
+            if exists
+                && self
+                    .property_attributes(target, key)
+                    .is_some_and(|attributes| !attributes.configurable)
+            {
+                return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
+            }
+            if !exists && !object.is_extensible() {
+                return Err(
+                    self.type_error(p, "cannot add property to non-extensible object".into())
+                );
+            }
+            if exists {
+                self.remove_property_attributes(target, key);
+            }
+            self.set_shape_property(target, key, value)?;
+            self.set_property_attributes(target, key, DEFAULT_PROPERTY_ATTRIBUTES);
+            return Ok(());
+        }
+
+        let key_value = match key {
+            PropertyKey::String(atom) => {
+                let text = self.atom_name(atom).to_owned();
+                self.heap.alloc(Cell::String(text.into()))
+            }
+            PropertyKey::Symbol(symbol) => symbol,
+            PropertyKey::Private(_) => {
+                return Err(JsError::validation(
+                    "private names are not public class-field keys".into(),
+                ));
+            }
+        };
+        let descriptor = self.object();
+        for (name, field) in [
+            ("value", value),
+            ("writable", Value::TRUE),
+            ("enumerable", Value::TRUE),
+            ("configurable", Value::TRUE),
+        ] {
+            let atom = self.intern_atom(name);
+            self.set_property(descriptor, atom, field)?;
+        }
+        self.object_define_property(p, &[target, key_value, descriptor])?;
+        Ok(())
+    }
+
     pub(super) fn object_prototype_to_string(
         &mut self,
         p: &ResidualProgram,

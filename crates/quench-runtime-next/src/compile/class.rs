@@ -802,16 +802,25 @@ impl FunctionCompiler<'_, '_> {
             if let Some(previous) = previous_field_initializer {
                 self.class_field_initializer = previous;
             }
-            if let Some(key) = computed_key {
-                self.emit(Op::SetIndex, value, this, key, 0);
-            } else {
+            let private = matches!(
+                field,
+                ClassField::Property(field)
+                    if matches!(&field.key, PropertyKey::PrivateIdentifier(_))
+            );
+            if private {
                 let field_atom = name.unwrap();
                 let cache = self.owner.cache_site();
                 self.emit(Op::SetField, value, this, cache, field_atom);
-                if matches!(field, ClassField::Property(field) if matches!(&field.key, PropertyKey::PrivateIdentifier(_)))
-                {
-                    self.emit(Op::MarkPrivateName, 0, this, home, field_atom);
-                }
+                self.emit(Op::MarkPrivateName, 0, this, home, field_atom);
+            } else if let Some(key) = computed_key {
+                self.emit(Op::DefineComputedField, value, this, key, 0);
+            } else if matches!(field, ClassField::AutoAccessor { .. }) {
+                let field_atom = name.unwrap();
+                let cache = self.owner.cache_site();
+                self.emit(Op::SetField, value, this, cache, field_atom);
+            } else {
+                let field_atom = name.unwrap();
+                self.emit(Op::DefineField, value, this, 0, field_atom);
             }
         }
     }
