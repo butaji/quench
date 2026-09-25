@@ -192,7 +192,7 @@ impl FunctionCompiler<'_, '_> {
             );
             self.after_super_call(dst);
         } else {
-            self.emit(
+            let pc = self.emit(
                 Op::Call,
                 dst,
                 callee,
@@ -204,6 +204,9 @@ impl FunctionCompiler<'_, '_> {
                     direct_eval && self.parameter_context,
                 ),
             );
+            if direct_eval {
+                self.record_direct_eval_site(pc);
+            }
         }
         dst
     }
@@ -224,14 +227,41 @@ impl FunctionCompiler<'_, '_> {
         let result = self.reg();
         let parameter_eval = self.parameter_context;
         self.dynamic_eval = true;
-        self.emit(
+        let pc = self.emit(
             Op::CallDirectEvalArray,
             result,
             callee,
             this,
             crate::bytecode::ImmediateLayout::call_immediate(base, 1, true, parameter_eval),
         );
+        self.record_direct_eval_site(pc);
         result
+    }
+
+    fn record_direct_eval_site(&mut self, pc: usize) {
+        let mut visible = rustc_hash::FxHashSet::default();
+        let mut lexical_bindings = Vec::new();
+        for scope in self.lexical_scopes.iter().rev() {
+            if self.with_depth != 0 && scope.with_depth < self.with_depth {
+                continue;
+            }
+            for (atom, binding) in &scope.bindings {
+                if visible.insert(*atom)
+                    && let Some(slot) = self.local_slots.get(binding)
+                {
+                    lexical_bindings.push(crate::bytecode::EvalBinding {
+                        atom: *atom,
+                        slot: *slot,
+                        immutable: scope.immutable.contains(atom),
+                    });
+                }
+            }
+        }
+        lexical_bindings.sort_unstable_by_key(|binding| binding.atom);
+        self.eval_sites.push(crate::bytecode::EvalSite {
+            resume_pc: (pc + 1) as u32,
+            lexical_bindings,
+        });
     }
 
     fn after_super_call(&mut self, result: Register) {

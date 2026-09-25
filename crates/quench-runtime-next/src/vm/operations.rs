@@ -289,9 +289,9 @@ impl<H: Host> Vm<H> {
             Native::ArraySlice => self.array_slice_native(p, this, args),
             Native::ArrayIncludes => self.array_includes_native(p, this, args),
             Native::ArrayJoin => self.array_join_native(p, this, args),
-            Native::ArrayConcat => self.array_concat_native(this, args),
+            Native::ArrayConcat => self.array_concat_native(p, this, args),
             Native::ArrayFlat => self.array_flat_native(p, this, args),
-            Native::ArrayReverse => self.array_reverse_native(this),
+            Native::ArrayReverse => self.array_reverse_native(p, this),
             Native::ArrayShift => self.array_shift_native(p, this),
             Native::ArrayUnshift => self.array_unshift_native(p, this, args),
             Native::ArraySplice => self.array_splice_native(p, this, args),
@@ -323,7 +323,7 @@ impl<H: Host> Vm<H> {
             | Native::ArrayToLocaleString
             | Native::ArraySpecies => self.array_modern_native(p, native, this, args),
             Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
-                self.array_iterator_native(native, this)
+                self.array_iterator_native(p, native, this)
             }
             Native::StringValues => self.string_iterator_native(p, this),
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args),

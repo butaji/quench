@@ -910,12 +910,12 @@ impl<H: Host> Vm<H> {
                 let args = match i.construct_arguments() {
                     crate::bytecode::ConstructArguments::Array(register) => {
                         let array = self.read(f, register);
-                        let Some(Cell::Array { elements, .. }) = self.heap.get(array) else {
+                        if !matches!(self.heap.get(array), Some(Cell::Array { .. })) {
                             return Err(JsError(
                                 "super constructor arguments are not an array".into(),
                             ));
-                        };
-                        elements.as_ref().clone()
+                        }
+                        self.call_argument_list(p, array, false)?
                     }
                     crate::bytecode::ConstructArguments::Registers(window) => {
                         let arguments = CallArguments::from_values(

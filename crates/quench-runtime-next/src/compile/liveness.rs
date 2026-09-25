@@ -313,6 +313,7 @@ mod tests {
             global_var_atoms: vec![],
             global_function_atoms: vec![],
             global_immutable_atoms: vec![],
+            eval_sites: vec![],
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),
                 Instr::new(Op::Jump, 0, 0, 0, 3),

@@ -353,12 +353,26 @@ pub struct Function {
     pub global_var_atoms: Vec<Atom>,
     pub global_function_atoms: Vec<Atom>,
     pub global_immutable_atoms: Vec<Atom>,
+    pub eval_sites: Vec<EvalSite>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
     pub(crate) dispatch: DispatchClass,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct EvalSite {
+    pub(crate) resume_pc: u32,
+    pub(crate) lexical_bindings: Vec<EvalBinding>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EvalBinding {
+    pub(crate) atom: Atom,
+    pub(crate) slot: u16,
+    pub(crate) immutable: bool,
 }
 
 /// High bit of `Function::arguments_slot` marks a mapped (sloppy, simple
@@ -668,8 +682,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 23;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0017_0000;
+    pub const FORMAT_VERSION: u8 = 24;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0018_0000;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

@@ -40,32 +40,17 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
-            _ => return Err(JsError("at receiver is not array".into())),
-        };
-        let index = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        if index.is_nan() || index.is_infinite() {
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
+        let index = self.array_relative_index(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+            length,
+        )?;
+        if index >= length {
             return Ok(Value::UNDEFINED);
         }
-        let index = index.trunc();
-        let index = if index < 0.0 {
-            length as f64 + index
-        } else {
-            index
-        };
-        if !(0.0..(length as f64)).contains(&index) {
-            return Ok(Value::UNDEFINED);
-        }
-        let index = index as usize;
-        Ok(elements
-            .get(index)
-            .copied()
-            .or_else(|| self.heap.sparse_get(this, index))
-            .unwrap_or(Value::UNDEFINED))
+        self.get_index(p, object, Value::number(index as f64))
     }
 
     pub(super) fn array_last_index_of_native(
@@ -157,61 +142,49 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
-            _ => return Err(JsError("copyWithin receiver is not array".into())),
-        };
-        let relative = |number: f64| {
-            if number.is_nan() {
-                0
-            } else if number.is_infinite() {
-                if number.is_sign_negative() { 0 } else { length }
-            } else if number.is_sign_negative() {
-                length.saturating_sub(number.abs().trunc() as usize)
-            } else {
-                (number.trunc() as usize).min(length)
-            }
-        };
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
         let target = args
             .first()
-            .map(|value| self.to_number(p, *value))
+            .map(|value| self.array_relative_index(p, *value, length))
             .transpose()?
-            .map(relative)
             .unwrap_or(0);
         let source = args
             .get(1)
-            .map(|value| self.to_number(p, *value))
+            .map(|value| self.array_relative_index(p, *value, length))
             .transpose()?
-            .map(relative)
             .unwrap_or(0);
         let end = args
             .get(2)
-            .map(|value| self.to_number(p, *value))
+            .copied()
+            .filter(|value| !value.is_undefined())
+            .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
-            .map(relative)
             .unwrap_or(length);
         let count = end
             .saturating_sub(source)
             .min(length.saturating_sub(target));
-        if count > 0 {
-            self.check_array_mutation(this, true, false, false)?;
+        for offset in 0..count {
+            let from = if target <= source {
+                source + offset
+            } else {
+                source + count - offset - 1
+            };
+            let to = if target <= source {
+                target + offset
+            } else {
+                target + count - offset - 1
+            };
+            let from_key = Value::number(from as f64);
+            let to_key = Value::number(to as f64);
+            if self.has_property(p, object, from_key)? {
+                let value = self.get_index(p, object, from_key)?;
+                self.set_index_mode(p, object, to_key, value, true)?;
+            } else {
+                self.delete_array_like_property(p, object, to_key)?;
+            }
         }
-        let copied = (0..count)
-            .map(|offset| {
-                elements
-                    .get(source + offset)
-                    .copied()
-                    .or_else(|| self.heap.sparse_get(this, source + offset))
-                    .unwrap_or(Value::UNDEFINED)
-            })
-            .collect::<Vec<_>>();
-        for (offset, value) in copied.into_iter().enumerate() {
-            self.set_array_element(this, target + offset, value);
-        }
-        Ok(this)
+        Ok(object)
     }
 
     pub(super) fn array_with_native(
@@ -361,44 +334,32 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (elements, length) = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => (
-                Rc::clone(elements),
-                self.heap.sparse_length(this).unwrap_or(elements.len()),
-            ),
-            _ => return Err(JsError("flatMap receiver is not array".into())),
-        };
+        let source = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, source)?;
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
+        if !self.is_function(callback) {
             return Err(JsError("flatMap callback is not callable".into()));
         }
+        let target = self.array_species_create(p, source, 0)?;
         let mut output = Vec::new();
         for index in 0..length {
-            let value = elements
-                .get(index)
-                .copied()
-                .or_else(|| self.heap.sparse_get(this, index))
-                .unwrap_or(Value::UNDEFINED);
-            let callback_args = [value, Value::number(index as f64), this];
+            let key = Value::number(index as f64);
+            if !self.has_property(p, source, key)? {
+                continue;
+            }
+            let value = self.get_index(p, source, key)?;
+            let callback_args = [value, key, source];
             let result = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
-            if let Some(Cell::Array { elements, .. }) = self.heap.get(result) {
-                let elements = Rc::clone(elements);
-                let length = self.heap.sparse_length(result).unwrap_or(elements.len());
-                output.extend((0..length).map(|offset| {
-                    elements
-                        .get(offset)
-                        .copied()
-                        .or_else(|| self.heap.sparse_get(result, offset))
-                        .unwrap_or(Value::UNDEFINED)
-                }));
+            if self.is_array(p, result)? {
+                self.flatten_into(p, result, 0, &mut output)?;
             } else {
                 output.push(result);
             }
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(output),
-        }))
+        for (index, value) in output.into_iter().enumerate() {
+            self.create_data_property_or_throw(p, target, index, value)?;
+        }
+        Ok(target)
     }
 
     pub(super) fn array_reduce_native(
@@ -413,11 +374,6 @@ impl<H: Host> Vm<H> {
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
             return Err(self.type_error(p, "reduce callback is not callable".into()));
-        }
-        if length == 0 && args.get(1).is_none() {
-            return Err(JsError(
-                "reduce of empty array with no initial value".into(),
-            ));
         }
         let reverse = matches!(native, Native::ArrayReduceRight);
         let mut index = if reverse { length } else { 0 };

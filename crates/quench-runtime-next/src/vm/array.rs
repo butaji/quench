@@ -2,20 +2,6 @@ use super::*;
 
 const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 
-pub(super) fn normalized_array_values(elements: &[Value]) -> Vec<Value> {
-    elements
-        .iter()
-        .copied()
-        .map(|value| {
-            if value.is_deleted() {
-                Value::UNDEFINED
-            } else {
-                value
-            }
-        })
-        .collect()
-}
-
 impl<H: Host> Vm<H> {
     pub(super) fn array_length(&self, array: Value) -> Option<usize> {
         match self.heap.get(array) {
@@ -42,21 +28,44 @@ impl<H: Host> Vm<H> {
         value.unwrap_or(Value::UNDEFINED)
     }
 
-    pub(super) fn array_reverse_native(&mut self, this: Value) -> Result<Value, JsError> {
-        let values = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => {
-                let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-                (0..length)
-                    .map(|index| self.array_value_at(this, index))
-                    .collect::<Vec<_>>()
+    pub(super) fn array_reverse_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
+        let (mut lower, mut upper) = (0, length.saturating_sub(1));
+        while lower < upper {
+            let lower_key = Value::number(lower as f64);
+            let upper_key = Value::number(upper as f64);
+            let lower_present = self.has_property(p, object, lower_key)?;
+            let lower_value = lower_present
+                .then(|| self.get_index(p, object, lower_key))
+                .transpose()?;
+            let upper_present = self.has_property(p, object, upper_key)?;
+            let upper_value = upper_present
+                .then(|| self.get_index(p, object, upper_key))
+                .transpose()?;
+            match (lower_value, upper_value) {
+                (Some(lower_value), Some(upper_value)) => {
+                    self.set_index_mode(p, object, lower_key, upper_value, true)?;
+                    self.set_index_mode(p, object, upper_key, lower_value, true)?;
+                }
+                (None, Some(upper_value)) => {
+                    self.set_index_mode(p, object, lower_key, upper_value, true)?;
+                    self.delete_array_like_property(p, object, upper_key)?;
+                }
+                (Some(lower_value), None) => {
+                    self.delete_array_like_property(p, object, lower_key)?;
+                    self.set_index_mode(p, object, upper_key, lower_value, true)?;
+                }
+                (None, None) => {}
             }
-            _ => return Err(JsError("reverse receiver is not array".into())),
-        };
-        self.check_array_mutation(this, true, false, false)?;
-        for (index, value) in values.into_iter().rev().enumerate() {
-            self.set_array_element(this, index, value);
+            lower += 1;
+            upper -= 1;
         }
-        Ok(this)
+        Ok(object)
     }
 
     pub(super) fn array_shift_native(
@@ -117,7 +126,7 @@ impl<H: Host> Vm<H> {
         Ok(Value::number(new_length as f64))
     }
 
-    fn delete_array_like_property(
+    pub(super) fn delete_array_like_property(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -235,43 +244,27 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let length = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => {
-                self.heap.sparse_length(this).unwrap_or(elements.len())
-            }
-            _ => return Err(JsError("fill receiver is not array".into())),
-        };
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let relative = |number: f64| {
-            if number.is_nan() {
-                0
-            } else if number.is_infinite() {
-                if number.is_sign_negative() { 0 } else { length }
-            } else if number.is_sign_negative() {
-                length.saturating_sub(number.abs().trunc() as usize)
-            } else {
-                (number.trunc() as usize).min(length)
-            }
-        };
         let start = args
             .get(1)
-            .map(|value| self.to_number(p, *value))
+            .copied()
+            .filter(|value| !value.is_undefined())
+            .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
-            .map(relative)
             .unwrap_or(0);
         let end = args
             .get(2)
-            .map(|value| self.to_number(p, *value))
+            .copied()
+            .filter(|value| !value.is_undefined())
+            .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
-            .map(relative)
             .unwrap_or(length);
-        if start < end {
-            self.check_array_mutation(this, true, false, false)?;
+        for index in start..end {
+            self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
         }
-        for index in start.min(end)..end {
-            self.set_array_element(this, index, value);
-        }
-        Ok(this)
+        Ok(object)
     }
 
     pub(super) fn array_flat_native(
@@ -280,65 +273,94 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !matches!(self.heap.get(this), Some(Cell::Array { .. })) {
-            return Err(JsError("flat receiver is not array".into()));
-        }
+        let source = self.box_object_or_type_error(p, this)?;
         let depth = match self.to_number(p, args.first().copied().unwrap_or(Value::number(1.0)))? {
             value if value.is_nan() || value <= 0.0 => 0,
             value if value.is_infinite() => usize::MAX,
             value => value.trunc() as usize,
         };
+        let target = self.array_species_create(p, source, 0)?;
         let mut values = Vec::new();
-        self.flatten_array(this, depth, &mut values);
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+        self.flatten_into(p, source, depth, &mut values)?;
+        for (index, value) in values.into_iter().enumerate() {
+            self.create_data_property_or_throw(p, target, index, value)?;
+        }
+        Ok(target)
     }
 
-    fn flatten_array(&self, value: Value, depth: usize, output: &mut Vec<Value>) {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(value) else {
-            output.push(value);
-            return;
-        };
-        let length = self.heap.sparse_length(value).unwrap_or(elements.len());
-        let items = (0..length)
-            .map(|index| self.array_value_at(value, index))
-            .collect::<Vec<_>>();
-        for item in items {
-            if depth > 0 && matches!(self.heap.get(item), Some(Cell::Array { .. })) {
-                self.flatten_array(item, depth - 1, output);
+    pub(super) fn flatten_into(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        depth: usize,
+        output: &mut Vec<Value>,
+    ) -> Result<(), JsError> {
+        let length = self.array_like_length(p, source)?;
+        for index in 0..length {
+            let key = Value::number(index as f64);
+            if !self.has_property(p, source, key)? {
+                continue;
+            }
+            let value = self.get_index(p, source, key)?;
+            if depth > 0 && self.is_array(p, value)? {
+                self.flatten_into(p, value, depth - 1, output)?;
             } else {
-                output.push(item);
+                output.push(value);
             }
         }
+        Ok(())
     }
 
     pub(super) fn array_concat_native(
         &mut self,
+        p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::Array { .. }) = self.heap.get(this) else {
-            return Err(JsError("concat receiver is not array".into()));
-        };
-        let mut values = Vec::new();
-        let append = |value: Value, values: &mut Vec<Value>| {
-            if let Some(Cell::Array { elements, .. }) = self.heap.get(value) {
-                let length = self.heap.sparse_length(value).unwrap_or(elements.len());
-                values.extend((0..length).map(|index| self.array_value_at(value, index)));
+        let source = self.box_object_or_type_error(p, this)?;
+        let target = self.array_species_create(p, source, 0)?;
+        let spreadable_atom = self
+            .well_known_symbols
+            .get("isConcatSpreadable")
+            .copied()
+            .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
+        let mut next = 0usize;
+        for item in std::iter::once(source).chain(args.iter().copied()) {
+            let spreadable = if self.is_object_like(item) {
+                let value = self.get_index(p, item, spreadable_atom)?;
+                if value.is_undefined() {
+                    self.is_array(p, item)?
+                } else {
+                    self.truthy(value)
+                }
             } else {
-                values.push(value);
+                false
+            };
+            if !spreadable {
+                if next as f64 >= MAX_SAFE_INTEGER {
+                    return Err(
+                        self.type_error(p, "array concat index exceeds safe integer".into())
+                    );
+                }
+                self.create_data_property_or_throw(p, target, next, item)?;
+                next += 1;
+                continue;
             }
-        };
-        append(this, &mut values);
-        for value in args.iter().copied() {
-            append(value, &mut values);
+            let length = self.array_like_length(p, item)?;
+            if next.saturating_add(length) as f64 > MAX_SAFE_INTEGER {
+                return Err(self.type_error(p, "array concat length exceeds safe integer".into()));
+            }
+            for index in 0..length {
+                let source_key = Value::number(index as f64);
+                if self.has_property(p, item, source_key)? {
+                    let value = self.get_index(p, item, source_key)?;
+                    self.create_data_property_or_throw(p, target, next, value)?;
+                }
+                next += 1;
+            }
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+        self.set_array_like_length(p, target, next)?;
+        Ok(target)
     }
 
     pub(super) fn array_push_native(
@@ -473,7 +495,7 @@ impl<H: Host> Vm<H> {
         Ok(result)
     }
 
-    fn array_species_create(
+    pub(super) fn array_species_create(
         &mut self,
         p: &ResidualProgram,
         source: Value,
@@ -505,7 +527,7 @@ impl<H: Host> Vm<H> {
         self.construct_value(p, constructor, &[Value::number(length as f64)])
     }
 
-    fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
+    pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
         match self.heap.get(value) {
             Some(Cell::Array { .. }) => Ok(true),
             Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
@@ -546,11 +568,8 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let elements = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => Rc::clone(elements),
-            _ => return Err(JsError("includes receiver is not array".into())),
-        };
-        let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         let from = args
             .get(1)
@@ -558,16 +577,17 @@ impl<H: Host> Vm<H> {
             .map(|value| self.to_number(p, value))
             .transpose()?
             .unwrap_or(0.0);
-        if from.is_infinite() && from.is_sign_positive() {
-            return Ok(Value::FALSE);
-        }
-        let start = if from.is_sign_negative() {
-            length.saturating_sub((-from.trunc()) as usize)
+        let start = if from.is_nan() || from == 0.0 || from == f64::NEG_INFINITY {
+            0
+        } else if from == f64::INFINITY {
+            length
+        } else if from.is_sign_negative() {
+            length.saturating_sub(from.abs().trunc() as usize)
         } else {
-            from.max(0.0).trunc() as usize
+            (from.trunc() as usize).min(length)
         };
         for index in start..length {
-            let value = self.array_value_at(this, index);
+            let value = self.get_index(p, object, Value::number(index as f64))?;
             if self.same_value_zero(value, search) {
                 return Ok(Value::TRUE);
             }
@@ -581,11 +601,8 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let elements = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => Rc::clone(elements),
-            _ => return Err(JsError("join receiver is not array".into())),
-        };
-        let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+        let object = self.box_object_or_type_error(p, this)?;
+        let length = self.array_like_length(p, object)?;
         let separator = match args.first().copied() {
             None | Some(Value::UNDEFINED) => ",".to_owned(),
             Some(value) => self.to_string(p, value)?,
@@ -595,10 +612,7 @@ impl<H: Host> Vm<H> {
             if index != 0 {
                 output.push_str(&separator);
             }
-            let value = self.array_value_at(this, index);
-            if value.is_undefined() {
-                continue;
-            }
+            let value = self.get_index(p, object, Value::number(index as f64))?;
             if value.is_null() || value.is_undefined() {
                 continue;
             }
