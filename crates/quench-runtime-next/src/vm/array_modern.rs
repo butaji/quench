@@ -17,9 +17,9 @@ impl<H: Host> Vm<H> {
             Native::ArraySpecies => Ok(this),
             Native::ArrayToString => self.array_to_string_native(p, this),
             Native::ArrayToLocaleString => self.array_to_locale_string_native(p, this),
-            Native::ArrayFrom => self.array_from_native(p, args),
+            Native::ArrayFrom => self.array_from_native(p, this, args),
             Native::ArrayFromAsync => self.array_from_async_native(p, this, args),
-            Native::ArrayOf => Ok(self.new_array(args.to_vec())),
+            Native::ArrayOf => self.array_of_native(p, this, args),
             _ => unreachable!("non-modern native routed to modern array dispatch"),
         }
     }
@@ -100,73 +100,154 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::String(result.into())))
     }
 
-    fn array_from_native(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+    fn array_of_native(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let target = if self.is_constructable(p, constructor) {
+            self.construct_value(p, constructor, &[Value::number(args.len() as f64)])?
+        } else {
+            self.array_create(p, args.len())?
+        };
+        let root = self.heap.root(target);
+        let outcome = (|| {
+            for (index, value) in args.iter().copied().enumerate() {
+                let target = self.heap.root_value(root).unwrap();
+                self.create_data_property_or_throw(p, target, index, value)?;
+            }
+            let target = self.heap.root_value(root).unwrap();
+            self.set_array_like_length(p, target, args.len())?;
+            Ok(target)
+        })();
+        self.heap.release_root(root);
+        outcome
+    }
+
+    fn array_create(&mut self, p: &ResidualProgram, length: usize) -> Result<Value, JsError> {
+        if length > MAX_ARRAY_LENGTH {
+            return Err(self.range_error(p, "invalid array length".into()));
+        }
+        let array = self.new_array(Vec::new());
+        self.heap.sparse_set_length(array, length);
+        Ok(array)
+    }
+
+    fn array_from_target(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        length: Option<usize>,
+    ) -> Result<Value, JsError> {
+        if self.is_constructable(p, constructor) {
+            let args = length
+                .map(|length| vec![Value::number(length as f64)])
+                .unwrap_or_default();
+            self.construct_value(p, constructor, &args)
+        } else {
+            self.array_create(p, length.unwrap_or(0))
+        }
+    }
+
+    fn array_from_native(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         let done_atom = self.intern_atom("done");
         let value_atom = self.intern_atom("value");
         let mapfn = args.get(1).copied().filter(|value| !value.is_undefined());
-        if let Some(mapfn) = mapfn
-            && !matches!(self.heap.get(mapfn), Some(Cell::Function { .. }))
-        {
+        if mapfn.is_some_and(|mapfn| !self.is_function(mapfn)) {
             return Err(JsError("Array.from map function is not callable".into()));
         }
         let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        let mut values = Vec::new();
-        match self.get_iterator(p, source) {
-            Ok(iterator) => loop {
-                let step = match self.iterator_next(p, iterator) {
-                    Ok(step) => step,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                let done = match self.get_property(p, step, done_atom) {
-                    Ok(done) => done,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                if self.truthy(done) {
-                    break;
+        let iterator_symbol = self.well_known_symbols.get("iterator").copied();
+        let iterator_method = iterator_symbol
+            .map(|symbol| self.get_index(p, source, symbol))
+            .transpose()?
+            .unwrap_or(Value::UNDEFINED);
+        if !iterator_method.is_undefined() && !iterator_method.is_null() {
+            if !self.is_function(iterator_method) {
+                return Err(self.type_error(p, "iterator method is not callable".into()));
+            }
+            let target = self.array_from_target(p, constructor, None)?;
+            let root = self.heap.root(target);
+            let outcome = (|| {
+                let iterator = self.call_value(p, iterator_method, source, &[])?;
+                if !self.is_object_like(iterator) {
+                    return Err(
+                        self.type_error(p, "iterator method did not return an object".into())
+                    );
                 }
-                let mut value = match self.get_property(p, step, value_atom) {
-                    Ok(value) => value,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                if let Some(mapfn) = mapfn {
-                    let index = Value::number(values.len() as f64);
-                    value = match self.call_value(p, mapfn, map_this, &[value, index]) {
+                let mut index = 0;
+                loop {
+                    let step = match self.iterator_next(p, iterator) {
+                        Ok(step) => step,
+                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                    };
+                    let done = match self.get_property(p, step, done_atom) {
+                        Ok(done) => done,
+                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                    };
+                    if self.truthy(done) {
+                        break;
+                    }
+                    let mut value = match self.get_property(p, step, value_atom) {
                         Ok(value) => value,
                         Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
                     };
-                }
-                values.push(value);
-            },
-            Err(error) if error.to_string() == "value is not iterable" => {
-                let length_atom = self.intern_atom("length");
-                let length_value = self.get_property(p, source, length_atom)?;
-                let length = self.to_number(p, length_value)?;
-                let length = if !length.is_finite() || length <= 0.0 {
-                    if length.is_infinite() && length.is_sign_positive() {
-                        return Err(JsError("Array.from length is too large".into()));
-                    }
-                    0
-                } else {
-                    length.floor().min(usize::MAX as f64) as usize
-                };
-                values.reserve(length);
-                for index in 0..length {
-                    let mut value = self.get_index(p, source, Value::number(index as f64))?;
                     if let Some(mapfn) = mapfn {
-                        value = self.call_value(
-                            p,
-                            mapfn,
-                            map_this,
-                            &[value, Value::number(index as f64)],
-                        )?;
+                        let key = Value::number(index as f64);
+                        value = match self.call_value(p, mapfn, map_this, &[value, key]) {
+                            Ok(value) => value,
+                            Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                        };
                     }
-                    values.push(value);
+                    let target = self.heap.root_value(root).unwrap();
+                    if let Err(error) = self.create_data_property_or_throw(p, target, index, value)
+                    {
+                        return Err(self.iterator_abrupt(p, iterator, error));
+                    }
+                    index += 1;
                 }
-            }
-            Err(error) => return Err(error),
+                let target = self.heap.root_value(root).unwrap();
+                self.set_array_like_length(p, target, index)?;
+                Ok(target)
+            })();
+            self.heap.release_root(root);
+            return outcome;
         }
-        Ok(self.new_array(values))
+
+        let length_atom = self.intern_atom("length");
+        let length_value = self.get_property(p, source, length_atom)?;
+        let length = self.to_number(p, length_value)?;
+        let length = if !length.is_finite() || length <= 0.0 {
+            if length.is_infinite() && length.is_sign_positive() {
+                return Err(JsError("Array.from length is too large".into()));
+            }
+            0
+        } else {
+            length.floor().min(usize::MAX as f64) as usize
+        };
+        let target = self.array_from_target(p, constructor, Some(length))?;
+        let root = self.heap.root(target);
+        let outcome = (|| {
+            for index in 0..length {
+                let mut value = self.get_index(p, source, Value::number(index as f64))?;
+                if let Some(mapfn) = mapfn {
+                    value =
+                        self.call_value(p, mapfn, map_this, &[value, Value::number(index as f64)])?;
+                }
+                let target = self.heap.root_value(root).unwrap();
+                self.create_data_property_or_throw(p, target, index, value)?;
+            }
+            Ok(self.heap.root_value(root).unwrap())
+        })();
+        self.heap.release_root(root);
+        outcome
     }
 
     fn array_from_async_native(
@@ -526,7 +607,8 @@ impl<H: Host> Vm<H> {
         iterator: Value,
         error: JsError,
     ) -> JsError {
-        self.iterator_close(p, iterator).err().unwrap_or(error)
+        let _ = self.iterator_close(p, iterator);
+        error
     }
 
     fn array_to_spliced_native(
