@@ -56,8 +56,8 @@ impl<H: Host> Vm<H> {
         }
         for (name, value) in [
             ("EPSILON", f64::EPSILON),
-            ("MAX_SAFE_INTEGER", 9_007_199_254_740_991.0),
-            ("MIN_SAFE_INTEGER", -9_007_199_254_740_991.0),
+            ("MAX_SAFE_INTEGER", MAX_SAFE_INTEGER),
+            ("MIN_SAFE_INTEGER", -MAX_SAFE_INTEGER),
             ("MAX_VALUE", f64::MAX),
             ("MIN_VALUE", MINIMUM_POSITIVE_SUBNORMAL),
             ("NaN", f64::NAN),
@@ -104,9 +104,7 @@ impl<H: Host> Vm<H> {
             }
             Native::NumberIsSafeInteger => {
                 if value.as_number().is_some_and(|value| {
-                    value.is_finite()
-                        && value.fract() == 0.0
-                        && value.abs() <= 9_007_199_254_740_991.0
+                    value.is_finite() && value.fract() == 0.0 && value.abs() <= MAX_SAFE_INTEGER
                 }) {
                     Value::TRUE
                 } else {

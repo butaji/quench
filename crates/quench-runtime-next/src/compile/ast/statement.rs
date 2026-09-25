@@ -137,6 +137,7 @@ impl FunctionCompiler<'_, '_> {
                 let value = self.expression(&item.argument);
                 self.emit(Op::Throw, value, 0, 0, 0);
             }
+            Statement::DebuggerStatement(_) => {}
             Statement::TryStatement(item) => self.try_statement(item),
             Statement::WithStatement(item) => self.with_statement(item),
             _ => self.owner.reject(

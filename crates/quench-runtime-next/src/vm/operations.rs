@@ -797,7 +797,7 @@ impl<H: Host> Vm<H> {
         let length = if length_number.is_nan() || length_number <= 0.0 {
             0
         } else {
-            length_number.floor().min(9_007_199_254_740_991.0) as usize
+            length_number.floor().min(MAX_SAFE_INTEGER) as usize
         };
         let mut arguments = Vec::new();
         arguments
