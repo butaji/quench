@@ -685,6 +685,22 @@ impl Engine {
         }
         early::parameter_early_error(&parsed.program, strict)
     }
+
+    pub(crate) fn eval_strict_binding_early_error(source: &str, strict: bool) -> Option<String> {
+        let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if !parsed.diagnostics.is_empty() {
+            if parsed.diagnostics.iter().any(|diagnostic| {
+                diagnostic
+                    .to_string()
+                    .contains("Unexpected new.target expression")
+            }) {
+                return None;
+            }
+            return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
+        }
+        early::strict_binding_early_error(&parsed.program, strict)
+    }
 }
 
 pub(crate) fn module_default_binding(module_name: &str) -> String {
@@ -1234,7 +1250,7 @@ impl<'a> Compiler<'a> {
         if let Some(error) = early::block_early_error(program) {
             self.reject(Span::default(), error);
         }
-        if let Some(error) = early::strict_binding_early_error(program) {
+        if let Some(error) = early::strict_binding_early_error(program, self.root_strict) {
             self.reject(Span::default(), error);
         }
         if let Some(error) = early::parameter_early_error(program, self.root_strict) {

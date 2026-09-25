@@ -342,9 +342,14 @@ impl<H: Host> Vm<H> {
         let source_strict =
             inherited_strict || crate::Engine::eval_has_use_strict_directive(source);
         if source_strict
-            && source.contains("function")
+            && let Some(error) = crate::Engine::eval_strict_binding_early_error(source, true)
+        {
+            let message = error.strip_prefix("SyntaxError: ").unwrap_or(&error);
+            return self.syntax_error_result(p, message);
+        }
+        if source.contains("function")
             && !source.contains("super")
-            && let Some(error) = crate::Engine::eval_parameter_early_error(source, true)
+            && let Some(error) = crate::Engine::eval_parameter_early_error(source, source_strict)
         {
             let message = error.strip_prefix("SyntaxError: ").unwrap_or(&error);
             return self.syntax_error_result(p, message);

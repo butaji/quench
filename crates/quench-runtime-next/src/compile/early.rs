@@ -120,11 +120,15 @@ fn valid_modifier_flags(flags: &str, allow_empty: bool) -> bool {
         .all(|flag| matches!(flag, 'i' | 'm' | 's') && seen.insert(flag))
 }
 
-pub(super) fn strict_binding_early_error(program: &Program<'_>) -> Option<String> {
-    let strict = program
-        .directives
-        .iter()
-        .any(|directive| directive.directive == "use strict");
+pub(super) fn strict_binding_early_error(
+    program: &Program<'_>,
+    inherited_strict: bool,
+) -> Option<String> {
+    let strict = inherited_strict
+        || program
+            .directives
+            .iter()
+            .any(|directive| directive.directive == "use strict");
     validate_strict_statements(&program.body, strict)
 }
 
@@ -314,6 +318,15 @@ fn validate_strict_statements(
 ) -> Option<String> {
     for statement in statements {
         match statement {
+            Statement::FunctionDeclaration(function)
+                if inherited_strict
+                    && function
+                        .id
+                        .as_ref()
+                        .is_some_and(|identifier| strict_reserved(identifier.name.as_str())) =>
+            {
+                return Some("SyntaxError: strict-reserved function name".into());
+            }
             Statement::VariableDeclaration(declaration) if inherited_strict => {
                 let mut names = Vec::new();
                 for item in &declaration.declarations {
