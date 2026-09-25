@@ -479,6 +479,7 @@ impl FunctionCompiler<'_, '_> {
             SimpleAssignmentTarget::PrivateFieldExpression(item) => {
                 let atom = self.owner.private_name_atom(item.field.span);
                 let object = self.expression(&item.object);
+                self.emit(Op::CheckPrivate, object, 0, 0, atom);
                 let value = self.compound_field(object, atom, right, operator);
                 let site = self.owner.cache_site();
                 self.emit(Op::SetField, value, object, site, atom);
