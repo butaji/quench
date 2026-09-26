@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), value);
             }
             Op::LoadLocal => {
-                let slot = i.imm() as usize;
+                let slot = i.local_slot();
                 let v = if let Some(value) =
                     self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
                 {
@@ -93,7 +93,7 @@ impl<H: Host> Vm<H> {
             }
             Op::StoreLocal => {
                 let value = self.read(f, i.a());
-                let slot = i.imm() as usize;
+                let slot = i.local_slot();
                 let function = &p.functions[self.frames[f].function as usize];
                 if function
                     .local_atoms
@@ -157,7 +157,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::LoadEnvLocal => {
-                let slot = i.imm() as usize;
+                let slot = i.local_slot();
                 let value = if let Some(value) =
                     self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
                 {
@@ -174,7 +174,7 @@ impl<H: Host> Vm<H> {
                 if value.is_deleted() {
                     let atom = p.functions[self.frames[f].function as usize]
                         .local_atoms
-                        .get(i.imm() as usize)
+                        .get(slot)
                         .copied()
                         .unwrap_or_default();
                     return Err(self.reference_error(
@@ -190,10 +190,11 @@ impl<H: Host> Vm<H> {
             }
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.a());
+                let slot = i.local_slot();
                 let function = &p.functions[self.frames[f].function as usize];
                 if function
                     .local_atoms
-                    .get(i.imm() as usize)
+                    .get(slot)
                     .is_some_and(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
                 {
                     if function.strict {
@@ -203,8 +204,7 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(StepResult::Continue);
                 }
-                let global_var =
-                    self.root_global_var_atom(p, self.frames[f].function, i.imm() as usize);
+                let global_var = self.root_global_var_atom(p, self.frames[f].function, slot);
                 if let Some(atom) = global_var {
                     if !self.set_property_with_receiver(
                         p,
@@ -225,11 +225,11 @@ impl<H: Host> Vm<H> {
                     else {
                         return Err(JsError("invalid local environment".into()));
                     };
-                    slots[i.imm() as usize] = value;
+                    slots[slot] = value;
                 } else {
-                    self.frames[f].locals[i.imm() as usize] = value;
+                    self.frames[f].locals[slot] = value;
                 }
-                self.mapped_argument_store(p, f, i.imm() as usize, value);
+                self.mapped_argument_store(p, f, slot, value);
             }
             Op::LoadCapture => {
                 let v = self.capture(p, f, i.imm())?;
@@ -516,7 +516,7 @@ impl<H: Host> Vm<H> {
                 self.set_function_name_key(self.read(f, i.a()), self.read(f, i.b()), i.imm());
             }
             Op::InitializeTdz => {
-                let slot = i.imm() as usize;
+                let slot = i.local_slot();
                 if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) =
                         self.heap.get_mut(self.frames[f].env)

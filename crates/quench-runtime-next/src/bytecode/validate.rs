@@ -121,12 +121,12 @@ impl ResidualProgram {
                         return Err(format!("function {index} constant load is invalid"));
                     }
                     Op::LoadLocal | Op::LoadEnvLocal
-                        if instruction.imm() >= u32::from(function.locals) =>
+                        if instruction.local_slot() >= usize::from(function.locals) =>
                     {
                         return Err(format!("function {index} local access is invalid"));
                     }
                     Op::StoreLocal | Op::StoreEnvLocal | Op::InitializeTdz
-                        if instruction.imm() >= u32::from(function.locals) =>
+                        if instruction.local_slot() >= usize::from(function.locals) =>
                     {
                         return Err(format!("function {index} local store is invalid"));
                     }
