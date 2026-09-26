@@ -186,6 +186,20 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn unused_fields_are_zero(self) -> bool {
+                [
+                    InstructionField::A,
+                    InstructionField::B,
+                    InstructionField::C,
+                ]
+                .into_iter()
+                .all(|field| {
+                    self.op().field_layout(field) != FieldLayout::Unused
+                        || self.unused_field_is_zero(field)
+                })
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn unused_immediate_is_zero(self) -> bool {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::Unused);
                 self.imm() == 0
