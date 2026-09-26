@@ -188,6 +188,9 @@ impl<H: Host> Vm<H> {
         let generator = self.heap.alloc(Cell::Iterator {
             object: Self::empty_object(generator_prototype),
             source: Value::NULL,
+            next_method: None,
+            helper: None,
+            helper_running: false,
             kind: if function.is_async {
                 IteratorKind::AsyncGenerator
             } else {

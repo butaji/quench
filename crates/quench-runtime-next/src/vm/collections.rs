@@ -6,7 +6,31 @@ impl<H: Host> Vm<H> {
     pub(super) fn is_collection_native(native: Native) -> bool {
         matches!(
             native,
-            Native::MapGet
+            Native::Iterator
+                | Native::IteratorFrom
+                | Native::IteratorDispose
+                | Native::IteratorProtocolNext
+                | Native::IteratorHelperNext
+                | Native::IteratorHelperReturn
+                | Native::IteratorConcat
+                | Native::IteratorZip
+                | Native::IteratorZipKeyed
+                | Native::IteratorMap
+                | Native::IteratorFilter
+                | Native::IteratorTake
+                | Native::IteratorDrop
+                | Native::IteratorFlatMap
+                | Native::IteratorReduce
+                | Native::IteratorToArray
+                | Native::IteratorForEach
+                | Native::IteratorEvery
+                | Native::IteratorFind
+                | Native::IteratorSome
+                | Native::IteratorPrototypeConstructorGetter
+                | Native::IteratorPrototypeConstructorSetter
+                | Native::IteratorPrototypeToStringTagGetter
+                | Native::IteratorPrototypeToStringTagSetter
+                | Native::MapGet
                 | Native::MapSet
                 | Native::MapHas
                 | Native::MapDelete
@@ -232,6 +256,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
+            Native::Iterator => {
+                Err(self.type_error(p, "Iterator constructor cannot be called".into()))
+            }
             Native::MapGet => {
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let Some(index) = self.map_entry_index(this, key) else {
@@ -375,6 +402,35 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             }
             Native::IteratorNext => self.iterator_next_with_args(p, this, args),
+            Native::IteratorProtocolNext => self.iterator_next_with_args(p, this, args),
+            Native::IteratorFrom => self.iterator_from(p, args),
+            Native::IteratorDispose => self.iterator_dispose(p, this),
+            Native::IteratorHelperNext => self.iterator_next_with_args(p, this, args),
+            Native::IteratorHelperReturn => self.iterator_helper_return(p, this),
+            Native::IteratorMap
+            | Native::IteratorFilter
+            | Native::IteratorTake
+            | Native::IteratorDrop
+            | Native::IteratorFlatMap
+            | Native::IteratorReduce
+            | Native::IteratorToArray
+            | Native::IteratorForEach
+            | Native::IteratorEvery
+            | Native::IteratorFind
+            | Native::IteratorSome => self.iterator_prototype_method(p, native, this, args),
+            Native::IteratorConcat | Native::IteratorZip | Native::IteratorZipKeyed => {
+                self.iterator_static_method(p, native, args)
+            }
+            Native::IteratorPrototypeConstructorGetter => self.iterator_prototype_getter(p),
+            Native::IteratorPrototypeToStringTagGetter => Ok(self
+                .heap
+                .alloc(Cell::String(JsString::from_str("Iterator")))),
+            Native::IteratorPrototypeConstructorSetter => {
+                self.iterator_prototype_setter(p, this, "constructor", args)
+            }
+            Native::IteratorPrototypeToStringTagSetter => {
+                self.iterator_prototype_setter(p, this, "Symbol.toStringTag", args)
+            }
             Native::ArrayIteratorNext => self.array_iterator_next(p, this, args),
             Native::IteratorClose => self.iterator_close(p, this),
             Native::IteratorSelf => Ok(this),

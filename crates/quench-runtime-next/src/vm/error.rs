@@ -916,6 +916,26 @@ impl<H: Host> Vm<H> {
         let realm_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.install_iterator_constructor(global, realm_iterator_proto, Some(global))?;
+        self.install_iterator_prototype(realm_iterator_proto, Some(global))?;
+        let realm_iterator_helper_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+        let realm_wrap_for_valid_iterator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+        self.install_iterator_helper_prototype(realm_iterator_helper_proto, Some(global))?;
+        self.install_wrap_for_valid_iterator_prototype(
+            realm_wrap_for_valid_iterator_proto,
+            Some(global),
+        )?;
+        self.iterator_realm_prototypes.insert(
+            global,
+            IteratorRealmPrototypes {
+                helper: realm_iterator_helper_proto,
+                wrapper: realm_wrap_for_valid_iterator_proto,
+            },
+        );
         let realm_generator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));

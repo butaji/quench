@@ -64,12 +64,21 @@ impl<H: Host> Vm<H> {
                     self.promise.proto,
                     self.iterator_proto,
                     self.generator_proto,
+                    self.iterator_helper_proto,
+                    self.wrap_for_valid_iterator_proto,
                     self.async_iterator_proto,
                     self.async_generator_proto,
                     self.async_from_sync_iterator_proto,
                     self.regexp_proto,
                 ])
                 .chain(self.natives.iter().map(|(_, value)| *value))
+                .chain(
+                    self.iterator_realm_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototypes)| {
+                            [*realm, prototypes.helper, prototypes.wrapper]
+                        }),
+                )
                 .chain(self.test262_agent.roots())
                 .chain(self.promise.active_native.iter().copied())
                 .chain(self.promise.modules.values().flat_map(ModuleRecord::roots))

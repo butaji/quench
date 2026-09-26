@@ -3,7 +3,10 @@ use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, Op, Operand, REGISTER_MASK,
     RETURN_REGISTER, Register, ResidualProgram, WideInstruction,
 };
-use crate::heap::{Cell, FunctionKind, Heap, IteratorKind, Native, Object, RootId, TypedArrayKind};
+use crate::heap::{
+    Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object,
+    RootId, TypedArrayKind,
+};
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
@@ -308,6 +311,9 @@ pub struct Vm<H> {
     finalization_registry_proto: Value,
     iterator_proto: Value,
     generator_proto: Value,
+    iterator_helper_proto: Value,
+    wrap_for_valid_iterator_proto: Value,
+    iterator_realm_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
     async_iterator_proto: Value,
     async_generator_proto: Value,
     async_from_sync_iterator_proto: Value,
@@ -359,6 +365,12 @@ pub struct Vm<H> {
     deferred_dependency_batch: bool,
     construct_target: Option<Value>,
     random_state: u64,
+}
+
+#[derive(Clone, Copy)]
+struct IteratorRealmPrototypes {
+    helper: Value,
+    wrapper: Value,
 }
 impl<H: Host> Vm<H> {
     pub fn root(&mut self, value: Value) -> RootId {

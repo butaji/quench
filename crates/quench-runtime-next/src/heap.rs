@@ -407,11 +407,40 @@ impl Heap {
             Cell::Iterator {
                 object: value,
                 source,
+                next_method,
+                helper,
                 generator,
                 ..
             } => {
                 object(value);
                 work.push(*source);
+                work.extend(*next_method);
+                if let Some(helper) = helper {
+                    match helper.as_ref() {
+                        IteratorHelper::Map { callback, .. }
+                        | IteratorHelper::Filter { callback, .. }
+                        | IteratorHelper::FlatMap { callback, .. } => work.push(*callback),
+                        IteratorHelper::Take { .. } | IteratorHelper::Drop { .. } => {}
+                        IteratorHelper::Concat {
+                            items,
+                            methods,
+                            opened,
+                            active,
+                            ..
+                        } => {
+                            work.extend(items.iter().copied());
+                            work.extend(methods.iter().copied());
+                            work.extend(opened.iter().flatten().copied());
+                            work.extend(*active);
+                        }
+                    }
+                    match helper.as_ref() {
+                        IteratorHelper::FlatMap {
+                            inner: Some(inner), ..
+                        } => work.push(*inner),
+                        _ => {}
+                    }
+                }
                 if let Some(record) = generator {
                     if let Some(continuation) = record.continuation.as_ref() {
                         work.extend(continuation.roots());
