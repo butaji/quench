@@ -62,7 +62,7 @@ impl<H: Host> Vm<H> {
             let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
             let result = self.call_value(p, trap, handler, &[target, key, value, receiver])?;
             if !self.truthy(result) {
-                return Err(JsError("proxy set trap returned false".into()));
+                return Err(self.type_error(p, "proxy set trap returned false".into()));
             }
             return Ok(());
         }

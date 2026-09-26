@@ -591,6 +591,15 @@ impl<H: Host> Vm<H> {
                 Native::Boolean => Some("Boolean"),
                 Native::DataView => Some("DataView"),
                 Native::Date => Some("Date"),
+                Native::Error => Some("Error"),
+                Native::AggregateError => Some("AggregateError"),
+                Native::SuppressedError => Some("SuppressedError"),
+                Native::EvalError => Some("EvalError"),
+                Native::RangeError => Some("RangeError"),
+                Native::ReferenceError => Some("ReferenceError"),
+                Native::SyntaxError => Some("SyntaxError"),
+                Native::TypeError | Native::RealmTypeError => Some("TypeError"),
+                Native::URIError => Some("URIError"),
                 _ => None,
             }) else {
                 return Ok(());

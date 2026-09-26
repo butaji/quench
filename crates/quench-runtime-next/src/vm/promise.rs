@@ -223,6 +223,9 @@ fn native_length(kind: Native) -> Option<f64> {
     if let Some(length) = super::date::date_native_length(kind) {
         return Some(length);
     }
+    if let Some(length) = super::error::error_native_length(kind) {
+        return Some(length);
+    }
     if let Some(length) = super::finalization::disposal_native_length(kind) {
         return Some(length);
     }

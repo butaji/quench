@@ -456,6 +456,7 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 ancestors.push(value);
+                let object_value = value;
                 let shape = object.shape();
                 let keys = self.shapes[shape as usize]
                     .keys
@@ -471,6 +472,12 @@ impl<H: Host> Vm<H> {
                 let mut output = Vec::new();
                 let result = (|| {
                     for (atom, slot) in keys {
+                        if self
+                            .property_attributes(object_value, PropertyKey::string(atom))
+                            .is_some_and(|attributes| !attributes.enumerable)
+                        {
+                            continue;
+                        }
                         let Some(value) = self.heap.property_get(&object, slot) else {
                             continue;
                         };
