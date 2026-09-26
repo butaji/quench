@@ -533,15 +533,15 @@ impl<H: Host> Vm<H> {
     fn install_json(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let json = self.object();
         self.install_builtin_to_string_tag(json, "JSON")?;
-        self.set_named(program, json, "parse", self.native_value(Native::JsonParse))?;
-        self.set_named(
-            program,
-            json,
-            "stringify",
-            self.native_value(Native::JsonStringify),
-        )?;
+        let parse = self.native_value(Native::JsonParse);
+        self.set_builtin_value_named(json, "parse", parse)?;
+        self.set_builtin_function_name(parse, "parse")?;
+        let stringify = self.native_value(Native::JsonStringify);
+        self.set_builtin_value_named(json, "stringify", stringify)?;
+        self.set_builtin_function_name(stringify, "stringify")?;
         self.global(program, "JSON", json)
     }
+
     fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let reflect = self.object();
         for (name, native) in [
