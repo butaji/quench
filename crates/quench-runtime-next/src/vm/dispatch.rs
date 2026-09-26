@@ -341,8 +341,8 @@ impl<H: Host> Vm<H> {
                 let v = self.object_pair(
                     p,
                     i.object_site_index(),
-                    self.read(f, i.b()),
-                    self.read(f, i.c()),
+                    self.read(f, i.register_b()),
+                    self.read(f, i.register_c()),
                 );
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));

@@ -561,9 +561,9 @@ impl ResidualProgram {
                         return Err(format!("function {index} construct is invalid"));
                     }
                     Op::MakeObject2
-                        if !destination(instruction.a())
-                            || !register(instruction.b())
-                            || !register(instruction.c())
+                        if !destination(instruction.result_register())
+                            || !register(instruction.register_b())
+                            || !register(instruction.register_c())
                             || instruction.object_site_index() >= self.object_sites.len() =>
                     {
                         return Err(format!("function {index} object site is invalid"));

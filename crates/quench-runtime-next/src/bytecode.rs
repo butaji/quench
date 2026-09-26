@@ -369,7 +369,7 @@ opcodes!(
     MakeArray => CALL_EFFECT; meaning ArrayLength, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     MakeConstArray => CALL_EFFECT; meaning ConstantIndex, @ Register, @ fields(Undeclared, ElementCount, Undeclared),
     MakeObject => CALL_EFFECT, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
-    MakeObject2 => CALL_EFFECT; meaning ObjectSiteIndex, @ Returnable,
+    MakeObject2 => CALL_EFFECT; meaning ObjectSiteIndex, @ Returnable, @ fields(Undeclared, Register, Register),
     SuperConstArrayObject2 => CALL_EFFECT; meaning SuperinstructionIndex, @ Returnable,
     GetIterator => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     GetAsyncIterator => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
