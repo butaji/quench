@@ -71,6 +71,7 @@ pub(crate) enum FieldLayout {
     Register,
     FunctionIndex,
     ConstructArguments,
+    ElementCount,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,7 +344,7 @@ opcodes!(
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
     MakeClosure => CALL_EFFECT; meaning ClosureFunctionIndex,
     MakeArray => CALL_EFFECT,
-    MakeConstArray => CALL_EFFECT,
+    MakeConstArray => CALL_EFFECT; meaning ConstantIndex, @ Register, @ fields(Undeclared, ElementCount, Undeclared),
     MakeObject => CALL_EFFECT,
     MakeObject2 => CALL_EFFECT; meaning ObjectSiteIndex, @ Returnable,
     SuperConstArrayObject2 => CALL_EFFECT; meaning SuperinstructionIndex, @ Returnable,

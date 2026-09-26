@@ -342,8 +342,8 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), v);
             }
             Op::MakeConstArray => {
-                let start = i.imm() as usize;
-                let end = start + i.b() as usize;
+                let start = i.constant_index();
+                let end = start + i.element_count() as usize;
                 let elements = self
                     .programs
                     .const_array(self.frames[f].program, start, end - start)

@@ -114,6 +114,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn element_count(self) -> u16 {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::ElementCount
+                );
+                self.b()
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn method_site_index(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::MethodSiteIndex);
                 self.imm() as usize
