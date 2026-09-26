@@ -984,13 +984,10 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "RegExp exec result is not an object".into()))
             };
         }
-        if !method.is_undefined() {
-            return Err(self.type_error(p, "RegExp exec is not callable".into()));
+        if matches!(self.heap.get(receiver), Some(Cell::RegExp { .. })) {
+            return self.regexp_native(p, Native::RegExpExec, receiver, &[input]);
         }
-        if !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. })) {
-            return Err(self.type_error(p, "RegExp exec is not callable".into()));
-        }
-        self.regexp_native(p, Native::RegExpExec, receiver, &[input])
+        Err(self.type_error(p, "RegExp exec is not callable".into()))
     }
 
     pub(super) fn regexp_slot_native(
