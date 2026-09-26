@@ -72,12 +72,33 @@ impl<H: Host> Vm<H> {
                 }
                 let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
                 if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
-                    return Err(JsError(
+                    return Err(self.type_error(
+                        p,
                         "proxy deleteProperty trap cannot delete a non-configurable property"
                             .into(),
                     ));
                 }
+                let extensible = if descriptor.is_undefined() {
+                    Value::TRUE
+                } else {
+                    self.object_is_extensible(p, &[target])?
+                };
+                if !descriptor.is_undefined() && !self.truthy(extensible) {
+                    return Err(self.type_error(
+                        p,
+                        "proxy deleteProperty trap cannot hide a property of a non-extensible target"
+                            .into(),
+                    ));
+                }
                 return Ok(Value::TRUE);
+            } else if !trap.is_null() && !trap.is_undefined() {
+                return Err(self.type_error(p, "proxy deleteProperty trap is not callable".into()));
+            } else {
+                let mut forwarded = args.to_vec();
+                if let Some(receiver) = forwarded.first_mut() {
+                    *receiver = target;
+                }
+                return self.object_delete_property(p, &forwarded);
             }
         }
         let target = self.proxy_target(source);

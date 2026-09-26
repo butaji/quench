@@ -36,9 +36,55 @@ impl<H: Host> Vm<H> {
         let trap = self.proxy_trap(p, handler, "get")?;
         if self.is_function(trap) {
             let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
-            return self.call_value(p, trap, handler, &[target, key, receiver]);
+            let result = self.call_value(p, trap, handler, &[target, key, receiver])?;
+            self.validate_proxy_get(p, target, key, result)?;
+            return Ok(result);
         }
-        self.get_property_with_receiver(p, target, atom, receiver)
+        if trap.is_null() || trap.is_undefined() {
+            return self.get_property_with_receiver(p, target, atom, receiver);
+        }
+        Err(self.type_error(p, "proxy get trap is not callable".into()))
+    }
+
+    fn validate_proxy_get(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+        result: Value,
+    ) -> Result<(), JsError> {
+        let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+        if descriptor.is_undefined() || self.descriptor_flag(descriptor, "configurable") {
+            return Ok(());
+        }
+        let value = self.intern_atom("value");
+        let writable = self.intern_atom("writable");
+        let getter = self.intern_atom("get");
+        let is_data = self.own_property(descriptor, value).is_some()
+            || self.own_property(descriptor, writable).is_some();
+        if is_data
+            && !self.descriptor_flag(descriptor, "writable")
+            && self
+                .own_property(descriptor, value)
+                .is_some_and(|value| !self.same_value(value, result))
+        {
+            return Err(self.type_error(
+                p,
+                "proxy get trap returned a different value for a frozen property".into(),
+            ));
+        }
+        if !is_data
+            && self
+                .own_property(descriptor, getter)
+                .is_none_or(Value::is_undefined)
+            && !result.is_undefined()
+        {
+            return Err(self.type_error(
+                p,
+                "proxy get trap returned a value for an accessor without a getter".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn proxy_set(
@@ -86,9 +132,14 @@ impl<H: Host> Vm<H> {
         }
         let trap = self.proxy_trap(p, handler, "get")?;
         if self.is_function(trap) {
-            return self.call_value(p, trap, handler, &[target, key, receiver]);
+            let result = self.call_value(p, trap, handler, &[target, key, receiver])?;
+            self.validate_proxy_get(p, target, key, result)?;
+            return Ok(result);
         }
-        self.get_symbol_property_with_receiver(p, target, key, receiver)
+        if trap.is_null() || trap.is_undefined() {
+            return self.get_symbol_property_with_receiver(p, target, key, receiver);
+        }
+        Err(self.type_error(p, "proxy get trap is not callable".into()))
     }
 
     pub(super) fn get_symbol_property_with_receiver(
