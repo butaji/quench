@@ -1,7 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
-    DispatchClass, FieldBase, FieldLayout, InstructionField, Op, Operand, OperandKind,
-    REGISTER_MASK, Register, ResidualProgram, ResultLayout,
+    DispatchClass, FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand,
+    OperandKind, REGISTER_MASK, Register, ResidualProgram, ResultLayout,
 };
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
@@ -148,6 +148,39 @@ fn immediate_domains_in_bounds(
     }
 }
 
+fn packed_layout_domains_in_bounds(
+    instruction: super::WideInstruction,
+    bounds: ValidationBounds,
+) -> bool {
+    match instruction.op().immediate_layout() {
+        ImmediateLayout::CaptureDepthAndSlot => {
+            usize::from(instruction.capture_depth()) < bounds.functions
+        }
+        ImmediateLayout::CallWindow | ImmediateLayout::CallWindowWithEvalFlags => {
+            let window = instruction.call_window();
+            register_window_in_bounds(
+                u16::from(window.base),
+                u32::from(window.count),
+                bounds.registers,
+            )
+        }
+        ImmediateLayout::ConstructCountAndFlags => match instruction.construct_arguments() {
+            super::ConstructArguments::Registers(window) => {
+                register_window_in_bounds(window.base, u32::from(window.count), bounds.registers)
+            }
+            super::ConstructArguments::Array(register) => {
+                register_in_bounds(register, bounds.registers, 0)
+            }
+        },
+        ImmediateLayout::RegisterPair => {
+            let (first, second) = instruction.register_pair();
+            register_in_bounds(first, bounds.registers, 0)
+                && register_in_bounds(second, bounds.registers, 0)
+        }
+        ImmediateLayout::Scalar => true,
+    }
+}
+
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
     pub(crate) fn validate(&self) -> Result<(), String> {
@@ -240,6 +273,7 @@ impl ResidualProgram {
                 }
                 if !field_domains_in_bounds(instruction, bounds)
                     || !immediate_domains_in_bounds(instruction, bounds)
+                    || !packed_layout_domains_in_bounds(instruction, bounds)
                 {
                     return Err(format!(
                         "function {index} {:?} has an out-of-domain operand",
@@ -268,11 +302,6 @@ impl ResidualProgram {
                     }
                     Op::LoadEnvLocal if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} local access is invalid"));
-                    }
-                    Op::LoadCapture | Op::StoreCapture
-                        if usize::from(instruction.capture_depth()) >= self.functions.len() =>
-                    {
-                        return Err(format!("function {index} capture depth is invalid"));
                     }
                     Op::LoadCapture if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} capture load is invalid"));
@@ -508,12 +537,7 @@ impl ResidualProgram {
                     Op::Call | Op::CallDirectEvalArray
                         if !destination(instruction.result_register())
                             || !register(instruction.register_b())
-                            || !register(instruction.register_c())
-                            || !register_window_in_bounds(
-                                u16::from(instruction.call_window().base),
-                                u32::from(instruction.call_window().count),
-                                function.registers,
-                            ) =>
+                            || !register(instruction.register_c()) =>
                     {
                         return Err(format!("function {index} call is invalid"));
                     }
@@ -523,49 +547,13 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} suspension is invalid"));
                     }
-                    Op::YieldStar
-                        if !destination(instruction.result_register())
-                            || !register(instruction.register_b())
-                            || !register(instruction.register_c())
-                            || {
-                                let (state, next_method) = instruction.register_pair();
-                                !register(state) || !register(next_method)
-                            } =>
-                    {
-                        return Err(format!("function {index} delegated yield is invalid"));
-                    }
                     Op::CallDirectEvalArray if instruction.call_window().count != 1 => {
                         return Err(format!(
                             "function {index} direct eval arguments are invalid"
                         ));
                     }
-                    Op::CallKnown
-                        if !destination(instruction.result_register())
-                            || !register_window_in_bounds(
-                                u16::from(instruction.call_window().base),
-                                u32::from(instruction.call_window().count),
-                                function.registers,
-                            ) =>
-                    {
+                    Op::CallKnown if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} known call is invalid"));
-                    }
-                    Op::Construct
-                        if !destination(instruction.result_register())
-                            || !register(instruction.register_b())
-                            || match instruction.construct_arguments() {
-                                super::ConstructArguments::Registers(window) => {
-                                    !register_window_in_bounds(
-                                        window.base,
-                                        u32::from(window.count),
-                                        function.registers,
-                                    )
-                                }
-                                super::ConstructArguments::Array(array_register) => {
-                                    !register(array_register)
-                                }
-                            } =>
-                    {
-                        return Err(format!("function {index} construct is invalid"));
                     }
                     _ => {}
                 }
