@@ -39,7 +39,7 @@ pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
     }
     for instruction in &mut function.code {
         if instruction.op() == Op::Binary
-            && let Some(op) = specialized_numeric_op(instruction.imm())
+            && let Some(op) = specialized_numeric_op(instruction.binary_operator())
         {
             instruction.set_op(op);
         }
