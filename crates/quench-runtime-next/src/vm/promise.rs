@@ -288,6 +288,43 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::MapClear | Native::MapKeys | Native::MapValues | Native::MapEntries => 0.0,
         Native::MapGroupBy => 2.0,
         Native::MapGetOrInsert | Native::MapGetOrInsertComputed => 2.0,
+        Native::MathMax
+        | Native::MathMin
+        | Native::MathPow
+        | Native::MathAtan2
+        | Native::MathHypot
+        | Native::MathImul => 2.0,
+        Native::MathRandom => 0.0,
+        Native::MathAbs
+        | Native::MathAcos
+        | Native::MathAcosh
+        | Native::MathAsin
+        | Native::MathAsinh
+        | Native::MathAtan
+        | Native::MathAtanh
+        | Native::MathCbrt
+        | Native::MathCeil
+        | Native::MathClz32
+        | Native::MathCos
+        | Native::MathCosh
+        | Native::MathExp
+        | Native::MathExpm1
+        | Native::MathF16Round
+        | Native::MathFloor
+        | Native::MathFround
+        | Native::MathLog
+        | Native::MathLog10
+        | Native::MathLog1p
+        | Native::MathLog2
+        | Native::MathRound
+        | Native::MathSign
+        | Native::MathSin
+        | Native::MathSinh
+        | Native::MathSqrt
+        | Native::MathSumPrecise
+        | Native::MathTan
+        | Native::MathTanh
+        | Native::MathTrunc => 1.0,
         Native::SetAdd | Native::SetHas | Native::SetDelete | Native::SetForEach => 1.0,
         Native::SetClear | Native::SetKeys | Native::SetValues | Native::SetEntries => 0.0,
         Native::ToString => 1.0,

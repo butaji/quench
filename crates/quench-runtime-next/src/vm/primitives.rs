@@ -401,7 +401,21 @@ impl<H: Host> Vm<H> {
             | Native::MathCos
             | Native::MathExp
             | Native::MathSin
-            | Native::MathTan => {
+            | Native::MathTan
+            | Native::MathAcosh
+            | Native::MathAsinh
+            | Native::MathAtanh
+            | Native::MathCbrt
+            | Native::MathCosh
+            | Native::MathExpm1
+            | Native::MathFround
+            | Native::MathLog10
+            | Native::MathLog1p
+            | Native::MathLog2
+            | Native::MathSinh
+            | Native::MathTanh
+            | Native::MathClz32
+            | Native::MathF16Round => {
                 let value = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 Ok(Value::number(super::number::math_unary(native, value)))
             }
@@ -418,19 +432,46 @@ impl<H: Host> Vm<H> {
                 } else {
                     f64::NEG_INFINITY
                 };
+                let mut saw_nan = false;
                 for value in args {
                     let number = self.to_number(p, *value)?;
                     if number.is_nan() {
-                        return Ok(Value::number(f64::NAN));
+                        saw_nan = true;
+                        continue;
                     }
                     result = if native == Native::MathMin {
-                        result.min(number)
+                        if number == 0.0 && result == 0.0 {
+                            if number.is_sign_negative() || result.is_sign_negative() {
+                                -0.0
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            result.min(number)
+                        }
                     } else {
-                        result.max(number)
+                        if number == 0.0 && result == 0.0 {
+                            if number.is_sign_positive() || result.is_sign_positive() {
+                                0.0
+                            } else {
+                                -0.0
+                            }
+                        } else {
+                            result.max(number)
+                        }
                     };
                 }
-                Ok(Value::number(result))
+                Ok(Value::number(if saw_nan { f64::NAN } else { result }))
             }
+            Native::MathHypot => self.math_hypot(p, args),
+            Native::MathImul => {
+                let left = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let right = self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let product = (crate::value::number_to_u32(left) as i32)
+                    .wrapping_mul(crate::value::number_to_u32(right) as i32);
+                Ok(Value::number(product as f64))
+            }
+            Native::MathSumPrecise => self.math_sum_precise(p, args.first().copied()),
             Native::MathRandom => {
                 let mut state = self.random_state;
                 state ^= state << 13;

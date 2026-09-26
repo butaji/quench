@@ -1,6 +1,45 @@
 use super::property_key::PropertyKey;
 use super::wtf16::JsString;
 use super::*;
+const MATH_FUNCTIONS: &[(&str, Native)] = &[
+    ("abs", Native::MathAbs),
+    ("acos", Native::MathAcos),
+    ("acosh", Native::MathAcosh),
+    ("asin", Native::MathAsin),
+    ("asinh", Native::MathAsinh),
+    ("atan", Native::MathAtan),
+    ("atan2", Native::MathAtan2),
+    ("atanh", Native::MathAtanh),
+    ("cbrt", Native::MathCbrt),
+    ("ceil", Native::MathCeil),
+    ("clz32", Native::MathClz32),
+    ("cos", Native::MathCos),
+    ("cosh", Native::MathCosh),
+    ("exp", Native::MathExp),
+    ("expm1", Native::MathExpm1),
+    ("floor", Native::MathFloor),
+    ("f16round", Native::MathF16Round),
+    ("fround", Native::MathFround),
+    ("hypot", Native::MathHypot),
+    ("imul", Native::MathImul),
+    ("log", Native::MathLog),
+    ("log10", Native::MathLog10),
+    ("log1p", Native::MathLog1p),
+    ("log2", Native::MathLog2),
+    ("max", Native::MathMax),
+    ("min", Native::MathMin),
+    ("pow", Native::MathPow),
+    ("random", Native::MathRandom),
+    ("round", Native::MathRound),
+    ("sign", Native::MathSign),
+    ("sin", Native::MathSin),
+    ("sinh", Native::MathSinh),
+    ("sqrt", Native::MathSqrt),
+    ("sumPrecise", Native::MathSumPrecise),
+    ("tan", Native::MathTan),
+    ("tanh", Native::MathTanh),
+    ("trunc", Native::MathTrunc),
+];
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
     Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
@@ -288,6 +327,11 @@ const NATIVES: &[Native] = &[
     Native::MathSqrt, Native::MathSign, Native::MathAcos, Native::MathAsin,
     Native::MathAtan, Native::MathCos, Native::MathExp, Native::MathSin,
     Native::MathTan, Native::MathAtan2,
+    Native::MathAcosh, Native::MathAsinh, Native::MathAtanh, Native::MathCbrt,
+    Native::MathCosh, Native::MathExpm1, Native::MathFround, Native::MathHypot,
+    Native::MathImul, Native::MathLog10, Native::MathLog1p, Native::MathLog2,
+    Native::MathSinh, Native::MathTanh, Native::MathClz32, Native::MathF16Round,
+    Native::MathSumPrecise,
     Native::NumberString,
     Native::Number, Native::NumberValueOf,
     Native::GlobalIsNaN, Native::GlobalIsFinite, Native::NumberIsNaN,
@@ -620,39 +664,9 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_named_constant(program, math, name, Value::number(value))?;
         }
-        self.set_named(program, math, "log", self.native_value(Native::MathLog))?;
-        self.set_named(program, math, "pow", self.native_value(Native::MathPow))?;
-        self.set_named(program, math, "acos", self.native_value(Native::MathAcos))?;
-        self.set_named(program, math, "asin", self.native_value(Native::MathAsin))?;
-        for (name, native) in [
-            ("atan", Native::MathAtan),
-            ("cos", Native::MathCos),
-            ("exp", Native::MathExp),
-            ("sin", Native::MathSin),
-            ("tan", Native::MathTan),
-            ("atan2", Native::MathAtan2),
-        ] {
-            self.set_named(program, math, name, self.native_value(native))?;
+        for (name, native) in MATH_FUNCTIONS {
+            self.set_builtin_named(program, math, name, *native)?;
         }
-        self.set_named(program, math, "floor", self.native_value(Native::MathFloor))?;
-        self.set_named(program, math, "min", self.native_value(Native::MathMin))?;
-        self.set_named(program, math, "max", self.native_value(Native::MathMax))?;
-        for (name, native) in [
-            ("abs", Native::MathAbs),
-            ("ceil", Native::MathCeil),
-            ("round", Native::MathRound),
-            ("trunc", Native::MathTrunc),
-            ("sqrt", Native::MathSqrt),
-            ("sign", Native::MathSign),
-        ] {
-            self.set_named(program, math, name, self.native_value(native))?;
-        }
-        self.set_named(
-            program,
-            math,
-            "random",
-            self.native_value(Native::MathRandom),
-        )?;
         self.global(program, "Math", math)
     }
 
