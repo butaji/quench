@@ -193,9 +193,17 @@ impl<H: Host> Vm<H> {
             }
         }
         let value = self.proxy_target(value);
-        self.object_data(value)
+        if value.is_null() || value.is_undefined() {
+            return Err(self.type_error(
+                p,
+                "Object.getPrototypeOf called on null or undefined".into(),
+            ));
+        }
+        let value = self.box_object_or_type_error(p, value)?;
+        Ok(self
+            .object_data(value)
             .map(|object| object.proto)
-            .ok_or_else(|| JsError("Object.getPrototypeOf target is not an object".into()))
+            .unwrap_or(Value::NULL))
     }
 
     pub(super) fn object_set_prototype_of(
@@ -204,6 +212,27 @@ impl<H: Host> Vm<H> {
         target: Value,
         proto: Value,
     ) -> Result<Value, JsError> {
+        if target.is_null() || target.is_undefined() {
+            return Err(self.type_error(
+                p,
+                "Object.setPrototypeOf target is null or undefined".into(),
+            ));
+        }
+        if !proto.is_null() && self.object_data(proto).is_none() {
+            return Err(self.type_error(p, "Object prototype is not an object".into()));
+        }
+        if self.object_data(target).is_none()
+            && !matches!(self.heap.get(target), Some(Cell::Proxy { .. }))
+        {
+            return Ok(target);
+        }
+        if target == self.object_proto
+            && self
+                .object_data(target)
+                .is_some_and(|object| object.proto != proto)
+        {
+            return Err(self.type_error(p, "Object.prototype has an immutable prototype".into()));
+        }
         if let Some(Cell::Proxy {
             target: underlying,
             handler,
@@ -218,7 +247,9 @@ impl<H: Host> Vm<H> {
             if self.is_function(trap) {
                 let result = self.call_value(p, trap, handler, &[underlying, proto])?;
                 if !self.truthy(result) {
-                    return Err(JsError("proxy setPrototypeOf trap returned false".into()));
+                    return Err(
+                        self.type_error(p, "proxy setPrototypeOf trap returned false".into())
+                    );
                 }
                 if self
                     .object_data(underlying)
@@ -232,27 +263,22 @@ impl<H: Host> Vm<H> {
             }
         }
         let target = self.proxy_target(target);
-        if !proto.is_null() && self.object_data(proto).is_none() {
-            return Err(JsError("Object prototype is not an object".into()));
-        }
         let Some(current_proto) = self.object_data(target).map(|object| object.proto) else {
-            return Err(JsError(
-                "Object.setPrototypeOf target is not an object".into(),
-            ));
+            return Err(self.type_error(p, "Object.setPrototypeOf target is not an object".into()));
         };
         if self
             .object_data(target)
             .is_some_and(|object| !object.is_extensible())
             && current_proto != proto
         {
-            return Err(JsError(
-                "cannot change prototype of non-extensible object".into(),
-            ));
+            return Err(
+                self.type_error(p, "cannot change prototype of non-extensible object".into())
+            );
         }
         let mut cursor = proto;
         while !cursor.is_null() {
             if cursor == target {
-                return Err(JsError("prototype chain cycle".into()));
+                return Err(self.type_error(p, "prototype chain cycle".into()));
             }
             cursor = self
                 .object_data(cursor)
@@ -323,12 +349,13 @@ impl<H: Host> Vm<H> {
             if self.is_function(trap) {
                 let result = self.call_value(p, trap, handler, &[target])?;
                 if !self.truthy(result) {
-                    return Err(JsError(
-                        "proxy preventExtensions trap returned false".into(),
-                    ));
+                    return Err(
+                        self.type_error(p, "proxy preventExtensions trap returned false".into())
+                    );
                 }
                 if self.object_data(target).is_some_and(Object::is_extensible) {
-                    return Err(JsError(
+                    return Err(self.type_error(
+                        p,
                         "proxy preventExtensions trap did not make target non-extensible".into(),
                     ));
                 }
@@ -372,9 +399,9 @@ impl<H: Host> Vm<H> {
             }
         }
         let target = self.proxy_target(source);
-        let object = self
-            .object_data(target)
-            .ok_or_else(|| JsError("isExtensible target is not an object".into()))?;
+        let Some(object) = self.object_data(target) else {
+            return Ok(Value::FALSE);
+        };
         Ok(Self::integrity_bool(object.is_extensible()))
     }
 
@@ -479,13 +506,39 @@ impl<H: Host> Vm<H> {
         Ok(target)
     }
 
-    pub(super) fn object_is_integrity_level(&self, args: &[Value], freeze: bool) -> bool {
-        let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
+    pub(super) fn object_is_integrity_level(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        freeze: bool,
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if matches!(self.heap.get(source), Some(Cell::Proxy { .. })) {
+            let extensible = self.object_is_extensible(p, &[source])?;
+            if self.truthy(extensible) {
+                return Ok(Value::FALSE);
+            }
+            for key in self.object_own_key_values(p, source)? {
+                let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
+                if descriptor.is_undefined() || self.descriptor_flag(descriptor, "configurable") {
+                    return Ok(Value::FALSE);
+                }
+                let value_atom = self.intern_atom("value");
+                let writable_atom = self.intern_atom("writable");
+                let is_data = self.own_property(descriptor, value_atom).is_some()
+                    || self.own_property(descriptor, writable_atom).is_some();
+                if freeze && is_data && self.descriptor_flag(descriptor, "writable") {
+                    return Ok(Value::FALSE);
+                }
+            }
+            return Ok(Value::TRUE);
+        }
+        let target = source;
         let Some(data) = self.object_data(target) else {
-            return true;
+            return Ok(Value::TRUE);
         };
-        if data.is_extensible() || freeze && !data.is_frozen() {
-            return false;
+        if data.is_extensible() {
+            return Ok(Value::FALSE);
         }
         let named_ok = self
             .ordered_shape(data)
@@ -508,7 +561,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 !attributes.configurable && (!freeze || !attributes.writable)
             });
-        named_ok && arrays_ok && symbols_ok
+        Ok(Self::integrity_bool(named_ok && arrays_ok && symbols_ok))
     }
 
     pub(super) fn validate_proxy_define_property(

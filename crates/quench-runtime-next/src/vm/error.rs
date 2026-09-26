@@ -455,6 +455,12 @@ impl<H: Host> Vm<H> {
             "valueOf",
             self.native_value(Native::SymbolValueOf),
         )?;
+        self.set_builtin_named(
+            program,
+            symbol_prototype,
+            "toString",
+            Native::SymbolToString,
+        )?;
         for native in [Native::String, Native::Number] {
             let constructor = self.native_value(native);
             let prototype = self.object();

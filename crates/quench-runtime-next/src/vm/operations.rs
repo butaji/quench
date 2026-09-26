@@ -201,8 +201,11 @@ impl<H: Host> Vm<H> {
             | Native::RegExpHasIndices => self.regexp_flag_native(p, native, this),
             Native::RegExpSource | Native::RegExpFlags => self.regexp_slot_native(p, native, this),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
-                let key_value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let descriptor = self.object_get_own_property_descriptor(p, &[this, key_value])?;
+                let key_value =
+                    self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let receiver = self.box_object_or_type_error(p, this)?;
+                let descriptor =
+                    self.object_get_own_property_descriptor(p, &[receiver, key_value])?;
                 if descriptor.is_undefined() {
                     return Ok(Value::FALSE);
                 }
@@ -218,6 +221,7 @@ impl<H: Host> Vm<H> {
                 })
             }
             Native::ObjectPrototypeLookupGetter | Native::ObjectPrototypeLookupSetter => {
+                self.require_object_coercible(p, this)?;
                 let key =
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let mut object = self.box_object(this)?;
@@ -238,7 +242,25 @@ impl<H: Host> Vm<H> {
                     }
                 }
             }
+            Native::ObjectPrototypeDefineGetter | Native::ObjectPrototypeDefineSetter => {
+                self.object_prototype_define_accessor(p, native, this, args)
+            }
             Native::ObjectPrototypeToString => self.object_prototype_to_string(p, this),
+            Native::ObjectPrototypeProtoGetter => {
+                self.require_object_coercible(p, this)?;
+                let object = self.box_object(this)?;
+                self.object_get_prototype_of(p, object)
+            }
+            Native::ObjectPrototypeProtoSetter => {
+                self.require_object_coercible(p, this)?;
+                let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if self.is_object_like(this)
+                    && (proto.is_null() || self.object_data(proto).is_some())
+                {
+                    self.object_set_prototype_of(p, this, proto)?;
+                }
+                Ok(Value::UNDEFINED)
+            }
             Native::ObjectPrototypeToLocaleString => {
                 self.object_prototype_to_locale_string(p, this)
             }
@@ -250,11 +272,14 @@ impl<H: Host> Vm<H> {
             }),
             Native::ObjectPrototypeIsPrototypeOf => {
                 let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if self.object_data(target).is_none() {
+                    return Ok(Value::FALSE);
+                }
                 let prototype = self.box_object(this)?;
                 let mut current = target;
                 let mut found = false;
-                while let Some(object) = self.object_data(current) {
-                    current = object.proto;
+                while self.is_object_like(current) {
+                    current = self.object_get_prototype_of(p, current)?;
                     if current == prototype {
                         found = true;
                         break;

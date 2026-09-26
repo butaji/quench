@@ -278,6 +278,9 @@ impl<H: Host> Vm<H> {
             | Native::StringCodePointAt
             | Native::StringToUpperCase
             | Native::StringToLowerCase
+            | Native::StringToLocaleUpperCase
+            | Native::StringToLocaleLowerCase
+            | Native::StringLocaleCompare
             | Native::StringConcat
             | Native::StringNormalize => self.string_basic_native(p, native, this, args),
             Native::StringRepeat => {

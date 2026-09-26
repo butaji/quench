@@ -43,17 +43,8 @@ impl<H: Host> Vm<H> {
             let trap_atom = self.intern_atom("getOwnPropertyDescriptor");
             let trap = self.get_property(p, handler, trap_atom)?;
             if self.is_function(trap) {
-                let key = if matches!(
-                    self.heap
-                        .get(args.get(1).copied().unwrap_or(Value::UNDEFINED)),
-                    Some(Cell::Symbol(_))
-                ) {
-                    args.get(1).copied().unwrap_or(Value::UNDEFINED)
-                } else {
-                    let text =
-                        self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                    self.heap.alloc(Cell::String(text.into()))
-                };
+                let key =
+                    self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let result = self.call_value(p, trap, handler, &[target, key])?;
                 if result.is_undefined() {
                     let target_descriptor =
@@ -151,7 +142,41 @@ impl<H: Host> Vm<H> {
             }
             return Ok(descriptor);
         }
-        let key = self.coerce_js_string(p, key_value)?;
+        let key = self.to_property_key(p, key_value)?;
+        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            let Some(value) = self.symbol_property(target, key) else {
+                return Ok(Value::UNDEFINED);
+            };
+            let attributes = self
+                .property_attributes(target, PropertyKey::symbol(key))
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+            let descriptor = self.object();
+            let fields = if attributes.accessor {
+                vec![
+                    ("get", attributes.getter.unwrap_or(Value::UNDEFINED)),
+                    ("set", attributes.setter.unwrap_or(Value::UNDEFINED)),
+                ]
+            } else {
+                vec![
+                    ("value", value),
+                    ("writable", Self::integrity_bool(attributes.writable)),
+                ]
+            };
+            for (name, value) in fields.into_iter().chain([
+                ("enumerable", Self::integrity_bool(attributes.enumerable)),
+                (
+                    "configurable",
+                    Self::integrity_bool(attributes.configurable),
+                ),
+            ]) {
+                let atom = self.intern_atom(name);
+                self.set_property(descriptor, atom, value)?;
+            }
+            return Ok(descriptor);
+        }
+        let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+            unreachable!("ToPropertyKey returns a string or symbol")
+        };
         let atom = self.intern_js_atom(&key);
         self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
         if key.host_string() == "length"

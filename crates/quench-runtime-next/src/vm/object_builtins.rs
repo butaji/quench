@@ -8,12 +8,24 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         if self.object_data(target).is_none() {
-            return Err(JsError("defineProperties target is not an object".into()));
+            return Err(self.type_error(p, "defineProperties target is not an object".into()));
         }
-        let descriptors = self.box_object(args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        let descriptors =
+            self.box_object_or_type_error(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
         let keys = self.object_own_key_values(p, descriptors)?;
         for key in keys {
-            let descriptor = self.get_index(p, descriptors, key)?;
+            let property = self.object_get_own_property_descriptor(p, &[descriptors, key])?;
+            if property.is_undefined() || !self.descriptor_flag(property, "enumerable") {
+                continue;
+            }
+            let descriptor = match self.heap.get(key).cloned() {
+                Some(Cell::Symbol(_)) => self.get_index(p, descriptors, key)?,
+                Some(Cell::String(name)) => {
+                    let atom = self.intern_js_atom(&name);
+                    self.get_property(p, descriptors, atom)?
+                }
+                _ => continue,
+            };
             self.object_define_property(p, &[target, key, descriptor])?;
         }
         Ok(target)
@@ -22,6 +34,19 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_object(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let object = self.native_value(Native::Object);
         self.set_named(program, object, "prototype", self.object_proto)?;
+        let prototype = self.intern_atom("prototype");
+        self.set_property_attributes(
+            object,
+            super::property_key::PropertyKey::string(prototype),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_named(program, self.object_proto, "constructor", Native::Object)?;
         self.set_builtin_named(program, self.function_proto, "call", Native::FunctionCall)?;
         self.set_builtin_named(program, self.function_proto, "apply", Native::FunctionApply)?;
@@ -66,6 +91,7 @@ impl<H: Host> Vm<H> {
         self.install_object_extra(program, object)?;
         for (name, native) in [
             ("create", Native::ObjectCreate),
+            ("groupBy", Native::ObjectGroupBy),
             ("assign", Native::ObjectAssign),
             ("getPrototypeOf", Native::ObjectGetPrototypeOf),
             ("setPrototypeOf", Native::ObjectSetPrototypeOf),

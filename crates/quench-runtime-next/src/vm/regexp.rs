@@ -90,23 +90,27 @@ impl<H: Host> Vm<H> {
         let constructor = self.native_value(Native::RegExp);
         self.regexp_proto = self.object();
         self.set_named(program, constructor, "prototype", self.regexp_proto)?;
-        self.set_named(
-            program,
-            self.regexp_proto,
-            "exec",
-            self.native_value(Native::RegExpExec),
-        )?;
-        self.set_named(
-            program,
-            self.regexp_proto,
-            "test",
-            self.native_value(Native::RegExpTest),
-        )?;
-        self.set_named(
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_named(program, self.regexp_proto, "constructor", Native::RegExp)?;
+        self.set_builtin_named(program, self.regexp_proto, "exec", Native::RegExpExec)?;
+        self.set_builtin_named(program, self.regexp_proto, "test", Native::RegExpTest)?;
+        self.set_builtin_named(
             program,
             self.regexp_proto,
             "toString",
-            self.native_value(Native::RegExpToString),
+            Native::RegExpToString,
         )?;
         self.install_regexp_symbol_properties(constructor, self.regexp_proto, self.realm.globals)?;
         for (name, native) in REGEXP_FLAG_ACCESSORS {

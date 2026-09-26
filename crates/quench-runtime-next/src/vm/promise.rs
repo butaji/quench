@@ -294,6 +294,21 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
+        Native::String => 1.0,
+        Native::StringToLocaleLowerCase | Native::StringToLocaleUpperCase => 0.0,
+        Native::StringLocaleCompare => 1.0,
+        Native::StringFromCharCode | Native::StringFromCodePoint => 1.0,
+        Native::RegExp => 2.0,
+        Native::ObjectPrototypeToLocaleString | Native::ObjectPrototypeValueOf => 0.0,
+        Native::ObjectPrototypeToString => 0.0,
+        Native::ObjectPrototypeDefineGetter | Native::ObjectPrototypeDefineSetter => 2.0,
+        Native::ObjectPrototypeProtoGetter => 0.0,
+        Native::ObjectPrototypeProtoSetter => 1.0,
+        Native::ObjectPrototypeLookupGetter
+        | Native::ObjectPrototypeLookupSetter
+        | Native::ObjectPrototypeHasOwnProperty
+        | Native::ObjectPrototypePropertyIsEnumerable
+        | Native::ObjectPrototypeIsPrototypeOf => 1.0,
         Native::Map | Native::Set | Native::MapSizeGetter | Native::SetSizeGetter => 0.0,
         Native::MapGet | Native::MapHas | Native::MapDelete | Native::MapForEach => 1.0,
         Native::MapSet => 2.0,
@@ -473,6 +488,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::ObjectDefineProperties | Native::ObjectAssign => 2.0,
         Native::ObjectFromEntries => 1.0,
         Native::ObjectDefineProperty => 3.0,
+        Native::ObjectGroupBy => 2.0,
         Native::ObjectSetPrototypeOf => 2.0,
         Native::JsonParse => 2.0,
         Native::JsonStringify => 3.0,
@@ -480,9 +496,6 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::RegExpSymbolMatch => 1.0,
         Native::RegExpSpecies => 0.0,
         Native::ReflectHas | Native::ReflectApply => 2.0,
-        Native::ObjectPrototypeHasOwnProperty
-        | Native::ObjectPrototypePropertyIsEnumerable
-        | Native::ObjectPrototypeIsPrototypeOf => 1.0,
         _ => return None,
     })
 }
