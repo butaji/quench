@@ -21,7 +21,7 @@ mod early;
 mod liveness;
 mod locals;
 mod numeric;
-mod regexp;
+pub(crate) mod regexp;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 mod rewrite;

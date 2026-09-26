@@ -1364,6 +1364,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn compile_regexp(source: &str, flags: &str) -> Result<CompiledRegexp, JsError> {
         quench_regexp::validate_flags(flags)
             .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
+        crate::compile::regexp::validate_pattern(source, flags)
+            .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
         let regex = catch_unwind(AssertUnwindSafe(|| {
             quench_regexp::Regex::with_flags(source, quench_regexp::Flags::from(flags))
         }))
