@@ -402,8 +402,8 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::JumpFalse | Op::Return | Op::Throw => instruction.register_a() == register,
         Op::Call | Op::CallDirectEvalArray => {
             let window = instruction.call_window();
-            instruction.b() == register
-                || instruction.c() == register
+            instruction.register_b() == register
+                || instruction.register_c() == register
                 || range(window.base, window.count)
         }
         Op::CallKnown => {
@@ -418,7 +418,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
                 }
                 crate::bytecode::ConstructArguments::Array(array) => array == register,
             };
-            instruction.b() == register || arguments
+            instruction.register_b() == register || arguments
         }
         _ => false,
     }

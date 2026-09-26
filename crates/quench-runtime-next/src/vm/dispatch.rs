@@ -831,8 +831,8 @@ impl<H: Host> Vm<H> {
                         (0..window.count).map(|x| self.read(f, window.base + x)),
                     )
                 };
-                let this = self.read(f, i.c());
-                let callee = self.read(f, i.b());
+                let this = self.read(f, i.register_c());
+                let callee = self.read(f, i.register_b());
                 let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
                 let direct_eval = crate::bytecode::ImmediateLayout::direct_eval(i.imm())
@@ -949,7 +949,7 @@ impl<H: Host> Vm<H> {
             }
             Op::CallMethod => {
                 self.profile.call_source(2);
-                let this = self.read(f, i.b());
+                let this = self.read(f, i.register_b());
                 self.frames[f].pc = *pc;
                 let value = self.call_method_site_safe(p, f, i.method_site_index(), this)?;
                 if i.returns_from_frame() {

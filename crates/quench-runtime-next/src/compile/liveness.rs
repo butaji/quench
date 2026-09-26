@@ -175,13 +175,15 @@ fn uses(
         Op::JumpFalse | Op::Return | Op::Throw => bit(instruction.register_a()),
         Op::Call | Op::CallDirectEvalArray => {
             let window = instruction.call_window();
-            bit(instruction.b()) | bit(instruction.c()) | range(window.base, window.count)
+            bit(instruction.register_b())
+                | bit(instruction.register_c())
+                | range(window.base, window.count)
         }
         Op::CallKnown => {
             let window = instruction.call_window();
             range(window.base, window.count)
         }
-        Op::CallMethod => bit(instruction.b()) | method_arguments(instruction, methods),
+        Op::CallMethod => bit(instruction.register_b()) | method_arguments(instruction, methods),
         Op::CallThisMethod => method_arguments(instruction, methods),
         Op::Construct => {
             let arguments = match instruction.construct_arguments() {
