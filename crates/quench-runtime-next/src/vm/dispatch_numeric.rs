@@ -199,7 +199,7 @@ impl<H: Host> Vm<H> {
                         }
                     }
                     Op::StoreLocal => {
-                        let value = self.read(frame, ins.a());
+                        let value = self.read(frame, ins.register_a());
                         let local = ins.local_slot();
                         self.frames[frame].locals[local] = value;
                         self.mirror_global_lexical_binding(p, frame, local, value);

@@ -293,12 +293,17 @@ impl ResidualProgram {
                         return Err(format!("function {index} object allocation is invalid"));
                     }
                     Op::GetField
-                        if !destination(instruction.a())
-                            || !field_base_in_bounds(instruction.b(), function.registers)
+                        if !destination(instruction.result_register())
                             || match instruction.field_lookup() {
                                 super::FieldLookup::Site(site) => site >= self.field_sites.len(),
-                                super::FieldLookup::Atom(atom_index) => {
-                                    !atom(atom_index) || !cache(instruction.c())
+                                super::FieldLookup::Atom {
+                                    atom: atom_index,
+                                    base,
+                                    cache_site,
+                                } => {
+                                    !field_base_in_bounds(base.0, function.registers)
+                                        || !atom(atom_index)
+                                        || !cache(cache_site)
                                 }
                             } =>
                     {
@@ -392,7 +397,7 @@ impl ResidualProgram {
                         return Err(format!("function {index} array literal element is invalid"));
                     }
                     Op::Binary | Op::NumericAdd | Op::NumericMultiply
-                        if !destination(instruction.a())
+                        if !destination(instruction.result_register())
                             || match instruction.op() {
                                 Op::Binary => {
                                     instruction.binary_operator()
@@ -580,8 +585,8 @@ impl ResidualProgram {
                         return Err(format!("function {index} method call is invalid"));
                     }
                     Op::Construct
-                        if !destination(instruction.a())
-                            || !register(instruction.b())
+                        if !destination(instruction.result_register())
+                            || !register(instruction.register_b())
                             || match instruction.construct_arguments() {
                                 super::ConstructArguments::Registers(window) => {
                                     !register_window_in_bounds(

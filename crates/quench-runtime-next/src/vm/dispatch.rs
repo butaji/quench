@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::StoreLocal => {
-                let value = self.read(f, i.a());
+                let value = self.read(f, i.register_a());
                 let slot = i.local_slot();
                 let function = &p.functions[self.frames[f].function as usize];
                 if function
@@ -191,7 +191,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::StoreEnvLocal => {
-                let value = self.read(f, i.a());
+                let value = self.read(f, i.register_a());
                 let slot = i.local_slot();
                 let function = &p.functions[self.frames[f].function as usize];
                 if function
@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
                 f,
                 i.capture_depth(),
                 i.capture_slot(),
-                self.read(f, i.a()),
+                self.read(f, i.register_a()),
             )?,
             Op::LoadName => {
                 let v = self.load_name(p, i.atom_index(), i.cache_site_index())?;
@@ -385,9 +385,13 @@ impl<H: Host> Vm<H> {
                 let lookup = i.field_lookup();
                 let v = match lookup {
                     crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
-                    crate::bytecode::FieldLookup::Atom(atom) => {
-                        let base = self.resolve_field_base(p, f, FieldBase(i.b()))?;
-                        self.get_field_cached(p, base, atom, i.c())?
+                    crate::bytecode::FieldLookup::Atom {
+                        atom,
+                        base,
+                        cache_site,
+                    } => {
+                        let base = self.resolve_field_base(p, f, base)?;
+                        self.get_field_cached(p, base, atom, cache_site)?
                     }
                 };
                 if i.writes_current_this() {
@@ -835,10 +839,8 @@ impl<H: Host> Vm<H> {
                 let callee = self.read(f, i.register_b());
                 let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
-                let direct_eval = crate::bytecode::ImmediateLayout::direct_eval(i.imm())
-                    && callee == self.native_value(Native::Eval);
-                let parameter_eval =
-                    direct_eval && crate::bytecode::ImmediateLayout::parameter_eval(i.imm());
+                let direct_eval = i.direct_eval() && callee == self.native_value(Native::Eval);
+                let parameter_eval = direct_eval && i.parameter_eval();
                 let previous_direct_eval = self.direct_eval;
                 let previous_parameter_eval = self.parameter_eval;
                 self.direct_eval = direct_eval;
@@ -995,7 +997,7 @@ impl<H: Host> Vm<H> {
                     }
                 };
                 self.frames[f].pc = *pc;
-                let callee = self.read(f, i.b());
+                let callee = self.read(f, i.register_b());
                 let v = if i.is_super_construct() {
                     self.construct_super_value(p, callee, &args)?
                 } else {

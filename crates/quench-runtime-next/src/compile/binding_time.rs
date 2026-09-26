@@ -159,7 +159,7 @@ fn materialize_calls(functions: &mut [Function], bindings: &[BindingTime<StaticV
                 origins.fill(None);
             }
             if instruction.op() == Op::Call
-                && !crate::bytecode::ImmediateLayout::direct_eval(instruction.imm())
+                && !instruction.direct_eval()
                 && let Some((target, callee_origin)) = known[instruction.b() as usize]
             {
                 dead.push(callee_origin);
