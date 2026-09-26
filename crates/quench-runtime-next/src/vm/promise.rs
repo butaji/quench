@@ -515,7 +515,17 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::RegExpSymbolMatch => 1.0,
         Native::RegExpSymbolReplace => 2.0,
         Native::RegExpSpecies => 0.0,
-        Native::ReflectHas | Native::ReflectApply => 2.0,
+        Native::ReflectHas | Native::ReflectDeleteProperty | Native::ReflectSetPrototypeOf => 2.0,
+        Native::ReflectApply => 3.0,
+        Native::ReflectDefineProperty => 3.0,
+        Native::ReflectConstruct => 2.0,
+        Native::ReflectGet => 2.0,
+        Native::ReflectSet => 3.0,
+        Native::ReflectGetOwnPropertyDescriptor => 2.0,
+        Native::ReflectGetPrototypeOf
+        | Native::ReflectIsExtensible
+        | Native::ReflectOwnKeys
+        | Native::ReflectPreventExtensions => 1.0,
         _ => return None,
     })
 }
