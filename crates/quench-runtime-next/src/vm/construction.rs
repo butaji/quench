@@ -647,6 +647,7 @@ impl<H: Host> Vm<H> {
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = (match native {
                 Native::Object => Some("Object"),
+                Native::RegExp => Some("RegExp"),
                 Native::Number => Some("Number"),
                 Native::Iterator => Some("Iterator"),
                 Native::Boolean => Some("Boolean"),
