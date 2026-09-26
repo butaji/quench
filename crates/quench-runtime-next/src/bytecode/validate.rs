@@ -280,7 +280,8 @@ impl ResidualProgram {
                     Op::SetIndex
                         if !register(instruction.a())
                             || !register(instruction.b())
-                            || !register(instruction.c()) =>
+                            || !register(instruction.c())
+                            || instruction.boolean_flag().is_none() =>
                     {
                         return Err(format!("function {index} indexed store is invalid"));
                     }
@@ -309,7 +310,10 @@ impl ResidualProgram {
                         return Err(format!("function {index} binary operand is invalid"));
                     }
                     Op::Unary | Op::IncDec
-                        if !register(instruction.a()) || !register(instruction.b()) =>
+                        if !register(instruction.a())
+                            || !register(instruction.b())
+                            || (instruction.op() == Op::IncDec
+                                && instruction.boolean_flag().is_none()) =>
                     {
                         return Err(format!("function {index} unary operand is invalid"));
                     }
