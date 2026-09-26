@@ -382,7 +382,7 @@ impl<H: Host> Vm<H> {
             | Native::AsyncGeneratorReturn
             | Native::AsyncGeneratorThrow => self.async_generator_method(p, native, this, args),
             Native::WeakMapGet => {
-                let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let Some(index) = self.weak_map_entry_index(this, key) else {
                     return Ok(Value::UNDEFINED);
                 };
@@ -392,7 +392,7 @@ impl<H: Host> Vm<H> {
                 Ok(entries[index].1)
             }
             Native::WeakMapSet => {
-                let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let index = self.weak_map_entry_index(this, key);
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
@@ -406,7 +406,7 @@ impl<H: Host> Vm<H> {
                 Ok(this)
             }
             Native::WeakMapHas => {
-                let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 Ok(if self.weak_map_entry_index(this, key).is_some() {
                     Value::TRUE
                 } else {
@@ -414,7 +414,7 @@ impl<H: Host> Vm<H> {
                 })
             }
             Native::WeakMapDelete => {
-                let key = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let Some(index) = self.weak_map_entry_index(this, key) else {
                     return Ok(Value::FALSE);
                 };
@@ -425,7 +425,7 @@ impl<H: Host> Vm<H> {
                 Ok(Value::TRUE)
             }
             Native::WeakSetAdd => {
-                let value = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let value = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let exists = self.weak_set_entry_index(this, value).is_some();
                 let Some(Cell::WeakSet { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(JsError("WeakSet method receiver is not a WeakSet".into()));
@@ -436,7 +436,7 @@ impl<H: Host> Vm<H> {
                 Ok(this)
             }
             Native::WeakSetHas => {
-                let value = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let value = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 Ok(if self.weak_set_entry_index(this, value).is_some() {
                     Value::TRUE
                 } else {
@@ -444,7 +444,7 @@ impl<H: Host> Vm<H> {
                 })
             }
             Native::WeakSetDelete => {
-                let value = self.weak_key(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let value = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let Some(index) = self.weak_set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
@@ -486,11 +486,14 @@ impl<H: Host> Vm<H> {
             || (left.as_number().is_some_and(f64::is_nan)
                 && right.as_number().is_some_and(f64::is_nan))
     }
-    pub(super) fn weak_key(&self, value: Value) -> Result<Value, JsError> {
-        if self.object_data(value).is_some() {
+    pub(super) fn weak_key(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+        let is_object = self.is_object_like(value);
+        let is_unique_symbol = matches!(self.heap.get(value), Some(Cell::Symbol(_)))
+            && !self.symbol_registry.values().any(|symbol| *symbol == value);
+        if is_object || is_unique_symbol {
             Ok(value)
         } else {
-            Err(JsError("weak collection keys must be objects".into()))
+            Err(self.type_error(p, "weak collection keys must be objects".into()))
         }
     }
     fn weak_map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
