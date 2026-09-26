@@ -319,6 +319,7 @@ fn native_length(kind: Native) -> Option<f64> {
             1.0
         }
         Native::ArrayIteratorNext
+        | Native::IteratorNext
         | Native::IteratorSelf
         | Native::AsyncIteratorSelf
         | Native::AsyncIteratorDispose => 0.0,
