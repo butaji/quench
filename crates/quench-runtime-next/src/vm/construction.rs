@@ -234,7 +234,15 @@ impl<H: Host> Vm<H> {
                     .filter(|prototype| self.object_data(*prototype).is_some())
                     .unwrap_or(self.async_generator_proto)
             } else if p.functions[id as usize].is_generator {
-                self.iterator_proto
+                let constructor_atom = self.intern_atom("GeneratorFunction");
+                let prototype_atom = self.intern_atom("prototype");
+                self.own_property(realm, constructor_atom)
+                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
+                    .and_then(|function_prototype| {
+                        self.own_property(function_prototype, prototype_atom)
+                    })
+                    .filter(|prototype| self.object_data(*prototype).is_some())
+                    .unwrap_or(self.iterator_proto)
             } else {
                 self.realm_object_prototype(realm)
             };

@@ -108,6 +108,18 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        self.set_property_attributes(
+            generator_function_proto,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_value_named(
             async_function_proto,
             "constructor",
@@ -121,6 +133,18 @@ impl<H: Host> Vm<H> {
         let constructor_atom = self.intern_atom("constructor");
         self.set_property_attributes(
             async_generator_function_proto,
+            PropertyKey::string(constructor_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_property_attributes(
+            generator_function_proto,
             PropertyKey::string(constructor_atom),
             PropertyAttributes {
                 writable: false,
