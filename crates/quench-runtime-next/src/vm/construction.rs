@@ -236,7 +236,7 @@ impl<H: Host> Vm<H> {
             } else if p.functions[id as usize].is_generator {
                 self.iterator_proto
             } else {
-                self.object_proto
+                self.realm_object_prototype(realm)
             };
         let prototype = self
             .heap
@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
                 })
                 .unwrap_or(self.function_proto)
         } else {
-            self.function_proto
+            self.realm_function_prototype(realm)
         };
         let function = self.heap.alloc(Cell::Function {
             object: Box::new(Self::empty_object(function_object_prototype)),
@@ -367,6 +367,24 @@ impl<H: Host> Vm<H> {
     fn realm_constructor(&mut self, realm: Value, name: &str) -> Option<Value> {
         let atom = self.intern_atom(name);
         self.own_property(realm, atom)
+    }
+
+    fn realm_object_prototype(&mut self, realm: Value) -> Value {
+        let object = self.intern_atom("Object");
+        let prototype = self.intern_atom("prototype");
+        self.own_property(realm, object)
+            .and_then(|constructor| self.own_property(constructor, prototype))
+            .filter(|value| self.object_data(*value).is_some())
+            .unwrap_or(self.object_proto)
+    }
+
+    fn realm_function_prototype(&mut self, realm: Value) -> Value {
+        let function = self.intern_atom("Function");
+        let prototype = self.intern_atom("prototype");
+        self.own_property(realm, function)
+            .and_then(|constructor| self.own_property(constructor, prototype))
+            .filter(|value| self.object_data(*value).is_some())
+            .unwrap_or(self.function_proto)
     }
 
     pub(super) fn construct_value(
@@ -542,7 +560,9 @@ impl<H: Host> Vm<H> {
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
-        let realm = if self.is_function(constructor) {
+        let has_function_realm = self.is_function(constructor)
+            || matches!(self.heap.get(constructor), Some(Cell::Proxy { .. }));
+        let realm = if has_function_realm {
             self.function_realm(p, constructor)?
         } else {
             return Ok(self.object_proto);
@@ -609,6 +629,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = (match native {
+                Native::Object => Some("Object"),
                 Native::Boolean => Some("Boolean"),
                 Native::DataView => Some("DataView"),
                 Native::Date => Some("Date"),

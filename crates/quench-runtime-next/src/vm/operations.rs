@@ -415,6 +415,10 @@ impl<H: Host> Vm<H> {
                         "Function.prototype.toString called on incompatible receiver".into(),
                     ));
                 }
+                let source_atom = self.intern_atom("\0rqj:function-source");
+                if let Some(source) = self.own_property(this, source_atom) {
+                    return Ok(source);
+                }
                 Ok(self
                     .heap
                     .alloc(Cell::String("function () { [native code] }".into())))
@@ -469,30 +473,7 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "Constructor FinalizationRegistry requires 'new'".into()))
             }
             Native::FunctionCaller => {
-                let restricted = match self.heap.get(this) {
-                    Some(Cell::Function {
-                        kind: FunctionKind::Native(Native::FunctionBoundCall),
-                        ..
-                    }) => true,
-                    Some(Cell::Function {
-                        kind:
-                            FunctionKind::User(program_id, id)
-                            | FunctionKind::NumericUser(program_id, id),
-                        ..
-                    }) => self.programs.get(*program_id).is_some_and(|program| {
-                        program.functions.get(*id as usize).is_some_and(|function| {
-                            function.strict
-                                || function.is_async
-                                || function.is_generator
-                                || function.name.is_some_and(|name| {
-                                    (name as usize) < program.atoms.len()
-                                        && program.atoms[name as usize].as_bytes() == b"\0rqj:arrow"
-                                })
-                        })
-                    }),
-                    _ => false,
-                };
-                if restricted {
+                if this == self.function_proto || self.function_caller_is_restricted(this) {
                     Err(self.type_error(p, "restricted function caller access".into()))
                 } else {
                     Ok(Value::UNDEFINED)
@@ -878,6 +859,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Vec<Value>, JsError> {
         if allow_nullish && (list.is_null() || list.is_undefined()) {
             return Ok(Vec::new());
+        }
+        if !self.is_object_like(list) {
+            return Err(self.type_error(p, "argument list must be an object".into()));
         }
         let object = self.box_object(list)?;
         let length_atom = self.intern_atom("length");

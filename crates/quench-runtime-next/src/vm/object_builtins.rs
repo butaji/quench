@@ -36,11 +36,6 @@ impl<H: Host> Vm<H> {
         for name in ["caller", "arguments"] {
             let atom = self.intern_atom(name);
             self.set_named(program, self.function_proto, name, Value::UNDEFINED)?;
-            let getter = if name == "caller" {
-                self.native_value(Native::FunctionCaller)
-            } else {
-                throw_type_error
-            };
             self.set_property_attributes(
                 self.function_proto,
                 property_key::PropertyKey::string(atom),
@@ -49,7 +44,7 @@ impl<H: Host> Vm<H> {
                     enumerable: false,
                     configurable: true,
                     accessor: true,
-                    getter: Some(getter),
+                    getter: Some(throw_type_error),
                     setter: Some(throw_type_error),
                 },
             );
