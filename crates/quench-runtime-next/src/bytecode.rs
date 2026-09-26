@@ -96,6 +96,7 @@ pub(crate) enum ImmediateRole {
     ArrayIndex,
     BinaryOperator,
     UnaryOperator,
+    TemplateSiteIndex,
     JumpTarget,
     MethodSiteIndex,
     ObjectSiteIndex,
@@ -409,8 +410,8 @@ opcodes!(
     NumericAdd => READ_THROW; meaning BinaryOperator, @ NumericReturnable,
     NumericMultiply => READ_THROW; meaning BinaryOperator, @ NumericReturnable,
     InitializeThis => Effect::CONTROL,
-    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
-    LoadCachedTemplateObject => Effect::READS_HEAP,
+    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex,
+    LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex,
     DefineField => WRITE_THROW; meaning AtomIndex,
     ValidateClassHeritage => READ_THROW,
 );
