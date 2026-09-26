@@ -531,12 +531,12 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError("iterator cleanup stack underflow".into()))?;
             }
             Op::SetFunctionName => {
-                self.set_function_name(p, self.read(f, i.a()), i.atom_index())?;
+                self.set_function_name(p, self.read(f, i.register_a()), i.atom_index())?;
             }
             Op::SetFunctionNameKey => {
                 self.set_function_name_key(
-                    self.read(f, i.a()),
-                    self.read(f, i.b()),
+                    self.read(f, i.register_a()),
+                    self.read(f, i.register_b()),
                     i.function_name_prefix(),
                 );
             }
