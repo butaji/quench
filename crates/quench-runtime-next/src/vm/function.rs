@@ -3,6 +3,7 @@ use super::*;
 impl<H: Host> Vm<H> {
     pub(super) fn bind_function(
         &mut self,
+        p: &ResidualProgram,
         target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
@@ -25,6 +26,41 @@ impl<H: Host> Vm<H> {
         });
         self.set_property(env, args_atom, bound_args)?;
         let function = self.native_with_env(Native::FunctionBoundCall, env);
+        let length_atom = self.intern_atom("length");
+        let bound_count = args.len().saturating_sub(1) as f64;
+        let bound_length = if self
+            .property_attributes(target, PropertyKey::string(length_atom))
+            .is_some()
+        {
+            let target_length = self.get_property(p, target, length_atom)?;
+            match target_length.as_number() {
+                None => 0.0,
+                Some(target_length) if target_length.is_infinite() => target_length.max(0.0),
+                Some(target_length) => (target_length.trunc() - bound_count).max(0.0),
+            }
+        } else {
+            0.0
+        };
+        self.set_builtin_value_named(function, "length", Value::number(bound_length))?;
+        self.set_property_attributes(
+            function,
+            PropertyKey::string(length_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let name_atom = self.intern_atom("name");
+        let target_name = self.get_property(p, target, name_atom)?;
+        let target_name = match self.heap.get(target_name) {
+            Some(Cell::String(name)) => name.to_string(),
+            _ => String::new(),
+        };
+        self.set_builtin_function_name(function, &format!("bound {target_name}"))?;
         Ok(function)
     }
 

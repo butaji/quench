@@ -396,12 +396,39 @@ impl<H: Host> Vm<H> {
         self.global(program, "globalThis", self.realm.globals)?;
         let function = self.native_value(Native::Function);
         self.set_builtin_value_named(function, "prototype", self.function_proto)?;
+        let prototype = self.intern_atom("prototype");
+        self.set_property_attributes(
+            function,
+            PropertyKey::string(prototype),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_value_named(self.function_proto, "constructor", function)?;
         self.set_builtin_value_named(
             self.function_proto,
             "length",
             Value::number(FUNCTION_PROTOTYPE_LENGTH),
         )?;
+        let prototype_length = self.intern_atom("length");
+        self.set_property_attributes(
+            self.function_proto,
+            PropertyKey::string(prototype_length),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_function_name(self.function_proto, "")?;
         let length = self.intern_atom("length");
         self.set_builtin_value_named(function, "length", Value::number(1.0))?;
         self.set_property_attributes(

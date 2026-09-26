@@ -130,12 +130,30 @@ impl<H: Host> Vm<H> {
                 return Ok(self.truthy(result));
             }
         }
-        // Function.prototype is itself callable in JavaScript even though
-        // this VM represents it with the shared prototype object cell.
-        if !self.is_function(constructor) && constructor != self.function_proto {
-            return Err(
-                self.type_error(p, "right-hand side of 'instanceof' is not callable".into())
-            );
+        self.ordinary_has_instance(p, constructor, value)
+    }
+
+    pub(super) fn ordinary_has_instance(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        value: Value,
+    ) -> Result<bool, JsError> {
+        if !self.is_function(constructor) {
+            return Ok(false);
+        }
+        let bound_env = match self.heap.get(constructor) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionBoundCall),
+                env,
+                ..
+            }) => Some(*env),
+            _ => None,
+        };
+        if let Some(env) = bound_env {
+            let target_atom = self.intern_atom("\0rqj:bound-target");
+            let target = self.own_property(env, target_atom).unwrap_or(Value::UNDEFINED);
+            return self.ordinary_has_instance(p, target, value);
         }
         if self.object_data(value).is_none() {
             return Ok(false);
