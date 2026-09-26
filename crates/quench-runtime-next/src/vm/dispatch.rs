@@ -256,7 +256,12 @@ impl<H: Host> Vm<H> {
                 let v = self.load_name_typeof(p, i.atom_index(), i.cache_site_index())?;
                 self.write(f, i.result_register(), v);
             }
-            Op::StoreName => self.store_name(p, i.atom_index(), self.read(f, i.a()), i.c())?,
+            Op::StoreName => self.store_name(
+                p,
+                i.atom_index(),
+                self.read(f, i.register_a()),
+                i.cache_site_index(),
+            )?,
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
                 self.write(f, i.result_register(), this);
@@ -486,7 +491,7 @@ impl<H: Host> Vm<H> {
             }
             Op::DeleteName => {
                 let value = self.delete_name(p, i.atom_index())?;
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::StoreResolvedName => {
                 let strict = i
