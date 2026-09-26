@@ -9,6 +9,13 @@ const LOW_SURROGATE_END: u16 = 0xDFFF;
 
 pub(super) struct CompiledRegexp(quench_regexp::Regex);
 
+struct RegExpReplaceMatch {
+    matched: JsString,
+    position: f64,
+    captures: Vec<Value>,
+    groups: Value,
+}
+
 impl CompiledRegexp {
     pub(super) fn find_from(&self, input: &str, start: usize) -> Option<quench_regexp::Match> {
         self.0.find_from(input, start).next()
@@ -276,10 +283,241 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let input = self.heap.alloc(Cell::String(input.into()));
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(
+                p,
+                "RegExp.prototype[@@replace] receiver is not an object".into(),
+            ));
+        }
+        let input =
+            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input_value = self.heap.alloc(Cell::String(input.clone()));
         let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        self.string_replace_native(p, input, &[receiver, replacement], false)
+        let flags_atom = self.intern_atom("flags");
+        let flags_value = self.get_property(p, receiver, flags_atom)?;
+        let flags = self.to_string(p, flags_value)?;
+        let global_atom = self.intern_atom("global");
+        let global_value = self.get_property(p, receiver, global_atom)?;
+        let global = self.truthy(global_value);
+        let unicode = if global {
+            let unicode_atom = self.intern_atom("unicode");
+            let unicode_value = self.get_property(p, receiver, unicode_atom)?;
+            self.truthy(unicode_value) || flags.contains('v')
+        } else {
+            false
+        };
+        let callable = self.is_function(replacement);
+        let replacement_string = if callable {
+            None
+        } else {
+            Some(self.regexp_input_string(p, replacement)?)
+        };
+        let last_index_atom = self.intern_atom("lastIndex");
+        if global {
+            self.set_property_with_program_mode(
+                p,
+                receiver,
+                last_index_atom,
+                Value::number(0.0),
+                true,
+            )?;
+        }
+
+        let mut matches = Vec::new();
+        loop {
+            let result = self.regexp_exec_value(p, receiver, input_value)?;
+            if result.is_null() {
+                break;
+            }
+            let matched_atom = self.intern_atom("0");
+            let matched_value = self.get_property(p, result, matched_atom)?;
+            let matched = self.regexp_input_string(p, matched_value)?;
+            let position_atom = self.intern_atom("index");
+            let position_value = self.get_property(p, result, position_atom)?;
+            let position = regexp_to_integer_or_infinity(self.to_number(p, position_value)?);
+            let length_atom = self.intern_atom("length");
+            let length_value = self.get_property(p, result, length_atom)?;
+            let length = regexp_to_length(self.to_number(p, length_value)?);
+            let mut captures = Vec::new();
+            for index in 1..length {
+                let atom = self.intern_atom(&index.to_string());
+                let capture = self.get_property(p, result, atom)?;
+                if callable || capture.is_undefined() {
+                    captures.push(capture);
+                } else {
+                    let capture = self.regexp_input_string(p, capture)?;
+                    captures.push(self.heap.alloc(Cell::String(capture)));
+                }
+            }
+            let groups_atom = self.intern_atom("groups");
+            let groups = self.get_property(p, result, groups_atom)?;
+            if !callable && groups.is_null() {
+                return Err(self.type_error(p, "RegExp replace groups is null".into()));
+            }
+            let empty_match = matched.units().is_empty();
+            matches.push(RegExpReplaceMatch {
+                matched,
+                position,
+                captures,
+                groups,
+            });
+            if !global {
+                break;
+            }
+            if empty_match {
+                let last_index = self.get_property(p, receiver, last_index_atom)?;
+                let last_index = regexp_to_length(self.to_number(p, last_index)?);
+                let next = advance_string_index_units(input.units(), last_index, unicode);
+                self.set_property_with_program_mode(
+                    p,
+                    receiver,
+                    last_index_atom,
+                    Value::number(next as f64),
+                    true,
+                )?;
+            }
+        }
+
+        if matches.is_empty() {
+            return Ok(self.heap.alloc(Cell::String(input)));
+        }
+        let mut output = Vec::new();
+        let mut next_source = 0usize;
+        for matched in matches {
+            let input_units = input.units().len();
+            let position = if matched.position.is_nan() || matched.position <= 0.0 {
+                0
+            } else if matched.position.is_infinite() {
+                input_units
+            } else {
+                (matched.position.trunc() as usize).min(input_units)
+            };
+            if position < next_source {
+                continue;
+            }
+            output.extend_from_slice(&input.units()[next_source..position]);
+            let replacement_text = if callable {
+                let mut callback_args = Vec::with_capacity(matched.captures.len() + 4);
+                callback_args.push(self.heap.alloc(Cell::String(matched.matched.clone())));
+                callback_args.extend(matched.captures.iter().copied());
+                callback_args.push(Value::number(position as f64));
+                callback_args.push(input_value);
+                if !matched.groups.is_undefined() {
+                    callback_args.push(matched.groups);
+                }
+                let value = self.call_value(p, replacement, Value::UNDEFINED, &callback_args)?;
+                self.regexp_input_string(p, value)?
+            } else {
+                self.regexp_expand_replace_template(
+                    p,
+                    replacement_string
+                        .as_ref()
+                        .expect("non-callable replacement"),
+                    &input,
+                    position,
+                    &matched.matched,
+                    &matched.captures,
+                    matched.groups,
+                )?
+            };
+            output.extend_from_slice(replacement_text.units());
+            let end = position.saturating_add(matched.matched.units().len());
+            next_source = end.min(input_units);
+        }
+        output.extend_from_slice(&input.units()[next_source..]);
+        Ok(self.heap.alloc(Cell::String(JsString::from_units(&output))))
+    }
+
+    fn regexp_expand_replace_template(
+        &mut self,
+        p: &ResidualProgram,
+        template: &JsString,
+        input: &JsString,
+        match_position: usize,
+        matched: &JsString,
+        captures: &[Value],
+        groups: Value,
+    ) -> Result<JsString, JsError> {
+        let units = template.units();
+        let mut output = Vec::new();
+        let mut cursor = 0usize;
+        while cursor < units.len() {
+            if units[cursor] != u16::from(b'$') || cursor + 1 == units.len() {
+                output.push(units[cursor]);
+                cursor += 1;
+                continue;
+            }
+            match units[cursor + 1] {
+                unit if unit == u16::from(b'$') => {
+                    output.push(u16::from(b'$'));
+                    cursor += 2;
+                }
+                unit if unit == u16::from(b'&') => {
+                    output.extend_from_slice(matched.units());
+                    cursor += 2;
+                }
+                unit if unit == u16::from(b'`') => {
+                    output.extend_from_slice(&input.units()[..match_position]);
+                    cursor += 2;
+                }
+                unit if unit == u16::from(b'\'') => {
+                    let end = match_position.saturating_add(matched.units().len());
+                    output.extend_from_slice(&input.units()[end.min(input.units().len())..]);
+                    cursor += 2;
+                }
+                unit if (u16::from(b'0')..=u16::from(b'9')).contains(&unit) => {
+                    let first = usize::from(units[cursor + 1] - u16::from(b'0'));
+                    let second = units
+                        .get(cursor + 2)
+                        .filter(|unit| (u16::from(b'0')..=u16::from(b'9')).contains(unit))
+                        .map(|unit| first * 10 + usize::from(*unit - u16::from(b'0')));
+                    let selected = match (first, second) {
+                        (0, Some(index)) if index > 0 && index <= captures.len() => {
+                            Some((index, 2))
+                        }
+                        (0, _) => None,
+                        (_, Some(index)) if index <= captures.len() => Some((index, 2)),
+                        (_, _) if first <= captures.len() => Some((first, 1)),
+                        _ => None,
+                    };
+                    if let Some((capture, consumed)) = selected {
+                        let value = captures[capture - 1];
+                        if !value.is_undefined() {
+                            let value = self.regexp_input_string(p, value)?;
+                            output.extend_from_slice(value.units());
+                        }
+                        cursor += consumed + 1;
+                    } else {
+                        output.push(u16::from(b'$'));
+                        cursor += 1;
+                    }
+                }
+                unit if unit == u16::from(b'<') && !groups.is_undefined() => {
+                    let Some(end) = units[cursor + 2..]
+                        .iter()
+                        .position(|unit| *unit == u16::from(b'>'))
+                        .map(|offset| cursor + 2 + offset)
+                    else {
+                        output.push(u16::from(b'$'));
+                        cursor += 1;
+                        continue;
+                    };
+                    let name = String::from_utf16_lossy(&units[cursor + 2..end]);
+                    let atom = self.intern_atom(&name);
+                    let value = self.get_property(p, groups, atom)?;
+                    if !value.is_undefined() {
+                        let value = self.regexp_input_string(p, value)?;
+                        output.extend_from_slice(value.units());
+                    }
+                    cursor = end + 1;
+                }
+                _ => {
+                    output.push(u16::from(b'$'));
+                    cursor += 1;
+                }
+            }
+        }
+        Ok(JsString::from_units(&output))
     }
 
     pub(super) fn regexp_symbol_search(
@@ -1109,6 +1347,16 @@ pub(super) fn regexp_to_length(value: f64) -> usize {
         MAX_SAFE_INTEGER as usize
     } else {
         value.trunc().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize
+    }
+}
+
+fn regexp_to_integer_or_infinity(value: f64) -> f64 {
+    if value.is_nan() || value == 0.0 {
+        0.0
+    } else if value.is_infinite() {
+        value
+    } else {
+        value.trunc()
     }
 }
 
