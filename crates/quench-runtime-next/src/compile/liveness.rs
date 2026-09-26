@@ -120,8 +120,8 @@ fn uses(
         | Op::RequireObjectCoercible
         | Op::RequireIteratorResult => bit(instruction.register_b()),
         Op::IteratorCleanupPush => bit(instruction.register_a()) | bit(instruction.register_b()),
-        Op::SetFunctionName => bit(instruction.a()),
-        Op::SetFunctionNameKey => bit(instruction.a()) | bit(instruction.b()),
+        Op::SetFunctionName => bit(instruction.register_a()),
+        Op::SetFunctionNameKey => bit(instruction.register_a()) | bit(instruction.register_b()),
         Op::GetField => field_base(instruction, fields),
         Op::CheckPrivate => bit(instruction.register_a()),
         Op::PrivateIn => bit(instruction.register_b()),
