@@ -153,6 +153,12 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn unary_operator(self) -> u32 {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::UnaryOperator);
+                self.imm()
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn atom_index(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::AtomIndex);
                 self.imm()
