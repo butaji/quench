@@ -443,6 +443,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        self.set_builtin_function_name(function, "Function")?;
         self.global(program, "Function", function)?;
         let symbol = self.native_value(Native::Symbol);
         let symbol_prototype = self.object();
@@ -641,6 +642,7 @@ impl<H: Host> Vm<H> {
             return Ok(self.native_with_env(Native::FunctionReturnThis, function_realm));
         }
         let parameters = argument_strings.join(",");
+        let parser_parameters = format!("{parameters}\n");
         let source_name = format!("<Function:{}>", self.programs.len());
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
@@ -652,7 +654,7 @@ impl<H: Host> Vm<H> {
             _ => crate::compile::DynamicFunctionKind::Ordinary,
         };
         let residual = crate::Engine::specialize_dynamic_function_with_kind(
-            &parameters,
+            &parser_parameters,
             source,
             &source_name,
             &atom_prefix,
@@ -691,7 +693,25 @@ impl<H: Host> Vm<H> {
             self.closure_in_realm(&residual, function, Value::NULL, function_realm)
         })();
         self.active_program = active_program;
-        result
+        let function = result?;
+        let function_source = match kind {
+            crate::compile::DynamicFunctionKind::Ordinary => {
+                format!("function anonymous({parameters}\n) {{\n{source}\n}}")
+            }
+            crate::compile::DynamicFunctionKind::Async => {
+                format!("async function anonymous({parameters}\n) {{\n{source}\n}}")
+            }
+            crate::compile::DynamicFunctionKind::Generator => {
+                format!("function* anonymous({parameters}\n) {{\n{source}\n}}")
+            }
+            crate::compile::DynamicFunctionKind::AsyncGenerator => {
+                format!("async function* anonymous({parameters}\n) {{\n{source}\n}}")
+            }
+        };
+        let source_atom = self.intern_atom("\0rqj:function-source");
+        let source_value = self.heap.alloc(Cell::String(function_source.into()));
+        self.set_property(function, source_atom, source_value)?;
+        Ok(function)
     }
 
     pub(super) fn dynamic_class_native(&mut self, base: Value) -> Result<Value, JsError> {
@@ -861,6 +881,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(object_constructor, "Object")?;
         self.set_builtin_value_named(object_constructor, "prototype", object_prototype)?;
         self.set_builtin_value_named(object_prototype, "constructor", object_constructor)?;
+        self.install_function_prototype_for_realm(global, object_prototype, function)?;
         let object_name = self.intern_atom("Object");
         self.set_property(global, object_name, object_constructor)?;
         self.set_property_attributes(
@@ -1148,6 +1169,124 @@ impl<H: Host> Vm<H> {
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
         Ok(realm)
+    }
+
+    fn install_function_prototype_for_realm(
+        &mut self,
+        global: Value,
+        object_prototype: Value,
+        constructor: Value,
+    ) -> Result<(), JsError> {
+        self.set_builtin_function_name(constructor, "Function")?;
+        self.set_builtin_value_named(constructor, "length", Value::number(1.0))?;
+        let constructor_length = self.intern_atom("length");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(constructor_length),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let prototype = self.heap.alloc(Cell::Function {
+            object: Box::new(Self::empty_object(object_prototype)),
+            kind: FunctionKind::Native(Native::FunctionPrototype),
+            env: Value::NULL,
+            realm: global,
+        });
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        self.set_builtin_value_named(prototype, "length", Value::number(0.0))?;
+        let length = self.intern_atom("length");
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(length),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_function_name(prototype, "")?;
+        for (name, native) in [
+            ("call", Native::FunctionCall),
+            ("apply", Native::FunctionApply),
+            ("bind", Native::FunctionBind),
+            ("toString", Native::FunctionToString),
+        ] {
+            let method = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(prototype, name, method)?;
+        }
+        if let Some(symbol) = self.well_known_symbols.get("hasInstance").copied() {
+            let method =
+                self.native_with_realm(Native::FunctionPrototypeHasInstance, global, global);
+            self.set_builtin_function_name(method, "[Symbol.hasInstance]")?;
+            self.set_symbol_property(prototype, symbol, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        let throw_type_error = self.native_value(Native::ThrowTypeError);
+        for key in ["caller", "arguments"] {
+            let atom = self.intern_atom(key);
+            self.set_property(prototype, atom, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(throw_type_error),
+                    setter: Some(throw_type_error),
+                },
+            );
+        }
+        let name = self.intern_atom("Function");
+        self.set_property_attributes(
+            global,
+            PropertyKey::string(name),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
     }
 
     pub(super) fn install_errors(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
