@@ -400,23 +400,23 @@ impl ResidualProgram {
                             "function {index} initialized this operand is invalid"
                         ));
                     }
-                    Op::GetIterator
-                    | Op::GetAsyncIterator
-                    | Op::IteratorClose
-                    | Op::SpreadToArray
-                    | Op::RequireObjectCoercible
-                        if !register(instruction.a()) =>
+                    Op::GetIterator | Op::GetAsyncIterator | Op::SpreadToArray
+                        if !register(instruction.result_register())
+                            || !register(instruction.register_b()) =>
                     {
-                        return Err(format!("function {index} result register is invalid"));
+                        return Err(format!("function {index} iterator register is invalid"));
                     }
                     Op::Return | Op::Throw if !register(instruction.register_a()) => {
                         return Err(format!("function {index} result register is invalid"));
                     }
-                    Op::RequireObjectCoercible if !register(instruction.b()) => {
-                        return Err(format!("function {index} object operand is invalid"));
+                    Op::IteratorClose | Op::RequireObjectCoercible | Op::RequireIteratorResult
+                        if !register(instruction.register_b()) =>
+                    {
+                        return Err(format!("function {index} iterator operand is invalid"));
                     }
                     Op::IteratorCleanupPush
-                        if !register(instruction.a()) || !register(instruction.b()) =>
+                        if !register(instruction.register_a())
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!(
                             "function {index} iterator cleanup register is invalid"

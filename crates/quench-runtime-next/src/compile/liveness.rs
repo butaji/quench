@@ -118,8 +118,8 @@ fn uses(
         | Op::IteratorClose
         | Op::SpreadToArray
         | Op::RequireObjectCoercible
-        | Op::RequireIteratorResult => bit(instruction.b()),
-        Op::IteratorCleanupPush => bit(instruction.a()) | bit(instruction.b()),
+        | Op::RequireIteratorResult => bit(instruction.register_b()),
+        Op::IteratorCleanupPush => bit(instruction.register_a()) | bit(instruction.register_b()),
         Op::SetFunctionName => bit(instruction.a()),
         Op::SetFunctionNameKey => bit(instruction.a()) | bit(instruction.b()),
         Op::GetField => field_base(instruction, fields),
