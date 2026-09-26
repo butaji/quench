@@ -440,29 +440,51 @@ impl<H: Host> Vm<H> {
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise job".into()))?;
         if !self.is_function(reaction.handler) {
-            return self
-                .promise_settle(
-                    p,
-                    reaction.next,
-                    if reaction.rejected {
-                        PromiseState::Rejected
-                    } else {
-                        PromiseState::Fulfilled
-                    },
-                    value,
-                )
-                .map(|_| Value::UNDEFINED);
-        }
-        match self.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
-            Ok(result) => self.promise_resolve_value(p, reaction.next, result),
-            Err(error) => self.promise_settle(
+            self.settle_reaction(
                 p,
                 reaction.next,
+                if reaction.rejected {
+                    PromiseState::Rejected
+                } else {
+                    PromiseState::Fulfilled
+                },
+                value,
+            )?;
+            return Ok(Value::UNDEFINED);
+        }
+        let (state, result) = match self.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
+            Ok(result) => (PromiseState::Fulfilled, result),
+            Err(error) => (
                 PromiseState::Rejected,
                 error.thrown_value().unwrap_or(Value::UNDEFINED),
             ),
+        };
+        self.settle_reaction(p, reaction.next, state, result)?;
+        Ok(Value::UNDEFINED)
+    }
+
+    fn settle_reaction(
+        &mut self,
+        p: &ResidualProgram,
+        next: Value,
+        state: PromiseState,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let capability = self.promise.reaction_capabilities.remove(&next);
+        if let Some((resolve, reject)) = capability {
+            let settler = if state == PromiseState::Fulfilled {
+                resolve
+            } else {
+                reject
+            };
+            self.call_value(p, settler, Value::UNDEFINED, &[value])?;
+            return Ok(());
         }
-        .map(|_| Value::UNDEFINED)
+        if state == PromiseState::Fulfilled {
+            self.promise_resolve_value(p, next, value)
+        } else {
+            self.promise_settle(p, next, state, value)
+        }
     }
 
     pub(super) fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
@@ -488,7 +510,11 @@ impl<H: Host> Vm<H> {
         Ok(Value::UNDEFINED)
     }
 
-    pub(super) fn promise_finally_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
+    pub(super) fn promise_finally_job(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let job = *self
             .promise
             .active_native
@@ -499,6 +525,7 @@ impl<H: Host> Vm<H> {
             .finally_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise finally job".into()))?;
+        let original = args.first().copied().unwrap_or(reaction.value);
         match self.call_value(p, reaction.handler, Value::UNDEFINED, &[]) {
             Ok(cleanup) => {
                 let cleanup = self.promise_for_value(p, cleanup)?;
@@ -506,7 +533,7 @@ impl<H: Host> Vm<H> {
                     p,
                     reaction.next,
                     reaction.rejected,
-                    reaction.value,
+                    original,
                     cleanup,
                 );
             }
@@ -514,7 +541,7 @@ impl<H: Host> Vm<H> {
                 let reason = error
                     .thrown_value()
                     .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                self.promise_settle(p, reaction.next, PromiseState::Rejected, reason)?;
+                self.settle_reaction(p, reaction.next, PromiseState::Rejected, reason)?;
             }
         }
         Ok(Value::UNDEFINED)
@@ -536,16 +563,26 @@ impl<H: Host> Vm<H> {
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise finally continuation".into()))?;
         if continuation.cleanup_rejected {
-            self.promise_settle(p, continuation.next, PromiseState::Rejected, cleanup_value)?;
+            self.settle_reaction(
+                p,
+                continuation.next,
+                PromiseState::Rejected,
+                cleanup_value,
+            )?;
         } else if continuation.original_rejected {
-            self.promise_settle(
+            self.settle_reaction(
                 p,
                 continuation.next,
                 PromiseState::Rejected,
                 continuation.value,
             )?;
         } else {
-            self.promise_resolve_value(p, continuation.next, continuation.value)?;
+            self.settle_reaction(
+                p,
+                continuation.next,
+                PromiseState::Fulfilled,
+                continuation.value,
+            )?;
         }
         Ok(Value::UNDEFINED)
     }
