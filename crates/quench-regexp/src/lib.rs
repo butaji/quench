@@ -214,16 +214,21 @@ struct State {
 // branch. Memory is finite for a finite input/pattern (though the fallback can
 // still be exponentially large); it is no longer silently result-changing.
 const MAX_BACKTRACK_STATES: usize = usize::MAX;
+const ASCII_MAX: u16 = 0x7F;
 
 pub struct Regex {
     program: Expr,
     flags: Flags,
     capture_names: Vec<String>,
     has_named_groups: bool,
+    compiled_dot_requires_cr_guard: bool,
     /// The automata backend is a guarded fast path for ASCII patterns. Regex
     /// syntax it cannot represent (backreferences/lookaround and other
     /// ECMAScript-only constructs) continues through our complete matcher.
     compiled: Option<regex::bytes::Regex>,
+    /// Test-only matching may use regular syntax with captures whose reported
+    /// values differ from ECMAScript; the boolean and end offset remain exact.
+    compiled_test: Option<regex::bytes::Regex>,
     /// Reusable capture workspace for the compiled backend. Creating
     /// `CaptureLocations` for every `exec`/`replace` call allocates a fresh
     /// vector on the fixture's hot path; the regex object is already cached
@@ -262,20 +267,15 @@ impl Regex {
         // mode modifiers).  Keep compilation behind a source-shape guard so
         // those patterns use the repository matcher instead of silently
         // changing observable match results.
-        let compiled = (compiled_source_is_safe(source)
-            && !flags.unicode_sets
+        let backend_enabled = !flags.unicode_sets
             && !flags.unicode
-            && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none())
-        .then(|| {
-            let mut builder = regex::bytes::RegexBuilder::new(source);
-            builder
-                .case_insensitive(flags.ignore_case)
-                .multi_line(flags.multiline)
-                .dot_matches_new_line(flags.dot_all)
-                .unicode(false);
-            builder.build().ok()
-        })
-        .flatten();
+            && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none();
+        let compiled = (backend_enabled && compiled_source_is_safe(source))
+            .then(|| compile_byte_regex(source, flags))
+            .flatten();
+        let compiled_test = (backend_enabled && compiled_test_source_is_safe(source))
+            .then(|| compile_byte_regex(source, flags))
+            .flatten();
         let compiled_locations = compiled
             .as_ref()
             .map(regex::bytes::Regex::capture_locations);
@@ -284,7 +284,9 @@ impl Regex {
             flags,
             capture_names: lowering.names,
             has_named_groups,
+            compiled_dot_requires_cr_guard: !flags.dot_all && has_bare_dot(source),
             compiled,
+            compiled_test,
             compiled_locations: RefCell::new(compiled_locations),
         })
     }
@@ -299,7 +301,9 @@ impl Regex {
     }
 
     pub fn find_from(&self, text: &str, start: usize) -> Matches {
-        if text.is_ascii() {
+        if text.is_ascii()
+            && (!self.compiled_dot_requires_cr_guard || !text.as_bytes().contains(&b'\r'))
+        {
             if let Some(compiled) = &self.compiled {
                 // Most replace/test patterns have no captures. Use the
                 // allocation-free search API for those, avoiding both a
@@ -338,6 +342,27 @@ impl Regex {
     }
 
     pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
+        if input.iter().all(|unit| *unit <= ASCII_MAX)
+            && (!self.compiled_dot_requires_cr_guard || !input.contains(&u16::from(b'\r')))
+        {
+            if let Some(compiled) = &self.compiled {
+                let bytes = input.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
+                let mut workspace = self.compiled_locations.borrow_mut();
+                let locations = workspace
+                    .as_mut()
+                    .expect("compiled regexp has capture workspace");
+                let item = compiled
+                    .captures_read_at(locations, &bytes, start)
+                    .map(|matched| Match {
+                        range: matched.range(),
+                        captures: (1..locations.len())
+                            .map(|index| locations.get(index).map(|(start, end)| start..end))
+                            .collect(),
+                        named: self.names_for_match(),
+                    });
+                return Matches { item };
+            }
+        }
         let units = units_from_utf16(input, self.flags.unicode || self.flags.unicode_sets);
         let first = units
             .iter()
@@ -346,6 +371,22 @@ impl Regex {
         Matches {
             item: self.find_units(&units, first),
         }
+    }
+
+    pub fn find_range_from_utf16(&self, input: &[u16], start: usize) -> Option<Range<usize>> {
+        if input.iter().all(|unit| *unit <= ASCII_MAX)
+            && (!self.compiled_dot_requires_cr_guard || !input.contains(&u16::from(b'\r')))
+        {
+            if let Some(compiled) = &self.compiled_test {
+                let bytes = input.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
+                return compiled
+                    .find_at(&bytes, start)
+                    .map(|matched| matched.range());
+            }
+        }
+        self.find_from_utf16(input, start)
+            .next()
+            .map(|matched| matched.range)
     }
 
     fn find_units(&self, input: &[Unit], first: usize) -> Option<Match> {
@@ -509,6 +550,33 @@ fn class_contains_invalid_string_property(class: &ast::CharacterClass<'_>, flags
 }
 
 fn compiled_source_is_safe(source: &str) -> bool {
+    compiled_source_syntax_is_safe(source) && !source.contains(")?") && !source.contains("??")
+}
+
+fn compiled_test_source_is_safe(source: &str) -> bool {
+    compiled_source_syntax_is_safe(source) && !has_backreference(source)
+}
+
+fn has_bare_dot(source: &str) -> bool {
+    let mut escaped = false;
+    let mut in_class = false;
+    for byte in source.bytes() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match byte {
+            b'\\' => escaped = true,
+            b'[' if !in_class => in_class = true,
+            b']' => in_class = false,
+            b'.' if !in_class => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn compiled_source_syntax_is_safe(source: &str) -> bool {
     let mut escaped = false;
     for byte in source.bytes() {
         if escaped {
@@ -566,10 +634,7 @@ fn compiled_source_is_safe(source: &str) -> bool {
     if escaped {
         return false;
     }
-    // Inline modifiers/lookaround are outside the byte backend's semantic
-    // contract.  Optional captures and nested nullable quantifiers also have
-    // ECMAScript capture rules that differ from the backend.
-    if source.contains("(?") || source.contains(")?") || source.contains("??") {
+    if source.contains("(?") {
         return false;
     }
     // A bare dot is cheap to match in the VM, while the byte backend treats
@@ -579,6 +644,32 @@ fn compiled_source_is_safe(source: &str) -> bool {
         return false;
     }
     true
+}
+
+fn has_backreference(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'\\' {
+            if matches!(bytes[index + 1], b'0'..=b'9' | b'k') {
+                return true;
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    false
+}
+
+fn compile_byte_regex(source: &str, flags: Flags) -> Option<regex::bytes::Regex> {
+    let mut builder = regex::bytes::RegexBuilder::new(source);
+    builder
+        .case_insensitive(flags.ignore_case)
+        .multi_line(flags.multiline)
+        .dot_matches_new_line(flags.dot_all)
+        .unicode(false);
+    builder.build().ok()
 }
 
 fn flag_text(flags: Flags) -> String {

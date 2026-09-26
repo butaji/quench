@@ -35,6 +35,14 @@ impl CompiledRegexp {
         self.0.find_from_utf16(input, start).next()
     }
 
+    pub(super) fn find_range_from_utf16(
+        &self,
+        input: &[u16],
+        start: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        self.0.find_range_from_utf16(input, start)
+    }
+
     pub(super) fn find_iter<'a>(
         &'a self,
         input: &'a str,
@@ -1198,6 +1206,33 @@ impl<H: Host> Vm<H> {
                 Value::NULL
             });
         }
+        if native == Native::RegExpTest {
+            let matched = regex
+                .find_range_from_utf16(input.units(), start)
+                .filter(|matched| !sticky || matched.start == start);
+            let Some(matched) = matched else {
+                if stateful {
+                    self.set_property_with_program_mode(
+                        p,
+                        this,
+                        last_index_atom,
+                        Value::number(0.0),
+                        true,
+                    )?;
+                }
+                return Ok(Value::FALSE);
+            };
+            if stateful {
+                self.set_property_with_program_mode(
+                    p,
+                    this,
+                    last_index_atom,
+                    Value::number(matched.end as f64),
+                    true,
+                )?;
+            }
+            return Ok(Value::TRUE);
+        }
         let matched = regex.find_from_utf16(input.units(), start);
         let matched = matched.filter(|matched| !sticky || matched.range.start == start);
         let Some(matched) = matched else {
@@ -1224,9 +1259,6 @@ impl<H: Host> Vm<H> {
                 Value::number(matched.range.end as f64),
                 true,
             )?;
-        }
-        if native == Native::RegExpTest {
-            return Ok(Value::TRUE);
         }
         let values = std::iter::once(Some(matched.range.clone()))
             .chain(matched.captures.iter().cloned())
