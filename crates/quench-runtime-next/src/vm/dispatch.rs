@@ -274,7 +274,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), import_meta);
             }
             Op::InitializeThis => {
-                let value = self.read(f, i.a());
+                let value = self.read(f, i.register_a());
                 self.initialize_this_binding(f, value);
             }
             Op::CacheTemplateObject => {

@@ -403,7 +403,7 @@ impl ResidualProgram {
                             "function {index} copy-data-properties operand is invalid"
                         ));
                     }
-                    Op::InitializeThis if !register(instruction.a()) => {
+                    Op::InitializeThis if !register(instruction.register_a()) => {
                         return Err(format!(
                             "function {index} initialized this operand is invalid"
                         ));

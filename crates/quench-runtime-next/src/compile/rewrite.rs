@@ -372,7 +372,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
                 || instruction.register_c() == register
         }
         Op::SetThisField => instruction.register_a() == register,
-        Op::InitializeThis => instruction.a() == register,
+        Op::InitializeThis => instruction.register_a() == register,
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
             instruction.a() == register

@@ -151,7 +151,7 @@ fn uses(
                 | bit(instruction.register_c())
         }
         Op::SetThisField => bit(instruction.register_a()),
-        Op::InitializeThis => bit(instruction.a()),
+        Op::InitializeThis => bit(instruction.register_a()),
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
             bit(instruction.a())
