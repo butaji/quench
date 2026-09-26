@@ -528,9 +528,9 @@ impl ResidualProgram {
                         return Err(format!("function {index} branch operand is invalid"));
                     }
                     Op::Call | Op::CallDirectEvalArray
-                        if !destination(instruction.a())
-                            || !register(instruction.b())
-                            || !register(instruction.c())
+                        if !destination(instruction.result_register())
+                            || !register(instruction.register_b())
+                            || !register(instruction.register_c())
                             || !register_window_in_bounds(
                                 u16::from(instruction.call_window().base),
                                 u32::from(instruction.call_window().count),
@@ -545,7 +545,7 @@ impl ResidualProgram {
                         ));
                     }
                     Op::CallKnown
-                        if !destination(instruction.a())
+                        if !destination(instruction.result_register())
                             || instruction.known_function_index() as usize
                                 >= self.functions.len()
                             || !register_window_in_bounds(
@@ -557,7 +557,7 @@ impl ResidualProgram {
                         return Err(format!("function {index} known call is invalid"));
                     }
                     Op::CallMethod | Op::CallThisMethod
-                        if !destination(instruction.a())
+                        if !destination(instruction.result_register())
                             || instruction.method_site_index() >= self.method_sites.len() =>
                     {
                         return Err(format!("function {index} method call is invalid"));
