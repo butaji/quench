@@ -112,6 +112,7 @@ fusion_recipes! {
 
 pub(super) fn apply(
     function: &mut BcFunction,
+    methods: &[MethodSiteSpec],
     field_sites: &mut Vec<FieldSite>,
     superinstructions: &mut Vec<Superinstruction>,
 ) {
@@ -120,7 +121,7 @@ pub(super) fn apply(
     while rewrite_super_window(function, superinstructions) {
         changed_passes += 1;
     }
-    while rewrite_once(function, field_sites) {
+    while rewrite_once(function, methods, field_sites, superinstructions) {
         changed_passes += 1;
     }
     if std::env::var_os("RQJ_REWRITE_STATS").is_some() {
@@ -246,7 +247,12 @@ pub(super) fn protected_positions(
     protected
 }
 
-fn rewrite_once(function: &mut BcFunction, field_sites: &mut Vec<FieldSite>) -> bool {
+fn rewrite_once(
+    function: &mut BcFunction,
+    methods: &[MethodSiteSpec],
+    field_sites: &mut Vec<FieldSite>,
+    superinstructions: &[Superinstruction],
+) -> bool {
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(&old, &function.handlers, function.parameter_end_pc);
     let mut code = Vec::with_capacity(old.len());
@@ -277,7 +283,13 @@ fn rewrite_once(function: &mut BcFunction, field_sites: &mut Vec<FieldSite>) -> 
                             | Op::Unary
                             | Op::GetField
                     )
-                    || register_dead_in_suffix(old[index].a(), &old[index + 2..], field_sites)
+                    || register_dead_in_suffix(
+                        old[index].result_register(),
+                        &old[index + 2..],
+                        methods,
+                        field_sites,
+                        superinstructions,
+                    )
             })
             .and_then(|second| {
                 let first = old[index];
@@ -307,132 +319,20 @@ fn rewrite_once(function: &mut BcFunction, field_sites: &mut Vec<FieldSite>) -> 
     changed
 }
 
-fn register_dead_in_suffix(register: Register, suffix: &[Instr], fields: &[FieldSite]) -> bool {
-    suffix
-        .iter()
-        .all(|instruction| !reads_register(*instruction, register, fields))
-}
-
-fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) -> bool {
-    let operand = |raw| match Operand(raw).kind() {
-        Some(crate::bytecode::OperandKind::Register) => {
-            Operand(raw).register_index() == Some(register)
-        }
-        Some(crate::bytecode::OperandKind::Field) => {
-            fields
-                .get(usize::from(Operand(raw).payload()))
-                .and_then(|site| site.base.register_index())
-                == Some(register)
-        }
-        _ => false,
-    };
-    let range = |base: Register, count: u16| register >= base && register < base + count;
-    match instruction.op() {
-        Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture => instruction.a() == register,
-        Op::StoreName => instruction.register_a() == register,
-        Op::StoreResolvedName => {
-            instruction.register_a() == register || instruction.register_b() == register
-        }
-        Op::SetFunctionNameKey => {
-            instruction.register_a() == register || instruction.register_b() == register
-        }
-        Op::SetFunctionName => instruction.register_a() == register,
-        Op::MarkPrivateName => {
-            instruction.register_b() == register || instruction.register_c() == register
-        }
-        Op::ResolveName | Op::DeleteName => false,
-        Op::LoadResolvedName => instruction.register_b() == register,
-        Op::LoadImportMeta => false,
-        Op::GetIterator
-        | Op::GetAsyncIterator
-        | Op::IteratorClose
-        | Op::SpreadToArray
-        | Op::RequireObjectCoercible
-        | Op::RequireIteratorResult => instruction.register_b() == register,
-        Op::IteratorCleanupPush => {
-            instruction.register_a() == register || instruction.register_b() == register
-        }
-        Op::GetField => match instruction.field_lookup() {
-            crate::bytecode::FieldLookup::Site(index) => {
-                fields
-                    .get(index)
-                    .and_then(|site| site.base.register_index())
-                    == Some(register)
-            }
-            crate::bytecode::FieldLookup::Atom { base, .. } => {
-                base.register_index() == Some(register)
-            }
-        },
-        Op::CheckPrivate => instruction.register_a() == register,
-        Op::PrivateIn => instruction.register_b() == register,
-        Op::GetIndex => operand(instruction.operand_b().0) || operand(instruction.operand_c().0),
-        Op::MakeObject2 => {
-            instruction.register_b() == register || instruction.register_c() == register
-        }
-        Op::CopyDataProperties => {
-            instruction.register_a() == register
-                || instruction.register_b() == register
-                || instruction.register_c() == register
-        }
-        Op::ToPropertyKey | Op::ToNumeric => instruction.register_b() == register,
-        Op::SuperConstArrayObject2 => true,
-        Op::SetField | Op::DefineField => {
-            instruction.register_a() == register || instruction.register_b() == register
-        }
-        Op::DefineComputedField => {
-            instruction.register_a() == register
-                || instruction.register_b() == register
-                || instruction.register_c() == register
-        }
-        Op::SetThisField => instruction.register_a() == register,
-        Op::InitializeThis => instruction.register_a() == register,
-        Op::ValidateClassHeritage => instruction.register_a() == register,
-        Op::CacheTemplateObject => instruction.register_a() == register,
-        Op::Await | Op::Yield => instruction.register_b() == register,
-        Op::YieldStar => {
-            let (state, next_method) = instruction.register_pair();
-            instruction.result_register() == register
-                || instruction.register_b() == register
-                || instruction.register_c() == register
-                || state == register
-                || next_method == register
-        }
-        Op::SetIndex => {
-            instruction.register_a() == register
-                || instruction.register_b() == register
-                || instruction.register_c() == register
-        }
-        Op::DefineArrayElement => {
-            instruction.register_a() == register || instruction.register_b() == register
-        }
-        Op::Binary | Op::JumpBinaryFalse => {
-            operand(instruction.operand_b().0) || operand(instruction.operand_c().0)
-        }
-        Op::IncDec | Op::Unary | Op::Move => instruction.register_b() == register,
-        Op::Delete => instruction.register_b() == register || instruction.register_c() == register,
-        Op::JumpFalse | Op::Return | Op::Throw => instruction.register_a() == register,
-        Op::Call | Op::CallDirectEvalArray => {
-            let window = instruction.call_window();
-            instruction.register_b() == register
-                || instruction.register_c() == register
-                || range(window.base, window.count)
-        }
-        Op::CallKnown => {
-            let window = instruction.call_window();
-            range(window.base, window.count)
-        }
-        Op::CallMethod | Op::CallThisMethod => true,
-        Op::Construct => {
-            let arguments = match instruction.construct_arguments() {
-                crate::bytecode::ConstructArguments::Registers(window) => {
-                    range(window.base, window.count)
-                }
-                crate::bytecode::ConstructArguments::Array(array) => array == register,
-            };
-            instruction.register_b() == register || arguments
-        }
-        _ => false,
+fn register_dead_in_suffix(
+    register: Register,
+    suffix: &[Instr],
+    methods: &[MethodSiteSpec],
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> bool {
+    if u32::from(register) >= u64::BITS {
+        return false;
     }
+    suffix.iter().all(|instruction| {
+        let uses = liveness::uses(*instruction, methods, fields, superinstructions);
+        uses & (1 << register) == 0
+    })
 }
 
 fn apply_rule(

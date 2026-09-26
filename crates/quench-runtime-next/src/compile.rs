@@ -1509,6 +1509,7 @@ impl<'a> Compiler<'a> {
             binding_time::apply(&mut functions);
             Self::apply_rewrites(
                 &mut functions,
+                &self.method_sites,
                 &mut self.field_sites,
                 &mut self.superinstructions,
             );
@@ -2047,12 +2048,13 @@ impl<'a> Compiler<'a> {
 
     fn apply_rewrites(
         functions: &mut [BcFunction],
+        method_sites: &[MethodSiteSpec],
         field_sites: &mut Vec<FieldSite>,
         superinstructions: &mut Vec<Superinstruction>,
     ) {
         for function in functions {
             if function.wide.is_empty() {
-                rewrite::apply(function, field_sites, superinstructions);
+                rewrite::apply(function, method_sites, field_sites, superinstructions);
             }
         }
     }
