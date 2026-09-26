@@ -1,5 +1,5 @@
 use super::*;
-use crate::bytecode::{REGISTER_MASK, Superinstruction};
+use crate::bytecode::{ImmediateRole, REGISTER_MASK, Superinstruction};
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -226,10 +226,7 @@ pub(super) fn protected_positions(
 ) -> Vec<bool> {
     let mut protected = vec![false; code.len() + 1];
     for instruction in code {
-        if matches!(
-            instruction.op(),
-            Op::Jump | Op::JumpFalse | Op::JumpBinaryFalse
-        ) {
+        if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
             protected[instruction.jump_target() as usize] = true;
         }
     }
@@ -359,10 +356,7 @@ pub(super) fn relocate(
     parameter_end_pc: &mut u32,
 ) {
     for instruction in code {
-        if matches!(
-            instruction.op(),
-            Op::Jump | Op::JumpFalse | Op::JumpBinaryFalse
-        ) {
+        if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
             instruction.set_imm(map[instruction.jump_target() as usize] as u32);
         }
     }
