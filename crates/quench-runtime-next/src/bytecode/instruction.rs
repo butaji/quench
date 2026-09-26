@@ -1,6 +1,6 @@
 use super::{
-    Effect, FieldLayout, ImmediateLayout, InstructionField, Op, REGISTER_MASK, RETURN_REGISTER,
-    Register, ResultLayout, SET_THIS_REGISTER,
+    Effect, FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Op, REGISTER_MASK,
+    RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
 };
 
 const PACKED_PAIR_LOW_BITS: u32 = 8;
@@ -111,6 +111,12 @@ macro_rules! layout_accessors {
                     FieldLayout::FunctionIndex
                 );
                 self.b()
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn method_site_index(self) -> usize {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::MethodSiteIndex);
+                self.imm() as usize
             }
 
             #[allow(dead_code)]

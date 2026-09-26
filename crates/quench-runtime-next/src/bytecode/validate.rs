@@ -371,7 +371,7 @@ impl ResidualProgram {
                     }
                     Op::CallMethod | Op::CallThisMethod
                         if !destination(instruction.a())
-                            || instruction.imm() as usize >= self.method_sites.len() =>
+                            || instruction.method_site_index() >= self.method_sites.len() =>
                     {
                         return Err(format!("function {index} method call is invalid"));
                     }
