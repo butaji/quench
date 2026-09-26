@@ -165,11 +165,6 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let default_prototype = if function.is_async {
-            self.async_generator_proto
-        } else {
-            self.generator_proto
-        };
         let function_object = self
             .function_values
             .get(&(self.active_program, id))
@@ -179,7 +174,24 @@ impl<H: Host> Vm<H> {
                     .find(|(closure_env, _)| *closure_env == parent)
                     .map(|(_, function)| *function)
             });
-        let realm = self.realm.globals;
+        let realm = function_object
+            .map(|function| self.function_realm(p, function))
+            .transpose()?
+            .unwrap_or(self.realm.globals);
+        let realm_prototypes = self.iterator_realm_prototypes.get(&realm).copied();
+        let default_prototype = realm_prototypes
+            .map(|prototypes| {
+                if function.is_async {
+                    prototypes.async_generator
+                } else {
+                    prototypes.generator
+                }
+            })
+            .unwrap_or(if function.is_async {
+                self.async_generator_proto
+            } else {
+                self.generator_proto
+            });
         let prototype_atom = self.intern_atom("prototype");
         let generator_prototype = function_object
             .and_then(|function| self.own_property(function, prototype_atom))

@@ -374,6 +374,8 @@ pub struct Vm<H> {
 struct IteratorRealmPrototypes {
     helper: Value,
     wrapper: Value,
+    generator: Value,
+    async_generator: Value,
 }
 impl<H: Host> Vm<H> {
     pub fn root(&mut self, value: Value) -> RootId {
