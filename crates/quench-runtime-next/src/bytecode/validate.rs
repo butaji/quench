@@ -165,9 +165,11 @@ impl ResidualProgram {
                     }
                     Op::LoadResolvedName
                         if !atom(instruction.atom_index())
-                            || !register(instruction.a())
-                            || !register(instruction.b())
-                            || instruction.c() > 1 =>
+                            || !register(instruction.register_b())
+                            || instruction
+                                .boolean_field(crate::bytecode::InstructionField::C)
+                                .is_none()
+                            || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} resolved name site is invalid"));
                     }
@@ -181,16 +183,21 @@ impl ResidualProgram {
                     }
                     Op::ResolveName
                         if !atom(instruction.atom_index())
-                            || !destination(instruction.a())
-                            || instruction.b() > 1 =>
+                            || !destination(instruction.result_register())
+                            || instruction
+                                .boolean_field(crate::bytecode::InstructionField::B)
+                                .is_none()
+                            || !cache(instruction.cache_site_index()) =>
                     {
                         return Err(format!("function {index} name resolution is invalid"));
                     }
                     Op::StoreResolvedName
                         if !atom(instruction.atom_index())
-                            || !register(instruction.a())
-                            || !register(instruction.b())
-                            || instruction.c() > 1 =>
+                            || !register(instruction.register_a())
+                            || !register(instruction.register_b())
+                            || instruction
+                                .boolean_field(crate::bytecode::InstructionField::C)
+                                .is_none() =>
                     {
                         return Err(format!("function {index} resolved name store is invalid"));
                     }
