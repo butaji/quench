@@ -156,6 +156,16 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn boolean_flag(self) -> Option<bool> {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::BooleanFlag);
+                match self.imm() {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                }
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn field_lookup(self) -> FieldLookup {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::FieldLookup);
                 if self.b() == FieldBase::NESTED {

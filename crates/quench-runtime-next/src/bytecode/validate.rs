@@ -316,7 +316,8 @@ impl ResidualProgram {
                     Op::Delete
                         if !register(instruction.a())
                             || !register(instruction.b())
-                            || !register(instruction.c()) =>
+                            || !register(instruction.c())
+                            || instruction.boolean_flag().is_none() =>
                     {
                         return Err(format!("function {index} delete operand is invalid"));
                     }
