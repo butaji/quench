@@ -37,7 +37,7 @@ fn is_numeric_index_operand(operand: Operand) -> bool {
 }
 
 fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
-    atom as usize <= atoms.saturating_sub(1)
+    (atom as usize) < atoms
 }
 
 fn cache_in_bounds(cache: u16, caches: u16) -> bool {
@@ -101,13 +101,17 @@ fn field_domains_in_bounds(
 fn immediate_domains_in_bounds(
     instruction: super::WideInstruction,
     functions: usize,
+    locals: u16,
     constants: usize,
+    atoms: usize,
 ) -> bool {
     match instruction.op().immediate_role() {
         super::ImmediateRole::ConstantIndex => instruction.constant_index() < constants,
         super::ImmediateRole::ClosureFunctionIndex => {
             (instruction.closure_function_index() as usize) < functions
         }
+        super::ImmediateRole::LocalSlot => instruction.local_slot() < usize::from(locals),
+        super::ImmediateRole::AtomIndex => atom_in_bounds(instruction.atom_index(), atoms),
         _ => true,
     }
 }
@@ -200,7 +204,9 @@ impl ResidualProgram {
                 ) || !immediate_domains_in_bounds(
                     instruction,
                     self.functions.len(),
+                    function.locals,
                     self.constants.len(),
+                    self.atoms.len(),
                 ) {
                     return Err(format!(
                         "function {index} {:?} has an invalid field value",
@@ -216,10 +222,7 @@ impl ResidualProgram {
                     Op::LoadConst if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} constant load is invalid"));
                     }
-                    Op::LoadLocal
-                        if instruction.local_slot() >= usize::from(function.locals)
-                            || !destination(instruction.result_register()) =>
-                    {
+                    Op::LoadLocal if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} local access is invalid"));
                     }
                     Op::LoadLocal
@@ -230,21 +233,8 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} numeric local target is invalid"));
                     }
-                    Op::LoadEnvLocal
-                        if instruction.local_slot() >= usize::from(function.locals)
-                            || !destination(instruction.result_register()) =>
-                    {
+                    Op::LoadEnvLocal if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} local access is invalid"));
-                    }
-                    Op::StoreLocal | Op::StoreEnvLocal
-                        if instruction.local_slot() >= usize::from(function.locals) =>
-                    {
-                        return Err(format!("function {index} local store is invalid"));
-                    }
-                    Op::InitializeTdz
-                        if instruction.local_slot() >= usize::from(function.locals) =>
-                    {
-                        return Err(format!("function {index} local store is invalid"));
                     }
                     Op::LoadCapture | Op::StoreCapture
                         if usize::from(instruction.capture_depth()) >= self.functions.len() =>
@@ -255,65 +245,44 @@ impl ResidualProgram {
                         return Err(format!("function {index} capture load is invalid"));
                     }
                     Op::LoadName | Op::LoadNameTypeof
-                        if !atom(instruction.atom_index())
-                            || !destination(instruction.result_register()) =>
+                        if !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} name load is invalid"));
                     }
-                    Op::StoreName
-                        if !atom(instruction.atom_index())
-                            || !register(instruction.register_a()) =>
-                    {
+                    Op::StoreName if !register(instruction.register_a()) => {
                         return Err(format!("function {index} name store is invalid"));
                     }
-                    Op::DeleteName
-                        if !atom(instruction.atom_index())
-                            || !destination(instruction.result_register())
-                            || !instruction
-                                .unused_field_is_zero(crate::bytecode::InstructionField::B)
-                            || !instruction
-                                .unused_field_is_zero(crate::bytecode::InstructionField::C) =>
-                    {
+                    Op::DeleteName if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} name deletion is invalid"));
                     }
                     Op::LoadResolvedName
-                        if !atom(instruction.atom_index())
-                            || !register(instruction.register_b())
+                        if !register(instruction.register_b())
                             || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} resolved name site is invalid"));
                     }
                     Op::LoadNameCall
-                        if !atom(instruction.atom_index())
-                            || !destination(instruction.result_register())
+                        if !destination(instruction.result_register())
                             || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} call-name site is invalid"));
                     }
-                    Op::ResolveName
-                        if !atom(instruction.atom_index())
-                            || !destination(instruction.result_register()) =>
-                    {
+                    Op::ResolveName if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} name resolution is invalid"));
                     }
                     Op::StoreResolvedName
-                        if !atom(instruction.atom_index())
-                            || !register(instruction.register_a())
+                        if !register(instruction.register_a())
                             || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} resolved name store is invalid"));
                     }
                     Op::MarkPrivateName
-                        if !atom(instruction.atom_index())
-                            || !register(instruction.register_b())
+                        if !register(instruction.register_b())
                             || !register(instruction.register_c()) =>
                     {
                         return Err(format!("function {index} private-name mark is invalid"));
                     }
-                    Op::SetFunctionName
-                        if !register(instruction.register_a())
-                            || !atom(instruction.atom_index()) =>
-                    {
+                    Op::SetFunctionName if !register(instruction.register_a()) => {
                         return Err(format!("function {index} function name is invalid"));
                     }
                     Op::SetFunctionNameKey
@@ -360,15 +329,13 @@ impl ResidualProgram {
                     }
                     Op::SetField
                         if !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || !atom(instruction.atom_index()) =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} field store is invalid"));
                     }
                     Op::DefineField
                         if !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || !atom(instruction.atom_index()) =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} field definition is invalid"));
                     }
@@ -381,22 +348,15 @@ impl ResidualProgram {
                             "function {index} computed field definition is invalid"
                         ));
                     }
-                    Op::SetThisField
-                        if !register(instruction.register_a())
-                            || !atom(instruction.atom_index()) =>
-                    {
+                    Op::SetThisField if !register(instruction.register_a()) => {
                         return Err(format!("function {index} this-field store is invalid"));
                     }
-                    Op::CheckPrivate
-                        if !register(instruction.register_a())
-                            || !atom(instruction.atom_index()) =>
-                    {
+                    Op::CheckPrivate if !register(instruction.register_a()) => {
                         return Err(format!("function {index} private check is invalid"));
                     }
                     Op::PrivateIn
                         if !destination(instruction.result_register())
-                            || !register(instruction.register_b())
-                            || !atom(instruction.atom_index()) =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} private-in operation is invalid"));
                     }
