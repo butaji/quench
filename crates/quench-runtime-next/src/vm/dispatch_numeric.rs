@@ -210,16 +210,18 @@ impl<H: Host> Vm<H> {
                     Op::GetIndex => {
                         #[cfg(feature = "profile-aggregate")]
                         self.profile.index_dispatch(false, true);
-                        let base = self.numeric_index_source(frame, ins.b());
-                        let index = self.numeric_index_source(frame, ins.c());
-                        if Operand(ins.b()).kind() == Some(crate::bytecode::OperandKind::Local) {
+                        let base_operand = ins.operand_b();
+                        let index_operand = ins.operand_c();
+                        let base = self.numeric_index_source(frame, base_operand);
+                        let index = self.numeric_index_source(frame, index_operand);
+                        if base_operand.kind() == Some(crate::bytecode::OperandKind::Local) {
                             self.profile.virtual_opcode(Op::LoadLocal as usize);
                         }
-                        if Operand(ins.c()).kind() == Some(crate::bytecode::OperandKind::Local) {
+                        if index_operand.kind() == Some(crate::bytecode::OperandKind::Local) {
                             self.profile.virtual_opcode(Op::LoadLocal as usize);
                         }
                         let value = self.get_index(p, base, index)?;
-                        self.write(frame, ins.a(), value);
+                        self.write(frame, ins.result_register(), value);
                     }
                     Op::SetIndex => {
                         #[cfg(feature = "profile-aggregate")]
@@ -415,8 +417,7 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
-    fn numeric_index_source(&self, frame: usize, raw: u16) -> Value {
-        let operand = Operand(raw);
+    fn numeric_index_source(&self, frame: usize, operand: Operand) -> Value {
         match operand.kind() {
             Some(crate::bytecode::OperandKind::Register) => self.read(frame, operand.payload()),
             Some(crate::bytecode::OperandKind::Local) => {
