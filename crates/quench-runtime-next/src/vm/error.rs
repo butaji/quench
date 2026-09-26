@@ -1429,6 +1429,13 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(prototype, "message", empty_message)?;
             self.global(program, name, constructor)?;
         }
+        let error_constructor = self.native_value(Native::Error);
+        for (_, native) in constructors.iter().skip(1) {
+            let constructor = self.native_value(*native);
+            if let Some(function) = self.object_data_mut(constructor) {
+                function.proto = error_constructor;
+            }
+        }
         if let Some(error) = self
             .lookup_atom("Error")
             .and_then(|atom| self.own_property(self.realm.globals, atom))
