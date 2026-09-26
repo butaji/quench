@@ -313,6 +313,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
+        Native::ShadowRealmImportValueFulfilled => 1.0,
         Native::String => 1.0,
         Native::SymbolDescriptionGetter => 0.0,
         Native::StringToLocaleLowerCase | Native::StringToLocaleUpperCase => 0.0,
