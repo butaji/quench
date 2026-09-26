@@ -124,6 +124,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn register_b(self) -> Register {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::Register
+                );
+                self.b()
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn operand_b(self) -> Operand {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),

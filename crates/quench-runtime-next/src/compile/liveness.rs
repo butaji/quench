@@ -1,6 +1,5 @@
 use crate::bytecode::{
-    FieldBase, FieldLookup, FieldSite, Function, Instr, Op, Operand, REGISTER_MASK, Register,
-    Superinstruction,
+    FieldBase, FieldLookup, FieldSite, Function, Instr, Op, Operand, Register, Superinstruction,
 };
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -157,7 +156,7 @@ fn uses(
         Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
             operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
         }
-        Op::IncDec | Op::Unary | Op::Move => bit(instruction.b()),
+        Op::IncDec | Op::Unary | Op::Move => bit(instruction.register_b()),
         Op::Delete => bit(instruction.b()) | bit(instruction.c()),
         Op::JumpFalse | Op::Return | Op::Throw => bit(instruction.register_a()),
         Op::Call | Op::CallDirectEvalArray => {
@@ -227,7 +226,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::Construct
             if !instruction.returns_from_frame() =>
         {
-            bit(instruction.a() & REGISTER_MASK)
+            bit(instruction.result_register())
         }
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
