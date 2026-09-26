@@ -356,7 +356,9 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::CheckPrivate => instruction.register_a() == register,
         Op::PrivateIn => instruction.register_b() == register,
         Op::GetIndex => operand(instruction.operand_b().0) || operand(instruction.operand_c().0),
-        Op::MakeObject2 => instruction.b() == register || instruction.c() == register,
+        Op::MakeObject2 => {
+            instruction.register_b() == register || instruction.register_c() == register
+        }
         Op::CopyDataProperties => {
             instruction.register_a() == register
                 || instruction.register_b() == register
