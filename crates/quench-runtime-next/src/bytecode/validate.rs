@@ -569,9 +569,10 @@ impl ResidualProgram {
                         return Err(format!("function {index} object site is invalid"));
                     }
                     Op::SuperConstArrayObject2
-                        if !destination(instruction.a())
+                        if !destination(instruction.result_register())
                             || instruction.superinstruction_index()
-                                >= self.superinstructions.len() =>
+                                >= self.superinstructions.len()
+                            || !instruction.unused_fields_are_zero() =>
                     {
                         return Err(format!("function {index} superinstruction is invalid"));
                     }
