@@ -158,10 +158,22 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} name load is invalid"));
                     }
-                    Op::StoreName | Op::DeleteName
-                        if !atom(instruction.atom_index()) || !cache(instruction.c()) =>
+                    Op::StoreName
+                        if !atom(instruction.atom_index())
+                            || !register(instruction.register_a())
+                            || !cache(instruction.cache_site_index()) =>
                     {
-                        return Err(format!("function {index} name site is invalid"));
+                        return Err(format!("function {index} name store is invalid"));
+                    }
+                    Op::DeleteName
+                        if !atom(instruction.atom_index())
+                            || !destination(instruction.result_register())
+                            || !instruction
+                                .unused_field_is_zero(crate::bytecode::InstructionField::B)
+                            || !instruction
+                                .unused_field_is_zero(crate::bytecode::InstructionField::C) =>
+                    {
+                        return Err(format!("function {index} name deletion is invalid"));
                     }
                     Op::LoadResolvedName
                         if !atom(instruction.atom_index())

@@ -70,6 +70,7 @@ pub(crate) enum ResultLayout {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FieldLayout {
     Undeclared,
+    Unused,
     Register,
     FunctionIndex,
     ConstructArguments,
@@ -358,8 +359,8 @@ opcodes!(
     LoadNameTypeof => Effect::READS_HEAP; meaning AtomIndex, @ Register, @ fields(Undeclared, Undeclared, CacheSiteIndex),
     ResolveName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, BooleanFlag, CacheSiteIndex),
     LoadResolvedName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Register, BooleanFlag),
-    DeleteName => READ_THROW; meaning AtomIndex,
-    StoreName => WRITE_THROW; meaning AtomIndex,
+    DeleteName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Unused, Unused),
+    StoreName => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, BooleanFlag),
     LoadThis => Effect::PURE, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP), @ Register, @ fields(Undeclared, Undeclared, Undeclared),

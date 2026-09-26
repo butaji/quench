@@ -318,9 +318,8 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
     };
     let range = |base: Register, count: u16| register >= base && register < base + count;
     match instruction.op() {
-        Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
-            instruction.a() == register
-        }
+        Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture => instruction.a() == register,
+        Op::StoreName => instruction.register_a() == register,
         Op::StoreResolvedName => {
             instruction.register_a() == register || instruction.register_b() == register
         }
