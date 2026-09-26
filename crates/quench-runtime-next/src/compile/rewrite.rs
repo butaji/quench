@@ -349,8 +349,8 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
                     .and_then(|site| site.base.register_index())
                     == Some(register)
             }
-            crate::bytecode::FieldLookup::Atom(_) => {
-                FieldBase(instruction.b()).register_index() == Some(register)
+            crate::bytecode::FieldLookup::Atom { base, .. } => {
+                base.register_index() == Some(register)
             }
         },
         Op::CheckPrivate => instruction.register_a() == register,
