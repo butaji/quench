@@ -60,6 +60,16 @@ impl WideInstruction {
         self.op = op;
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn set_b(&mut self, value: u16) {
+        self.b = value;
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn set_c(&mut self, value: u16) {
+        self.c = value;
+    }
+
     pub(crate) fn set_imm(&mut self, imm: u32) {
         self.imm = imm;
     }
@@ -142,12 +152,30 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn set_operand_b(&mut self, operand: Operand) {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::Operand
+                );
+                self.set_b(operand.0);
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn operand_c(self) -> Operand {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::C),
                     FieldLayout::Operand
                 );
                 Operand(self.c())
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn set_operand_c(&mut self, operand: Operand) {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::Operand
+                );
+                self.set_c(operand.0);
             }
 
             #[allow(dead_code)]
