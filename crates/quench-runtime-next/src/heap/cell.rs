@@ -533,6 +533,7 @@ pub(crate) enum IteratorKind {
     Drop,
     FlatMap,
     Concat,
+    Zip,
     Generator,
     AsyncFromSync,
     AsyncGenerator,
@@ -565,6 +566,20 @@ pub(crate) enum IteratorHelper {
         next_item: usize,
         active: Option<Value>,
     },
+    Zip {
+        iterators: Vec<Value>,
+        padding: Vec<Value>,
+        mode: IteratorZipMode,
+        keys: Option<Vec<Value>>,
+        opened: Vec<bool>,
+        done: bool,
+    },
+}
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum IteratorZipMode {
+    Shortest,
+    Longest,
+    Strict,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IteratorConsumer {

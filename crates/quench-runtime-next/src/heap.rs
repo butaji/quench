@@ -433,12 +433,28 @@ impl Heap {
                             work.extend(opened.iter().flatten().copied());
                             work.extend(*active);
                         }
+                        IteratorHelper::Zip {
+                            iterators,
+                            padding,
+                            keys,
+                            ..
+                        } => {
+                            work.extend(iterators.iter().copied());
+                            work.extend(padding.iter().copied());
+                            work.extend(keys.iter().flatten().copied());
+                        }
                     }
                     match helper.as_ref() {
                         IteratorHelper::FlatMap {
                             inner: Some(inner), ..
                         } => work.push(*inner),
-                        _ => {}
+                        IteratorHelper::FlatMap { inner: None, .. } => {}
+                        IteratorHelper::Zip { .. }
+                        | IteratorHelper::Map { .. }
+                        | IteratorHelper::Filter { .. }
+                        | IteratorHelper::Take { .. }
+                        | IteratorHelper::Drop { .. }
+                        | IteratorHelper::Concat { .. } => {}
                     }
                 }
                 if let Some(record) = generator {
