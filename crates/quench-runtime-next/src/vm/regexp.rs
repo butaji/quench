@@ -181,6 +181,23 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        if let Some(symbol) = self.well_known_symbols.get("search").copied() {
+            let method = self.native_with_realm(Native::RegExpSymbolSearch, realm, realm);
+            self.set_builtin_function_name(method, "[Symbol.search]")?;
+            self.set_symbol_property(prototype, symbol, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         if let Some(symbol) = self.well_known_symbols.get("matchAll").copied() {
             let method = self.native_with_realm(Native::RegExpSymbolMatchAll, realm, realm);
             self.set_builtin_function_name(method, "[Symbol.matchAll]")?;
@@ -228,6 +245,46 @@ impl<H: Host> Vm<H> {
         let input = self.heap.alloc(Cell::String(input.into()));
         let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         self.string_replace_native(p, input, &[receiver, replacement], false)
+    }
+
+    pub(super) fn regexp_symbol_search(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(
+                self.type_error(p, "RegExp.prototype[@@search] called on non-object".into())
+            );
+        }
+        let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let last_index_atom = self.intern_atom("lastIndex");
+        let previous = self.get_property(p, receiver, last_index_atom)?;
+        if !self.same_value(previous, Value::number(0.0)) {
+            self.set_property_with_program_mode(
+                p,
+                receiver,
+                last_index_atom,
+                Value::number(0.0),
+                true,
+            )?;
+        }
+        let result = self.regexp_exec(p, receiver, &input)?;
+        let current = self.get_property(p, receiver, last_index_atom)?;
+        if !self.same_value(current, previous) {
+            self.set_property_with_program_mode(p, receiver, last_index_atom, previous, true)?;
+        }
+        if result.is_null() {
+            return Ok(Value::number(-1.0));
+        }
+        if !self.is_object_like(result) {
+            return Err(self.type_error(p, "RegExp exec result is not an object".into()));
+        }
+        let index_atom = self.intern_atom("index");
+        let index = self.get_property(p, result, index_atom)?;
+        let index = regexp_to_length(self.to_number(p, index)?);
+        Ok(Value::number(index as f64))
     }
 
     pub(super) fn regexp_symbol_match_all(

@@ -225,6 +225,19 @@ impl<H: Host> Vm<H> {
         };
         let receiver_host = receiver.host_string();
         let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if native == Native::StringSearch && self.is_object_like(pattern) {
+            let Some(symbol) = self.well_known_symbols.get("search").copied() else {
+                return Err(JsError("RegExp search symbol is unavailable".into()));
+            };
+            let method = self.get_index(p, pattern, symbol)?;
+            if self.is_function(method) {
+                let input = self.heap.alloc(Cell::String(receiver));
+                return self.call_value(p, method, pattern, &[input]);
+            }
+            if !method.is_undefined() && !method.is_null() {
+                return Err(self.type_error(p, "String search method is not callable".into()));
+            }
+        }
         if native == Native::StringMatch && self.is_regexp(pattern) {
             let Some(symbol) = self.well_known_symbols.get("match").copied() else {
                 return Err(JsError("RegExp match symbol is unavailable".into()));
