@@ -309,6 +309,7 @@ const NATIVES: &[Native] = &[
     Native::RegExpFlags,
     Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf, Native::BigIntToString, Native::BigIntAsIntN, Native::BigIntAsUintN,
     Native::Symbol, Native::SymbolToString, Native::SymbolValueOf,
+    Native::SymbolDescriptionGetter,
     Native::SymbolFor,
     Native::SymbolKeyFor,
     Native::StringCharCodeAt, Native::StringSlice,

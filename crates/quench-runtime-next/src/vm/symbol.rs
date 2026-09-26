@@ -15,7 +15,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn call_symbol_value_native(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         native: Native,
         this: Value,
     ) -> Result<Value, JsError> {
@@ -43,6 +43,29 @@ impl<H: Host> Vm<H> {
                     self.own_property(this, value_atom).ok_or_else(|| {
                         JsError("Symbol.prototype.valueOf called on incompatible receiver".into())
                     })
+                }
+            }
+            Native::SymbolDescriptionGetter => {
+                let symbol = if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
+                    this
+                } else {
+                    let value_atom = self.intern_atom("\0rqj:symbol-value");
+                    self.own_property(this, value_atom)
+                        .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
+                        .ok_or_else(|| {
+                            self.type_error(
+                                p,
+                                "Symbol.prototype.description called on incompatible receiver"
+                                    .into(),
+                            )
+                        })?
+                };
+                match self.heap.get(symbol) {
+                    Some(Cell::Symbol(Some(description))) => Ok(self
+                        .heap
+                        .alloc(Cell::String(JsString::from_str(description)))),
+                    Some(Cell::Symbol(None)) => Ok(Value::UNDEFINED),
+                    _ => unreachable!("symbol receiver was validated"),
                 }
             }
             _ => Err(JsError("invalid Symbol method".into())),

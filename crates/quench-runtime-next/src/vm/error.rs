@@ -461,6 +461,22 @@ impl<H: Host> Vm<H> {
             "toString",
             Native::SymbolToString,
         )?;
+        let description = self.native_value(Native::SymbolDescriptionGetter);
+        self.set_builtin_function_name(description, "get description")?;
+        let description_atom = self.intern_atom("description");
+        self.set_property(symbol_prototype, description_atom, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            symbol_prototype,
+            PropertyKey::string(description_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(description),
+                setter: None,
+            },
+        );
         for native in [Native::String, Native::Number] {
             let constructor = self.native_value(native);
             let prototype = self.object();
