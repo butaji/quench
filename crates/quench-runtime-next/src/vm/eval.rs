@@ -829,6 +829,9 @@ impl<H: Host> Vm<H> {
                 })
                 .unwrap_or(Value::UNDEFINED));
         }
+        if expression.starts_with("new ") {
+            return self.eval_compiled_expression(p, expression, strict);
+        }
         if let Some((name, arguments)) = eval_new_expression(expression) {
             let atom = self.intern_atom(name);
             let callee = self.load_eval_name(p, atom)?;
