@@ -194,6 +194,7 @@ impl<H: Host> Vm<H> {
             Native::RegExpSymbolSearch => self.regexp_symbol_search(p, this, args),
             Native::RegExpSymbolReplace => self.regexp_symbol_replace(p, this, args),
             Native::RegExpSymbolMatchAll => self.regexp_symbol_match_all(p, this, args),
+            Native::RegExpSymbolSplit => self.regexp_symbol_split(p, this, args),
             Native::RegExpToString => self.regexp_to_string_native(p, this),
             Native::RegExpSpecies => Ok(this),
             Native::RegExpGlobal

@@ -224,41 +224,7 @@ impl<H: Host> Vm<H> {
             }
             Native::StringReplace => self.string_replace_native(p, this, args, false),
             Native::StringReplaceAll => self.string_replace_native(p, this, args, true),
-            Native::StringSplit => {
-                let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let limit = match args.get(1).copied() {
-                    None | Some(Value::UNDEFINED) => usize::MAX,
-                    Some(value) => {
-                        let number = self.to_number(p, value)?;
-                        if !number.is_finite() || number <= 0.0 {
-                            0
-                        } else {
-                            number.trunc().min(usize::MAX as f64) as usize
-                        }
-                    }
-                };
-                let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if self.is_regexp(separator) {
-                    return self.string_split_regexp_native(p, this, separator, limit);
-                }
-                let parts = if separator.is_undefined() {
-                    vec![receiver]
-                } else {
-                    let separator = self.coerce_js_string(p, separator)?;
-                    receiver.split_units(separator.units())
-                };
-                let values = parts
-                    .into_iter()
-                    .take(limit)
-                    .map(|part| self.heap.alloc(Cell::String(part)))
-                    .collect();
-                Ok(self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(values),
-                }))
-            }
+            Native::StringSplit => self.string_split_native(p, this, args),
             Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
