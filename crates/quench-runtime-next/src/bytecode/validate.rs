@@ -362,9 +362,9 @@ impl ResidualProgram {
                         return Err(format!("function {index} unary operand is invalid"));
                     }
                     Op::Delete
-                        if !register(instruction.a())
-                            || !register(instruction.b())
-                            || !register(instruction.c())
+                        if !register(instruction.result_register())
+                            || !register(instruction.register_b())
+                            || !register(instruction.register_c())
                             || instruction.boolean_flag().is_none() =>
                     {
                         return Err(format!("function {index} delete operand is invalid"));
