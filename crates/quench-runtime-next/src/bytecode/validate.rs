@@ -136,13 +136,15 @@ impl ResidualProgram {
                     }
                     Op::LoadConst
                         if instruction.constant_index() >= self.constants.len()
-                            || !destination(instruction.result_register()) =>
+                            || !destination(instruction.result_register())
+                            || !instruction.unused_fields_are_zero() =>
                     {
                         return Err(format!("function {index} constant load is invalid"));
                     }
                     Op::LoadLocal | Op::LoadEnvLocal
                         if instruction.local_slot() >= usize::from(function.locals)
-                            || !destination(instruction.result_register()) =>
+                            || !destination(instruction.result_register())
+                            || !instruction.unused_fields_are_zero() =>
                     {
                         return Err(format!("function {index} local access is invalid"));
                     }
@@ -156,8 +158,11 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} capture depth is invalid"));
                     }
-                    Op::LoadCapture if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} capture result is invalid"));
+                    Op::LoadCapture
+                        if !destination(instruction.result_register())
+                            || !instruction.unused_fields_are_zero() =>
+                    {
+                        return Err(format!("function {index} capture load is invalid"));
                     }
                     Op::LoadName | Op::LoadNameTypeof
                         if !atom(instruction.atom_index())
