@@ -322,7 +322,10 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
             instruction.a() == register
         }
         Op::StoreResolvedName => instruction.a() == register || instruction.b() == register,
-        Op::SetFunctionNameKey => instruction.a() == register || instruction.b() == register,
+        Op::SetFunctionNameKey => {
+            instruction.register_a() == register || instruction.register_b() == register
+        }
+        Op::SetFunctionName => instruction.register_a() == register,
         Op::ResolveName | Op::DeleteName => false,
         Op::LoadResolvedName => instruction.b() == register,
         Op::LoadImportMeta => false,

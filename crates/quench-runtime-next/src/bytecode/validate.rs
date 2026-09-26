@@ -188,13 +188,14 @@ impl ResidualProgram {
                         return Err(format!("function {index} private-name mark is invalid"));
                     }
                     Op::SetFunctionName
-                        if !register(instruction.a()) || !atom(instruction.atom_index()) =>
+                        if !register(instruction.register_a())
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} function name is invalid"));
                     }
                     Op::SetFunctionNameKey
-                        if !register(instruction.a())
-                            || !register(instruction.b())
+                        if !register(instruction.register_a())
+                            || !register(instruction.register_b())
                             || instruction.function_name_prefix()
                                 > crate::bytecode::FUNCTION_NAME_PREFIX_SETTER =>
                     {
