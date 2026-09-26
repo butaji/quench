@@ -25,20 +25,20 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.array_proto),
             elements,
         });
-        self.write(frame, array.a(), array_value);
+        self.write(frame, array.result_register(), array_value);
 
         self.execute_super_binary(program, frame, first)?;
         self.execute_super_binary(program, frame, second)?;
         let value = self.object_pair(
             program,
             object.object_site_index(),
-            self.read(frame, object.b()),
-            self.read(frame, object.c()),
+            self.read(frame, object.register_b()),
+            self.read(frame, object.register_c()),
         );
         if instruction.returns_from_frame() {
             Ok(Some(value))
         } else {
-            self.write(frame, destination & REGISTER_MASK, value);
+            self.write(frame, destination, value);
             Ok(None)
         }
     }
@@ -58,7 +58,7 @@ impl<H: Host> Vm<H> {
         let left = self.resolve_operand(program, frame, left_operand)?;
         let right = self.resolve_operand(program, frame, right_operand)?;
         let value = self.binary(program, operator, left, right)?;
-        self.write(frame, instruction.a(), value);
+        self.write(frame, instruction.result_register(), value);
         Ok(())
     }
 }
