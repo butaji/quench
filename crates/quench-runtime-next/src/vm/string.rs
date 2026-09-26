@@ -98,15 +98,46 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         constructor: Value,
     ) -> Result<(), JsError> {
+        self.string_proto = self.install_string_prototype(
+            program,
+            constructor,
+            self.object_proto,
+            self.realm.globals,
+        )?;
+        let iterator = self.native_value(Native::StringValues);
+        self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
+        Ok(())
+    }
+
+    pub(super) fn install_string_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_proto: Value,
+    ) -> Result<(), JsError> {
+        let string = self.native_with_realm(Native::String, global, global);
+        self.set_builtin_function_name(string, "String")?;
+        self.install_string_prototype(program, string, object_proto, global)?;
+        self.set_builtin_value_named(global, "String", string)?;
+        self.set_builtin_named_for_realm(program, string, "fromCharCode", Native::StringFromCharCode, global)?;
+        self.set_builtin_named_for_realm(program, string, "fromCodePoint", Native::StringFromCodePoint, global)?;
+        self.set_builtin_named_for_realm(program, string, "raw", Native::StringRaw, global)
+    }
+
+    fn install_string_prototype(
+        &mut self,
+        program: &ResidualProgram,
+        constructor: Value,
+        object_proto: Value,
+        realm: Value,
+    ) -> Result<Value, JsError> {
         let empty = self.heap.alloc(Cell::String(JsString::from_str("")));
-        self.string_proto = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        let prototype = self.heap.alloc(Cell::Object(Self::empty_object(object_proto)));
         let value_atom = self.intern_atom("\0rqj:string-value");
-        self.set_property(self.string_proto, value_atom, empty)?;
-        self.set_named_constant(program, self.string_proto, "length", Value::number(0.0))?;
-        self.set_builtin_named(program, self.string_proto, "constructor", Native::String)?;
-        self.set_named(program, constructor, "prototype", self.string_proto)?;
+        self.set_property(prototype, value_atom, empty)?;
+        self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
             constructor,
@@ -121,11 +152,26 @@ impl<H: Host> Vm<H> {
             },
         );
         for (name, native, _) in STRING_METHODS {
-            self.set_builtin_named(program, self.string_proto, name, *native)?;
+            self.set_builtin_named_for_realm(program, prototype, name, *native, realm)?;
         }
-        let iterator = self.native_value(Native::StringValues);
+        let iterator = self.native_with_realm(Native::StringValues, realm, realm);
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
-        Ok(())
+        let symbol = self.well_known_symbols["iterator"];
+        self.set_symbol_property(prototype, symbol, iterator)?;
+        Ok(prototype)
+    }
+
+    fn set_builtin_named_for_realm(
+        &mut self,
+        _program: &ResidualProgram,
+        object: Value,
+        name: &str,
+        native: Native,
+        realm: Value,
+    ) -> Result<(), JsError> {
+        let function = self.native_with_realm(native, realm, realm);
+        self.set_builtin_function_name(function, name)?;
+        self.set_builtin_value_named(object, name, function)
     }
 
     pub(super) fn string_raw(
@@ -238,7 +284,8 @@ impl<H: Host> Vm<H> {
             Native::StringConcat => {
                 let mut text = receiver;
                 for value in args {
-                    text.push_str(&self.to_string(p, *value)?);
+                    let value = self.coerce_js_string(p, *value)?;
+                    text.push_js_string(&value);
                 }
                 Ok(self.heap.alloc(Cell::String(text)))
             }

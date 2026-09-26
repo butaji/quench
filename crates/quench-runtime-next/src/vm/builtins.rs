@@ -309,7 +309,7 @@ const NATIVES: &[Native] = &[
     Native::RegExpSource,
     Native::RegExpFlags,
     Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf, Native::BigIntToString, Native::BigIntAsIntN, Native::BigIntAsUintN,
-    Native::Symbol, Native::SymbolToString, Native::SymbolValueOf,
+    Native::Symbol, Native::SymbolToString, Native::SymbolToPrimitive, Native::SymbolValueOf,
     Native::SymbolDescriptionGetter,
     Native::SymbolFor,
     Native::SymbolKeyFor,
@@ -477,6 +477,24 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }
+        let symbol_prototype_atom = self.intern_atom("prototype");
+        let symbol_prototype = self.get_property(program, symbol, symbol_prototype_atom)?;
+        let symbol_to_primitive = self.native_value(Native::SymbolToPrimitive);
+        self.set_builtin_function_name(symbol_to_primitive, "[Symbol.toPrimitive]")?;
+        let to_primitive = self.well_known_symbols["toPrimitive"];
+        self.set_symbol_property(symbol_prototype, to_primitive, symbol_to_primitive)?;
+        self.set_property_attributes(
+            symbol_prototype,
+            PropertyKey::symbol(to_primitive),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.install_map_species()?;
         self.install_set_species(self.native_value(Native::Set))?;
         self.install_shadow_realm_tag(self.shadow_realm_proto)?;

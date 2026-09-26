@@ -319,6 +319,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::ShadowRealmImportValueFulfilled => 1.0,
         Native::String => 1.0,
         Native::SymbolDescriptionGetter => 0.0,
+        Native::SymbolToPrimitive => 1.0,
         Native::StringToLocaleLowerCase | Native::StringToLocaleUpperCase => 0.0,
         Native::StringValues => 0.0,
         Native::StringLocaleCompare => 1.0,
