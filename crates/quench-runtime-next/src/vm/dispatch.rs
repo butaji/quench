@@ -407,7 +407,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::CheckPrivate => {
-                let object = self.read(f, i.a());
+                let object = self.read(f, i.register_a());
                 let atom = i.atom_index();
                 self.check_private_brand(p, object, atom)?;
                 if self.own_property(object, atom).is_none()
@@ -419,14 +419,18 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::PrivateIn => {
-                let object = self.read(f, i.b());
+                let object = self.read(f, i.register_b());
                 if !self.is_object_like(object) {
                     return Err(
                         self.type_error(p, "right-hand side of 'in' is not an object".into())
                     );
                 }
                 let result = self.has_private_brand(p, object, i.atom_index());
-                self.write(f, i.a(), if result { Value::TRUE } else { Value::FALSE });
+                self.write(
+                    f,
+                    i.result_register(),
+                    if result { Value::TRUE } else { Value::FALSE },
+                );
             }
             Op::MarkPrivateName => {
                 let object = self.read(f, i.b());

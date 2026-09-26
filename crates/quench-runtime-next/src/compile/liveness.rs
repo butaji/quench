@@ -123,8 +123,8 @@ fn uses(
         Op::SetFunctionName => bit(instruction.a()),
         Op::SetFunctionNameKey => bit(instruction.a()) | bit(instruction.b()),
         Op::GetField => field_base(instruction, fields),
-        Op::CheckPrivate => bit(instruction.a()),
-        Op::PrivateIn => bit(instruction.b()),
+        Op::CheckPrivate => bit(instruction.register_a()),
+        Op::PrivateIn => bit(instruction.register_b()),
         Op::GetIndex => {
             operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
         }
