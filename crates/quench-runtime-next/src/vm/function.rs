@@ -1,6 +1,30 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
+        match self.heap.get(function) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionBoundCall),
+                ..
+            }) => true,
+            Some(Cell::Function {
+                kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
+                ..
+            }) => self.programs.get(*program_id).is_some_and(|program| {
+                program.functions.get(*id as usize).is_some_and(|function| {
+                    function.strict
+                        || function.is_async
+                        || function.is_generator
+                        || function.name.is_some_and(|name| {
+                            (name as usize) < program.atoms.len()
+                                && program.atoms[name as usize].as_bytes() == b"\0rqj:arrow"
+                        })
+                })
+            }),
+            _ => false,
+        }
+    }
+
     pub(super) fn bind_function(
         &mut self,
         p: &ResidualProgram,

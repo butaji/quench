@@ -143,6 +143,17 @@ impl<H: Host> Vm<H> {
                 },
             ));
         }
+        if !private_name
+            && self.atom_name(atom) == "caller"
+            && matches!(self.heap.get(object), Some(Cell::Function { .. }))
+            && self.own_property(object, atom).is_none()
+        {
+            return if object == self.function_proto || self.function_caller_is_restricted(object) {
+                Err(self.type_error(p, "restricted function caller access".into()))
+            } else {
+                Ok(Value::UNDEFINED)
+            };
+        }
         let private_target = object;
         let mut object = object;
         if object.as_bool().is_some() {
@@ -251,6 +262,12 @@ impl<H: Host> Vm<H> {
                     return Ok(value);
                 }
             }
+            if let Some(index) = super::object_static::array_index(self.atom_name(atom))
+                && matches!(self.heap.get(object), Some(Cell::TypedArray { .. }))
+                && let Some(value) = self.typed_array_get(object, index as usize)
+            {
+                return Ok(value);
+            }
             if let Some(v) = self.own_property(object, atom) {
                 return Ok(v);
             }
@@ -262,6 +279,11 @@ impl<H: Host> Vm<H> {
                     if self.array_buffer_virtual_property(object, atom).is_some() =>
                 {
                     return Ok(self.array_buffer_virtual_property(object, atom).unwrap());
+                }
+                Some(Cell::TypedArray { .. }) if atom == self.length_atom => {
+                    return Ok(Value::number(
+                        self.typed_array_length(object).unwrap_or(0) as f64
+                    ));
                 }
                 Some(Cell::ArrayBuffer { bytes, shared, .. }) if atom == self.byte_length_atom => {
                     let _shared = shared;

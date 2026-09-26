@@ -163,9 +163,7 @@ impl<H: Host> Vm<H> {
         if self.object_data(prototype).is_none() {
             return Err(self.type_error(p, "instanceof prototype is not an object".into()));
         }
-        let Some(mut current) = self.object_data(value).map(|data| data.proto) else {
-            return Ok(false);
-        };
+        let mut current = self.object_get_prototype_of(p, value)?;
         loop {
             if current == prototype {
                 return Ok(true);
@@ -173,10 +171,7 @@ impl<H: Host> Vm<H> {
             if current.is_null() {
                 return Ok(false);
             }
-            let Some(data) = self.object_data(current) else {
-                return Ok(false);
-            };
-            current = data.proto;
+            current = self.object_get_prototype_of(p, current)?;
         }
     }
 }
