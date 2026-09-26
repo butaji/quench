@@ -198,19 +198,26 @@ impl<H: Host> Vm<H> {
             if self.is_function(trap) {
                 let result = self.call_value(p, trap, handler, &[target])?;
                 if !result.is_null() && self.object_data(result).is_none() {
-                    return Err(JsError(
+                    return Err(self.type_error(
+                        p,
                         "proxy getPrototypeOf trap must return an object or null".into(),
                     ));
                 }
-                if self
-                    .object_data(target)
-                    .is_some_and(|object| !object.is_extensible() && object.proto != result)
-                {
-                    return Err(JsError(
-                        "proxy getPrototypeOf trap changed a non-extensible target".into(),
-                    ));
+                let extensible = self.object_is_extensible(p, &[target])?;
+                if !self.truthy(extensible) {
+                    let target_prototype = self.object_get_prototype_of(p, target)?;
+                    if !self.same_value(target_prototype, result) {
+                        return Err(self.type_error(
+                            p,
+                            "proxy getPrototypeOf trap changed a non-extensible target".into(),
+                        ));
+                    }
                 }
                 return Ok(result);
+            } else if !trap.is_null() && !trap.is_undefined() {
+                return Err(self.type_error(p, "proxy getPrototypeOf trap is not callable".into()));
+            } else {
+                return self.object_get_prototype_of(p, target);
             }
         }
         let value = self.proxy_target(value);
@@ -272,14 +279,21 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "proxy setPrototypeOf trap returned false".into())
                     );
                 }
-                if self
-                    .object_data(underlying)
-                    .is_some_and(|object| !object.is_extensible() && object.proto != proto)
-                {
-                    return Err(JsError(
-                        "proxy setPrototypeOf trap changed a non-extensible target".into(),
-                    ));
+                let extensible = self.object_is_extensible(p, &[underlying])?;
+                if !self.truthy(extensible) {
+                    let target_proto = self.object_get_prototype_of(p, underlying)?;
+                    if !self.same_value(target_proto, proto) {
+                        return Err(self.type_error(
+                            p,
+                            "proxy setPrototypeOf trap changed a non-extensible target".into(),
+                        ));
+                    }
                 }
+                return Ok(target);
+            } else if !trap.is_null() && !trap.is_undefined() {
+                return Err(self.type_error(p, "proxy setPrototypeOf trap is not callable".into()));
+            } else {
+                self.object_set_prototype_of(p, underlying, proto)?;
                 return Ok(target);
             }
         }
@@ -374,12 +388,20 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "proxy preventExtensions trap returned false".into())
                     );
                 }
-                if self.object_data(target).is_some_and(Object::is_extensible) {
+                let target_extensible = self.object_is_extensible(p, &[target])?;
+                if self.truthy(target_extensible) {
                     return Err(self.type_error(
                         p,
                         "proxy preventExtensions trap did not make target non-extensible".into(),
                     ));
                 }
+                return Ok(source);
+            } else if !trap.is_null() && !trap.is_undefined() {
+                return Err(
+                    self.type_error(p, "proxy preventExtensions trap is not callable".into())
+                );
+            } else {
+                self.object_prevent_extensions(p, &[target])?;
                 return Ok(source);
             }
         }
@@ -408,15 +430,17 @@ impl<H: Host> Vm<H> {
             if self.is_function(trap) {
                 let result = self.call_value(p, trap, handler, &[target])?;
                 let value = self.truthy(result);
-                if self
-                    .object_data(target)
-                    .is_some_and(|object| object.is_extensible() != value)
-                {
-                    return Err(JsError(
-                        "proxy isExtensible trap disagreed with target".into(),
-                    ));
+                let target_value = self.object_is_extensible(p, &[target])?;
+                if self.truthy(target_value) != value {
+                    return Err(
+                        self.type_error(p, "proxy isExtensible trap disagreed with target".into())
+                    );
                 }
                 return Ok(Self::integrity_bool(value));
+            } else if !trap.is_null() && !trap.is_undefined() {
+                return Err(self.type_error(p, "proxy isExtensible trap is not callable".into()));
+            } else {
+                return self.object_is_extensible(p, &[target]);
             }
         }
         let target = self.proxy_target(source);

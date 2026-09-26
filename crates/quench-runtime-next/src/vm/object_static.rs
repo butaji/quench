@@ -745,7 +745,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn box_object(&mut self, value: Value) -> Result<Value, JsError> {
-        if self.object_data(value).is_some() {
+        if self.is_object_like(value) {
             return Ok(value);
         }
         if value.is_null() || value.is_undefined() {

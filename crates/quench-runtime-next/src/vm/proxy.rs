@@ -90,12 +90,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let proxy = self.construct_native(p, Native::Proxy, args)?;
-        let revoke = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.function_proto)),
-            kind: FunctionKind::Native(Native::ProxyRevoke),
-            env: proxy,
-            realm: self.realm.globals,
-        });
+        let revoke = self.native_with_env(Native::ProxyRevoke, proxy);
         let result = self.object();
         let proxy_atom = self.intern_atom("proxy");
         let revoke_atom = self.intern_atom("revoke");

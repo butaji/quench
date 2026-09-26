@@ -236,6 +236,9 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::FunctionPrototypeHasInstance => 1.0,
         Native::FunctionCall | Native::FunctionBind => 1.0,
         Native::FunctionApply => 2.0,
+        Native::Proxy => 2.0,
+        Native::ProxyRevocable => 2.0,
+        Native::ProxyRevoke => 0.0,
         Native::AbstractModuleSource => 0.0,
         Native::AbstractModuleSourceToStringTag => 0.0,
         Native::AggregateError => 2.0,
@@ -754,6 +757,7 @@ impl<H: Host> Vm<H> {
             );
         let anonymous_capability_executor =
             !env.is_null() && kind == Native::PromiseCapabilityExecutor;
+        let anonymous_proxy_revoke = !env.is_null() && kind == Native::ProxyRevoke;
         let length = promise_resolver
             .then_some(1.0)
             .or_else(|| native_length(kind));
@@ -773,7 +777,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if promise_resolver || anonymous_capability_executor {
+        if promise_resolver || anonymous_capability_executor || anonymous_proxy_revoke {
             let atom = self.intern_atom("name");
             let empty_name = self.heap.alloc(Cell::String("".into()));
             let _ = self.set_property(function, atom, empty_name);

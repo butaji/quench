@@ -95,7 +95,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         atom: Atom,
         value: Value,
-    ) -> Result<(), JsError> {
+    ) -> Result<bool, JsError> {
         if self.atom_name(atom).starts_with("\0rqj:private:") {
             return Err(self.type_error(p, "private member is not present on this object".into()));
         }
@@ -108,15 +108,41 @@ impl<H: Host> Vm<H> {
             let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
             let result = self.call_value(p, trap, handler, &[target, key, value, receiver])?;
             if !self.truthy(result) {
-                return Err(self.type_error(p, "proxy set trap returned false".into()));
+                return Ok(false);
             }
-            return Ok(());
+            let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+            if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
+                let value_atom = self.intern_atom("value");
+                let writable_atom = self.intern_atom("writable");
+                let setter_atom = self.intern_atom("set");
+                let is_data = self.own_property(descriptor, value_atom).is_some()
+                    || self.own_property(descriptor, writable_atom).is_some();
+                if is_data
+                    && !self.descriptor_flag(descriptor, "writable")
+                    && self
+                        .own_property(descriptor, value_atom)
+                        .is_some_and(|target_value| !self.same_value(value, target_value))
+                {
+                    return Err(self
+                        .type_error(p, "proxy set trap changed a frozen target property".into()));
+                }
+                if !is_data
+                    && self
+                        .own_property(descriptor, setter_atom)
+                        .is_none_or(Value::is_undefined)
+                {
+                    return Err(self.type_error(
+                        p,
+                        "proxy set trap accepted a property without a setter".into(),
+                    ));
+                }
+            }
+            return Ok(true);
         }
-        if self.set_property_with_receiver(p, target, atom, value, receiver)? {
-            Ok(())
-        } else {
-            Err(self.type_error(p, "cannot set property through proxy".into()))
+        if trap.is_null() || trap.is_undefined() {
+            return self.set_property_with_receiver(p, target, atom, value, receiver);
         }
+        Err(self.type_error(p, "proxy set trap is not callable".into()))
     }
 
     pub(super) fn proxy_get_symbol(
