@@ -93,6 +93,7 @@ fn write_field(
         | FieldLayout::FunctionIndex
         | FieldLayout::ElementCount
         | FieldLayout::CacheSiteIndex
+        | FieldLayout::WideIndexChunk
         | FieldLayout::BooleanFlag => write_scalar_field(output, instruction, field, layout),
         FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
             write_operand_field(output, instruction, field)
@@ -245,6 +246,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         ImmediateRole::ArrayLength
         | ImmediateRole::FunctionNamePrefix
         | ImmediateRole::BooleanFlag
+        | ImmediateRole::WideInstructionIndex
         | ImmediateRole::ArrayIndex
         | ImmediateRole::BinaryOperator
         | ImmediateRole::AdditionOperator

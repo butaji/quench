@@ -667,14 +667,10 @@ impl Instr {
 
     pub(crate) fn wide(index: usize) -> Option<Self> {
         let index = u64::try_from(index).ok()?;
-        let max = (1_u64 << (Self::FIELD_BITS * 3 + (64 - Self::IMM_SHIFT))) - 1;
-        (index <= max).then_some(Self(
-            Op::Wide as u64
-                | ((index & Self::FIELD_MASK) << Self::A_SHIFT)
-                | (((index >> Self::FIELD_BITS) & Self::FIELD_MASK) << Self::B_SHIFT)
-                | (((index >> (Self::FIELD_BITS * 2)) & Self::FIELD_MASK) << Self::C_SHIFT)
-                | ((index >> (Self::FIELD_BITS * 3)) << Self::IMM_SHIFT),
-        ))
+        let payload_bits = u64::BITS - Self::OP_BITS;
+        let max = (1_u64 << payload_bits) - 1;
+        (Op::Wide.immediate_role() == ImmediateRole::WideInstructionIndex && index <= max)
+            .then_some(Self(Op::Wide as u64 | (index << Self::OP_BITS)))
     }
 
     pub(crate) fn wide_from_fields(a: u16, b: u16, c: u16, imm: u32) -> Option<Self> {
@@ -693,11 +689,11 @@ impl Instr {
     }
 
     pub(crate) const fn wide_index(self) -> usize {
-        let index = ((self.0 >> Self::A_SHIFT) & Self::FIELD_MASK)
-            | (((self.0 >> Self::B_SHIFT) & Self::FIELD_MASK) << Self::FIELD_BITS)
-            | (((self.0 >> Self::C_SHIFT) & Self::FIELD_MASK) << (Self::FIELD_BITS * 2))
-            | ((self.0 >> Self::IMM_SHIFT) << (Self::FIELD_BITS * 3));
-        index as usize
+        debug_assert!(matches!(
+            self.op().immediate_role(),
+            ImmediateRole::WideInstructionIndex
+        ));
+        (self.0 >> Self::OP_BITS) as usize
     }
 
     pub(crate) const fn as_wide(self) -> WideInstruction {
