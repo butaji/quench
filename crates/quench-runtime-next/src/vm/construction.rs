@@ -126,6 +126,7 @@ impl<H: Host> Vm<H> {
                         | Native::AsyncFunction
                         | Native::GeneratorFunction
                         | Native::AsyncGeneratorFunction
+                        | Native::Iterator
                         | Native::Object
                         | Native::Proxy
                         | Native::Array
@@ -786,6 +787,7 @@ impl<H: Host> Vm<H> {
             | Native::AsyncFunction
             | Native::GeneratorFunction
             | Native::AsyncGeneratorFunction => self.function_native(p, native, args),
+            Native::Iterator => Ok(self.object()),
             Native::Object => {
                 if let Some(value) = args.first().copied() {
                     if self.object_data(value).is_some() {

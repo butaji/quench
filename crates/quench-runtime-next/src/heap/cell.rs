@@ -190,6 +190,7 @@ pub(crate) enum Native {
     IteratorSome,
     IteratorDispose,
     IteratorProtocolNext,
+    IteratorProtocolReturn,
     IteratorHelperNext,
     IteratorHelperReturn,
     IteratorPrototypeConstructorGetter,
