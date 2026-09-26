@@ -524,10 +524,11 @@ impl<H: Host> Vm<H> {
         if replace_all && !search_value.is_null() && !search_value.is_undefined() {
             let is_regexp = self.regexp_is_regexp(p, search_value)?;
             if is_regexp {
-                let global_atom = self.intern_atom("global");
-                let global = self.get_property(p, search_value, global_atom)?;
-                self.require_object_coercible(p, global)?;
-                if !self.truthy(global) {
+                let flags_atom = self.intern_atom("flags");
+                let flags = self.get_property(p, search_value, flags_atom)?;
+                self.require_object_coercible(p, flags)?;
+                let flags = self.to_string(p, flags)?;
+                if !flags.contains('g') {
                     return Err(self.type_error(
                         p,
                         "String.prototype.replaceAll requires a global RegExp".into(),

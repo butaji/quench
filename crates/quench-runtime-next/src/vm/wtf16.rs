@@ -39,7 +39,7 @@ impl JsString {
         let mut units = self.units.to_vec();
         units.extend(text.units.iter().copied());
         self.units = Rc::from(units);
-        self.host.push_str(&text.host);
+        self.host = String::from_utf16_lossy(&self.units);
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {
