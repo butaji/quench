@@ -57,8 +57,10 @@ pub(super) fn analyze(
 fn successors(function: &Function, live: &[u64], pc: usize, instruction: Instr) -> u64 {
     let fallthrough = live.get(pc + 1).copied().unwrap_or(0);
     let normal = match instruction.op() {
-        Op::Jump => live[instruction.imm() as usize],
-        Op::JumpFalse | Op::JumpBinaryFalse => fallthrough | live[instruction.imm() as usize],
+        Op::Jump => live[instruction.jump_target() as usize],
+        Op::JumpFalse | Op::JumpBinaryFalse => {
+            fallthrough | live[instruction.jump_target() as usize]
+        }
         Op::Return | Op::Throw => 0,
         _ if instruction.returns_from_frame() => 0,
         _ => fallthrough,

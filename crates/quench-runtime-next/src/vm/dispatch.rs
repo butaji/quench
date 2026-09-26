@@ -738,7 +738,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), result);
             }
             Op::Jump => {
-                *pc = i.imm() as usize;
+                *pc = i.jump_target() as usize;
                 self.frames[f].pc = *pc;
                 self.maybe_collect(p);
             }
@@ -748,7 +748,7 @@ impl<H: Host> Vm<H> {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.branch_value(value.profile_kind(), truthy);
                 if !truthy {
-                    *pc = i.imm() as usize;
+                    *pc = i.jump_target() as usize;
                 }
             }
             Op::JumpBinaryFalse => {
@@ -756,7 +756,7 @@ impl<H: Host> Vm<H> {
                 let left = self.resolve_operand(p, f, Operand(i.b()))?;
                 let right = self.resolve_operand(p, f, Operand(i.c()))?;
                 if !self.binary_truthy(p, u32::from(i.a()), left, right)? {
-                    *pc = i.imm() as usize;
+                    *pc = i.jump_target() as usize;
                 }
             }
             Op::Call | Op::CallDirectEvalArray => {

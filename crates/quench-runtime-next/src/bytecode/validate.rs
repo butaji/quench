@@ -410,7 +410,7 @@ impl ResidualProgram {
                         return Err(format!("function {index} superinstruction is invalid"));
                     }
                     Op::Jump | Op::JumpFalse | Op::JumpBinaryFalse
-                        if instruction.imm() >= code_len =>
+                        if instruction.jump_target() >= code_len =>
                     {
                         return Err(format!("function {index} branch at {pc} is out of bounds"));
                     }

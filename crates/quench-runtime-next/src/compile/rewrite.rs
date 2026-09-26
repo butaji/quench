@@ -219,7 +219,7 @@ pub(super) fn protected_positions(
             instruction.op(),
             Op::Jump | Op::JumpFalse | Op::JumpBinaryFalse
         ) {
-            protected[instruction.imm() as usize] = true;
+            protected[instruction.jump_target() as usize] = true;
         }
     }
     for handler in handlers {
@@ -413,7 +413,7 @@ pub(super) fn relocate(
             instruction.op(),
             Op::Jump | Op::JumpFalse | Op::JumpBinaryFalse
         ) {
-            instruction.set_imm(map[instruction.imm() as usize] as u32);
+            instruction.set_imm(map[instruction.jump_target() as usize] as u32);
         }
     }
     for handler in handlers {

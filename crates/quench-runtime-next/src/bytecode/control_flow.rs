@@ -29,9 +29,9 @@ pub(super) fn is_bounded(function: &Function) -> bool {
         };
         match instruction.op() {
             Op::Return | Op::Throw => {}
-            Op::Jump => work.push(instruction.imm() as usize),
+            Op::Jump => work.push(instruction.jump_target() as usize),
             Op::JumpFalse | Op::JumpBinaryFalse => {
-                work.push(instruction.imm() as usize);
+                work.push(instruction.jump_target() as usize);
                 work.push(pc + 1);
             }
             _ if instruction.returns_from_frame() => {}
