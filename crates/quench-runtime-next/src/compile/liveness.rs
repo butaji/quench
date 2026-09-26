@@ -1,6 +1,6 @@
 use crate::bytecode::{
-    FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, Instr,
-    InstructionField, Op, Operand, Register, ResultLayout, Superinstruction,
+    ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
+    ImmediateRole, Instr, InstructionField, Op, Operand, Register, ResultLayout, Superinstruction,
 };
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -57,14 +57,14 @@ pub(super) fn analyze(
 
 fn successors(function: &Function, live: &[u64], pc: usize, instruction: Instr) -> u64 {
     let fallthrough = live.get(pc + 1).copied().unwrap_or(0);
-    let normal = match instruction.op() {
-        Op::Jump => live[instruction.jump_target() as usize],
-        Op::JumpFalse | Op::JumpBinaryFalse => {
+    let normal = match instruction.op().control_flow_layout() {
+        ControlFlowLayout::Jump => live[instruction.jump_target() as usize],
+        ControlFlowLayout::ConditionalJump => {
             fallthrough | live[instruction.jump_target() as usize]
         }
-        Op::Return | Op::Throw => 0,
-        _ if instruction.returns_from_frame() => 0,
-        _ => fallthrough,
+        ControlFlowLayout::Terminal => 0,
+        ControlFlowLayout::Fallthrough if instruction.returns_from_frame() => 0,
+        ControlFlowLayout::Fallthrough => fallthrough,
     };
     function
         .handlers
