@@ -329,6 +329,9 @@ impl ResidualProgram {
                     Op::Unary | Op::IncDec
                         if !register(instruction.a())
                             || !register(instruction.b())
+                            || (instruction.op() == Op::Unary
+                                && instruction.unary_operator()
+                                    > oxc_ast::ast::UnaryOperator::Void as u32)
                             || (instruction.op() == Op::IncDec
                                 && instruction.boolean_flag().is_none()) =>
                     {
