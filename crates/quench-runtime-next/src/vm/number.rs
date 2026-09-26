@@ -1,4 +1,5 @@
 use super::*;
+use num_bigint::{BigInt, Sign};
 
 const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
 const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PATTERN);
@@ -255,7 +256,12 @@ pub(super) fn math_unary(native: Native, value: f64) -> f64 {
             } else if (-0.5..0.0).contains(&value) {
                 -0.0
             } else {
-                (value + 0.5).floor()
+                let floor = value.floor();
+                if value - floor < 0.5 {
+                    floor
+                } else {
+                    floor + 1.0
+                }
             }
         }
         Native::MathTrunc => value.trunc(),
@@ -267,6 +273,20 @@ pub(super) fn math_unary(native: Native, value: f64) -> f64 {
         Native::MathExp => value.exp(),
         Native::MathSin => value.sin(),
         Native::MathTan => value.tan(),
+        Native::MathAcosh => value.acosh(),
+        Native::MathAsinh => value.asinh(),
+        Native::MathAtanh => value.atanh(),
+        Native::MathCbrt => value.cbrt(),
+        Native::MathCosh => value.cosh(),
+        Native::MathExpm1 => value.exp_m1(),
+        Native::MathFround => f64::from(value as f32),
+        Native::MathLog10 => value.log10(),
+        Native::MathLog1p => value.ln_1p(),
+        Native::MathLog2 => value.log2(),
+        Native::MathSinh => value.sinh(),
+        Native::MathTanh => value.tanh(),
+        Native::MathClz32 => f64::from(crate::value::number_to_u32(value).leading_zeros()),
+        Native::MathF16Round => f16_round(value),
         Native::MathSign => {
             if value.is_nan() || value == 0.0 {
                 value
@@ -278,4 +298,228 @@ pub(super) fn math_unary(native: Native, value: f64) -> f64 {
         }
         _ => unreachable!("non-unary Math native"),
     }
+}
+
+impl<H: Host> Vm<H> {
+    pub(super) fn math_hypot(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let numbers = args
+            .iter()
+            .copied()
+            .map(|value| self.to_number(p, value))
+            .collect::<Result<Vec<_>, _>>()?;
+        if numbers.iter().any(|value| value.is_infinite()) {
+            return Ok(Value::number(f64::INFINITY));
+        }
+        if numbers.iter().any(|value| value.is_nan()) {
+            return Ok(Value::number(f64::NAN));
+        }
+        let largest = numbers.iter().copied().map(f64::abs).fold(0.0, f64::max);
+        if largest == 0.0 {
+            return Ok(Value::number(0.0));
+        }
+        let squares = numbers
+            .iter()
+            .map(|value| (value / largest).powi(2))
+            .sum::<f64>();
+        Ok(Value::number(largest * squares.sqrt()))
+    }
+
+    pub(super) fn math_sum_precise(
+        &mut self,
+        p: &ResidualProgram,
+        iterable: Option<Value>,
+    ) -> Result<Value, JsError> {
+        let iterable = iterable.unwrap_or(Value::UNDEFINED);
+        let iterator = self.get_iterator(p, iterable)?;
+        let mut exact_sum = BigInt::from(0_u8);
+        let mut state = PreciseSumState::default();
+        loop {
+            let step = match self.iterator_next(p, iterator) {
+                Ok(step) => step,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    return Err(error);
+                }
+            };
+            let done_atom = self.intern_atom("done");
+            let done = match self.get_property(p, step, done_atom) {
+                Ok(done) => self.truthy(done),
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    return Err(error);
+                }
+            };
+            if done {
+                return Ok(Value::number(state.finish(exact_sum)));
+            }
+            let value_atom = self.intern_atom("value");
+            let value = match self.get_property(p, step, value_atom) {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    return Err(error);
+                }
+            };
+            let Some(number) = value.as_number() else {
+                let error = self.type_error(p, "Math.sumPrecise requires Number values".into());
+                let _ = self.iterator_close(p, iterator);
+                return Err(error);
+            };
+            state.add(number, &mut exact_sum);
+        }
+    }
+}
+
+#[derive(Default)]
+struct PreciseSumState {
+    infinity: Option<bool>,
+    invalid: bool,
+    positive_zero: bool,
+    nonzero: bool,
+}
+
+impl PreciseSumState {
+    fn add(&mut self, value: f64, sum: &mut BigInt) {
+        if value.is_nan() {
+            self.invalid = true;
+        } else if value.is_infinite() {
+            self.invalid |= self
+                .infinity
+                .is_some_and(|sign| sign != value.is_sign_positive());
+            self.infinity.get_or_insert(value.is_sign_positive());
+        } else if value == 0.0 {
+            self.positive_zero |= value.is_sign_positive();
+        } else {
+            self.nonzero = true;
+            let bits = value.to_bits();
+            let fraction = bits & ((1_u64 << 52) - 1);
+            let exponent = ((bits >> 52) & 0x7ff) as usize;
+            let significand = if exponent == 0 {
+                fraction
+            } else {
+                fraction | (1_u64 << 52)
+            };
+            let units = BigInt::from(significand) << exponent.saturating_sub(1);
+            *sum += if value.is_sign_negative() {
+                -units
+            } else {
+                units
+            };
+        }
+    }
+
+    fn finish(self, sum: BigInt) -> f64 {
+        if self.invalid {
+            f64::NAN
+        } else if let Some(positive) = self.infinity {
+            if positive {
+                f64::INFINITY
+            } else {
+                f64::NEG_INFINITY
+            }
+        } else if sum == BigInt::from(0_u8) {
+            if !self.nonzero && !self.positive_zero {
+                -0.0
+            } else {
+                0.0
+            }
+        } else {
+            scaled_binary_sum(sum)
+        }
+    }
+}
+
+fn scaled_binary_sum(sum: BigInt) -> f64 {
+    let negative = sum.sign() == Sign::Minus;
+    let magnitude = if negative { -sum } else { sum };
+    let bits = magnitude.magnitude().bits() as usize;
+    let rounded = if bits <= 52 {
+        magnitude.to_string().parse::<f64>().unwrap_or(f64::NAN) * 2_f64.powi(-1074)
+    } else {
+        let shift = bits - 53;
+        let mut significand = &magnitude >> shift;
+        let remainder = &magnitude - (&significand << shift);
+        let halfway = BigInt::from(1_u8) << (shift - 1);
+        if remainder > halfway
+            || remainder == halfway && (&significand & BigInt::from(1_u8)) != BigInt::from(0_u8)
+        {
+            significand += 1_u8;
+        }
+        significand.to_string().parse::<f64>().unwrap_or(f64::NAN) * 2_f64.powi(shift as i32 - 1074)
+    };
+    if negative { -rounded } else { rounded }
+}
+
+fn f16_round(value: f64) -> f64 {
+    half_to_f64(f64_to_half(value))
+}
+
+fn f64_to_half(value: f64) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 63) as u16) << 15;
+    let exponent = ((bits >> 52) & 0x7ff) as u16;
+    let fraction = bits & 0x000f_ffff_ffff_ffff;
+    if exponent == 0x7ff {
+        return sign
+            | if fraction == 0 {
+                0x7c00
+            } else {
+                0x7c00 | ((fraction >> 42) as u16).max(1)
+            };
+    }
+    let absolute = f64::from_bits(bits & 0x7fff_ffff_ffff_ffff);
+    if absolute < 2f64.powi(-14) {
+        let rounded = round_half(absolute * 2f64.powi(24));
+        return sign | if rounded >= 0x0400 { 0x0400 } else { rounded };
+    }
+    let unbiased = exponent as i32 - 1023;
+    if unbiased > 15 {
+        return sign | 0x7c00;
+    }
+    let mut significand = (fraction >> 42) as u16;
+    let remainder = fraction & ((1_u64 << 42) - 1);
+    if remainder > (1_u64 << 41) || (remainder == (1_u64 << 41) && significand & 1 != 0) {
+        significand += 1;
+    }
+    let half_exponent = (unbiased + 15) as u16;
+    if significand == 0x0400 {
+        let half_exponent = half_exponent + 1;
+        if half_exponent >= 0x1f {
+            return sign | 0x7c00;
+        }
+        return sign | (half_exponent << 10);
+    }
+    sign | (half_exponent << 10) | significand
+}
+
+fn round_half(value: f64) -> u16 {
+    let lower = value.floor() as u64;
+    let fraction = value - lower as f64;
+    (lower + u64::from(fraction > 0.5 || (fraction == 0.5 && lower & 1 != 0))) as u16
+}
+
+fn half_to_f64(bits: u16) -> f64 {
+    let sign_bits = (u64::from(bits & 0x8000)) << 48;
+    let exponent = (bits >> 10) & 0x1f;
+    let fraction = bits & 0x03ff;
+    match (exponent, fraction) {
+        (0, 0) => f64::from_bits(sign_bits),
+        (0, fraction) => f64::from(fraction) * 2_f64.powi(-24) * sign_factor(sign_bits),
+        (0x1f, 0) => f64::from_bits(sign_bits | 0x7ff0_0000_0000_0000),
+        (0x1f, fraction) => {
+            f64::from_bits(sign_bits | 0x7ff0_0000_0000_0000 | (u64::from(fraction) << 42))
+        }
+        (exponent, fraction) => {
+            let value = (1.0 + f64::from(fraction) / 1024.0) * 2_f64.powi(i32::from(exponent) - 15);
+            value * sign_factor(sign_bits)
+        }
+    }
+}
+
+fn sign_factor(sign: u64) -> f64 {
+    if sign == 0 { 1.0 } else { -1.0 }
 }
