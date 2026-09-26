@@ -121,7 +121,10 @@ impl ResidualProgram {
                     return Err(format!("function {index} result flags are invalid"));
                 }
                 if !instruction.unused_operands_are_zero() {
-                    return Err(format!("function {index} unused operands are not zero"));
+                    return Err(format!(
+                        "function {index} {:?} has nonzero unused operands",
+                        instruction.op()
+                    ));
                 }
                 let register = |value: u16| register_in_bounds(value, function.registers, 0);
                 let destination =
@@ -135,13 +138,38 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} constant load is invalid"));
                     }
-                    Op::LoadLocal | Op::LoadEnvLocal
+                    Op::LoadLocal
                         if instruction.local_slot() >= usize::from(function.locals)
                             || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} local access is invalid"));
                     }
-                    Op::StoreLocal | Op::StoreEnvLocal | Op::InitializeTdz
+                    Op::LoadLocal
+                        if !instruction.numeric_local_store_fields_valid()
+                            || instruction
+                                .numeric_local_store_target()
+                                .is_some_and(|target| !register(target.register)) =>
+                    {
+                        return Err(format!("function {index} numeric local target is invalid"));
+                    }
+                    Op::LoadEnvLocal
+                        if instruction.local_slot() >= usize::from(function.locals)
+                            || !destination(instruction.result_register()) =>
+                    {
+                        return Err(format!("function {index} local access is invalid"));
+                    }
+                    Op::StoreLocal | Op::StoreEnvLocal
+                        if instruction.local_slot() >= usize::from(function.locals)
+                            || instruction
+                                .boolean_field(super::InstructionField::C)
+                                .is_none()
+                            || instruction.optional_register_b().is_some_and(|register| {
+                                !register_in_bounds(register, function.registers, 0)
+                            }) =>
+                    {
+                        return Err(format!("function {index} local store is invalid"));
+                    }
+                    Op::InitializeTdz
                         if instruction.local_slot() >= usize::from(function.locals) =>
                     {
                         return Err(format!("function {index} local store is invalid"));
