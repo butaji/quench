@@ -775,7 +775,9 @@ impl<H: Host> Vm<H> {
             Native::Map | Native::Set => self.construct_collection_native(p, native, args),
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),
-            Native::FinalizationRegistry => self.construct_finalization_registry_native(args),
+            Native::FinalizationRegistry => {
+                self.construct_finalization_registry_native(p, args, new_target)
+            }
             Native::DisposableStack | Native::AsyncDisposableStack => {
                 self.construct_disposable_stack_native(p, native, new_target)
             }
