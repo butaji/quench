@@ -872,6 +872,7 @@ impl<H: Host> Vm<H> {
         let object_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        self.install_number_for_realm(program, global, object_prototype)?;
         let object_constructor = self.native_with_realm(Native::Object, global, global);
         self.set_builtin_function_name(object_constructor, "Object")?;
         self.set_builtin_value_named(object_constructor, "prototype", object_prototype)?;
