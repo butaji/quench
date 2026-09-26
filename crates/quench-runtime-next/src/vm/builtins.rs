@@ -278,6 +278,7 @@ const NATIVES: &[Native] = &[
     Native::Error, Native::ErrorToString, Native::ErrorIsError, Native::ErrorStackGetter, Native::ErrorStackSetter,
     Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
+    Native::RegExpEscape,
     Native::RegExpToString,
     Native::RegExpSymbolMatch,
     Native::RegExpSymbolReplace,

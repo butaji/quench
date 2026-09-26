@@ -318,6 +318,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::StringLocaleCompare => 1.0,
         Native::StringFromCharCode | Native::StringFromCodePoint => 1.0,
         Native::RegExp => 2.0,
+        Native::RegExpEscape => 1.0,
         Native::ObjectPrototypeToLocaleString | Native::ObjectPrototypeValueOf => 0.0,
         Native::ObjectPrototypeToString => 0.0,
         Native::ObjectPrototypeDefineGetter | Native::ObjectPrototypeDefineSetter => 2.0,
