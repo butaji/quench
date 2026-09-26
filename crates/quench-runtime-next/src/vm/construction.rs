@@ -278,6 +278,9 @@ impl<H: Host> Vm<H> {
             env,
             realm,
         });
+        if let Some(source) = p.functions[id as usize].source_text.as_deref() {
+            self.set_function_source(function, source)?;
+        }
         let program = self.active_program;
         self.function_values
             .entry((program, id))
@@ -504,7 +507,11 @@ impl<H: Host> Vm<H> {
             } else if !matches!(
                 native,
                 Native::Proxy | Native::Array | Native::ArrayBuffer | Native::SharedArrayBuffer
-            ) {
+            ) && !(native == Native::Object
+                && args
+                    .first()
+                    .is_some_and(|value| !value.is_null() && !value.is_undefined()))
+            {
                 self.set_constructed_prototype(p, result, new_target, native)?;
             }
             return Ok(result);
@@ -772,10 +779,13 @@ impl<H: Host> Vm<H> {
             | Native::GeneratorFunction
             | Native::AsyncGeneratorFunction => self.function_native(p, native, args),
             Native::Object => {
-                if let Some(value) = args.first().copied()
-                    && self.object_data(value).is_some()
-                {
-                    return Ok(value);
+                if let Some(value) = args.first().copied() {
+                    if self.object_data(value).is_some() {
+                        return Ok(value);
+                    }
+                    if !value.is_null() && !value.is_undefined() {
+                        return self.box_object(value);
+                    }
                 }
                 Ok(self.object())
             }

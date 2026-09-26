@@ -220,6 +220,8 @@ const NATIVES: &[Native] = &[
     Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
     Native::RegExpToString,
+    Native::RegExpSymbolMatch,
+    Native::RegExpSpecies,
     Native::RegExpExec,
     Native::RegExpTest,
     Native::RegExpGlobal,
@@ -385,6 +387,11 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }
+        self.install_regexp_symbol_properties(
+            self.native_value(Native::RegExp),
+            self.regexp_proto,
+            self.realm.globals,
+        )?;
         let has_instance_symbol = self.well_known_symbols["hasInstance"];
         let has_instance = self.native_value(Native::FunctionPrototypeHasInstance);
         self.set_builtin_function_name(has_instance, "[Symbol.hasInstance]")?;

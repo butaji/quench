@@ -225,7 +225,7 @@ pub(crate) enum Native {
     DateToLocaleString, DateToLocaleDateString, DateToLocaleTimeString, DateToISOString,
     DateToJSON, DateToPrimitive, DateToTemporalInstant, DateParse, DateUTC,
     Error, ErrorToString, ErrorIsError, ErrorStackGetter, ErrorStackSetter, AggregateError, SuppressedError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
-    RegExp, RegExpToString,
+    RegExp, RegExpToString, RegExpSymbolMatch, RegExpSpecies,
     RegExpExec,
     RegExpTest,
     RegExpGlobal,

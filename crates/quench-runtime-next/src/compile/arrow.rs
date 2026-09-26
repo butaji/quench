@@ -17,6 +17,10 @@ impl Compiler<'_> {
     ) -> u32 {
         let id = self.functions.len() as u32;
         self.functions.push(None);
+        let source_text = self
+            .text
+            .get(value.span.start as usize..value.span.end as usize)
+            .map(str::to_owned);
         let lexical_atoms = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
         {
             self.collect_lexical_atoms(&body.statements)
@@ -114,6 +118,7 @@ impl Compiler<'_> {
             // function table without adding a second callable representation.
             // The marker is VM-internal and never materialized as `.name`.
             name: Some(arrow_marker),
+            source_text,
             params: params.len() as u16,
             length: value
                 .params

@@ -108,6 +108,7 @@ pub(super) fn write_program(
     for function in &program.functions {
         out.option_u32(function.parent);
         out.option_u32(function.name);
+        write_optional_string(&mut out, function.source_text.as_deref());
         out.u16(function.params);
         out.u16(function.length);
         out.u32(function.parameter_end_pc);
@@ -321,6 +322,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let functions = input.list(|input| {
         let parent = input.option_u32()?;
         let name = input.option_u32()?;
+        let source_text = read_optional_string(input)?;
         let params = input.u16()?;
         let length = input.u16()?;
         let parameter_end_pc = input.u32()?;
@@ -463,6 +465,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         Ok(Function {
             parent,
             name,
+            source_text,
             params,
             length,
             parameter_end_pc,

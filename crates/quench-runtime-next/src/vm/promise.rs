@@ -388,6 +388,8 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::ObjectFromEntries => 1.0,
         Native::ObjectDefineProperty => 3.0,
         Native::ObjectSetPrototypeOf => 2.0,
+        Native::RegExpSymbolMatch => 1.0,
+        Native::RegExpSpecies => 0.0,
         Native::ReflectHas | Native::ReflectApply => 2.0,
         Native::ObjectPrototypeHasOwnProperty
         | Native::ObjectPrototypePropertyIsEnumerable
