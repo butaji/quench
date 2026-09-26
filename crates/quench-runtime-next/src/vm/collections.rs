@@ -10,6 +10,7 @@ impl<H: Host> Vm<H> {
                 | Native::IteratorFrom
                 | Native::IteratorDispose
                 | Native::IteratorProtocolNext
+                | Native::IteratorProtocolReturn
                 | Native::IteratorHelperNext
                 | Native::IteratorHelperReturn
                 | Native::IteratorConcat
@@ -403,6 +404,7 @@ impl<H: Host> Vm<H> {
             }
             Native::IteratorNext => self.iterator_next_with_args(p, this, args),
             Native::IteratorProtocolNext => self.iterator_next_with_args(p, this, args),
+            Native::IteratorProtocolReturn => self.iterator_protocol_return(p, this),
             Native::IteratorFrom => self.iterator_from(p, args),
             Native::IteratorDispose => self.iterator_dispose(p, this),
             Native::IteratorHelperNext => self.iterator_next_with_args(p, this, args),
