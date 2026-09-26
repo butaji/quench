@@ -742,7 +742,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), value);
             }
             Op::Unary => {
-                let v = self.unary(p, i.imm(), self.read(f, i.b()))?;
+                let v = self.unary(p, i.unary_operator(), self.read(f, i.b()))?;
                 self.write(f, i.a(), v);
             }
             Op::Delete => {
