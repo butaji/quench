@@ -347,14 +347,28 @@ impl<H: Host> Vm<H> {
                     let mut capture_roots = Vec::new();
                     for index in 1..length {
                         let atom = self.intern_atom(&index.to_string());
-                        let mut capture = self.get_property(p, result, atom)?;
-                        if !callable && !capture.is_undefined() {
-                            let string = self.regexp_input_string(p, capture)?;
-                            capture = self.heap.alloc(Cell::String(string));
-                        }
-                        let root = self.heap.root(capture);
-                        capture_roots.push(root);
-                        record_roots.push(root);
+                        let capture = self.get_property(p, result, atom)?;
+                        let capture_root = self.heap.root(capture);
+                        let retained_capture_root = if !callable && !capture.is_undefined() {
+                            let conversion = self.regexp_input_string(
+                                p,
+                                self.heap.root_value(capture_root).unwrap_or(capture),
+                            );
+                            let string = match conversion {
+                                Ok(string) => string,
+                                Err(error) => {
+                                    self.heap.release_root(capture_root);
+                                    return Err(error);
+                                }
+                            };
+                            self.heap.release_root(capture_root);
+                            let capture = self.heap.alloc(Cell::String(string));
+                            self.heap.root(capture)
+                        } else {
+                            capture_root
+                        };
+                        capture_roots.push(retained_capture_root);
+                        record_roots.push(retained_capture_root);
                     }
                     let groups_atom = self.intern_atom("groups");
                     let groups = self.get_property(p, result, groups_atom)?;
