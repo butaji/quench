@@ -745,7 +745,10 @@ impl<H: Host> Vm<H> {
             Op::Delete => {
                 let result =
                     self.delete_reference_property(p, self.read(f, i.b()), self.read(f, i.c()))?;
-                if !self.truthy(result) && i.imm() != 0 {
+                if !self.truthy(result)
+                    && (p.functions[self.frames[f].function as usize].strict
+                        || i.boolean_flag().expect("validated boolean immediate"))
+                {
                     return Err(self.type_error(p, "Cannot delete property in strict mode".into()));
                 }
                 self.write(f, i.a(), result);
