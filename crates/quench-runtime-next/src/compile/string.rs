@@ -9,6 +9,7 @@ pub(super) fn constant(value: &StringLiteral<'_>) -> Constant {
     from_raw(
         value.raw.as_ref().map(|raw| raw.as_str()),
         value.value.as_str(),
+        true,
     )
 }
 
@@ -16,23 +17,23 @@ pub(super) fn template_constant(value: &TemplateElementValue<'_>) -> Constant {
     from_raw(
         Some(value.raw.as_str()),
         value.cooked.as_ref().map_or("", |text| text.as_str()),
+        false,
     )
 }
 
-fn from_raw(raw: Option<&str>, fallback: &str) -> Constant {
+fn from_raw(raw: Option<&str>, fallback: &str, quoted: bool) -> Constant {
     let Some(raw) = raw else {
         return Constant::String(fallback.into());
     };
-    let units = decode_units(raw);
+    let units = decode_units(raw, quoted);
     match String::from_utf16(&units) {
         Ok(value) => Constant::String(value),
         Err(_) => Constant::StringUnits(units),
     }
 }
 
-fn decode_units(raw: &str) -> Vec<u16> {
+fn decode_units(raw: &str, quoted: bool) -> Vec<u16> {
     let mut chars = raw.chars();
-    let quoted = matches!(chars.clone().next(), Some('\'' | '"'));
     if quoted {
         chars.next();
     }
