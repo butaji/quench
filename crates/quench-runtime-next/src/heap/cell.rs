@@ -213,7 +213,7 @@ pub(crate) enum Native {
     IteratorPrototypeConstructorSetter,
     IteratorPrototypeToStringTagGetter,
     IteratorPrototypeToStringTagSetter,
-    IteratorNext, RegExpStringIteratorNext, IteratorClose, IteratorSelf, AsyncIteratorSelf,
+    IteratorNext, StringIteratorNext, RegExpStringIteratorNext, IteratorClose, IteratorSelf, AsyncIteratorSelf,
     IteratorReturn, IteratorThrow,
     GeneratorNext, GeneratorReturn, GeneratorThrow,
     AsyncGeneratorNext, AsyncGeneratorReturn, AsyncGeneratorThrow,
