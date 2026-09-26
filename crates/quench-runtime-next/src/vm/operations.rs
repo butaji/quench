@@ -58,6 +58,7 @@ impl<H: Host> Vm<H> {
             native,
             Native::ShadowRealmEvaluate
                 | Native::ShadowRealmImportValue
+                | Native::ShadowRealmImportValueFulfilled
                 | Native::ShadowRealmWrappedFunction
         ) {
             return self.shadow_realm_native(p, native, this, args);

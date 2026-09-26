@@ -139,6 +139,7 @@ impl<H: Host> Vm<H> {
         match native {
             Native::ShadowRealmEvaluate => self.shadow_realm_evaluate(p, this, args),
             Native::ShadowRealmImportValue => self.shadow_realm_import_value(p, this, args),
+            Native::ShadowRealmImportValueFulfilled => self.shadow_realm_import_fulfilled(p, args),
             Native::ShadowRealmWrappedFunction => self.call_shadow_wrapped_function(p, args),
             _ => Err(JsError("invalid ShadowRealm native".into())),
         }
@@ -216,40 +217,125 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !matches!(self.heap.get(this), Some(Cell::ShadowRealm { .. })) {
+        let Some(Cell::ShadowRealm { realm_global, .. }) = self.heap.get(this) else {
             return Err(self.type_error(
                 p,
                 "ShadowRealm.prototype.importValue called on incompatible receiver".into(),
             ));
-        }
+        };
+        let realm_global = *realm_global;
         let specifier = args.first().copied().unwrap_or(Value::UNDEFINED);
-        self.to_string(p, specifier)?;
-        if let Some(name) = args.get(1)
-            && !matches!(self.heap.get(*name), Some(Cell::String(_)))
-        {
+        let specifier = self.to_string(p, specifier)?;
+        let Some(export_name) = args.get(1).copied() else {
+            return Err(self.type_error(
+                p,
+                "ShadowRealm.prototype.importValue export name must be a string".into(),
+            ));
+        };
+        if !matches!(self.heap.get(export_name), Some(Cell::String(_))) {
             return Err(self.type_error(
                 p,
                 "ShadowRealm.prototype.importValue export name must be a string".into(),
             ));
         }
-        let caller_global = match self.heap.get(this) {
-            Some(Cell::ShadowRealm { caller_global, .. }) => *caller_global,
-            _ => self.realm.globals,
-        };
-        let prior_global = self.switch_realm_global(caller_global);
-        let promise = (|| {
-            let error = self
-                .type_error(p, "ShadowRealm import failed".into())
-                .thrown_value()
-                .unwrap_or(Value::UNDEFINED);
-            let promise_atom = self.intern_atom("Promise");
-            let promise_constructor = self.get_property(p, caller_global, promise_atom)?;
-            let reject_atom = self.intern_atom("reject");
-            let reject = self.get_property(p, promise_constructor, reject_atom)?;
-            self.call_value(p, reject, promise_constructor, &[error])
-        })();
+        let caller_global = self.realm.globals;
+        self.start_shadow_realm_import(
+            p,
+            realm_global,
+            caller_global,
+            specifier.into(),
+            export_name,
+        )
+    }
+
+    fn start_shadow_realm_import(
+        &mut self,
+        p: &ResidualProgram,
+        realm_global: Value,
+        caller_global: Value,
+        specifier: JsString,
+        export_name: Value,
+    ) -> Result<Value, JsError> {
+        let specifier = self.heap.alloc(Cell::String(specifier));
+        let prior_global = self.switch_realm_global(realm_global);
+        let import = self.call_native(p, Native::DynamicImport, Value::UNDEFINED, &[specifier]);
         self.switch_realm_global(prior_global);
-        promise
+        let import = import?;
+        let import_root = self.heap.root(import);
+        let result = (|| {
+            let on_fulfilled =
+                self.shadow_realm_import_handler(export_name, caller_global, false)?;
+            let on_rejected = self.shadow_realm_import_handler(export_name, caller_global, true)?;
+            let then_atom = self.intern_atom("then");
+            let then = self.get_property(p, import, then_atom)?;
+            self.call_value(p, then, import, &[on_fulfilled, on_rejected])
+        })();
+        self.heap.release_root(import_root);
+        result
+    }
+
+    fn shadow_realm_import_handler(
+        &mut self,
+        export_name: Value,
+        caller_global: Value,
+        rejected: bool,
+    ) -> Result<Value, JsError> {
+        let env = self.object();
+        let export_atom = self.intern_atom("\0rqj:shadow-export-name");
+        let caller_atom = self.intern_atom("\0rqj:shadow-import-caller");
+        let rejected_atom = self.intern_atom("\0rqj:shadow-import-rejected");
+        self.set_property(env, export_atom, export_name)?;
+        self.set_property(env, caller_atom, caller_global)?;
+        self.set_property(
+            env,
+            rejected_atom,
+            if rejected { Value::TRUE } else { Value::FALSE },
+        )?;
+        Ok(self.native_with_realm(Native::ShadowRealmImportValueFulfilled, env, caller_global))
+    }
+
+    fn shadow_realm_import_fulfilled(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let env = self.active_native_env().unwrap_or(Value::NULL);
+        let export_atom = self.intern_atom("\0rqj:shadow-export-name");
+        let caller_atom = self.intern_atom("\0rqj:shadow-import-caller");
+        let rejected_atom = self.intern_atom("\0rqj:shadow-import-rejected");
+        let export_name = self
+            .own_property(env, export_atom)
+            .unwrap_or(Value::UNDEFINED);
+        let caller = self
+            .own_property(env, caller_atom)
+            .unwrap_or(self.realm.globals);
+        if self
+            .own_property(env, rejected_atom)
+            .is_some_and(|value| self.truthy(value))
+        {
+            return self.with_realm_type_error(p, caller, "ShadowRealm import failed");
+        }
+        let namespace = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let descriptor = self.object_get_own_property_descriptor(p, &[namespace, export_name])?;
+        if descriptor.is_undefined() {
+            return self.with_realm_type_error(p, caller, "ShadowRealm export not found");
+        }
+        let Some(Cell::String(export_name)) = self.heap.get(export_name).cloned() else {
+            return self.with_realm_type_error(p, caller, "ShadowRealm export not found");
+        };
+        let export_atom = self.intern_js_atom(&export_name);
+        let value = self.get_property(p, namespace, export_atom)?;
+        if self.is_function(value) {
+            return self.wrap_shadow_callable(p, value, caller);
+        }
+        if self.is_object_like(value) {
+            return self.with_realm_type_error(
+                p,
+                caller,
+                "ShadowRealm imported value must be primitive or callable",
+            );
+        }
+        Ok(value)
     }
 
     pub(super) fn construct_shadow_realm(
