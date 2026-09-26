@@ -497,28 +497,28 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.c()),
             )?,
             Op::GetIterator => {
-                let value = self.get_iterator(p, self.read(f, i.b()))?;
-                self.write(f, i.a(), value);
+                let value = self.get_iterator(p, self.read(f, i.register_b()))?;
+                self.write(f, i.result_register(), value);
             }
             Op::SpreadToArray => {
-                let array = self.spread_to_array(p, self.read(f, i.b()))?;
-                self.write(f, i.a(), array);
+                let array = self.spread_to_array(p, self.read(f, i.register_b()))?;
+                self.write(f, i.result_register(), array);
             }
             Op::RequireObjectCoercible => {
-                self.require_object_coercible(p, self.read(f, i.b()))?;
+                self.require_object_coercible(p, self.read(f, i.register_b()))?;
             }
             Op::RequireIteratorResult => {
-                if !self.is_object_like(self.read(f, i.b())) {
+                if !self.is_object_like(self.read(f, i.register_b())) {
                     return Err(self.type_error(p, "iterator next result is not an object".into()));
                 }
             }
             Op::SuperCallCheck => self.check_super_call(p)?,
             Op::IteratorClose => {
-                self.iterator_close(p, self.read(f, i.b()))?;
+                self.iterator_close(p, self.read(f, i.register_b()))?;
             }
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
-                iterator: i.a(),
-                done: i.b(),
+                iterator: i.register_a(),
+                done: i.register_b(),
             }),
             Op::IteratorCleanupPop => {
                 self.frames[f]
@@ -552,8 +552,8 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::GetAsyncIterator => {
-                let value = self.get_async_iterator(p, self.read(f, i.b()))?;
-                self.write(f, i.a(), value);
+                let value = self.get_async_iterator(p, self.read(f, i.register_b()))?;
+                self.write(f, i.result_register(), value);
             }
             Op::Await => {
                 return Ok(StepResult::Await {
