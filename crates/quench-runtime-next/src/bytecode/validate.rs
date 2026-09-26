@@ -116,6 +116,14 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                         && cache_in_bounds(cache_site, bounds.cache_sites)
                 }
             },
+            FieldLayout::NumericLocalTarget => {
+                instruction.numeric_local_store_fields_valid()
+                    && instruction
+                        .numeric_local_store_target()
+                        .is_none_or(|target| {
+                            register_in_bounds(target.register, bounds.registers, 0)
+                        })
+            }
             _ => true,
         },
     )
@@ -293,16 +301,6 @@ impl ResidualProgram {
                     ));
                 }
                 match instruction.op() {
-                    Op::LoadLocal
-                        if !instruction.numeric_local_store_fields_valid()
-                            || instruction
-                                .numeric_local_store_target()
-                                .is_some_and(|target| {
-                                    !register_in_bounds(target.register, function.registers, 0)
-                                }) =>
-                    {
-                        return Err(format!("function {index} numeric local target is invalid"));
-                    }
                     Op::GetIndex
                         if function.dispatch == DispatchClass::Numeric
                             && (!is_numeric_index_operand(instruction.operand_b())
