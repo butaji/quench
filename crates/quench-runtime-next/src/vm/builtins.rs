@@ -616,39 +616,15 @@ impl<H: Host> Vm<H> {
             ("deleteProperty", Native::ReflectDeleteProperty),
             ("preventExtensions", Native::ReflectPreventExtensions),
             ("isExtensible", Native::ReflectIsExtensible),
+            ("set", Native::ReflectSet),
+            ("ownKeys", Native::ReflectOwnKeys),
+            ("getPrototypeOf", Native::ReflectGetPrototypeOf),
+            ("setPrototypeOf", Native::ReflectSetPrototypeOf),
+            ("construct", Native::ReflectConstruct),
         ] {
-            self.set_named(program, reflect, name, self.native_value(native))?;
+            self.set_builtin_named(program, reflect, name, native)?;
         }
-        self.set_named(
-            program,
-            reflect,
-            "set",
-            self.native_value(Native::ReflectSet),
-        )?;
-        self.set_named(
-            program,
-            reflect,
-            "ownKeys",
-            self.native_value(Native::ReflectOwnKeys),
-        )?;
-        self.set_named(
-            program,
-            reflect,
-            "getPrototypeOf",
-            self.native_value(Native::ReflectGetPrototypeOf),
-        )?;
-        self.set_named(
-            program,
-            reflect,
-            "setPrototypeOf",
-            self.native_value(Native::ReflectSetPrototypeOf),
-        )?;
-        self.set_named(
-            program,
-            reflect,
-            "construct",
-            self.native_value(Native::ReflectConstruct),
-        )?;
+        self.install_builtin_to_string_tag(reflect, "Reflect")?;
         self.global(program, "Reflect", reflect)
     }
     fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
