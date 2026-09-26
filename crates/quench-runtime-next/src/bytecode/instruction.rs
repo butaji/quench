@@ -147,6 +147,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn function_name_prefix(self) -> u32 {
+                debug_assert_eq!(
+                    self.op().immediate_role(),
+                    ImmediateRole::FunctionNamePrefix
+                );
+                self.imm()
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn local_slot(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::LocalSlot);
                 self.imm() as usize

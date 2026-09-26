@@ -510,10 +510,14 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError("iterator cleanup stack underflow".into()))?;
             }
             Op::SetFunctionName => {
-                self.set_function_name(p, self.read(f, i.a()), i.imm())?;
+                self.set_function_name(p, self.read(f, i.a()), i.atom_index())?;
             }
             Op::SetFunctionNameKey => {
-                self.set_function_name_key(self.read(f, i.a()), self.read(f, i.b()), i.imm());
+                self.set_function_name_key(
+                    self.read(f, i.a()),
+                    self.read(f, i.b()),
+                    i.function_name_prefix(),
+                );
             }
             Op::InitializeTdz => {
                 let slot = i.local_slot();

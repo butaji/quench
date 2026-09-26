@@ -178,6 +178,21 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} private-name mark is invalid"));
                     }
+                    Op::SetFunctionName
+                        if !register(instruction.a()) || !atom(instruction.atom_index()) =>
+                    {
+                        return Err(format!("function {index} function name is invalid"));
+                    }
+                    Op::SetFunctionNameKey
+                        if !register(instruction.a())
+                            || !register(instruction.b())
+                            || instruction.function_name_prefix()
+                                > crate::bytecode::FUNCTION_NAME_PREFIX_SETTER =>
+                    {
+                        return Err(format!(
+                            "function {index} computed function name is invalid"
+                        ));
+                    }
                     Op::MakeClosure
                         if instruction.closure_function_index() as usize
                             >= self.functions.len()
@@ -329,7 +344,6 @@ impl ResidualProgram {
                     | Op::IteratorClose
                     | Op::SpreadToArray
                     | Op::RequireObjectCoercible
-                    | Op::SetFunctionName
                     | Op::Return
                     | Op::Throw
                         if !register(instruction.a()) =>
