@@ -415,8 +415,8 @@ opcodes!(
     NumericAdd => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     NumericMultiply => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     InitializeThis => Effect::CONTROL, @ NoResult, @ fields(Register, Undeclared, Undeclared),
-    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex,
-    LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex,
+    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex, @ Register, @ fields(Register, Undeclared, Undeclared),
+    LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     DefineField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Undeclared),
     ValidateClassHeritage => READ_THROW,
 );
