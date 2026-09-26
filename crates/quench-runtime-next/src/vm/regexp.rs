@@ -800,8 +800,7 @@ impl<H: Host> Vm<H> {
         let flags_atom = self.intern_atom("flags");
         let flags_value = self.get_property(p, receiver, flags_atom)?;
         let flags = self.to_string(p, flags_value)?;
-        let is_regexp = self.regexp_is_regexp(p, receiver)?;
-        let matcher = self.regexp_match_all_species(p, receiver, &flags, is_regexp)?;
+        let matcher = self.regexp_match_all_species(p, receiver, &flags)?;
         let last_index_atom = self.intern_atom("lastIndex");
         let last_index = self.get_property(p, receiver, last_index_atom)?;
         let last_index =
@@ -830,15 +829,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
         flags: &str,
-        is_regexp: bool,
     ) -> Result<Value, JsError> {
-        let constructor = if is_regexp {
-            let constructor_atom = self.intern_atom("constructor");
-            self.get_property(p, receiver, constructor_atom)?
-        } else {
-            Value::UNDEFINED
-        };
-        let species = if is_regexp && !constructor.is_undefined() {
+        let constructor_atom = self.intern_atom("constructor");
+        let constructor = self.get_property(p, receiver, constructor_atom)?;
+        let species = if !constructor.is_undefined() {
             if !self.is_object_like(constructor) {
                 return Err(self.type_error(p, "RegExp constructor is not an object".into()));
             }
@@ -855,11 +849,7 @@ impl<H: Host> Vm<H> {
         let intrinsic = self.get_property(p, self.realm.globals, regexp_atom)?;
         let flags_value = self.heap.alloc(Cell::String(flags.into()));
         if species.is_undefined() || species.is_null() {
-            let pattern = match self.heap.get(receiver) {
-                Some(Cell::RegExp { source, .. }) => self.heap.alloc(Cell::String(source.clone())),
-                _ => receiver,
-            };
-            return self.construct_value(p, intrinsic, &[pattern, flags_value]);
+            return self.construct_value(p, intrinsic, &[receiver, flags_value]);
         }
         self.construct_value(p, species, &[receiver, flags_value])
     }
