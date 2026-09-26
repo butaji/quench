@@ -228,18 +228,18 @@ impl<H: Host> Vm<H> {
                         self.profile.index_dispatch(true, true);
                         self.set_index_mode(
                             p,
-                            self.read(frame, ins.b()),
-                            self.read(frame, ins.c()),
-                            self.read(frame, ins.a()),
+                            self.read(frame, ins.register_b()),
+                            self.read(frame, ins.register_c()),
+                            self.read(frame, ins.register_a()),
                             p.functions[self.frames[frame].function as usize].strict
                                 || ins.boolean_flag().expect("validated boolean immediate"),
                         )?
                     }
                     Op::DefineArrayElement => self.define_array_literal_element(
                         p,
-                        self.read(frame, ins.b()),
+                        self.read(frame, ins.register_b()),
                         ins.array_index() as usize,
-                        self.read(frame, ins.a()),
+                        self.read(frame, ins.register_a()),
                     )?,
                     Op::Binary => {
                         let operator = ins.binary_operator();
