@@ -135,6 +135,12 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn array_length(self) -> usize {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ArrayLength);
+                self.imm() as usize
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn atom_index(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::AtomIndex);
                 self.imm()
