@@ -33,19 +33,27 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.array_proto),
             elements: std::rc::Rc::new(errors),
         });
-        let error = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        let name_atom = self.intern_atom("name");
-        let message_atom = self.intern_atom("message");
-        let errors_atom = self.intern_atom("errors");
-        let name = self.heap.alloc(Cell::String("AggregateError".into()));
-        let message = self
-            .heap
-            .alloc(Cell::String("All promises were rejected".into()));
-        self.set_property(error, name_atom, name)?;
-        self.set_property(error, message_atom, message)?;
-        self.set_property(error, errors_atom, errors)?;
+        let errors = self.heap.root(errors);
+        let prototype_atom = self.intern_atom("prototype");
+        let constructor_atom = self.intern_atom("AggregateError");
+        let constructor = self
+            .own_property(self.realm.globals, constructor_atom)
+            .unwrap_or_else(|| self.native_value(Native::AggregateError));
+        let prototype = self
+            .own_property(constructor, prototype_atom)
+            .unwrap_or(self.object_proto);
+        let error = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let error = self.heap.root(error);
+        let result = (|| {
+            let error = self.heap.root_value(error).unwrap_or(Value::UNDEFINED);
+            self.set_builtin_value_named(error, "\0rqj:error-brand", Value::TRUE)?;
+            let errors = self.heap.root_value(errors).unwrap_or(Value::UNDEFINED);
+            self.set_builtin_value_named(error, "errors", errors)?;
+            Ok(error)
+        })();
+        self.heap.release_root(error);
+        self.heap.release_root(errors);
+        let error = result?;
         Ok(error)
     }
 
