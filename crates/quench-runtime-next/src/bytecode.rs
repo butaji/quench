@@ -95,6 +95,13 @@ pub(crate) enum ImmediateRole {
     MethodSiteIndex,
     ObjectSiteIndex,
     SuperinstructionIndex,
+    FieldLookup,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FieldLookup {
+    Atom(Atom),
+    Site(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -365,7 +372,7 @@ opcodes!(
     Await => READ_THROW.union(Effect::CONTROL),
     Yield => READ_THROW.union(Effect::CONTROL),
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair,
-    GetField => READ_THROW, @ ReturnableAndThis,
+    GetField => READ_THROW; meaning FieldLookup, @ ReturnableAndThis,
     GetIndex => READ_THROW,
     ToPropertyKey => READ_THROW,
     ToNumeric => READ_THROW,
