@@ -77,6 +77,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.native_value(Native::RegExp);
         self.regexp_proto = self.object();
         self.set_named(program, constructor, "prototype", self.regexp_proto)?;
+        self.set_builtin_named(program, constructor, "escape", Native::RegExpEscape)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
             constructor,
@@ -440,6 +441,18 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::String(format!("/{source}/{flags}").into())))
     }
 
+    pub(super) fn regexp_escape_native(
+        &mut self,
+        program: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let Some(Cell::String(input)) = self.heap.get(value) else {
+            return Err(self.type_error(program, "RegExp.escape requires a string value".into()));
+        };
+        Ok(self.heap.alloc(Cell::String(escape_regexp_string(&input))))
+    }
+
     pub(super) fn regexp_native(
         &mut self,
         p: &ResidualProgram,
@@ -551,6 +564,69 @@ fn advance_string_index(input: &str, index: usize, unicode: bool) -> usize {
         index + 2
     } else {
         index + 1
+    }
+}
+
+fn escape_regexp_string(input: &JsString) -> JsString {
+    let units = input.units();
+    let mut escaped = String::new();
+    let mut index = 0;
+    while let Some(unit) = units.get(index) {
+        if (HIGH_SURROGATE_START..=HIGH_SURROGATE_END).contains(unit)
+            && units
+                .get(index + 1)
+                .is_some_and(|next| (LOW_SURROGATE_START..=LOW_SURROGATE_END).contains(next))
+        {
+            let scalar = 0x1_0000
+                + ((u32::from(*unit) - u32::from(HIGH_SURROGATE_START)) << 10)
+                + u32::from(units[index + 1])
+                - u32::from(LOW_SURROGATE_START);
+            if let Some(character) = char::from_u32(scalar) {
+                escape_regexp_character(&mut escaped, character, index == 0);
+            }
+            index += 2;
+        } else if (HIGH_SURROGATE_START..=LOW_SURROGATE_END).contains(unit) {
+            escaped.push_str(&format!("\\u{unit:04x}"));
+            index += 1;
+        } else {
+            if let Some(character) = char::from_u32(u32::from(*unit)) {
+                escape_regexp_character(&mut escaped, character, index == 0);
+            }
+            index += 1;
+        }
+    }
+    JsString::from(escaped)
+}
+
+fn escape_regexp_character(output: &mut String, character: char, first: bool) {
+    if first && character.is_ascii_alphanumeric() {
+        output.push_str(&format!("\\x{:02x}", u32::from(character)));
+    } else if let Some(escape) = regexp_escape_control(character) {
+        output.push_str(escape);
+    } else if "^$\\.*+?()[]{}|/".contains(character) {
+        output.push('\\');
+        output.push(character);
+    } else if ",-=<>#&!%:;@~'`\"".contains(character) || character == ' ' {
+        output.push_str(&format!("\\x{:02x}", u32::from(character)));
+    } else if character.is_control() || character.is_whitespace() || character == '\u{FEFF}' {
+        if u32::from(character) <= 0xFF {
+            output.push_str(&format!("\\x{:02x}", u32::from(character)));
+        } else {
+            output.push_str(&format!("\\u{:04x}", u32::from(character)));
+        }
+    } else {
+        output.push(character);
+    }
+}
+
+fn regexp_escape_control(character: char) -> Option<&'static str> {
+    match character {
+        '\n' => Some("\\n"),
+        '\r' => Some("\\r"),
+        '\t' => Some("\\t"),
+        '\u{000B}' => Some("\\v"),
+        '\u{000C}' => Some("\\f"),
+        _ => None,
     }
 }
 

@@ -1152,6 +1152,9 @@ impl<H: Host> Vm<H> {
         );
         self.set_builtin_value_named(global, "Map", map)?;
         let regexp = self.native_with_realm(Native::RegExp, global, global);
+        let regexp_escape = self.native_with_realm(Native::RegExpEscape, global, global);
+        self.set_builtin_function_name(regexp_escape, "escape")?;
+        self.set_builtin_value_named(regexp, "escape", regexp_escape)?;
         let regexp_prototype = self.heap.alloc(Cell::RegExp {
             object: Self::empty_object(object_prototype),
             source: JsString::from_str("(?:)"),
