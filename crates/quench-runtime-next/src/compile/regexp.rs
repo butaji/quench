@@ -9,7 +9,7 @@ pub(crate) fn validate_pattern(pattern: &str, flags: &str) -> Result<(), String>
     let unicode = flags.contains('u') || flags.contains('v');
     if unicode {
         validate_unicode_escapes(pattern, flags.contains('v'))?;
-        validate_unicode_quantifier_braces(pattern)?;
+        validate_unicode_quantifier_braces(pattern, flags.contains('v'))?;
         validate_unicode_class_ranges(pattern)?;
     }
     validate_named_groups(pattern, unicode)
@@ -325,13 +325,30 @@ fn is_capturing_group(bytes: &[u8], open: usize) -> bool {
     }
 }
 
-fn validate_unicode_quantifier_braces(pattern: &str) -> Result<(), String> {
+fn validate_unicode_quantifier_braces(pattern: &str, unicode_sets: bool) -> Result<(), String> {
     let bytes = pattern.as_bytes();
     let mut in_class = false;
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
             b'\\' if bytes.get(index + 1) == Some(&b'u') && bytes.get(index + 2) == Some(&b'{') => {
+                index = pattern[index + 3..]
+                    .find('}')
+                    .map_or(bytes.len(), |offset| index + 4 + offset);
+            }
+            b'\\'
+                if matches!(bytes.get(index + 1), Some(b'p' | b'P'))
+                    && bytes.get(index + 2) == Some(&b'{') =>
+            {
+                index = pattern[index + 3..]
+                    .find('}')
+                    .map_or(bytes.len(), |offset| index + 4 + offset);
+            }
+            b'\\'
+                if unicode_sets
+                    && bytes.get(index + 1) == Some(&b'q')
+                    && bytes.get(index + 2) == Some(&b'{') =>
+            {
                 index = pattern[index + 3..]
                     .find('}')
                     .map_or(bytes.len(), |offset| index + 4 + offset);
