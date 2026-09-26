@@ -1,6 +1,6 @@
 use oxc_ast::ast::Expression;
 
-use crate::bytecode::{Constant, Function, Instr, Op, REGISTER_MASK};
+use crate::bytecode::{Constant, Function, Instr, Op, ResultLayout};
 
 #[derive(Clone, Copy)]
 pub(super) enum BindingTime<T> {
@@ -67,13 +67,13 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
     for instruction in &root.code {
         match instruction.op() {
             Op::LoadConst => {
-                registers[instruction.a() as usize] =
+                registers[instruction.result_register() as usize] =
                     BindingTime::Static(StaticValue::Constant(instruction.constant_index() as u32));
             }
             Op::MakeClosure => {
-                registers[instruction.a() as usize] = BindingTime::Static(StaticValue::Function(
-                    instruction.closure_function_index(),
-                ));
+                registers[instruction.result_register() as usize] = BindingTime::Static(
+                    StaticValue::Function(instruction.closure_function_index()),
+                );
             }
             Op::Move => {
                 registers[instruction.result_register() as usize] =
@@ -82,7 +82,7 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
             Op::StoreLocal | Op::StoreEnvLocal => {
                 let slot = instruction.local_slot();
                 stores[slot] += 1;
-                bindings[slot] = bindings[slot].join(registers[instruction.a() as usize]);
+                bindings[slot] = bindings[slot].join(registers[instruction.register_a() as usize]);
             }
             Op::StoreCapture
             | Op::StoreName
@@ -97,8 +97,11 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
             | Op::JumpBinaryFalse
             | Op::Return
             | Op::Throw => {}
-            _ if instruction.a() < root.registers => {
-                registers[instruction.a() as usize] = BindingTime::Dynamic;
+            _ if instruction.op().result_layout() != ResultLayout::NoResult => {
+                let result = instruction.result_register();
+                if result < root.registers {
+                    registers[result as usize] = BindingTime::Dynamic;
+                }
             }
             _ => {}
         }
@@ -133,13 +136,8 @@ fn materialize_constants(functions: &mut [Function], bindings: &[BindingTime<Sta
                 && let BindingTime::Static(StaticValue::Constant(constant)) =
                     bindings[instruction.capture_slot() as usize]
             {
-                *instruction = Instr::new(
-                    Op::LoadConst,
-                    instruction.a(),
-                    instruction.b(),
-                    instruction.c(),
-                    constant,
-                );
+                *instruction =
+                    Instr::new(Op::LoadConst, instruction.result_register(), 0, 0, constant);
             }
         }
     }
@@ -160,22 +158,31 @@ fn materialize_calls(functions: &mut [Function], bindings: &[BindingTime<StaticV
             }
             if instruction.op() == Op::Call
                 && !instruction.direct_eval()
-                && let Some((target, callee_origin)) = known[instruction.b() as usize]
+                && let Some((target, callee_origin)) = known[instruction.register_b() as usize]
             {
                 dead.push(callee_origin);
-                if let Some(this_origin) = origins[instruction.c() as usize] {
+                if let Some(this_origin) = origins[instruction.register_c() as usize] {
                     dead.push(this_origin);
                 }
+                let window = instruction.call_window();
                 *instruction = Instr::new(
                     Op::CallKnown,
-                    instruction.a(),
+                    instruction.result_register(),
                     target as u16,
                     0,
-                    instruction.imm(),
+                    crate::bytecode::ImmediateLayout::call_immediate(
+                        window.base,
+                        window.count,
+                        false,
+                        false,
+                    ),
                 );
             }
-            let output = instruction.a() & REGISTER_MASK;
-            if output < function.registers {
+            if instruction.op().result_layout() != ResultLayout::NoResult {
+                let output = instruction.result_register();
+                if output >= function.registers {
+                    continue;
+                }
                 known[output as usize] = if instruction.op() == Op::LoadCapture
                     && instruction.capture_depth() == 0
                     && let BindingTime::Static(StaticValue::Function(target)) =
