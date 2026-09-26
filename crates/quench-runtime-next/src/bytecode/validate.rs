@@ -96,11 +96,8 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::OptionalRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
-            FieldLayout::CacheSiteIndex
-                if instruction.op().field_layout(InstructionField::B) != FieldLayout::FieldBase =>
-            {
-                cache_in_bounds(value, bounds.cache_sites)
-            }
+            FieldLayout::CacheSiteIndex => cache_in_bounds(value, bounds.cache_sites),
+            FieldLayout::FieldLookupCacheSiteIndex => true,
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
             FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
             FieldLayout::ElementCount => instruction

@@ -769,7 +769,10 @@ impl Instr {
     }
 
     const fn pack_field(op: Op, position: usize, value: u16) -> Option<u16> {
-        if matches!(op, Op::GetField) && position == 1 && value >= Self::FIELD_SENTINEL_START {
+        if position == 1
+            && matches!(op.field_layout(InstructionField::B), FieldLayout::FieldBase)
+            && value >= Self::FIELD_SENTINEL_START
+        {
             return Some(if value == u16::MAX {
                 Self::FIELD_SENTINEL_NEXT
             } else {
@@ -787,7 +790,10 @@ impl Instr {
 
     const fn unpack_field(op: Op, position: usize, packed: u16) -> u16 {
         let packed = packed & Self::FIELD_MASK as u16;
-        if matches!(op, Op::GetField) && position == 1 && packed >= Self::FIELD_SENTINEL {
+        if position == 1
+            && matches!(op.field_layout(InstructionField::B), FieldLayout::FieldBase)
+            && packed >= Self::FIELD_SENTINEL
+        {
             return if packed == Self::FIELD_SENTINEL {
                 Self::FIELD_SENTINEL_START
             } else {

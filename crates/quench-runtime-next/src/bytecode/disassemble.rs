@@ -1,8 +1,8 @@
 use super::ResidualProgram;
 use super::instruction::WideInstruction;
 use super::{
-    FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand, OperandKind,
-    Register, ResultLayout,
+    FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Operand, OperandKind, Register,
+    ResultLayout,
 };
 use std::fmt::{self, Write};
 
@@ -117,17 +117,20 @@ fn write_field(
         FieldLayout::Unused
         | FieldLayout::NumericLocalStoreMarker
         | FieldLayout::ConstructArguments
-        | FieldLayout::FieldBase => Ok(()),
+        | FieldLayout::FieldBase
+        | FieldLayout::FieldLookupCacheSiteIndex => Ok(()),
     }
 }
 
 fn skip_field(instruction: WideInstruction, field: InstructionField, layout: FieldLayout) -> bool {
-    layout == FieldLayout::Unused
-        || (field == InstructionField::A
-            && instruction.op().result_layout() != ResultLayout::NoResult)
-        || (instruction.op() == Op::GetField
-            && matches!(field, InstructionField::B | InstructionField::C))
-        || (instruction.op() == Op::LoadLocal && field == InstructionField::C)
+    matches!(
+        layout,
+        FieldLayout::Unused
+            | FieldLayout::NumericLocalStoreMarker
+            | FieldLayout::FieldBase
+            | FieldLayout::FieldLookupCacheSiteIndex
+    ) || (field == InstructionField::A
+        && instruction.op().result_layout() != ResultLayout::NoResult)
 }
 
 fn write_scalar_field(
