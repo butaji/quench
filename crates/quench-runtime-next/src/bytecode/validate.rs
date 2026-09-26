@@ -136,12 +136,12 @@ impl ResidualProgram {
                         return Err(format!("function {index} capture depth is invalid"));
                     }
                     Op::LoadName | Op::LoadNameTypeof | Op::StoreName | Op::DeleteName
-                        if !atom(instruction.imm()) || !cache(instruction.c()) =>
+                        if !atom(instruction.atom_index()) || !cache(instruction.c()) =>
                     {
                         return Err(format!("function {index} name site is invalid"));
                     }
                     Op::LoadResolvedName
-                        if !atom(instruction.imm())
+                        if !atom(instruction.atom_index())
                             || !register(instruction.a())
                             || !register(instruction.b())
                             || instruction.c() > 1 =>
@@ -149,12 +149,34 @@ impl ResidualProgram {
                         return Err(format!("function {index} resolved name site is invalid"));
                     }
                     Op::LoadNameCall
-                        if !atom(instruction.imm())
+                        if !atom(instruction.atom_index())
                             || !cache(instruction.c())
                             || !destination(instruction.a())
                             || !destination(instruction.b()) =>
                     {
                         return Err(format!("function {index} call-name site is invalid"));
+                    }
+                    Op::ResolveName
+                        if !atom(instruction.atom_index())
+                            || !destination(instruction.a())
+                            || instruction.b() > 1 =>
+                    {
+                        return Err(format!("function {index} name resolution is invalid"));
+                    }
+                    Op::StoreResolvedName
+                        if !atom(instruction.atom_index())
+                            || !register(instruction.a())
+                            || !register(instruction.b())
+                            || instruction.c() > 1 =>
+                    {
+                        return Err(format!("function {index} resolved name store is invalid"));
+                    }
+                    Op::MarkPrivateName
+                        if !atom(instruction.atom_index())
+                            || !register(instruction.b())
+                            || !register(instruction.c()) =>
+                    {
+                        return Err(format!("function {index} private-name mark is invalid"));
                     }
                     Op::MakeClosure
                         if instruction.closure_function_index() as usize
@@ -191,7 +213,7 @@ impl ResidualProgram {
                     Op::SetField
                         if !register(instruction.a())
                             || !register(instruction.b())
-                            || !atom(instruction.imm())
+                            || !atom(instruction.atom_index())
                             || !cache(instruction.c()) =>
                     {
                         return Err(format!("function {index} field store is invalid"));
@@ -199,7 +221,7 @@ impl ResidualProgram {
                     Op::DefineField
                         if !register(instruction.a())
                             || !register(instruction.b())
-                            || !atom(instruction.imm()) =>
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} field definition is invalid"));
                     }
@@ -214,18 +236,20 @@ impl ResidualProgram {
                     }
                     Op::SetThisField
                         if !register(instruction.a())
-                            || !atom(instruction.imm())
+                            || !atom(instruction.atom_index())
                             || !cache(instruction.c()) =>
                     {
                         return Err(format!("function {index} this-field store is invalid"));
                     }
-                    Op::CheckPrivate if !register(instruction.a()) || !atom(instruction.imm()) => {
+                    Op::CheckPrivate
+                        if !register(instruction.a()) || !atom(instruction.atom_index()) =>
+                    {
                         return Err(format!("function {index} private check is invalid"));
                     }
                     Op::PrivateIn
                         if !destination(instruction.a())
                             || !register(instruction.b())
-                            || !atom(instruction.imm()) =>
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} private-in operation is invalid"));
                     }

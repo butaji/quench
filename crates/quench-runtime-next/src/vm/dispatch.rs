@@ -237,19 +237,19 @@ impl<H: Host> Vm<H> {
             }
             Op::StoreCapture => self.store_capture(p, f, i.imm(), self.read(f, i.a()))?,
             Op::LoadName => {
-                let v = self.load_name(p, i.imm(), i.c())?;
+                let v = self.load_name(p, i.atom_index(), i.c())?;
                 self.write(f, i.a(), v);
             }
             Op::LoadNameCall => {
-                let (callee, this) = self.load_name_call(p, i.imm(), i.c())?;
+                let (callee, this) = self.load_name_call(p, i.atom_index(), i.c())?;
                 self.write(f, i.a(), callee);
                 self.write(f, i.b(), this);
             }
             Op::LoadNameTypeof => {
-                let v = self.load_name_typeof(p, i.imm(), i.c())?;
+                let v = self.load_name_typeof(p, i.atom_index(), i.c())?;
                 self.write(f, i.a(), v);
             }
-            Op::StoreName => self.store_name(p, i.imm(), self.read(f, i.a()), i.c())?,
+            Op::StoreName => self.store_name(p, i.atom_index(), self.read(f, i.a()), i.c())?,
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
                 self.write(f, i.a(), this);
@@ -391,7 +391,7 @@ impl<H: Host> Vm<H> {
             }
             Op::CheckPrivate => {
                 let object = self.read(f, i.a());
-                let atom = i.imm();
+                let atom = i.atom_index();
                 self.check_private_brand(p, object, atom)?;
                 if self.own_property(object, atom).is_none()
                     && self.property_accessor(object, atom).is_none()
@@ -408,13 +408,13 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "right-hand side of 'in' is not an object".into())
                     );
                 }
-                let result = self.has_private_brand(p, object, i.imm());
+                let result = self.has_private_brand(p, object, i.atom_index());
                 self.write(f, i.a(), if result { Value::TRUE } else { Value::FALSE });
             }
             Op::MarkPrivateName => {
                 let object = self.read(f, i.b());
                 let home = self.read(f, i.c());
-                let atom = i.imm();
+                let atom = i.atom_index();
                 let brand = PrivateBrand { home, name: atom };
                 if object != home {
                     let extensible = self.object_data(object).is_some_and(Object::is_extensible);
@@ -441,12 +441,12 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::ResolveName => {
-                let value = self.resolve_name(p, i.imm(), i.b() != 0)?;
+                let value = self.resolve_name(p, i.atom_index(), i.b() != 0)?;
                 self.write(f, i.a(), value);
             }
             Op::LoadResolvedName => {
                 let object = self.read(f, i.b());
-                let value = self.load_resolved_name(p, object, i.imm(), i.c() != 0)?;
+                let value = self.load_resolved_name(p, object, i.atom_index(), i.c() != 0)?;
                 self.write(f, i.a(), value);
             }
             Op::ValidateClassHeritage => {
@@ -457,12 +457,12 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::DeleteName => {
-                let value = self.delete_name(p, i.imm())?;
+                let value = self.delete_name(p, i.atom_index())?;
                 self.write(f, i.a(), value);
             }
             Op::StoreResolvedName => {
                 let object = self.read(f, i.b());
-                let atom = i.imm();
+                let atom = i.atom_index();
                 self.store_resolved_name(p, object, atom, self.read(f, i.a()), i.c() != 0)?;
             }
             Op::ToPropertyKey => {
@@ -633,7 +633,7 @@ impl<H: Host> Vm<H> {
                 self.set_field_cached(
                     p,
                     object,
-                    i.imm(),
+                    i.atom_index(),
                     value,
                     i.c(),
                     p.functions[self.frames[f].function as usize].strict,
@@ -642,7 +642,7 @@ impl<H: Host> Vm<H> {
             Op::DefineField => {
                 let object = self.read(f, i.b());
                 let value = self.read(f, i.a());
-                self.define_class_field(p, object, PropertyKey::string(i.imm()), value)?;
+                self.define_class_field(p, object, PropertyKey::string(i.atom_index()), value)?;
             }
             Op::DefineComputedField => {
                 let object = self.read(f, i.b());
@@ -660,7 +660,7 @@ impl<H: Host> Vm<H> {
                 self.set_field_cached(
                     p,
                     this,
-                    i.imm(),
+                    i.atom_index(),
                     self.read(f, i.a()),
                     i.c(),
                     p.functions[self.frames[f].function as usize].strict,
