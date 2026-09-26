@@ -860,7 +860,19 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
-        if self.own_property(object, atom).is_none() && self.inherited_write_blocked(object, atom) {
+        let own = self.own_property(object, atom).is_some();
+        if own
+            && self
+                .property_attributes(object, PropertyKey::string(atom))
+                .is_some_and(|attributes| !attributes.writable)
+        {
+            return if strict {
+                Err(self.type_error(p, "cannot write non-writable property".into()))
+            } else {
+                Ok(())
+            };
+        }
+        if !own && self.inherited_write_blocked(object, atom) {
             return Err(JsError(
                 "cannot write inherited non-writable property".into(),
             ));
