@@ -768,7 +768,11 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
                 .names
                 .iter()
                 .enumerate()
-                .filter_map(|(index, name)| (name == reference.name.as_str()).then_some(index + 1))
+                .filter_map(|(index, name)| {
+                    decode_identifier_escapes(reference.name.as_str())
+                        .is_some_and(|decoded| name == &decoded)
+                        .then_some(index + 1)
+                })
                 .collect();
             Expr::Backreference(Backreference::Named(indices))
         }
@@ -784,7 +788,8 @@ fn collect_names(disjunction: &ast::Disjunction<'_>, names: &mut Vec<String>) {
                         group
                             .name
                             .as_ref()
-                            .map_or_else(String::new, |name| name.to_string()),
+                            .and_then(|name| decode_identifier_escapes(name.as_str()))
+                            .unwrap_or_default(),
                     );
                     collect_names(&group.body, names);
                 }
@@ -804,7 +809,8 @@ fn collect_term_names(term: &ast::Term<'_>, names: &mut Vec<String>) {
                 group
                     .name
                     .as_ref()
-                    .map_or_else(String::new, |name| name.to_string()),
+                    .and_then(|name| decode_identifier_escapes(name.as_str()))
+                    .unwrap_or_default(),
             );
             collect_names(&group.body, names);
         }
@@ -813,6 +819,55 @@ fn collect_term_names(term: &ast::Term<'_>, names: &mut Vec<String>) {
         ast::Term::Quantifier(quantifier) => collect_term_names(&quantifier.body, names),
         _ => {}
     }
+}
+
+fn decode_identifier_escapes(name: &str) -> Option<String> {
+    let mut units = Vec::new();
+    let mut chars = name.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            let mut encoded = [0; 2];
+            units.extend(character.encode_utf16(&mut encoded).iter().copied());
+            continue;
+        }
+        if chars.next()? != 'u' {
+            return None;
+        }
+        let first = chars.next()?;
+        let value = if first == '{' {
+            let mut digits = String::new();
+            loop {
+                let digit = chars.next()?;
+                if digit == '}' {
+                    break;
+                }
+                if !digit.is_ascii_hexdigit() {
+                    return None;
+                }
+                digits.push(digit);
+            }
+            u32::from_str_radix(&digits, 16).ok()?
+        } else {
+            let mut digits = String::from(first);
+            digits.extend(chars.by_ref().take(3));
+            if digits.len() != 4 || !digits.chars().all(|digit| digit.is_ascii_hexdigit()) {
+                return None;
+            }
+            u32::from_str_radix(&digits, 16).ok()?
+        };
+        if value > u32::from(u16::MAX) {
+            let mut encoded = [0; 2];
+            units.extend(
+                char::from_u32(value)?
+                    .encode_utf16(&mut encoded)
+                    .iter()
+                    .copied(),
+            );
+        } else {
+            units.push(u16::try_from(value).ok()?);
+        }
+    }
+    String::from_utf16(&units).ok()
 }
 
 fn modifier_mode(

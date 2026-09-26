@@ -525,7 +525,57 @@ impl<H: Host> Vm<H> {
         let input_value = self.heap.alloc(Cell::String(input));
         let input_atom = self.intern_atom("input");
         self.set_property(result, input_atom, input_value)?;
+        if flags.contains('d') {
+            let indices = self.regexp_indices_array(&matched)?;
+            let indices_atom = self.intern_atom("indices");
+            self.set_property(result, indices_atom, indices)?;
+        }
         Ok(result)
+    }
+
+    fn regexp_indices_array(&mut self, matched: &quench_regexp::Match) -> Result<Value, JsError> {
+        let ranges = std::iter::once(Some(matched.range.clone()))
+            .chain(matched.captures.iter().cloned())
+            .collect::<Vec<_>>();
+        let entries = ranges
+            .into_iter()
+            .map(|range| self.regexp_index_pair(range))
+            .collect::<Vec<_>>();
+        let indices = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(entries),
+        });
+        let named = matched.named_groups().collect::<Vec<_>>();
+        let groups = if !named.is_empty() {
+            let groups = self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            for (name, range) in named {
+                let atom = self.intern_atom(name);
+                let pair = self.regexp_index_pair(range);
+                self.set_property(groups, atom, pair)?;
+            }
+            groups
+        } else {
+            Value::UNDEFINED
+        };
+        let groups_atom = self.intern_atom("groups");
+        self.set_property(indices, groups_atom, groups)?;
+        Ok(indices)
+    }
+
+    fn regexp_index_pair(&mut self, range: Option<std::ops::Range<usize>>) -> Value {
+        let Some(range) = range else {
+            return Value::UNDEFINED;
+        };
+        let pair = [
+            Value::number(range.start as f64),
+            Value::number(range.end as f64),
+        ];
+        self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(pair.into()),
+        })
     }
 
     pub(super) fn compile_regexp(source: &str, flags: &str) -> Result<CompiledRegexp, JsError> {
