@@ -216,7 +216,11 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|index| self.intern_atom(&index.to_string()))
             .collect::<Vec<_>>();
-        if matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+        if matches!(self.heap.get(target), Some(Cell::Array { .. }))
+            && !self
+                .object_data(target)
+                .is_some_and(Object::is_arguments_object)
+        {
             atoms.push(self.length_atom);
         }
         atoms
@@ -224,6 +228,12 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn array_is_integrity_level(&self, target: Value, freeze: bool) -> bool {
         if !matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+            return true;
+        }
+        if self
+            .object_data(target)
+            .is_some_and(Object::is_arguments_object)
+        {
             return true;
         }
         let length_attributes = self
