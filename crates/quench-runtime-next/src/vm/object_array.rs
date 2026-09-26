@@ -161,7 +161,9 @@ impl<H: Host> Vm<H> {
         target: Value,
         value: Value,
     ) -> Result<bool, JsError> {
-        let descriptor = self.object();
+        let descriptor = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
         let value_atom = self.intern_atom("value");
         self.set_property(descriptor, value_atom, value)?;
         self.define_array_length(p, target, descriptor)
