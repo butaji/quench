@@ -483,9 +483,6 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.intern_atom("prototype");
         let bigint_prototype = self.get_property(program, bigint, prototype_atom)?;
         self.install_builtin_to_string_tag(bigint_prototype, "BigInt")?;
-        let boolean = self.native_value(Native::Boolean);
-        let boolean_prototype = self.get_property(program, boolean, prototype_atom)?;
-        self.install_builtin_to_string_tag(boolean_prototype, "Boolean")?;
         let data_view = self.native_value(Native::DataView);
         let data_view_prototype = self.get_property(program, data_view, prototype_atom)?;
         self.install_builtin_to_string_tag(data_view_prototype, "DataView")?;
