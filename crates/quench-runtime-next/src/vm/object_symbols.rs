@@ -2,6 +2,26 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
+        let roots = keys
+            .iter()
+            .copied()
+            .map(|key| self.heap.root(key))
+            .collect::<Vec<_>>();
+        let keys = roots
+            .iter()
+            .filter_map(|root| self.heap.root_value(*root))
+            .collect::<Vec<_>>();
+        let result = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(keys),
+        });
+        roots.into_iter().for_each(|root| {
+            self.heap.release_root(root);
+        });
+        result
+    }
+
     fn ordinary_own_key_values(&mut self, object: Value) -> Vec<Value> {
         let mut values = self.indexed_name_keys(object).unwrap_or_default();
         let Some(data) = self.object_data(object) else {
@@ -225,17 +245,11 @@ impl<H: Host> Vm<H> {
         object: Value,
     ) -> Result<Value, JsError> {
         if let Some(keys) = self.proxy_own_keys(p, object)? {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(keys),
-            }));
+            return Ok(self.own_keys_array(keys));
         }
         let target = self.box_object(self.proxy_target(object))?;
         self.evaluate_deferred_namespace_for_key(p, target, None)?;
         let values = self.ordinary_own_key_values(target);
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+        Ok(self.own_keys_array(values))
     }
 }
