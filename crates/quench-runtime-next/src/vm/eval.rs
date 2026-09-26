@@ -165,7 +165,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn eval_global_script(&mut self, p: &ResidualProgram, source: &str) -> Result<Value, JsError> {
+    pub(super) fn eval_global_script(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+    ) -> Result<Value, JsError> {
         let source_name = format!("<Eval:{}>", self.programs.len());
         let strict = self
             .frames
@@ -190,6 +194,7 @@ impl<H: Host> Vm<H> {
                 .map_or("invalid eval source".to_owned(), ToString::to_string);
             self.syntax_error_result(p, &message)
                 .expect_err("dynamic eval syntax errors must throw")
+                .mark_eval_parser_diagnostic()
         })?;
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));

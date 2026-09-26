@@ -8,7 +8,7 @@ use std::rc::Rc;
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, EvalScript, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, FunctionCaller, DynamicFunction, DynamicDerivedClass, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag,
+    Print, HostDone, CreateRealm, EvalScript, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, FunctionCaller, DynamicFunction, DynamicDerivedClass, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmWrappedFunction,
     Object,
     ObjectKeys, ForInKeys, ForInKeyIsEnumerable, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen, ObjectGroupBy,
@@ -737,6 +737,11 @@ pub(crate) enum Cell {
     Set {
         object: Object,
         entries: Vec<Value>,
+    },
+    ShadowRealm {
+        object: Object,
+        caller_global: Value,
+        realm_global: Value,
     },
     WeakMap {
         object: Object,
