@@ -42,7 +42,7 @@ const MATH_FUNCTIONS: &[(&str, Native)] = &[
 ];
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmWrappedFunction,
     Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectGroupBy,
     Native::ObjectFromEntries, Native::ObjectIs,
@@ -440,6 +440,7 @@ impl<H: Host> Vm<H> {
         self.install_host_globals(program)?;
         self.install_errors(program)?;
         self.install_regexp(program)?;
+        self.install_shadow_realm(program)?;
         let symbol = self.native_value(Native::Symbol);
         self.set_named(program, symbol, "for", self.native_value(Native::SymbolFor))?;
         self.set_named(
@@ -474,6 +475,7 @@ impl<H: Host> Vm<H> {
         }
         self.install_map_species()?;
         self.install_set_species(self.native_value(Native::Set))?;
+        self.install_shadow_realm_tag(self.shadow_realm_proto)?;
         self.install_regexp_symbol_properties(
             self.native_value(Native::RegExp),
             self.regexp_proto,

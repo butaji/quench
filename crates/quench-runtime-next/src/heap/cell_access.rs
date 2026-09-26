@@ -17,6 +17,7 @@ impl Cell {
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
+            | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
@@ -39,6 +40,7 @@ impl Cell {
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
+            | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }

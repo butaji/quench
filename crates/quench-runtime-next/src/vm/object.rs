@@ -224,6 +224,7 @@ impl<H: Host> Vm<H> {
                     | Cell::DataView { .. }
                     | Cell::Map { .. }
                     | Cell::Set { .. }
+                    | Cell::ShadowRealm { .. }
                     | Cell::WeakMap { .. }
                     | Cell::WeakSet { .. }
                     | Cell::WeakRef { .. }

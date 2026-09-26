@@ -91,6 +91,7 @@ mod promise_state;
 mod proxy;
 mod reflect;
 mod regexp;
+mod shadow_realm;
 mod string;
 mod string_cache;
 mod string_extra;
@@ -305,6 +306,7 @@ pub struct Vm<H> {
     data_view_proto: Value,
     map_proto: Value,
     set_proto: Value,
+    shadow_realm_proto: Value,
     map_iterator_proto: Value,
     set_iterator_proto: Value,
     weak_map_proto: Value,

@@ -856,8 +856,29 @@ impl<H: Host> Vm<H> {
         Err(self.type_error(program, "cannot convert value to BigInt".into()))
     }
 
-    fn create_realm(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+    pub(super) fn create_realm(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         let global = self.object();
+        self.set_builtin_value_named(global, "globalThis", global)?;
+        for (name, value) in [
+            ("undefined", Value::UNDEFINED),
+            ("NaN", Value::number(f64::NAN)),
+            ("Infinity", Value::number(f64::INFINITY)),
+        ] {
+            self.set_builtin_value_named(global, name, value)?;
+            let atom = self.intern_atom(name);
+            self.set_property_attributes(
+                global,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         let type_error = self.native_with_realm(Native::RealmTypeError, global, global);
         let error_prototype = self
             .lookup_atom("prototype")
@@ -877,7 +898,10 @@ impl<H: Host> Vm<H> {
         self.set_named(program, global, "Function", function)?;
         let object_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        self.object_data_mut(global)
+            .expect("realm global is an object")
+            .proto = object_prototype;
         self.install_number_for_realm(program, global, object_prototype)?;
         let object_constructor = self.native_with_realm(Native::Object, global, global);
         self.set_builtin_function_name(object_constructor, "Object")?;
@@ -898,10 +922,40 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        for (name, native) in [
+            ("defineProperty", Native::ObjectDefineProperty),
+            ("defineProperties", Native::ObjectDefineProperties),
+            ("setPrototypeOf", Native::ObjectSetPrototypeOf),
+            ("getPrototypeOf", Native::ObjectGetPrototypeOf),
+            ("create", Native::ObjectCreate),
+            ("keys", Native::ObjectKeys),
+            ("values", Native::ObjectValues),
+            ("entries", Native::ObjectEntries),
+            ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
+            ("getOwnPropertySymbols", Native::ObjectGetOwnPropertySymbols),
+            (
+                "getOwnPropertyDescriptor",
+                Native::ObjectGetOwnPropertyDescriptor,
+            ),
+            (
+                "getOwnPropertyDescriptors",
+                Native::ObjectGetOwnPropertyDescriptors,
+            ),
+            ("fromEntries", Native::ObjectFromEntries),
+            ("assign", Native::ObjectAssign),
+            ("is", Native::ObjectIs),
+            ("hasOwn", Native::ObjectHasOwn),
+            ("preventExtensions", Native::ObjectPreventExtensions),
+            ("isExtensible", Native::ObjectIsExtensible),
+        ] {
+            self.set_builtin_named(program, object_constructor, name, native)?;
+        }
         let set = self.native_with_realm(Native::Set, global, global);
         self.install_set_prototype(program, set, object_prototype)?;
         self.install_set_species(set)?;
         self.set_builtin_value_named(global, "Set", set)?;
+        let shadow_realm = self.native_with_realm(Native::ShadowRealm, global, global);
+        self.install_shadow_realm_for_realm(program, global, shadow_realm, object_prototype)?;
         let proxy = self.native_with_realm(Native::Proxy, global, global);
         self.set_builtin_function_name(proxy, "Proxy")?;
         let revocable = self.native_with_realm(Native::ProxyRevocable, global, global);
@@ -1271,12 +1325,79 @@ impl<H: Host> Vm<H> {
             let intrinsic = self.native_with_realm(native, global, global);
             self.set_named(program, global, name, intrinsic)?;
         }
+        self.install_realm_default_bindings(global)?;
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
         let eval_script = self.native_with_realm(Native::EvalScript, global, global);
         self.set_builtin_function_name(eval_script, "evalScript")?;
         self.set_builtin_value_named(realm, "evalScript", eval_script)?;
         Ok(realm)
+    }
+
+    fn install_realm_default_bindings(&mut self, global: Value) -> Result<(), JsError> {
+        const SHARED_BINDINGS: &[&str] = &[
+            "AggregateError",
+            "Array",
+            "ArrayBuffer",
+            "BigInt",
+            "BigInt64Array",
+            "BigUint64Array",
+            "Boolean",
+            "DataView",
+            "Date",
+            "EvalError",
+            "Float16Array",
+            "Float32Array",
+            "Float64Array",
+            "Int8Array",
+            "Int16Array",
+            "Int32Array",
+            "SharedArrayBuffer",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "Uint16Array",
+            "Uint32Array",
+            "WeakMap",
+            "WeakRef",
+            "WeakSet",
+            "decodeURI",
+            "decodeURIComponent",
+            "encodeURI",
+            "encodeURIComponent",
+            "isFinite",
+            "isNaN",
+        ];
+        let source_global = self.realm.globals;
+        for name in SHARED_BINDINGS {
+            let atom = self.intern_atom(name);
+            if self.own_property(global, atom).is_some() {
+                continue;
+            }
+            let Some(value) = self.own_property(source_global, atom) else {
+                continue;
+            };
+            let value = match self.heap.get(value) {
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(native),
+                    ..
+                }) => {
+                    let function = self.native_with_realm(*native, Value::NULL, global);
+                    self.set_builtin_function_name(function, name)?;
+                    function
+                }
+                _ => value,
+            };
+            self.set_builtin_value_named(global, name, value)?;
+        }
+        for name in ["Atomics", "JSON", "Math", "Reflect"] {
+            let atom = self.intern_atom(name);
+            if self.own_property(global, atom).is_none()
+                && let Some(value) = self.own_property(source_global, atom)
+            {
+                self.set_builtin_value_named(global, name, value)?;
+            }
+        }
+        Ok(())
     }
 
     fn install_function_prototype_for_realm(

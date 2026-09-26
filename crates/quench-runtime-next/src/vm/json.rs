@@ -911,6 +911,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Error(_))
             | Some(Cell::Map { .. })
             | Some(Cell::Set { .. })
+            | Some(Cell::ShadowRealm { .. })
             | Some(Cell::WeakMap { .. })
             | Some(Cell::WeakSet { .. })
             | Some(Cell::WeakRef { .. })

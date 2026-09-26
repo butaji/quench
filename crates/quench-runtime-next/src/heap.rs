@@ -391,6 +391,14 @@ impl Heap {
                 object(value);
                 work.extend(entries.iter().copied());
             }
+            Cell::ShadowRealm {
+                object: value,
+                caller_global,
+                realm_global,
+            } => {
+                object(value);
+                work.extend([*caller_global, *realm_global]);
+            }
             Cell::WeakMap { object: value, .. } | Cell::WeakSet { object: value, .. } => {
                 object(value);
             }
@@ -522,6 +530,7 @@ impl Heap {
             Cell::DataView { .. } => 0,
             Cell::Map { .. } => 2,
             Cell::Set { .. } => 3,
+            Cell::ShadowRealm { .. } => 0,
             Cell::Iterator { .. } => 4,
             Cell::ArrayFromAsyncState(_) => 16,
             Cell::Proxy { .. } => 0,
@@ -543,6 +552,7 @@ impl Heap {
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         match cell {
             Cell::Object(_)
+            | Cell::ShadowRealm { .. }
             | Cell::Iterator { .. }
             | Cell::ArrayFromAsyncState(_)
             | Cell::Proxy { .. }
