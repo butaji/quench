@@ -241,9 +241,12 @@ impl<H: Host> Vm<H> {
                     )?,
                     Op::Binary => {
                         let operator = ins.binary_operator();
-                        self.profile.binary(operator as usize, ins.b(), ins.c());
-                        let left = self.resolve_operand(p, frame, Operand(ins.b()))?;
-                        let right = self.resolve_operand(p, frame, Operand(ins.c()))?;
+                        let left_operand = ins.operand_b();
+                        let right_operand = ins.operand_c();
+                        self.profile
+                            .binary(operator as usize, left_operand.0, right_operand.0);
+                        let left = self.resolve_operand(p, frame, left_operand)?;
+                        let right = self.resolve_operand(p, frame, right_operand)?;
                         let fast = self.numeric_binary(operator, left, right);
                         #[cfg(feature = "profile-aggregate")]
                         self.profile.numeric_binary_path(
@@ -303,10 +306,14 @@ impl<H: Host> Vm<H> {
                         }
                     }
                     Op::JumpBinaryFalse => {
-                        self.profile.binary(ins.a() as usize, ins.b(), ins.c());
-                        let left = self.resolve_operand(p, frame, Operand(ins.b()))?;
-                        let right = self.resolve_operand(p, frame, Operand(ins.c()))?;
-                        if !self.binary_truthy(p, u32::from(ins.a()), left, right)? {
+                        let operator = ins.binary_operator_field();
+                        let left_operand = ins.operand_b();
+                        let right_operand = ins.operand_c();
+                        self.profile
+                            .binary(operator as usize, left_operand.0, right_operand.0);
+                        let left = self.resolve_operand(p, frame, left_operand)?;
+                        let right = self.resolve_operand(p, frame, right_operand)?;
+                        if !self.binary_truthy(p, operator, left, right)? {
                             pc = ins.jump_target() as usize;
                         }
                     }

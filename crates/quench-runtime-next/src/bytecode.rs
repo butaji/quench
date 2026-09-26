@@ -60,6 +60,7 @@ pub(crate) enum ImmediateLayout {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResultLayout {
+    NoResult,
     Register,
     Returnable,
     ReturnableAndThis,
@@ -73,6 +74,8 @@ pub(crate) enum FieldLayout {
     FunctionIndex,
     ConstructArguments,
     ElementCount,
+    Operand,
+    BinaryOperator,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +139,7 @@ impl OperandLayout {
 impl ResultLayout {
     const fn allowed_flags(self) -> Register {
         match self {
+            Self::NoResult => NO_RESULT_FLAGS,
             Self::Register => NO_RESULT_FLAGS,
             Self::Returnable => RETURN_REGISTER,
             Self::ReturnableAndThis => RETURN_REGISTER | SET_THIS_REGISTER,
@@ -389,7 +393,7 @@ opcodes!(
     SetThisField => WRITE_THROW; meaning AtomIndex,
     SetIndex => WRITE_THROW; meaning BooleanFlag,
     DefineArrayElement => WRITE_THROW; meaning ArrayIndex,
-    Binary => READ_THROW; meaning BinaryOperator, @ NumericReturnable,
+    Binary => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     IncDec => READ_THROW; meaning BooleanFlag,
     Unary => READ_THROW; meaning UnaryOperator,
     Delete => READ_THROW; meaning BooleanFlag,
@@ -404,11 +408,11 @@ opcodes!(
     Construct => CALL_EFFECT; layout ConstructCountAndFlags, @ Returnable, @ fields(Undeclared, Register, ConstructArguments),
     Jump => Effect::CONTROL; meaning JumpTarget,
     JumpFalse => Effect::CONTROL; meaning JumpTarget,
-    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); meaning JumpTarget,
+    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); meaning JumpTarget, @ NoResult, @ fields(BinaryOperator, Operand, Operand),
     Return => Effect::CONTROL,
     Throw => Effect::THROWS.union(Effect::CONTROL),
-    NumericAdd => READ_THROW; meaning BinaryOperator, @ NumericReturnable,
-    NumericMultiply => READ_THROW; meaning BinaryOperator, @ NumericReturnable,
+    NumericAdd => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
+    NumericMultiply => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     InitializeThis => Effect::CONTROL,
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex,
     LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex,

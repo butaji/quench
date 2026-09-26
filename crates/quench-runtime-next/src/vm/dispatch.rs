@@ -708,9 +708,12 @@ impl<H: Host> Vm<H> {
             Op::Move => self.write(f, i.a(), self.read(f, i.b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 let operator = i.binary_operator();
-                self.profile.binary(operator as usize, i.b(), i.c());
-                let left = self.resolve_operand(p, f, Operand(i.b()))?;
-                let right = self.resolve_operand(p, f, Operand(i.c()))?;
+                let left_operand = i.operand_b();
+                let right_operand = i.operand_c();
+                self.profile
+                    .binary(operator as usize, left_operand.0, right_operand.0);
+                let left = self.resolve_operand(p, f, left_operand)?;
+                let right = self.resolve_operand(p, f, right_operand)?;
                 let site_pc = *pc - 1;
                 let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
                 let v = if armed {
@@ -779,10 +782,14 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::JumpBinaryFalse => {
-                self.profile.binary(i.a() as usize, i.b(), i.c());
-                let left = self.resolve_operand(p, f, Operand(i.b()))?;
-                let right = self.resolve_operand(p, f, Operand(i.c()))?;
-                if !self.binary_truthy(p, u32::from(i.a()), left, right)? {
+                let operator = i.binary_operator_field();
+                let left_operand = i.operand_b();
+                let right_operand = i.operand_c();
+                self.profile
+                    .binary(operator as usize, left_operand.0, right_operand.0);
+                let left = self.resolve_operand(p, f, left_operand)?;
+                let right = self.resolve_operand(p, f, right_operand)?;
+                if !self.binary_truthy(p, operator, left, right)? {
                     *pc = i.jump_target() as usize;
                 }
             }
