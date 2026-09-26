@@ -56,9 +56,26 @@ impl<H: Host> Vm<H> {
             if self.is_function(trap) {
                 let key = self.to_property_key(p, key)?;
                 let result = self.call_value(p, trap, handler, &[target, key])?;
-                return Ok(self.truthy(result));
+                if self.truthy(result) {
+                    return Ok(true);
+                }
+                let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+                if !descriptor.is_undefined() {
+                    let extensible = self.object_is_extensible(p, &[target])?;
+                    if !self.descriptor_flag(descriptor, "configurable") || !self.truthy(extensible)
+                    {
+                        return Err(self.type_error(
+                            p,
+                            "proxy has trap hid a property from a non-extensible target".into(),
+                        ));
+                    }
+                }
+                return Ok(false);
             }
-            return self.has_property(p, target, key);
+            if trap.is_null() || trap.is_undefined() {
+                return self.has_property(p, target, key);
+            }
+            return Err(self.type_error(p, "proxy has trap is not callable".into()));
         }
         if self.object_data(object).is_none() {
             return Err(JsError("right-hand side of 'in' is not an object".into()));
@@ -76,8 +93,21 @@ impl<H: Host> Vm<H> {
         );
         let mut current = object;
         loop {
+            if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
+                return self.has_property(p, current, key);
+            }
             self.evaluate_deferred_namespace_for_key(p, current, Some(property_key))?;
-            if symbol_key.is_some_and(|key| self.symbol_property(current, key).is_some()) {
+            if atom == Some(self.length_atom)
+                && matches!(
+                    self.heap.get(current),
+                    Some(Cell::Array { .. } | Cell::TypedArray { .. })
+                )
+            {
+                return Ok(true);
+            }
+            if self.property_attributes(current, property_key).is_some()
+                || symbol_key.is_some_and(|key| self.symbol_property(current, key).is_some())
+            {
                 return Ok(true);
             }
             if atom.is_some_and(|atom| {
@@ -131,7 +161,9 @@ impl<H: Host> Vm<H> {
             }
         }
         if !self.is_function(constructor) {
-            return Err(self.type_error(p, "right-hand side of 'instanceof' is not callable".into()));
+            return Err(
+                self.type_error(p, "right-hand side of 'instanceof' is not callable".into())
+            );
         }
         self.ordinary_has_instance(p, constructor, value)
     }
@@ -155,7 +187,9 @@ impl<H: Host> Vm<H> {
         };
         if let Some(env) = bound_env {
             let target_atom = self.intern_atom("\0rqj:bound-target");
-            let target = self.own_property(env, target_atom).unwrap_or(Value::UNDEFINED);
+            let target = self
+                .own_property(env, target_atom)
+                .unwrap_or(Value::UNDEFINED);
             return self.ordinary_has_instance(p, target, value);
         }
         if self.object_data(value).is_none() {

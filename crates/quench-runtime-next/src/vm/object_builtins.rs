@@ -86,9 +86,10 @@ impl<H: Host> Vm<H> {
             "\0rqj:for-in-key-is-enumerable",
             self.native_value(Native::ForInKeyIsEnumerable),
         )?;
-        self.global(program, "Proxy", self.native_value(Native::Proxy))?;
         let proxy = self.native_value(Native::Proxy);
+        self.set_builtin_function_name(proxy, "Proxy")?;
         self.set_builtin_named(program, proxy, "revocable", Native::ProxyRevocable)?;
+        self.global(program, "Proxy", proxy)?;
         self.install_object_extra(program, object)?;
         for (name, native) in [
             ("create", Native::ObjectCreate),
