@@ -1,6 +1,16 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn set_function_source(
+        &mut self,
+        function: Value,
+        source: &str,
+    ) -> Result<(), JsError> {
+        let source_atom = self.intern_atom("\0rqj:function-source");
+        let source_value = self.heap.alloc(Cell::String(source.into()));
+        self.set_property(function, source_atom, source_value)
+    }
+
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
         match self.heap.get(function) {
             Some(Cell::Function {

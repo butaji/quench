@@ -330,6 +330,7 @@ opcodes!(
 pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
+    pub source_text: Option<String>,
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
@@ -682,8 +683,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 24;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0018_0000;
+    pub const FORMAT_VERSION: u8 = 25;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0019_0000;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

@@ -1219,6 +1219,7 @@ fn private_name_labels(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32,
 #[derive(Default)]
 struct FunctionOptions<'a> {
     defaults: Option<&'a FormalParameters<'a>>,
+    source_text: Option<String>,
     name_binding: Option<Atom>,
     async_function: bool,
     generator: bool,
@@ -1377,6 +1378,7 @@ impl<'a> Compiler<'a> {
             None,
             FunctionOptions {
                 defaults: None,
+                source_text: None,
                 name_binding: None,
                 async_function: async_module,
                 generator: false,
@@ -1993,6 +1995,7 @@ impl<'a> Compiler<'a> {
         let result = BcFunction {
             parent,
             name: name.map(|value| function.owner.atom(value)),
+            source_text: options.source_text,
             params: params.len() as u16,
             length: options.defaults.map_or(params.len(), Self::formal_length) as u16,
             parameter_end_pc: if options.generator {

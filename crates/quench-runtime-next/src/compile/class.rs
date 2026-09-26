@@ -128,12 +128,12 @@ impl FunctionCompiler<'_, '_> {
             ClassElement::MethodDefinition(method)
                 if method.kind == MethodDefinitionKind::Constructor =>
             {
-                Some(method)
+                Some((method, class.span))
             }
             _ => None,
         });
         let constructor_home_atom = constructor
-            .map(|method| method_home_atoms[&method.span.start])
+            .map(|(method, _)| method_home_atoms[&method.span.start])
             .unwrap_or_else(|| {
                 self.hidden_local(&format!(
                     "\0rqj:home:implicit-constructor:{}",
@@ -144,9 +144,10 @@ impl FunctionCompiler<'_, '_> {
         let scopes = self.capture_scopes();
         let implicit_super = constructor.is_none() && heritage.is_some();
         let constructor_id = constructor
-            .map(|method| {
+            .map(|(method, source_span)| {
                 self.owner.compile_class_method(
                     method,
+                    Some(source_span),
                     &scopes,
                     Some(self.function_id),
                     Some(&instance_fields),
@@ -170,6 +171,7 @@ impl FunctionCompiler<'_, '_> {
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: None,
+                        source_text: None,
                         name_binding: None,
                         async_function: false,
                         generator: false,
@@ -423,6 +425,7 @@ impl FunctionCompiler<'_, '_> {
             self.store_atom(home_atom, target);
             let function_id = self.owner.compile_class_method(
                 method,
+                Some(element.span()),
                 &scopes,
                 Some(self.function_id),
                 None,
@@ -906,10 +909,10 @@ impl Compiler<'_> {
             return None;
         }
         let getter = self.compile_class_method(
-            methods[0], scopes, parent, None, None, false, home_atom, with_depth,
+            methods[0], None, scopes, parent, None, None, false, home_atom, with_depth,
         );
         let setter = self.compile_class_method(
-            methods[1], scopes, parent, None, None, false, home_atom, with_depth,
+            methods[1], None, scopes, parent, None, None, false, home_atom, with_depth,
         );
         Some((getter, setter))
     }
@@ -917,6 +920,7 @@ impl Compiler<'_> {
     fn compile_class_method(
         &mut self,
         method: &MethodDefinition<'_>,
+        source_span: Option<Span>,
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
         instance_fields: Option<&[ClassField<'_>]>,
@@ -954,6 +958,15 @@ impl Compiler<'_> {
             parent,
             FunctionOptions {
                 defaults: Some(&method.value.params),
+                source_text: source_span.and_then(|span| {
+                    class_method_source_span(self.text, span, method.key.span().start).and_then(
+                        |span| {
+                            self.text
+                                .get(span.start as usize..span.end as usize)
+                                .map(str::to_owned)
+                        },
+                    )
+                }),
                 name_binding: None,
                 async_function: method.value.r#async,
                 generator: method.value.generator,
@@ -991,6 +1004,7 @@ impl Compiler<'_> {
             parent,
             FunctionOptions {
                 defaults: None,
+                source_text: None,
                 name_binding: None,
                 async_function: false,
                 generator: false,
@@ -1011,6 +1025,65 @@ impl Compiler<'_> {
             },
         )
     }
+}
+
+fn class_method_source_span(mut text: &str, span: Span, key_start: u32) -> Option<Span> {
+    let mut start = span.start as usize;
+    let key_start = key_start as usize;
+    if start > key_start || key_start > text.len() {
+        return None;
+    }
+    text = text.get(start..key_start)?;
+    let leading = skip_source_trivia(text, 0);
+    start += leading;
+    text = text.get(leading..)?;
+    if text.starts_with("static")
+        && text
+            .as_bytes()
+            .get("static".len())
+            .is_none_or(|byte| !is_identifier_continue(*byte))
+    {
+        let after_static = "static".len();
+        start += skip_source_trivia(text, after_static);
+    }
+    Some(Span::new(u32::try_from(start).ok()?, span.end))
+}
+
+fn skip_source_trivia(text: &str, mut offset: usize) -> usize {
+    const COMMENT_PREFIX_LEN: usize = 2;
+    const BLOCK_COMMENT_SUFFIX_LEN: usize = 2;
+    let bytes = text.as_bytes();
+    loop {
+        while bytes
+            .get(offset)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            offset += 1;
+        }
+        match (bytes.get(offset), bytes.get(offset + 1)) {
+            (Some(b'/'), Some(b'*')) => {
+                let Some(end) = text
+                    .get(offset + COMMENT_PREFIX_LEN..)
+                    .and_then(|tail| tail.find("*/"))
+                else {
+                    return offset;
+                };
+                offset += end + COMMENT_PREFIX_LEN + BLOCK_COMMENT_SUFFIX_LEN;
+            }
+            (Some(b'/'), Some(b'/')) => {
+                let end = text
+                    .get(offset + COMMENT_PREFIX_LEN..)
+                    .and_then(|tail| tail.find(['\n', '\r']))
+                    .map_or(text.len(), |end| offset + COMMENT_PREFIX_LEN + end);
+                offset = end;
+            }
+            _ => return offset,
+        }
+    }
+}
+
+fn is_identifier_continue(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
 }
 
 fn class_method_name(key: &PropertyKey<'_>) -> Option<String> {

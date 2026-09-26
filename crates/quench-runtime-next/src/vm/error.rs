@@ -638,9 +638,6 @@ impl<H: Host> Vm<H> {
             }
             return Ok(self.native_with_env(Native::FunctionReturnClass, base));
         }
-        if source == "return this;" {
-            return Ok(self.native_with_env(Native::FunctionReturnThis, function_realm));
-        }
         let parameters = argument_strings.join(",");
         let parser_parameters = format!("{parameters}\n");
         let source_name = format!("<Function:{}>", self.programs.len());
@@ -708,9 +705,7 @@ impl<H: Host> Vm<H> {
                 format!("async function* anonymous({parameters}\n) {{\n{source}\n}}")
             }
         };
-        let source_atom = self.intern_atom("\0rqj:function-source");
-        let source_value = self.heap.alloc(Cell::String(function_source.into()));
-        self.set_property(function, source_atom, source_value)?;
+        self.set_function_source(function, &function_source)?;
         Ok(function)
     }
 
@@ -896,6 +891,12 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        let proxy = self.native_with_realm(Native::Proxy, global, global);
+        self.set_builtin_function_name(proxy, "Proxy")?;
+        let revocable = self.native_with_realm(Native::ProxyRevocable, global, global);
+        self.set_builtin_function_name(revocable, "revocable")?;
+        self.set_builtin_value_named(proxy, "revocable", revocable)?;
+        self.set_builtin_value_named(global, "Proxy", proxy)?;
         let boolean = self.native_with_realm(Native::Boolean, global, global);
         self.install_boolean_for_realm(program, global, object_prototype, boolean)?;
         let bigint = self.native_with_realm(Native::BigInt, global, global);
@@ -1062,6 +1063,7 @@ impl<H: Host> Vm<H> {
         });
         self.set_builtin_value_named(regexp, "prototype", regexp_prototype)?;
         self.set_builtin_value_named(regexp_prototype, "constructor", regexp)?;
+        self.install_regexp_symbol_properties(regexp, regexp_prototype, global)?;
         let regexp_name = self.heap.alloc(Cell::String("RegExp".into()));
         self.set_builtin_value_named(regexp, "name", regexp_name)?;
         self.set_builtin_value_named(global, "RegExp", regexp)?;
