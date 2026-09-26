@@ -181,6 +181,23 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        if let Some(symbol) = self.well_known_symbols.get("matchAll").copied() {
+            let method = self.native_with_realm(Native::RegExpSymbolMatchAll, realm, realm);
+            self.set_builtin_function_name(method, "[Symbol.matchAll]")?;
+            self.set_symbol_property(prototype, symbol, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         if let Some(symbol) = self.well_known_symbols.get("species").copied() {
             let getter = self.native_with_realm(Native::RegExpSpecies, realm, realm);
             self.set_builtin_function_name(getter, "get [Symbol.species]")?;
@@ -213,7 +230,108 @@ impl<H: Host> Vm<H> {
         self.string_replace_native(p, input, &[receiver, replacement], false)
     }
 
-    fn regexp_input_string(
+    pub(super) fn regexp_symbol_match_all(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(
+                p,
+                "RegExp.prototype[@@matchAll] receiver is not an object".into(),
+            ));
+        }
+        let input =
+            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let flags_atom = self.intern_atom("flags");
+        let flags_value = self.get_property(p, receiver, flags_atom)?;
+        let flags = self.to_string(p, flags_value)?;
+        let is_regexp = self.regexp_is_regexp(p, receiver)?;
+        let matcher = self.regexp_match_all_species(p, receiver, &flags, is_regexp)?;
+        let last_index_atom = self.intern_atom("lastIndex");
+        let last_index = self.get_property(p, receiver, last_index_atom)?;
+        let last_index =
+            regexp_to_length(self.to_number(p, last_index)?).min(MAX_SAFE_INTEGER as usize);
+        self.set_property(matcher, last_index_atom, Value::number(last_index as f64))?;
+        Ok(self.heap.alloc(Cell::Iterator {
+            object: Self::empty_object(self.regexp_string_iterator_proto),
+            source: matcher,
+            next_method: None,
+            helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
+                input,
+                global: flags.contains('g'),
+                unicode: flags.contains('u') || flags.contains('v'),
+            })),
+            helper_running: false,
+            helper_started: false,
+            kind: IteratorKind::RegExpStringMatchAll,
+            index: 0,
+            done: false,
+            generator: None,
+        }))
+    }
+
+    fn regexp_match_all_species(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        flags: &str,
+        is_regexp: bool,
+    ) -> Result<Value, JsError> {
+        let constructor = if is_regexp {
+            let constructor_atom = self.intern_atom("constructor");
+            self.get_property(p, receiver, constructor_atom)?
+        } else {
+            Value::UNDEFINED
+        };
+        let species = if is_regexp && !constructor.is_undefined() {
+            if !self.is_object_like(constructor) {
+                return Err(self.type_error(p, "RegExp constructor is not an object".into()));
+            }
+            let species_symbol = self
+                .well_known_symbols
+                .get("species")
+                .copied()
+                .ok_or_else(|| self.type_error(p, "RegExp species symbol is unavailable".into()))?;
+            self.get_index(p, constructor, species_symbol)?
+        } else {
+            Value::UNDEFINED
+        };
+        let regexp_atom = self.intern_atom("RegExp");
+        let intrinsic = self.get_property(p, self.realm.globals, regexp_atom)?;
+        let flags_value = self.heap.alloc(Cell::String(flags.into()));
+        if species.is_undefined() || species.is_null() {
+            let pattern = match self.heap.get(receiver) {
+                Some(Cell::RegExp { source, .. }) => self.heap.alloc(Cell::String(source.clone())),
+                _ => receiver,
+            };
+            return self.construct_value(p, intrinsic, &[pattern, flags_value]);
+        }
+        self.construct_value(p, species, &[receiver, flags_value])
+    }
+
+    pub(super) fn regexp_is_regexp(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<bool, JsError> {
+        if !self.is_object_like(value) {
+            return Ok(false);
+        }
+        let symbol = self
+            .well_known_symbols
+            .get("match")
+            .copied()
+            .ok_or_else(|| self.type_error(p, "RegExp match symbol is unavailable".into()))?;
+        let matcher = self.get_index(p, value, symbol)?;
+        if !matcher.is_undefined() {
+            return Ok(self.truthy(matcher));
+        }
+        Ok(matches!(self.heap.get(value), Some(Cell::RegExp { .. })))
+    }
+
+    pub(super) fn regexp_input_string(
         &mut self,
         program: &ResidualProgram,
         value: Value,
@@ -286,7 +404,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn regexp_exec(
+    pub(super) fn regexp_exec(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
@@ -343,6 +461,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<JsString, JsError> {
+        if let Some(Cell::RegExp { source, .. }) = self.heap.get(value) {
+            return Ok(source.clone());
+        }
         let primitive = self.to_primitive(p, value, "string")?;
         if let Some(Cell::String(source)) = self.heap.get(primitive) {
             return Ok(source.clone());
@@ -664,6 +785,31 @@ fn advance_string_index(input: &str, index: usize, unicode: bool) -> usize {
         index + 2
     } else {
         index + 1
+    }
+}
+
+pub(super) fn advance_string_index_units(input: &[u16], index: usize, unicode: bool) -> usize {
+    if unicode
+        && input.get(index).is_some_and(|unit| {
+            (HIGH_SURROGATE_START..=HIGH_SURROGATE_END).contains(unit)
+                && input
+                    .get(index + 1)
+                    .is_some_and(|next| (LOW_SURROGATE_START..=LOW_SURROGATE_END).contains(next))
+        })
+    {
+        index + 2
+    } else {
+        index + 1
+    }
+}
+
+pub(super) fn regexp_to_length(value: f64) -> usize {
+    if value.is_nan() || value <= 0.0 {
+        0
+    } else if value.is_infinite() {
+        MAX_SAFE_INTEGER as usize
+    } else {
+        value.trunc().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize
     }
 }
 
