@@ -198,7 +198,7 @@ fn uses(
 
 fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
     match instruction.op() {
-        Op::LoadNameCall => bit(instruction.a()) | bit(instruction.b()),
+        Op::LoadNameCall => bit(instruction.result_register()) | bit(instruction.register_b()),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply if instruction.writes_numeric_local() => {
             0
         }

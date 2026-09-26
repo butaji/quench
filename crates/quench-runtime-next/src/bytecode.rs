@@ -353,7 +353,7 @@ opcodes!(
     LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot,
     LoadName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Undeclared, CacheSiteIndex),
-    LoadNameCall => READ_THROW; meaning AtomIndex,
+    LoadNameCall => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Register, CacheSiteIndex),
     LoadNameTypeof => Effect::READS_HEAP; meaning AtomIndex, @ Register, @ fields(Undeclared, Undeclared, CacheSiteIndex),
     ResolveName => READ_THROW; meaning AtomIndex,
     LoadResolvedName => READ_THROW; meaning AtomIndex,

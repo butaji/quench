@@ -173,9 +173,9 @@ impl ResidualProgram {
                     }
                     Op::LoadNameCall
                         if !atom(instruction.atom_index())
-                            || !cache(instruction.c())
-                            || !destination(instruction.a())
-                            || !destination(instruction.b()) =>
+                            || !cache(instruction.cache_site_index())
+                            || !destination(instruction.result_register())
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} call-name site is invalid"));
                     }
