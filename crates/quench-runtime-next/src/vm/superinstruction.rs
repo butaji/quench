@@ -15,8 +15,8 @@ impl<H: Host> Vm<H> {
         debug_assert_eq!(second.op(), Op::Binary);
         debug_assert_eq!(object.op(), Op::MakeObject2);
 
-        let start = array.imm() as usize;
-        let end = start + array.b() as usize;
+        let start = array.constant_index();
+        let end = start + array.element_count() as usize;
         let elements = self
             .programs
             .const_array(self.frames[frame].program, start, end - start)
@@ -31,7 +31,7 @@ impl<H: Host> Vm<H> {
         self.execute_super_binary(program, frame, second)?;
         let value = self.object_pair(
             program,
-            object.imm() as usize,
+            object.object_site_index(),
             self.read(frame, object.b()),
             self.read(frame, object.c()),
         );
