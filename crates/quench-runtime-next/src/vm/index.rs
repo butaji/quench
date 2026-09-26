@@ -372,7 +372,7 @@ impl<H: Host> Vm<H> {
             }
         }
         let atom = self.intern_js_atom(&key);
-        self.set_property_with_program(p, object, atom, value)
+        self.set_property_with_program_mode(p, object, atom, value, strict)
     }
 
     fn set_inherited_index_accessor(
