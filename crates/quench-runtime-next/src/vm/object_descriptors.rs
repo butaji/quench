@@ -101,8 +101,17 @@ impl<H: Host> Vm<H> {
                 }
                 return Ok(result);
             }
+            if trap.is_undefined() || trap.is_null() {
+                return self.object_get_own_property_descriptor(
+                    p,
+                    &[target, args.get(1).copied().unwrap_or(Value::UNDEFINED)],
+                );
+            }
+            return Err(JsError(
+                "proxy getOwnPropertyDescriptor trap is not callable".into(),
+            ));
         }
-        let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         let target = self.box_object(target)?;
         let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {

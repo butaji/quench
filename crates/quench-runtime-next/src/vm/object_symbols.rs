@@ -244,10 +244,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
     ) -> Result<Value, JsError> {
-        if let Some(keys) = self.proxy_own_keys(p, object)? {
-            return Ok(self.own_keys_array(keys));
+        if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
+            if let Some(keys) = self.proxy_own_keys(p, object)? {
+                return Ok(self.own_keys_array(keys));
+            }
+            let Some(Cell::Proxy { target, .. }) = self.heap.get(object) else {
+                unreachable!("proxy disappeared during own-key operation")
+            };
+            let target = *target;
+            return self.object_own_keys(p, target);
         }
-        let target = self.box_object(self.proxy_target(object))?;
+        let target = self.box_object(object)?;
         self.evaluate_deferred_namespace_for_key(p, target, None)?;
         let values = self.ordinary_own_key_values(target);
         Ok(self.own_keys_array(values))

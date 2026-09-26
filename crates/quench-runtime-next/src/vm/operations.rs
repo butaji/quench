@@ -282,6 +282,8 @@ impl<H: Host> Vm<H> {
             | Native::ReflectConstruct => self.call_reflect_native(p, native, args),
             Native::JsonParse => self.json_parse(p, args),
             Native::JsonStringify => self.json_stringify(p, args),
+            Native::JsonRawJson => self.json_raw_json(p, args),
+            Native::JsonIsRawJson => self.json_is_raw_json(args),
             Native::GlobalIsNaN => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 Ok(if self.to_number(p, value)?.is_nan() {

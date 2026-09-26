@@ -18,6 +18,7 @@ const JSON_HEX_ESCAPE_DIGITS: usize = 4;
 const JSON_HEX_LETTER_VALUE_START: u16 = 10;
 const JSON_BACKSPACE: u16 = b'\x08' as u16;
 const JSON_FORM_FEED: u16 = b'\x0C' as u16;
+const JSON_RAW_VALUE_MARKER: &str = "\0rqj:raw-json";
 const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r' as u16];
 
 enum JsonValue {
@@ -26,6 +27,7 @@ enum JsonValue {
     Number(serde_json::Number),
     String(JsString),
     Raw(String),
+    Source(Box<JsonValue>, JsString),
     Array(Vec<JsonValue>),
     Object(Vec<(JsString, JsonValue)>),
 }
@@ -81,6 +83,7 @@ fn write_json(value: &JsonValue, output: &mut String, gap: &str, depth: usize) {
         JsonValue::Number(value) => output.push_str(&value.to_string()),
         JsonValue::String(value) => write_json_string(value, output),
         JsonValue::Raw(value) => output.push_str(value),
+        JsonValue::Source(value, _) => write_json(value, output, gap, depth),
         JsonValue::Array(values) => {
             output.push('[');
             for (index, value) in values.iter().enumerate() {
@@ -146,7 +149,8 @@ impl<'a> JsonParser<'a> {
 
     fn value(&mut self) -> Result<JsonValue, String> {
         self.whitespace();
-        match self.peek() {
+        let start = self.index;
+        let value = match self.peek() {
             Some(JSON_NULL_INITIAL) => self.literal(b"null", JsonValue::Null),
             Some(JSON_TRUE_INITIAL) => self.literal(b"true", JsonValue::Bool(true)),
             Some(JSON_FALSE_INITIAL) => self.literal(b"false", JsonValue::Bool(false)),
@@ -155,7 +159,20 @@ impl<'a> JsonParser<'a> {
             Some(JSON_OBJECT_START) => self.object(),
             Some(JSON_MINUS | JSON_DIGIT_START..=JSON_DIGIT_END) => self.number(),
             _ => Err("expected JSON value".into()),
-        }
+        }?;
+        Ok(
+            if matches!(
+                &value,
+                JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) | JsonValue::String(_)
+            ) {
+                JsonValue::Source(
+                    Box::new(value),
+                    JsString::from_units(&self.units[start..self.index]),
+                )
+            } else {
+                value
+            },
+        )
     }
 
     fn literal(&mut self, expected: &[u8], value: JsonValue) -> Result<JsonValue, String> {
@@ -351,6 +368,95 @@ fn hex_digit(unit: u16) -> Option<u16> {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn json_raw_json(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let units = text.units();
+        if units
+            .first()
+            .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+            || units
+                .last()
+                .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+        {
+            return self.syntax_error_result(p, "Invalid raw JSON text");
+        }
+        let parsed = match JsonParser::new(units).parse() {
+            Ok(parsed) => parsed,
+            Err(error) => return self.syntax_error_result(p, &error),
+        };
+        if !matches!(
+            match &parsed {
+                JsonValue::Source(value, _) => value.as_ref(),
+                value => value,
+            },
+            JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) | JsonValue::String(_)
+        ) {
+            return self.syntax_error_result(p, "rawJSON text must be a JSON primitive");
+        }
+        let object = self.object();
+        let object_root = self.heap.root(object);
+        if let Some(data) = self.object_data_mut(object) {
+            data.proto = Value::NULL;
+        }
+        let raw_atom = self.intern_atom("rawJSON");
+        let marker_atom = self.intern_atom(JSON_RAW_VALUE_MARKER);
+        let marker_value = Value::TRUE;
+        let raw_text_value = self.heap.alloc(Cell::String(text));
+        let raw_text_root = self.heap.root(raw_text_value);
+        let result = (|| {
+            let raw_text = self
+                .heap
+                .root_value(raw_text_root)
+                .unwrap_or(raw_text_value);
+            self.json_define_raw_property(p, object, raw_atom, raw_text)?;
+            self.json_define_raw_property(p, object, marker_atom, marker_value)?;
+            let object = self.heap.root_value(object_root).unwrap_or(object);
+            self.object_prevent_extensions(p, &[object])
+        })();
+        let object = self.heap.root_value(object_root).unwrap_or(object);
+        self.heap.release_root(raw_text_root);
+        self.heap.release_root(object_root);
+        result.map(|_| object)
+    }
+
+    pub(super) fn json_is_raw_json(&self, args: &[Value]) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let is_raw = matches!(self.heap.get(value), Some(Cell::Object(_)))
+            && self
+                .lookup_atom(JSON_RAW_VALUE_MARKER)
+                .and_then(|atom| self.own_property(value, atom))
+                .is_some_and(|marker| marker.as_bool() == Some(true));
+        Ok(if is_raw { Value::TRUE } else { Value::FALSE })
+    }
+
+    fn json_define_raw_property(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        key: Atom,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let descriptor = self.object();
+        let descriptor_root = self.heap.root(descriptor);
+        for (name, field) in [
+            ("value", value),
+            ("writable", Value::FALSE),
+            ("enumerable", Value::FALSE),
+            ("configurable", Value::FALSE),
+        ] {
+            let atom = self.intern_atom(name);
+            self.set_property(descriptor, atom, field)?;
+        }
+        let key = self.heap.alloc(Cell::String(self.atom_name(key).into()));
+        let result = self.object_define_property(p, &[object, key, descriptor]);
+        self.heap.release_root(descriptor_root);
+        result.map(|_| ())
+    }
+
     pub(super) fn json_parse(
         &mut self,
         p: &ResidualProgram,
@@ -373,7 +479,7 @@ impl<H: Host> Vm<H> {
         self.set_property(holder, empty, value)?;
         let holder = self.heap.root_value(holder_root).unwrap_or(holder);
         let key = JsString::from_str("");
-        let result = self.json_internalize(p, holder, &key, reviver_root);
+        let result = self.json_internalize(p, holder, &key, Some(&parsed), reviver_root);
         self.heap.release_root(holder_root);
         self.heap.release_root(reviver_root);
         result
@@ -392,6 +498,7 @@ impl<H: Host> Vm<H> {
             JsonValue::Number(value) => Value::number(value.as_f64().unwrap_or(f64::NAN)),
             JsonValue::String(value) => self.heap.alloc(Cell::String(value.clone())),
             JsonValue::Raw(_) => unreachable!("raw JSON fragments are not parser values"),
+            JsonValue::Source(value, _) => self.parse_json_value(value)?,
             JsonValue::Array(values) => {
                 let values = values
                     .iter()
@@ -414,11 +521,28 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    fn json_source_text(&self, source: &JsonValue, current: Value) -> Option<JsString> {
+        let JsonValue::Source(value, text) = source else {
+            return None;
+        };
+        let unchanged = match value.as_ref() {
+            JsonValue::Null => current.is_null(),
+            JsonValue::Bool(expected) => current.as_bool() == Some(*expected),
+            JsonValue::Number(expected) => current.as_number() == expected.as_f64(),
+            JsonValue::String(expected) => {
+                matches!(self.heap.get(current), Some(Cell::String(actual)) if actual == expected)
+            }
+            _ => false,
+        };
+        unchanged.then(|| text.clone())
+    }
+
     fn json_internalize(
         &mut self,
         p: &ResidualProgram,
         holder: Value,
         key: &JsString,
+        source: Option<&JsonValue>,
         reviver_root: crate::heap::RootId,
     ) -> Result<Value, JsError> {
         let holder_root = self.heap.root(holder);
@@ -426,64 +550,58 @@ impl<H: Host> Vm<H> {
         let holder = self.heap.root_value(holder_root).unwrap_or(holder);
         let value = self.get_property(p, holder, key_atom)?;
         let value_root = self.heap.root(value);
-        if matches!(self.heap.get(value), Some(Cell::Array { .. })) {
+        let source_value = source.map(|source| match source {
+            JsonValue::Source(value, _) => value.as_ref(),
+            value => value,
+        });
+        let source_text = source.and_then(|source| self.json_source_text(source, value));
+        if self.is_array(p, value)? {
             let array = self.heap.root_value(value_root).unwrap_or(value);
             let length = self.array_like_length(p, array)?;
+            let source_items = match source_value {
+                Some(JsonValue::Array(values)) => Some(values.as_slice()),
+                _ => None,
+            };
             for index in 0..length {
                 let array = self.heap.root_value(value_root).unwrap_or(value);
                 let child_key = JsString::from(index.to_string());
-                let child = self.json_internalize(p, array, &child_key, reviver_root)?;
+                let child_source = source_items.and_then(|values| values.get(index));
+                let child =
+                    self.json_internalize(p, array, &child_key, child_source, reviver_root)?;
                 let array = self.heap.root_value(value_root).unwrap_or(value);
                 let child_key_value = self.heap.alloc(Cell::String(child_key.clone()));
                 if child.is_undefined() {
-                    let deleted = self.object_delete_property(p, &[array, child_key_value])?;
-                    if !self.truthy(deleted) {
-                        return Err(
-                            self.type_error(p, "cannot delete revived array element".into())
-                        );
-                    }
+                    self.object_delete_property(p, &[array, child_key_value])?;
                 } else {
                     self.json_create_data_property(p, array, child_key_value, child)?;
                 }
             }
-        } else if matches!(self.heap.get(value), Some(Cell::Object(_))) {
+        } else if self.is_object_like(value) {
             let object = self.heap.root_value(value_root).unwrap_or(value);
-            let keys = self.object_own_keys(p, object)?;
-            let keys_root = self.heap.root(keys);
-            let keys = match self.heap.get(keys) {
-                Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
-                _ => Vec::new(),
+            let keys = self.json_enumerable_keys(p, object)?;
+            let source_properties = match source_value {
+                Some(JsonValue::Object(properties)) => Some(properties.as_slice()),
+                _ => None,
             };
-            for child_key_value in keys {
-                let child_key_root = self.heap.root(child_key_value);
-                let child_key = match self.heap.get(child_key_value) {
-                    Some(Cell::String(key)) => key.clone(),
-                    _ => {
-                        self.heap.release_root(child_key_root);
-                        continue;
-                    }
-                };
+            for child_key in keys {
                 let object = self.heap.root_value(value_root).unwrap_or(value);
-                let child = self.json_internalize(p, object, &child_key, reviver_root)?;
+                let child_source = source_properties.and_then(|properties| {
+                    properties
+                        .iter()
+                        .rev()
+                        .find(|(name, _)| name == &child_key)
+                        .map(|(_, value)| value)
+                });
+                let child =
+                    self.json_internalize(p, object, &child_key, child_source, reviver_root)?;
                 let object = self.heap.root_value(value_root).unwrap_or(value);
-                let key_value = self
-                    .heap
-                    .root_value(child_key_root)
-                    .unwrap_or(child_key_value);
+                let key_value = self.heap.alloc(Cell::String(child_key.clone()));
                 if child.is_undefined() {
-                    let deleted = self.object_delete_property(p, &[object, key_value])?;
-                    if !self.truthy(deleted) {
-                        self.heap.release_root(child_key_root);
-                        return Err(
-                            self.type_error(p, "cannot delete revived object property".into())
-                        );
-                    }
+                    self.object_delete_property(p, &[object, key_value])?;
                 } else {
                     self.json_create_data_property(p, object, key_value, child)?;
                 }
-                self.heap.release_root(child_key_root);
             }
-            self.heap.release_root(keys_root);
         }
         let reviver = self
             .heap
@@ -495,6 +613,16 @@ impl<H: Host> Vm<H> {
         let mut value = self.heap.root_value(value_root).unwrap_or(value);
         let context = self.object();
         let context_root = self.heap.root(context);
+        if let Some(source) = source_text {
+            let source_atom = self.intern_atom("source");
+            let source_value = self.heap.alloc(Cell::String(source));
+            let source_root = self.heap.root(source_value);
+            let context = self.heap.root_value(context_root).unwrap_or(context);
+            let source_value = self.heap.root_value(source_root).unwrap_or(source_value);
+            let set = self.set_property(context, source_atom, source_value);
+            self.heap.release_root(source_root);
+            set?;
+        }
         let result = self.call_value(
             p,
             reviver,
@@ -520,6 +648,12 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> Result<(), JsError> {
+        if !matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+            let current = self.object_get_own_property_descriptor(p, &[target, key])?;
+            if !current.is_undefined() && !self.descriptor_flag(current, "configurable") {
+                return Ok(());
+            }
+        }
         let descriptor = self.object();
         let descriptor_root = self.heap.root(descriptor);
         for (name, field) in [
@@ -545,7 +679,10 @@ impl<H: Host> Vm<H> {
         let replacer = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let space = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         let (replacer, property_list) = self.json_replacer(p, replacer)?;
-        let gap = self.json_gap(space);
+        let space_root = self.heap.root(space);
+        let gap = self.json_gap(p, space);
+        self.heap.release_root(space_root);
+        let gap = gap?;
         let mut state = JsonSerialization {
             replacer,
             property_list,
@@ -624,33 +761,36 @@ impl<H: Host> Vm<H> {
         None
     }
 
-    fn json_gap(&mut self, value: Value) -> String {
-        let boxed = self.json_boxed_gap(value);
-        let value = boxed.unwrap_or(value);
+    fn json_gap(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
+        let number_box = self.json_boxed_value(value, "\0rqj:number-value").is_some();
+        let string_box = self.json_boxed_value(value, "\0rqj:string-value").is_some();
+        let value = if number_box {
+            Value::number(self.to_number(p, value)?)
+        } else if string_box {
+            let text = self.to_string(p, value)?;
+            self.heap.alloc(Cell::String(text.into()))
+        } else {
+            value
+        };
         if let Some(number) = value.as_number() {
             let count = if number.is_nan() || number <= 0.0 {
                 0
             } else {
                 number.floor().min(10.0) as usize
             };
-            return " ".repeat(count);
+            return Ok(" ".repeat(count));
         }
         if let Some(Cell::String(text)) = self.heap.get(value) {
-            return String::from_utf16_lossy(&text.units()[..text.units().len().min(10)]);
+            return Ok(String::from_utf16_lossy(
+                &text.units()[..text.units().len().min(10)],
+            ));
         }
-        String::new()
+        Ok(String::new())
     }
 
-    fn json_boxed_gap(&self, value: Value) -> Option<Value> {
-        for marker in ["\0rqj:number-value", "\0rqj:string-value"] {
-            let Some(atom) = self.lookup_atom(marker) else {
-                continue;
-            };
-            if let Some(value) = self.own_property(value, atom) {
-                return Some(value);
-            }
-        }
-        None
+    fn json_boxed_value(&self, value: Value, marker: &str) -> Option<Value> {
+        self.lookup_atom(marker)
+            .and_then(|atom| self.own_property(value, atom))
     }
 
     fn json_serialize_property(
@@ -748,7 +888,11 @@ impl<H: Host> Vm<H> {
                 };
             return Ok(Some(JsonValue::Number(number)));
         }
-        let value = self.json_unbox(value);
+        let unboxed = self.json_unbox(p, value)?;
+        if unboxed != value {
+            return self.json_serialize_value(p, unboxed, state);
+        }
+        let value = unboxed;
         match self.heap.get(value).cloned() {
             Some(Cell::String(value)) => Ok(Some(JsonValue::String(value))),
             Some(Cell::Symbol(_)) => Ok(None),
@@ -781,24 +925,25 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn json_unbox(&self, value: Value) -> Value {
-        for marker in [
-            "\0rqj:string-value",
-            "\0rqj:number-value",
-            "\0rqj:boolean-value",
-            "\0rqj:bigint-value",
-        ] {
-            if let Some(atom) = self.lookup_atom(marker)
-                && let Some(value) = self.own_property(value, atom)
-            {
-                return value;
-            }
+    fn json_unbox(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+        if self.json_boxed_value(value, "\0rqj:string-value").is_some() {
+            let text = self.to_string(p, value)?;
+            return Ok(self.heap.alloc(Cell::String(text.into())));
         }
-        value
+        if self.json_boxed_value(value, "\0rqj:number-value").is_some() {
+            return Ok(Value::number(self.to_number(p, value)?));
+        }
+        if let Some(value) = self.json_boxed_value(value, "\0rqj:boolean-value") {
+            return Ok(value);
+        }
+        if let Some(value) = self.json_boxed_value(value, "\0rqj:bigint-value") {
+            return Ok(value);
+        }
+        Ok(value)
     }
 
     fn json_raw_text(&self, value: Value) -> Option<String> {
-        let marker = self.lookup_atom("\0rawjson")?;
+        let marker = self.lookup_atom(JSON_RAW_VALUE_MARKER)?;
         if !self.own_property(value, marker)?.as_bool()? {
             return None;
         }
