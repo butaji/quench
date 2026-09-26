@@ -316,7 +316,8 @@ impl ResidualProgram {
                     Op::SetThisField
                         if !register(instruction.register_a())
                             || !atom(instruction.atom_index())
-                            || !cache(instruction.cache_site_index()) =>
+                            || !cache(instruction.cache_site_index())
+                            || !instruction.unused_fields_are_zero() =>
                     {
                         return Err(format!("function {index} this-field store is invalid"));
                     }
@@ -372,6 +373,7 @@ impl ResidualProgram {
                     Op::DefineArrayElement
                         if !register(instruction.register_a())
                             || !register(instruction.register_b())
+                            || !instruction.unused_fields_are_zero()
                             || instruction.array_index() == super::ARRAY_INDEX_SENTINEL =>
                     {
                         return Err(format!("function {index} array literal element is invalid"));
