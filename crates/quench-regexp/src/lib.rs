@@ -236,9 +236,18 @@ impl Regex {
     pub fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {
         let allocator = oxc::allocator::Allocator::default();
         let flags_text = flag_text(flags);
-        let parsed = LiteralParser::new(&allocator, source, Some(&flags_text), Options::default())
-            .parse()
-            .map_err(|error| error.to_string())?;
+        let normalized_source = normalize_new_unicode_scripts(source);
+        let parsed = LiteralParser::new(
+            &allocator,
+            &normalized_source,
+            Some(&flags_text),
+            Options::default(),
+        )
+        .parse()
+        .map_err(|error| error.to_string())?;
+        if contains_invalid_string_property(&parsed.body, flags) {
+            return Err("invalid regular expression property of strings".into());
+        }
         let mut names = Vec::new();
         collect_names(&parsed.body, &mut names);
         let mut lowering = Lowering {
@@ -390,6 +399,113 @@ impl Regex {
         }
         None
     }
+}
+
+pub fn validate_property_escapes(source: &str, flags_text: &str) -> Result<(), String> {
+    let flags = Flags::from(flags_text);
+    let allocator = oxc::allocator::Allocator::default();
+    let source = normalize_new_unicode_scripts(source);
+    let parsed = LiteralParser::new(&allocator, &source, Some(flags_text), Options::default())
+        .parse()
+        .map_err(|error| error.to_string())?;
+    if contains_invalid_string_property(&parsed.body, flags) {
+        return Err("invalid regular expression property of strings".into());
+    }
+    Ok(())
+}
+
+struct UnicodeScriptData {
+    aliases: [&'static str; 2],
+    ranges: &'static [(u32, u32)],
+}
+
+const NEW_UNICODE_SCRIPTS: &[UnicodeScriptData] = &[
+    UnicodeScriptData {
+        aliases: ["Beria_Erfe", "Berf"],
+        ranges: &[(0x16EA0, 0x16EB8), (0x16EBB, 0x16ED3)],
+    },
+    UnicodeScriptData {
+        aliases: ["Sidetic", "Sidt"],
+        ranges: &[(0x10940, 0x10959)],
+    },
+    UnicodeScriptData {
+        aliases: ["Tai_Yo", "Tayo"],
+        ranges: &[(0x1E6C0, 0x1E6DE), (0x1E6E0, 0x1E6F5), (0x1E6FE, 0x1E6FF)],
+    },
+    UnicodeScriptData {
+        aliases: ["Tolong_Siki", "Tols"],
+        ranges: &[(0x11DB0, 0x11DDB), (0x11DE0, 0x11DE9)],
+    },
+];
+
+fn normalize_new_unicode_scripts(pattern: &str) -> String {
+    let mut normalized = pattern.to_owned();
+    for script in NEW_UNICODE_SCRIPTS {
+        let ranges = script
+            .ranges
+            .iter()
+            .map(|(start, end)| {
+                if start == end {
+                    format!(r"\u{{{start:X}}}")
+                } else {
+                    format!(r"\u{{{start:X}}}-\u{{{end:X}}}")
+                }
+            })
+            .collect::<String>();
+        for value in script.aliases {
+            for property in ["Script", "sc", "Script_Extensions", "scx"] {
+                for (escape, class) in [("p", format!("[{ranges}]")), ("P", format!("[^{ranges}]"))]
+                {
+                    normalized =
+                        normalized.replace(&format!(r"\{escape}{{{property}={value}}}"), &class);
+                }
+            }
+        }
+    }
+    normalized
+}
+
+fn contains_invalid_string_property(disjunction: &ast::Disjunction<'_>, flags: Flags) -> bool {
+    disjunction.body.iter().any(|alternative| {
+        alternative
+            .body
+            .iter()
+            .any(|term| term_contains_invalid_string_property(term, flags))
+    })
+}
+
+fn term_contains_invalid_string_property(term: &ast::Term<'_>, flags: Flags) -> bool {
+    match term {
+        ast::Term::UnicodePropertyEscape(property) => {
+            let is_string = property.strings || is_string_property(&property.name);
+            is_string
+                && (flags.unicode && !flags.unicode_sets || flags.unicode_sets && property.negative)
+        }
+        ast::Term::CharacterClass(class) => class_contains_invalid_string_property(class, flags),
+        ast::Term::CapturingGroup(group) => contains_invalid_string_property(&group.body, flags),
+        ast::Term::IgnoreGroup(group) => contains_invalid_string_property(&group.body, flags),
+        ast::Term::LookAroundAssertion(assertion) => {
+            contains_invalid_string_property(&assertion.body, flags)
+        }
+        ast::Term::Quantifier(quantifier) => {
+            term_contains_invalid_string_property(&quantifier.body, flags)
+        }
+        _ => false,
+    }
+}
+
+fn class_contains_invalid_string_property(class: &ast::CharacterClass<'_>, flags: Flags) -> bool {
+    class.body.iter().any(|item| match item {
+        ast::CharacterClassContents::UnicodePropertyEscape(property) => {
+            let is_string = property.strings || is_string_property(&property.name);
+            is_string
+                && (flags.unicode && !flags.unicode_sets || flags.unicode_sets && property.negative)
+        }
+        ast::CharacterClassContents::NestedCharacterClass(nested) => {
+            class_contains_invalid_string_property(nested, flags)
+        }
+        _ => false,
+    })
 }
 
 fn compiled_source_is_safe(source: &str) -> bool {
@@ -1664,6 +1780,9 @@ fn escape_matches(
 }
 
 pub fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
+    if (0xD800..=0xDFFF).contains(&character) {
+        return surrogate_property_matches(name, value);
+    }
     let Some(character) = char::from_u32(character) else {
         return false;
     };
@@ -1702,6 +1821,23 @@ pub fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool
     }
 }
 
+fn surrogate_property_matches(name: &str, value: Option<&str>) -> bool {
+    matches!(
+        (name, value),
+        ("Any", _)
+            | ("Assigned", _)
+            | ("C" | "Other", None)
+            | (
+                "General_Category" | "gc",
+                Some("C" | "Cs" | "Other" | "Surrogate")
+            )
+            | (
+                "Script" | "sc" | "Script_Extensions" | "scx",
+                Some("Unknown" | "Zzzz")
+            )
+    )
+}
+
 #[derive(Clone, Copy)]
 pub struct PropertyMatcher {
     kind: PropertyMatcherKind,
@@ -1713,6 +1849,7 @@ enum PropertyMatcherKind {
     Assigned,
     Script(icu_properties::props::Script),
     ScriptExtensions(icu_properties::props::Script),
+    ScriptRanges(&'static [(u32, u32)]),
     GeneralCategory(icu_properties::props::GeneralCategory),
     GeneralCategoryGroup(icu_properties::props::GeneralCategoryGroup),
     Binary(fn(char) -> bool),
@@ -1733,6 +1870,9 @@ impl PropertyMatcher {
             PropertyMatcherKind::ScriptExtensions(target) => {
                 icu_properties::script::ScriptWithExtensions::new().has_script(character, target)
             }
+            PropertyMatcherKind::ScriptRanges(ranges) => ranges
+                .iter()
+                .any(|(start, end)| (*start..=*end).contains(&u32::from(character))),
             PropertyMatcherKind::GeneralCategory(target) => {
                 CodePointMapData::<props::GeneralCategory>::new().get(character) == target
             }
@@ -1750,16 +1890,30 @@ fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: 
 
 pub fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<PropertyMatcher> {
     use icu_properties::{props, PropertyParser};
+    let new_script_ranges = value.and_then(|value| {
+        NEW_UNICODE_SCRIPTS
+            .iter()
+            .find(|script| script.aliases.contains(&value))
+            .map(|script| script.ranges)
+    });
     let kind = if name == "Any" {
         PropertyMatcherKind::Any
     } else if name == "Assigned" {
         PropertyMatcherKind::Assigned
     } else if matches!(name, "Script" | "sc") {
-        PropertyMatcherKind::Script(PropertyParser::<props::Script>::new().get_loose(value?)?)
+        if let Some(ranges) = new_script_ranges {
+            PropertyMatcherKind::ScriptRanges(ranges)
+        } else {
+            PropertyMatcherKind::Script(PropertyParser::<props::Script>::new().get_loose(value?)?)
+        }
     } else if matches!(name, "Script_Extensions" | "scx") {
-        PropertyMatcherKind::ScriptExtensions(
-            PropertyParser::<props::Script>::new().get_loose(value?)?,
-        )
+        if let Some(ranges) = new_script_ranges {
+            PropertyMatcherKind::ScriptRanges(ranges)
+        } else {
+            PropertyMatcherKind::ScriptExtensions(
+                PropertyParser::<props::Script>::new().get_loose(value?)?,
+            )
+        }
     } else if matches!(name, "General_Category" | "gc") {
         if let Some(target) = PropertyParser::<props::GeneralCategory>::new().get_loose(value?) {
             PropertyMatcherKind::GeneralCategory(target)
