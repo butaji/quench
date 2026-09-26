@@ -171,6 +171,7 @@ impl<H: Host> Vm<H> {
             .and_then(|values| {
                 values
                     .iter()
+                    .rev()
                     .find(|(closure_env, _)| *closure_env == parent)
                     .map(|(_, function)| *function)
             });
