@@ -305,6 +305,8 @@ pub struct Vm<H> {
     data_view_proto: Value,
     map_proto: Value,
     set_proto: Value,
+    map_iterator_proto: Value,
+    set_iterator_proto: Value,
     weak_map_proto: Value,
     weak_set_proto: Value,
     weak_ref_proto: Value,

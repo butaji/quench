@@ -57,6 +57,8 @@ impl<H: Host> Vm<H> {
                     self.data_view_proto,
                     self.map_proto,
                     self.set_proto,
+                    self.map_iterator_proto,
+                    self.set_iterator_proto,
                     self.weak_map_proto,
                     self.weak_set_proto,
                     self.weak_ref_proto,
