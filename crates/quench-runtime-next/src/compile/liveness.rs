@@ -154,7 +154,7 @@ fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite])
         FieldLayout::Register | FieldLayout::ReadWriteRegister => {
             bit(field_register(instruction, field))
         }
-        FieldLayout::Operand => {
+        FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
             let input_operand = match field {
                 InstructionField::B => instruction.operand_b(),
                 InstructionField::C => instruction.operand_c(),
