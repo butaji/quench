@@ -147,6 +147,7 @@ impl<H: Host> Vm<H> {
                         | Native::DataView
                         | Native::Map
                         | Native::Set
+                        | Native::ShadowRealm
                         | Native::WeakMap
                         | Native::WeakSet
                         | Native::WeakRef
@@ -847,6 +848,7 @@ impl<H: Host> Vm<H> {
             Native::Map | Native::Set => {
                 self.construct_collection_native(p, native, args, new_target)
             }
+            Native::ShadowRealm => self.construct_shadow_realm(p, new_target),
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),
             Native::FinalizationRegistry => {

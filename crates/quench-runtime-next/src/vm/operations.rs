@@ -54,6 +54,17 @@ impl<H: Host> Vm<H> {
         if Self::is_collection_native(native) {
             return self.call_collection_native(p, native, this, args);
         }
+        if matches!(
+            native,
+            Native::ShadowRealmEvaluate
+                | Native::ShadowRealmImportValue
+                | Native::ShadowRealmWrappedFunction
+        ) {
+            return self.shadow_realm_native(p, native, this, args);
+        }
+        if native == Native::ShadowRealm {
+            return Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()));
+        }
         if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
             return result;
         }

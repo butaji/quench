@@ -35,6 +35,7 @@ impl<H: Host> Vm<H> {
             data_view_proto: Value::NULL,
             map_proto: Value::NULL,
             set_proto: Value::NULL,
+            shadow_realm_proto: Value::NULL,
             map_iterator_proto: Value::NULL,
             set_iterator_proto: Value::NULL,
             weak_map_proto: Value::NULL,
