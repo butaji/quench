@@ -91,6 +91,7 @@ pub(crate) enum Native {
     ArrayIteratorNext,
     SharedArrayBuffer,
     SharedArrayBufferGrow,
+    SharedArrayBufferSlice,
     AtomicsLoad,
     AtomicsStore,
     AtomicsAdd,

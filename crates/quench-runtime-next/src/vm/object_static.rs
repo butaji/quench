@@ -376,8 +376,8 @@ impl<H: Host> Vm<H> {
             self.set_realm_builtin_named(program, prototype, name, native, realm)?;
         }
         let prototype_atom = self.intern_atom("__proto__");
-        let getter = self.realm_native_value(Native::ObjectPrototypeProtoGetter, realm);
-        let setter = self.realm_native_value(Native::ObjectPrototypeProtoSetter, realm);
+        let getter = self.realm_native_value_optional(Native::ObjectPrototypeProtoGetter, realm);
+        let setter = self.realm_native_value_optional(Native::ObjectPrototypeProtoSetter, realm);
         self.set_builtin_function_name(getter, "get __proto__")?;
         self.set_builtin_function_name(setter, "set __proto__")?;
         self.set_property(prototype, prototype_atom, Value::UNDEFINED)?;
@@ -396,7 +396,20 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn realm_native_value(&mut self, native: Native, realm: Option<Value>) -> Value {
+    pub(super) fn realm_native_value(
+        &mut self,
+        native: Native,
+        realm: Value,
+        current_realm: bool,
+    ) -> Value {
+        if current_realm {
+            self.native_value(native)
+        } else {
+            self.native_with_realm(native, Value::NULL, realm)
+        }
+    }
+
+    fn realm_native_value_optional(&mut self, native: Native, realm: Option<Value>) -> Value {
         match realm {
             Some(realm) => self.native_with_realm(native, Value::NULL, realm),
             None => self.native_value(native),
@@ -411,7 +424,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         realm: Option<Value>,
     ) -> Result<(), JsError> {
-        let function = self.realm_native_value(native, realm);
+        let function = self.realm_native_value_optional(native, realm);
         self.set_builtin_function_name(function, name)?;
         self.set_builtin_value_named(object, name, function)
     }

@@ -916,6 +916,9 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
         self.install_object_prototype_methods(program, object_prototype, Some(global))?;
+        let (shared_array_buffer, _) =
+            self.install_shared_array_buffer_for_realm(program, global, object_prototype)?;
+        self.set_builtin_value_named(global, "SharedArrayBuffer", shared_array_buffer)?;
         self.object_data_mut(global)
             .expect("realm global is an object")
             .proto = object_prototype;
