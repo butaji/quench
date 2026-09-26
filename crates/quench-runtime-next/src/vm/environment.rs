@@ -596,10 +596,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-        address: u32,
+        depth: u16,
+        slot: u16,
     ) -> Result<Value, JsError> {
         let env = self
-            .capture_env(frame, (address >> 16) as u16)
+            .capture_env(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
         let Cell::Environment {
             function,
@@ -613,7 +614,7 @@ impl<H: Host> Vm<H> {
         else {
             return Err(JsError("invalid capture".into()));
         };
-        let slot = address as u16 as usize;
+        let slot = usize::from(slot);
         let atom = program
             .and_then(|program| {
                 self.programs
@@ -670,11 +671,12 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-        address: u32,
+        depth: u16,
+        slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
         let env = self
-            .capture_env(frame, (address >> 16) as u16)
+            .capture_env(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
         let Some(Cell::Environment {
             function, slots, ..
@@ -684,13 +686,13 @@ impl<H: Host> Vm<H> {
         };
         let function = *function;
         if slots
-            .get(address as u16 as usize)
+            .get(usize::from(slot))
             .is_some_and(|current| current.is_deleted())
         {
             let atom = p
                 .functions
                 .get(function as usize)
-                .and_then(|metadata| metadata.local_atoms.get(address as u16 as usize))
+                .and_then(|metadata| metadata.local_atoms.get(usize::from(slot)))
                 .copied()
                 .unwrap_or_default();
             return Err(self.reference_error(
@@ -704,7 +706,7 @@ impl<H: Host> Vm<H> {
         let atom = p
             .functions
             .get(function as usize)
-            .and_then(|metadata| metadata.local_atoms.get(address as u16 as usize))
+            .and_then(|metadata| metadata.local_atoms.get(usize::from(slot)))
             .copied();
         if atom.is_some_and(|atom| self.is_self_binding(atom)) {
             if p.functions[self.frames[frame].function as usize].strict {
@@ -723,10 +725,8 @@ impl<H: Host> Vm<H> {
             .programs
             .get(self.frames[frame].program)
             .as_deref()
-            .and_then(|program| {
-                self.root_global_var_atom(program, function, address as u16 as usize)
-            })
-            .or_else(|| self.root_global_var_atom(p, function, address as u16 as usize))
+            .and_then(|program| self.root_global_var_atom(program, function, usize::from(slot)))
+            .or_else(|| self.root_global_var_atom(p, function, usize::from(slot)))
         {
             if !self.store_global_var_binding(p, atom, value)? {
                 self.set_property_with_program(p, self.realm.globals, atom, value)?;
@@ -737,7 +737,7 @@ impl<H: Host> Vm<H> {
             return Err(JsError("invalid capture".into()));
         };
         let slot = slots
-            .get_mut(address as u16 as usize)
+            .get_mut(usize::from(slot))
             .ok_or_else(|| JsError("invalid capture slot".into()))?;
         *slot = value;
         if function == 0
