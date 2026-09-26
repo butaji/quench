@@ -490,17 +490,6 @@ impl<H: Host> Vm<H> {
             }
             return self.define_receiver_data_property(p, receiver, atom, value, false);
         }
-        let extensible = if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
-            self.object_is_extensible(p, &[receiver])?
-        } else {
-            Self::integrity_bool(
-                self.object_data(receiver)
-                    .is_some_and(Object::is_extensible),
-            )
-        };
-        if !self.truthy(extensible) {
-            return Ok(false);
-        }
         if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
             return self.define_receiver_proxy_data_property(p, receiver, atom, value, true);
         }
@@ -526,6 +515,13 @@ impl<H: Host> Vm<H> {
                 value,
                 new_property,
             );
+        }
+        if new_property
+            && !self
+                .object_data(receiver)
+                .is_some_and(Object::is_extensible)
+        {
+            return Ok(false);
         }
         self.set_shape_property(receiver, PropertyKey::string(atom), value)?;
         self.mirror_global_var_property_write(p, receiver, atom, value);

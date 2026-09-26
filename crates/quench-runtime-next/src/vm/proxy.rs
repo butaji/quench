@@ -16,16 +16,16 @@ impl<H: Host> Vm<H> {
             return Err(JsError("proxy call target is invalid".into()));
         };
         if handler.is_null() {
-            return Err(JsError("cannot access a revoked proxy".into()));
+            return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
         if !self.is_function(target) {
-            return Err(JsError("value is not callable".into()));
+            return Err(self.type_error(p, "value is not callable".into()));
         }
         let trap_atom = self.intern_atom("apply");
         let trap = self.get_property(p, handler, trap_atom)?;
         if !trap.is_undefined() && !trap.is_null() {
             if !self.is_function(trap) {
-                return Err(JsError("proxy apply trap is not callable".into()));
+                return Err(self.type_error(p, "proxy apply trap is not callable".into()));
             }
             let arguments = self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.array_proto),

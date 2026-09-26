@@ -870,6 +870,7 @@ impl<H: Host> Vm<H> {
                             }
                         });
                 if terminal
+                    && !matches!(self.heap.get(callee), Some(Cell::Proxy { .. }))
                     && let Some(CallTarget::User(program_id, id, env)) =
                         self.call_target(callee).ok()
                     && program_id == self.frames[f].program

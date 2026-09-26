@@ -77,65 +77,23 @@ impl<H: Host> Vm<H> {
             }
             return Err(self.type_error(p, "proxy has trap is not callable".into()));
         }
-        if self.object_data(object).is_none() {
+        if !self.is_object_like(object) {
             return Err(JsError("right-hand side of 'in' is not an object".into()));
         }
-        let symbol_key = matches!(self.heap.get(key), Some(Cell::Symbol(_))).then_some(key);
-        let atom = if symbol_key.is_none() {
-            let key = self.to_string(p, key)?;
-            Some(self.intern_atom(&key))
-        } else {
-            None
-        };
-        let property_key = atom.map_or_else(
-            || super::property_key::PropertyKey::symbol(symbol_key.expect("symbol key")),
-            super::property_key::PropertyKey::string,
-        );
+        let key = self.to_property_key(p, key)?;
         let mut current = object;
         loop {
             if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
                 return self.has_property(p, current, key);
             }
-            self.evaluate_deferred_namespace_for_key(p, current, Some(property_key))?;
-            if atom == Some(self.length_atom)
-                && matches!(
-                    self.heap.get(current),
-                    Some(Cell::Array { .. } | Cell::TypedArray { .. })
-                )
-            {
+            let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
+            if !descriptor.is_undefined() {
                 return Ok(true);
             }
-            if self.property_attributes(current, property_key).is_some()
-                || symbol_key.is_some_and(|key| self.symbol_property(current, key).is_some())
-            {
-                return Ok(true);
-            }
-            if atom.is_some_and(|atom| {
-                super::object_static::array_index(self.atom_name(atom)).is_some_and(|index| {
-                    match self.heap.get(current) {
-                        Some(Cell::Array { .. }) => {
-                            let index = index as usize;
-                            self.has_own_array_index(current, index)
-                        }
-                        Some(Cell::TypedArray { .. }) => self
-                            .typed_array_length(current)
-                            .is_some_and(|length| (index as usize) < length),
-                        _ => self.indexed_view_property(current, atom).is_some(),
-                    }
-                })
-            }) {
-                return Ok(true);
-            }
-            if atom.is_some_and(|atom| self.own_property(current, atom).is_some()) {
-                return Ok(true);
-            }
-            let Some(data) = self.object_data(current) else {
-                return Ok(false);
-            };
-            if data.proto.is_null() {
+            current = self.object_get_prototype_of(p, current)?;
+            if current.is_null() {
                 return Ok(false);
             }
-            current = data.proto;
         }
     }
 
