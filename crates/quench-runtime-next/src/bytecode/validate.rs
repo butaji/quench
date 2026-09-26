@@ -378,10 +378,11 @@ impl ResidualProgram {
                     | Op::IteratorClose
                     | Op::SpreadToArray
                     | Op::RequireObjectCoercible
-                    | Op::Return
-                    | Op::Throw
                         if !register(instruction.a()) =>
                     {
+                        return Err(format!("function {index} result register is invalid"));
+                    }
+                    Op::Return | Op::Throw if !register(instruction.register_a()) => {
                         return Err(format!("function {index} result register is invalid"));
                     }
                     Op::RequireObjectCoercible if !register(instruction.b()) => {
@@ -394,7 +395,7 @@ impl ResidualProgram {
                             "function {index} iterator cleanup register is invalid"
                         ));
                     }
-                    Op::JumpFalse if !register(instruction.a()) => {
+                    Op::JumpFalse if !register(instruction.register_a()) => {
                         return Err(format!("function {index} branch register is invalid"));
                     }
                     Op::JumpBinaryFalse

@@ -159,7 +159,7 @@ fn uses(
         }
         Op::IncDec | Op::Unary | Op::Move => bit(instruction.b()),
         Op::Delete => bit(instruction.b()) | bit(instruction.c()),
-        Op::JumpFalse | Op::Return | Op::Throw => bit(instruction.a()),
+        Op::JumpFalse | Op::Return | Op::Throw => bit(instruction.register_a()),
         Op::Call | Op::CallDirectEvalArray => {
             let window = instruction.call_window();
             bit(instruction.b()) | bit(instruction.c()) | range(window.base, window.count)

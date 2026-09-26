@@ -297,7 +297,7 @@ impl<H: Host> Vm<H> {
                         self.maybe_collect(p);
                     }
                     Op::JumpFalse => {
-                        let value = self.read(frame, ins.a());
+                        let value = self.read(frame, ins.register_a());
                         let truthy = self.truthy(value);
                         #[cfg(feature = "profile-aggregate")]
                         self.profile.branch_value(value.profile_kind(), truthy);
@@ -319,7 +319,7 @@ impl<H: Host> Vm<H> {
                     }
                     Op::Return => {
                         self.frames[frame].pc = pc;
-                        return Ok(StepResult::Return(self.read(frame, ins.a())));
+                        return Ok(StepResult::Return(self.read(frame, ins.register_a())));
                     }
                     _ => {
                         self.frames[frame].pc = pc;
