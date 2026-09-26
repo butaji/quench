@@ -646,6 +646,7 @@ impl<H: Host> Vm<H> {
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = (match native {
                 Native::Object => Some("Object"),
+                Native::Iterator => Some("Iterator"),
                 Native::Boolean => Some("Boolean"),
                 Native::DataView => Some("DataView"),
                 Native::Date => Some("Date"),
@@ -787,6 +788,11 @@ impl<H: Host> Vm<H> {
             | Native::AsyncFunction
             | Native::GeneratorFunction
             | Native::AsyncGeneratorFunction => self.function_native(p, native, args),
+            Native::Iterator if new_target == self.native_value(Native::Iterator) => Err(self
+                .type_error(
+                    p,
+                    "Iterator constructor cannot be called or constructed".into(),
+                )),
             Native::Iterator => Ok(self.object()),
             Native::Object => {
                 if let Some(value) = args.first().copied() {

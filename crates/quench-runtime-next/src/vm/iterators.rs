@@ -960,6 +960,7 @@ impl<H: Host> Vm<H> {
         kind: IteratorKind,
         helper: IteratorHelper,
     ) -> Result<Value, JsError> {
+        let source = self.iterator_record(p, source)?;
         let prototypes = self
             .iterator_realm_prototypes
             .get(&self.realm.globals)
@@ -978,8 +979,16 @@ impl<H: Host> Vm<H> {
             done: false,
             generator: None,
         });
-        let _ = p;
         Ok(iterator)
+    }
+
+    fn iterator_record(&mut self, p: &ResidualProgram, iterator: Value) -> Result<Value, JsError> {
+        match self.heap.get(iterator) {
+            Some(Cell::Iterator {
+                next_method: None, ..
+            }) => self.iterator_get_direct(p, iterator),
+            _ => Ok(iterator),
+        }
     }
 
     pub(super) fn iterator_helper_next(
@@ -1090,6 +1099,9 @@ impl<H: Host> Vm<H> {
         if running {
             return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
+        if done {
+            return self.iterator_result(Value::UNDEFINED, true);
+        }
         if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
             *helper_running = true;
         }
@@ -1112,6 +1124,16 @@ impl<H: Host> Vm<H> {
         source: Value,
         args: &[Value],
     ) -> Result<Option<Value>, JsError> {
+        if let Some(Cell::Iterator {
+            source: iterator,
+            kind: IteratorKind::Protocol,
+            next_method: Some(next),
+            done: false,
+            ..
+        }) = self.heap.get(source)
+        {
+            return self.iterator_step_with_method(p, *iterator, *next, args);
+        }
         let source_root = self.heap.root(source);
         let next_atom = self.intern_atom("next");
         let source = self.heap.root_value(source_root).unwrap_or(source);
@@ -1350,7 +1372,8 @@ impl<H: Host> Vm<H> {
             if !self.is_object_like(mapped) {
                 return Err(self.type_error(p, "flatMap result is not an object".into()));
             }
-            inner = Some(self.iterator_from(p, &[mapped])?);
+            let next_inner = self.iterator_from(p, &[mapped])?;
+            inner = Some(self.iterator_record(p, next_inner)?);
         }
     }
 
@@ -1704,7 +1727,7 @@ impl<H: Host> Vm<H> {
                         .iter()
                         .filter_map(|root| self.heap.root_value(*root))
                         .collect::<Vec<_>>();
-                    let _ = self.iterator_close_all(p, &iterators, Some(outer));
+                    let _ = self.iterator_close_all(p, &iterators, None);
                     roots.into_iter().for_each(|root| {
                         self.heap.release_root(root);
                     });
@@ -1725,7 +1748,10 @@ impl<H: Host> Vm<H> {
                 self.heap.release_root(outer_root);
                 return Err(self.type_error(p, "Iterator.zip does not accept strings".into()));
             }
-            match self.iterator_from(p, &[value]) {
+            match self
+                .iterator_from(p, &[value])
+                .and_then(|iterator| self.iterator_record(p, iterator))
+            {
                 Ok(iterator) => {
                     roots.push(self.heap.root(iterator));
                     iterators.push(iterator);
@@ -1768,19 +1794,15 @@ impl<H: Host> Vm<H> {
             for key in keys {
                 let property_key = self.to_property_key(p, key)?;
                 let property_key_root = self.heap.root(property_key);
-                let (attributes_key, atom) =
-                    if matches!(self.heap.get(property_key), Some(Cell::Symbol(_))) {
-                        (PropertyKey::symbol(property_key), None)
-                    } else {
-                        let name = self.coerce_js_string(p, property_key)?;
-                        let atom = self.intern_atom(&name.host_string());
-                        (PropertyKey::string(atom), Some(atom))
-                    };
-                if !self
-                    .property_attributes(input, attributes_key)
-                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
-                    .enumerable
-                {
+                let atom = if matches!(self.heap.get(property_key), Some(Cell::Symbol(_))) {
+                    None
+                } else {
+                    let name = self.coerce_js_string(p, property_key)?;
+                    Some(self.intern_atom(&name.host_string()))
+                };
+                let descriptor =
+                    self.object_get_own_property_descriptor(p, &[input, property_key])?;
+                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
                     self.heap.release_root(property_key_root);
                     continue;
                 }
@@ -1807,7 +1829,10 @@ impl<H: Host> Vm<H> {
                     );
                 }
                 let value_root = self.heap.root(value);
-                match self.iterator_from(p, &[value]) {
+                match self
+                    .iterator_from(p, &[value])
+                    .and_then(|iterator| self.iterator_record(p, iterator))
+                {
                     Ok(iterator) => {
                         iterators.push(iterator);
                         roots.push(self.heap.root(iterator));
@@ -1862,11 +1887,11 @@ impl<H: Host> Vm<H> {
             return Ok(vec![Value::UNDEFINED; count]);
         }
         if let Some(keys) = keys {
-            return keys
-                .iter()
-                .copied()
-                .map(|key| self.get_index(p, padding, key))
-                .collect();
+            let mut values = Vec::with_capacity(keys.len());
+            for key in keys.iter().copied() {
+                values.push(self.get_index(p, padding, key)?);
+            }
+            return Ok(values);
         }
         let iterator = match self.iterator_get_direct(p, padding) {
             Ok(iterator) => iterator,
@@ -2013,6 +2038,26 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(Value::UNDEFINED);
                 match self.iterator_helper_step(p, iterator, &[]) {
                     Ok(Some(value)) => {
+                        if matches!(mode, IteratorZipMode::Strict) && ended_count > 0 {
+                            let helper = self.heap.root_value(helper_root).unwrap_or(helper);
+                            self.mark_iterator_done(helper);
+                            let active = iterator_roots
+                                .iter()
+                                .copied()
+                                .zip(opened.iter().copied())
+                                .filter_map(|(root, is_open)| {
+                                    is_open.then(|| self.heap.root_value(root)).flatten()
+                                })
+                                .collect::<Vec<_>>();
+                            let _ = self.iterator_close_all(p, &active, None);
+                            value_roots.into_iter().for_each(|root| {
+                                self.heap.release_root(root);
+                            });
+                            return Err(self.type_error(
+                                p,
+                                "Iterator.zip iterators have different lengths".into(),
+                            ));
+                        }
                         values.push(value);
                         value_roots.push(self.heap.root(value));
                     }
@@ -2025,11 +2070,33 @@ impl<H: Host> Vm<H> {
                         value_roots.push(self.heap.root(padding_value));
                         opened[index] = false;
                         ended_count += 1;
-                        if matches!(mode, IteratorZipMode::Shortest | IteratorZipMode::Strict) {
+                        if matches!(mode, IteratorZipMode::Shortest) {
                             break;
+                        }
+                        if matches!(mode, IteratorZipMode::Strict) && index > 0 && ended_count == 1
+                        {
+                            let helper = self.heap.root_value(helper_root).unwrap_or(helper);
+                            self.mark_iterator_done(helper);
+                            let active = iterator_roots
+                                .iter()
+                                .copied()
+                                .zip(opened.iter().copied())
+                                .filter_map(|(root, is_open)| {
+                                    is_open.then(|| self.heap.root_value(root)).flatten()
+                                })
+                                .collect::<Vec<_>>();
+                            let _ = self.iterator_close_all(p, &active, None);
+                            value_roots.into_iter().for_each(|root| {
+                                self.heap.release_root(root);
+                            });
+                            return Err(self.type_error(
+                                p,
+                                "Iterator.zip iterators have different lengths".into(),
+                            ));
                         }
                     }
                     Err(error) => {
+                        opened[index] = false;
                         let helper = self.heap.root_value(helper_root).unwrap_or(helper);
                         self.mark_iterator_done(helper);
                         let remaining = iterator_roots
@@ -2047,6 +2114,33 @@ impl<H: Host> Vm<H> {
                         return Err(error);
                     }
                 }
+            }
+            if ended_count == iterators.len() {
+                let helper = self.heap.root_value(helper_root).unwrap_or(helper);
+                self.mark_iterator_done(helper);
+                value_roots.into_iter().for_each(|root| {
+                    self.heap.release_root(root);
+                });
+                return self.iterator_result(Value::UNDEFINED, true);
+            }
+            if matches!(mode, IteratorZipMode::Strict) && ended_count > 0 {
+                let helper = self.heap.root_value(helper_root).unwrap_or(helper);
+                self.mark_iterator_done(helper);
+                let active = iterator_roots
+                    .iter()
+                    .copied()
+                    .zip(opened.iter().copied())
+                    .filter_map(|(root, is_open)| {
+                        is_open.then(|| self.heap.root_value(root)).flatten()
+                    })
+                    .collect::<Vec<_>>();
+                let _ = self.iterator_close_all(p, &active, None);
+                value_roots.into_iter().for_each(|root| {
+                    self.heap.release_root(root);
+                });
+                return Err(
+                    self.type_error(p, "Iterator.zip iterators have different lengths".into())
+                );
             }
             let iterators = iterator_roots
                 .iter()
@@ -2313,11 +2407,7 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(receiver) {
             return Err(self.type_error(p, "Iterator prototype setter requires an object".into()));
         }
-        let iterator_atom = self.intern_atom("Iterator");
-        let constructor = self.get_property(p, self.realm.globals, iterator_atom)?;
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, constructor, prototype_atom)?;
-        if receiver == prototype {
+        if receiver == self.iterator_proto {
             return Err(self.type_error(p, "Cannot assign to Iterator.prototype intrinsic".into()));
         }
         let key = if name == "constructor" {
@@ -2328,12 +2418,18 @@ impl<H: Host> Vm<H> {
                 .copied()
                 .unwrap_or(Value::UNDEFINED)
         };
-        self.set_index(
-            p,
-            receiver,
-            key,
-            args.first().copied().unwrap_or(Value::UNDEFINED),
-        )?;
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let descriptor = self.object();
+        for (field, field_value) in [
+            ("value", value),
+            ("writable", Value::TRUE),
+            ("enumerable", Value::TRUE),
+            ("configurable", Value::TRUE),
+        ] {
+            let atom = self.intern_atom(field);
+            self.set_property(descriptor, atom, field_value)?;
+        }
+        self.object_define_property(p, &[receiver, key, descriptor])?;
         Ok(Value::UNDEFINED)
     }
 
