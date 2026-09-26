@@ -1652,6 +1652,11 @@ impl<H: Host> Vm<H> {
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)?;
         if native == Native::SuppressedError {
+            if let Some(message) = args.get(2).copied().filter(|value| !value.is_undefined()) {
+                let message = self.to_string(program, message)?;
+                let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
+                self.set_builtin_value_named(object, "message", message)?;
+            }
             for (name, value) in [
                 ("error", args.first().copied().unwrap_or(Value::UNDEFINED)),
                 (
@@ -1660,11 +1665,6 @@ impl<H: Host> Vm<H> {
                 ),
             ] {
                 self.set_builtin_value_named(object, name, value)?;
-            }
-            if let Some(message) = args.get(2).copied().filter(|value| !value.is_undefined()) {
-                let message = self.to_string(program, message)?;
-                let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
-                self.set_builtin_value_named(object, "message", message)?;
             }
             return Ok(object);
         }
