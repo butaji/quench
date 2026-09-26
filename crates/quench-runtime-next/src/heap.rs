@@ -515,7 +515,8 @@ impl Heap {
                 work.extend(dynamic_bindings.iter().map(|(_, value)| *value));
                 work.extend(with_objects.iter().copied());
             }
-            Cell::Date { object: value, .. } => object(value),
+            Cell::Date { object: value, .. }
+            | Cell::TemporalDuration { object: value, .. } => object(value),
             Cell::String(_) | Cell::BigInt(_) | Cell::Symbol(_) | Cell::Error(_) => {}
             _ => unreachable!("typed array backing handled above"),
         }
@@ -546,6 +547,7 @@ impl Heap {
             Cell::Date { .. } => 13,
             Cell::Error(_) => 14,
             Cell::RegExp { .. } => 15,
+            Cell::TemporalDuration { .. } => 17,
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
@@ -557,6 +559,7 @@ impl Heap {
             | Cell::ArrayFromAsyncState(_)
             | Cell::Proxy { .. }
             | Cell::Date { .. } => 0,
+            Cell::TemporalDuration { .. } => 0,
             Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
