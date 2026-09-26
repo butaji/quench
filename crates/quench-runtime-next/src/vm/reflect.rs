@@ -96,20 +96,7 @@ impl<H: Host> Vm<H> {
             Native::ReflectGetPrototypeOf => self.object_get_prototype_of(p, target),
             Native::ReflectSetPrototypeOf => {
                 let proto = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let Some(object) = self.object_data(target) else {
-                    return Err(JsError("Reflect target is not an object".into()));
-                };
-                if !proto.is_null() && self.object_data(proto).is_none() {
-                    return Err(JsError("Reflect prototype is not an object".into()));
-                }
-                Ok(if !object.is_extensible() && object.proto != proto {
-                    Value::FALSE
-                } else {
-                    match self.object_set_prototype_of(p, target, proto) {
-                        Ok(_) => Value::TRUE,
-                        Err(_) => Value::FALSE,
-                    }
-                })
+                self.reflect_set_prototype_of(p, target, proto)
             }
             Native::ReflectConstruct => {
                 let new_target = args.get(2).copied().unwrap_or(target);
@@ -183,5 +170,59 @@ impl<H: Host> Vm<H> {
         } else {
             Value::FALSE
         })
+    }
+
+    fn reflect_set_prototype_of(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        prototype: Value,
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(target) {
+            return Err(self.type_error(p, "Reflect target is not an object".into()));
+        }
+        if !prototype.is_null() && !self.is_object_like(prototype) {
+            return Err(self.type_error(p, "Reflect prototype is not an object".into()));
+        }
+        if let Some(Cell::Proxy {
+            target: underlying,
+            handler,
+            ..
+        }) = self.heap.get(target).cloned()
+        {
+            if handler.is_null() {
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("setPrototypeOf");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if trap.is_null() || trap.is_undefined() {
+                return self.reflect_set_prototype_of(p, underlying, prototype);
+            }
+            if !self.is_function(trap) {
+                return Err(self.type_error(p, "proxy setPrototypeOf trap is not callable".into()));
+            }
+            let result = self.call_value(p, trap, handler, &[underlying, prototype])?;
+            if !self.truthy(result) {
+                return Ok(Value::FALSE);
+            }
+            let extensible = self.object_is_extensible(p, &[underlying])?;
+            if !self.truthy(extensible) {
+                let target_prototype = self.object_get_prototype_of(p, underlying)?;
+                if !self.same_value(target_prototype, prototype) {
+                    return Err(self.type_error(
+                        p,
+                        "proxy setPrototypeOf trap changed a non-extensible target".into(),
+                    ));
+                }
+            }
+            return Ok(Value::TRUE);
+        }
+        let current = self.object_get_prototype_of(p, target)?;
+        let extensible = self.object_is_extensible(p, &[target])?;
+        if !self.truthy(extensible) && !self.same_value(current, prototype) {
+            return Ok(Value::FALSE);
+        }
+        self.object_set_prototype_of(p, target, prototype)?;
+        Ok(Value::TRUE)
     }
 }

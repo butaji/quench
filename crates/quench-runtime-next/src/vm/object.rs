@@ -400,9 +400,7 @@ impl<H: Host> Vm<H> {
             target, handler, ..
         }) = self.heap.get(target).cloned()
         {
-            return self
-                .proxy_set(p, target, handler, receiver, atom, value)
-                .map(|()| true);
+            return self.proxy_set(p, target, handler, receiver, atom, value);
         }
         self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
 
@@ -413,9 +411,7 @@ impl<H: Host> Vm<H> {
                 target, handler, ..
             }) = self.heap.get(current).cloned()
             {
-                return self
-                    .proxy_set(p, target, handler, receiver, atom, value)
-                    .map(|()| true);
+                return self.proxy_set(p, target, handler, receiver, atom, value);
             }
             if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom))
                 && (self.own_property(current, atom).is_some() || attributes.accessor)
@@ -461,7 +457,7 @@ impl<H: Host> Vm<H> {
             return Ok(self.same_value(current, value));
         }
 
-        if self.object_data(receiver).is_none() {
+        if !self.is_object_like(receiver) {
             return Ok(false);
         }
         let receiver_descriptor = if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
@@ -489,13 +485,24 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(false);
             }
+            if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
+                return self.define_receiver_proxy_data_property(p, receiver, atom, value, false);
+            }
             return self.define_receiver_data_property(p, receiver, atom, value, false);
         }
-        if !self
-            .object_data(receiver)
-            .is_some_and(Object::is_extensible)
-        {
+        let extensible = if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
+            self.object_is_extensible(p, &[receiver])?
+        } else {
+            Self::integrity_bool(
+                self.object_data(receiver)
+                    .is_some_and(Object::is_extensible),
+            )
+        };
+        if !self.truthy(extensible) {
             return Ok(false);
+        }
+        if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
+            return self.define_receiver_proxy_data_property(p, receiver, atom, value, true);
         }
         self.define_receiver_data_property(p, receiver, atom, value, true)
     }
@@ -669,7 +676,12 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
-            return self.proxy_set(p, target, handler, object, atom, value);
+            let written = self.proxy_set(p, target, handler, object, atom, value)?;
+            return if written || !strict {
+                Ok(())
+            } else {
+                Err(self.type_error(p, "cannot assign property through proxy".into()))
+            };
         }
         if !self.is_object_like(object) {
             if self.atom_name(atom).starts_with("\0rqj:private:") {
@@ -830,7 +842,10 @@ impl<H: Host> Vm<H> {
             target, handler, ..
         }) = self.heap.get(object).cloned()
         {
-            return self.proxy_set(p, target, handler, object, atom, value);
+            if !self.proxy_set(p, target, handler, object, atom, value)? {
+                return Err(self.type_error(p, "cannot assign property through proxy".into()));
+            }
+            return Ok(());
         }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {

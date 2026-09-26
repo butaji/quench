@@ -814,8 +814,11 @@ impl<H: Host> Vm<H> {
             Native::Proxy => {
                 let target = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let handler = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                if self.object_data(target).is_none() || self.object_data(handler).is_none() {
-                    return Err(JsError("Proxy target and handler must be objects".into()));
+                if !self.is_object_like(target) {
+                    return Err(self.type_error(p, "Proxy target must be an object".into()));
+                }
+                if !self.is_object_like(handler) {
+                    return Err(self.type_error(p, "Proxy handler must be an object".into()));
                 }
                 Ok(self.heap.alloc(Cell::Proxy {
                     object: Self::empty_object(self.object_proto),
