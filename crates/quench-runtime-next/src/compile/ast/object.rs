@@ -73,7 +73,7 @@ impl FunctionCompiler<'_, '_> {
                         .reject(property.span, "object accessor key unsupported");
                     continue;
                 };
-                let item = self.object_method(&property.value, super_atom);
+                let item = self.object_method(&property.value, super_atom, property.span);
                 if computed {
                     self.emit(
                         Op::SetFunctionNameKey,
@@ -105,7 +105,12 @@ impl FunctionCompiler<'_, '_> {
                 };
                 let property_key = self.reg();
                 self.emit(Op::ToPropertyKey, property_key, key, 0, 0);
-                let item = self.object_property_value(&property.value, property.method, super_atom);
+                let item = self.object_property_value(
+                    &property.value,
+                    property.method,
+                    super_atom,
+                    property.span,
+                );
                 if Self::anonymous_function_definition(&property.value) {
                     self.emit(Op::SetFunctionNameKey, item, property_key, 0, 0);
                 }
@@ -116,8 +121,12 @@ impl FunctionCompiler<'_, '_> {
                 let key = super::super::string::constant(value);
                 if matches!(&key, Constant::StringUnits(_)) {
                     let key = self.literal(key);
-                    let item =
-                        self.object_property_value(&property.value, property.method, super_atom);
+                    let item = self.object_property_value(
+                        &property.value,
+                        property.method,
+                        super_atom,
+                        property.span,
+                    );
                     if Self::anonymous_function_definition(&property.value) {
                         self.emit(Op::SetFunctionNameKey, item, key, 0, 0);
                     }
@@ -135,6 +144,7 @@ impl FunctionCompiler<'_, '_> {
                             &property.value,
                             property.method,
                             super_atom,
+                            property.span,
                         );
                         if Self::anonymous_function_definition(&property.value) {
                             let property_key = self.reg();
@@ -151,7 +161,12 @@ impl FunctionCompiler<'_, '_> {
                     continue;
                 }
             };
-            let item = self.object_property_value(&property.value, property.method, super_atom);
+            let item = self.object_property_value(
+                &property.value,
+                property.method,
+                super_atom,
+                property.span,
+            );
             let atom = self.owner.atom(key);
             if Self::anonymous_function_definition(&property.value) {
                 self.emit(Op::SetFunctionName, item, 0, 0, atom);
@@ -179,7 +194,12 @@ impl FunctionCompiler<'_, '_> {
         );
     }
 
-    fn object_method(&mut self, value: &Expression<'_>, super_atom: Atom) -> Register {
+    fn object_method(
+        &mut self,
+        value: &Expression<'_>,
+        super_atom: Atom,
+        source_span: Span,
+    ) -> Register {
         let Expression::FunctionExpression(function) = value else {
             return self.expression(value);
         };
@@ -197,6 +217,11 @@ impl FunctionCompiler<'_, '_> {
             Some(self.function_id),
             FunctionOptions {
                 defaults: Some(&function.params),
+                source_text: self
+                    .owner
+                    .text
+                    .get(source_span.start as usize..source_span.end as usize)
+                    .map(str::to_owned),
                 async_function: function.r#async,
                 generator: function.generator,
                 with_depth: self.with_depth,
@@ -222,9 +247,10 @@ impl FunctionCompiler<'_, '_> {
         value: &Expression<'_>,
         is_method: bool,
         super_atom: Atom,
+        source_span: Span,
     ) -> Register {
         if is_method {
-            self.object_method(value, super_atom)
+            self.object_method(value, super_atom, source_span)
         } else {
             self.expression(value)
         }
