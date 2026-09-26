@@ -104,6 +104,18 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::BinaryOperator => {
                 u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
             }
+            FieldLayout::FieldBase => match instruction.field_lookup() {
+                super::FieldLookup::Site(site) => site < bounds.field_sites,
+                super::FieldLookup::Atom {
+                    atom,
+                    base,
+                    cache_site,
+                } => {
+                    field_base_in_bounds(base.0, bounds.registers)
+                        && atom_in_bounds(atom, bounds.atoms)
+                        && cache_in_bounds(cache_site, bounds.cache_sites)
+                }
+            },
             _ => true,
         },
     )
@@ -280,280 +292,42 @@ impl ResidualProgram {
                         instruction.op()
                     ));
                 }
-                let register = |value: u16| register_in_bounds(value, function.registers, 0);
-                let destination =
-                    |value: u16| register_in_bounds(value & REGISTER_MASK, function.registers, 0);
-                let cache = |value: u16| cache_in_bounds(value, self.cache_sites);
-                let atom = |value: u32| atom_in_bounds(value, self.atoms.len());
                 match instruction.op() {
-                    Op::LoadConst if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} constant load is invalid"));
-                    }
-                    Op::LoadLocal if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} local access is invalid"));
-                    }
                     Op::LoadLocal
                         if !instruction.numeric_local_store_fields_valid()
                             || instruction
                                 .numeric_local_store_target()
-                                .is_some_and(|target| !register(target.register)) =>
+                                .is_some_and(|target| {
+                                    !register_in_bounds(target.register, function.registers, 0)
+                                }) =>
                     {
                         return Err(format!("function {index} numeric local target is invalid"));
                     }
-                    Op::LoadEnvLocal if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} local access is invalid"));
-                    }
-                    Op::LoadCapture if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} capture load is invalid"));
-                    }
-                    Op::LoadName | Op::LoadNameTypeof
-                        if !destination(instruction.result_register()) =>
-                    {
-                        return Err(format!("function {index} name load is invalid"));
-                    }
-                    Op::StoreName if !register(instruction.register_a()) => {
-                        return Err(format!("function {index} name store is invalid"));
-                    }
-                    Op::DeleteName if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} name deletion is invalid"));
-                    }
-                    Op::LoadResolvedName
-                        if !register(instruction.register_b())
-                            || !destination(instruction.result_register()) =>
-                    {
-                        return Err(format!("function {index} resolved name site is invalid"));
-                    }
-                    Op::LoadNameCall
-                        if !destination(instruction.result_register())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} call-name site is invalid"));
-                    }
-                    Op::ResolveName if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} name resolution is invalid"));
-                    }
-                    Op::StoreResolvedName
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} resolved name store is invalid"));
-                    }
-                    Op::MarkPrivateName
-                        if !register(instruction.register_b())
-                            || !register(instruction.register_c()) =>
-                    {
-                        return Err(format!("function {index} private-name mark is invalid"));
-                    }
-                    Op::SetFunctionName if !register(instruction.register_a()) => {
-                        return Err(format!("function {index} function name is invalid"));
-                    }
-                    Op::SetFunctionNameKey
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!(
-                            "function {index} computed function name is invalid"
-                        ));
-                    }
-                    Op::MakeClosure if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} closure site is invalid"));
-                    }
-                    Op::MakeConstArray if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} constant array is invalid"));
-                    }
-                    Op::MakeArray if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} array allocation is invalid"));
-                    }
-                    Op::MakeObject if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} object allocation is invalid"));
-                    }
-                    Op::GetField
-                        if !destination(instruction.result_register())
-                            || match instruction.field_lookup() {
-                                super::FieldLookup::Site(site) => site >= self.field_sites.len(),
-                                super::FieldLookup::Atom {
-                                    atom: atom_index,
-                                    base,
-                                    cache_site,
-                                } => {
-                                    !field_base_in_bounds(base.0, function.registers)
-                                        || !atom(atom_index)
-                                        || !cache(cache_site)
-                                }
-                            } =>
-                    {
-                        return Err(format!("function {index} field load is invalid"));
-                    }
-                    Op::SetField
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} field store is invalid"));
-                    }
-                    Op::DefineField
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} field definition is invalid"));
-                    }
-                    Op::DefineComputedField
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || !register(instruction.register_c()) =>
-                    {
-                        return Err(format!(
-                            "function {index} computed field definition is invalid"
-                        ));
-                    }
-                    Op::SetThisField if !register(instruction.register_a()) => {
-                        return Err(format!("function {index} this-field store is invalid"));
-                    }
-                    Op::CheckPrivate if !register(instruction.register_a()) => {
-                        return Err(format!("function {index} private check is invalid"));
-                    }
-                    Op::PrivateIn
-                        if !destination(instruction.result_register())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} private-in operation is invalid"));
-                    }
-                    Op::ToPropertyKey | Op::ToNumeric
-                        if !destination(instruction.result_register())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} conversion operand is invalid"));
-                    }
                     Op::GetIndex
-                        if !register(instruction.result_register())
-                            || (function.dispatch == DispatchClass::Numeric
-                                && (!is_numeric_index_operand(instruction.operand_b())
-                                    || !is_numeric_index_operand(instruction.operand_c()))) =>
+                        if function.dispatch == DispatchClass::Numeric
+                            && (!is_numeric_index_operand(instruction.operand_b())
+                                || !is_numeric_index_operand(instruction.operand_c())) =>
                     {
                         return Err(format!("function {index} indexed load is invalid"));
                     }
-                    Op::SetIndex
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || !register(instruction.register_c()) =>
+                    Op::NumericAdd
+                        if instruction.binary_operator()
+                            != oxc_ast::ast::BinaryOperator::Addition as u32 =>
                     {
-                        return Err(format!("function {index} indexed store is invalid"));
+                        return Err(format!("function {index} numeric add opcode is invalid"));
                     }
-                    Op::DefineArrayElement
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} array literal element is invalid"));
-                    }
-                    Op::Binary if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} binary operand is invalid"));
-                    }
-                    Op::NumericAdd | Op::NumericMultiply
-                        if !destination(instruction.result_register())
-                            || (instruction.op() == Op::NumericAdd
-                                && instruction.binary_operator()
-                                    != oxc_ast::ast::BinaryOperator::Addition as u32)
-                            || (instruction.op() == Op::NumericMultiply
-                                && instruction.binary_operator()
-                                    != oxc_ast::ast::BinaryOperator::Multiplication as u32) =>
-                    {
-                        return Err(format!("function {index} binary operand is invalid"));
-                    }
-                    Op::Unary | Op::IncDec
-                        if !register(instruction.result_register())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} unary operand is invalid"));
-                    }
-                    Op::Delete
-                        if !register(instruction.result_register())
-                            || !register(instruction.register_b())
-                            || !register(instruction.register_c()) =>
-                    {
-                        return Err(format!("function {index} delete operand is invalid"));
-                    }
-                    Op::Move
-                        if !register(instruction.result_register())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} move operand is invalid"));
-                    }
-                    Op::LoadThis | Op::LoadImportMeta
-                        if !destination(instruction.result_register()) =>
-                    {
-                        return Err(format!("function {index} this/import-meta load is invalid"));
-                    }
-                    Op::CacheTemplateObject if !register(instruction.register_a()) => {
-                        return Err(format!("function {index} template-object cache is invalid"));
-                    }
-                    Op::LoadCachedTemplateObject if !destination(instruction.result_register()) => {
-                        return Err(format!(
-                            "function {index} cached template-object load is invalid"
-                        ));
-                    }
-                    Op::ValidateClassHeritage if !register(instruction.register_a()) => {
-                        return Err(format!(
-                            "function {index} class heritage register is invalid"
-                        ));
-                    }
-                    Op::CopyDataProperties
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || !register(instruction.register_c()) =>
+                    Op::NumericMultiply
+                        if instruction.binary_operator()
+                            != oxc_ast::ast::BinaryOperator::Multiplication as u32 =>
                     {
                         return Err(format!(
-                            "function {index} copy-data-properties operand is invalid"
+                            "function {index} numeric multiply opcode is invalid"
                         ));
-                    }
-                    Op::InitializeThis if !register(instruction.register_a()) => {
-                        return Err(format!(
-                            "function {index} initialized this operand is invalid"
-                        ));
-                    }
-                    Op::GetIterator | Op::GetAsyncIterator | Op::SpreadToArray
-                        if !register(instruction.result_register())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} iterator register is invalid"));
-                    }
-                    Op::Return | Op::Throw if !register(instruction.register_a()) => {
-                        return Err(format!("function {index} result register is invalid"));
-                    }
-                    Op::IteratorClose | Op::RequireObjectCoercible | Op::RequireIteratorResult
-                        if !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} iterator operand is invalid"));
-                    }
-                    Op::IteratorCleanupPush
-                        if !register(instruction.register_a())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!(
-                            "function {index} iterator cleanup register is invalid"
-                        ));
-                    }
-                    Op::JumpFalse if !register(instruction.register_a()) => {
-                        return Err(format!("function {index} branch register is invalid"));
-                    }
-                    Op::Call | Op::CallDirectEvalArray
-                        if !destination(instruction.result_register())
-                            || !register(instruction.register_b())
-                            || !register(instruction.register_c()) =>
-                    {
-                        return Err(format!("function {index} call is invalid"));
-                    }
-                    Op::Await | Op::Yield
-                        if !destination(instruction.result_register())
-                            || !register(instruction.register_b()) =>
-                    {
-                        return Err(format!("function {index} suspension is invalid"));
                     }
                     Op::CallDirectEvalArray if instruction.call_window().count != 1 => {
                         return Err(format!(
                             "function {index} direct eval arguments are invalid"
                         ));
-                    }
-                    Op::CallKnown if !destination(instruction.result_register()) => {
-                        return Err(format!("function {index} known call is invalid"));
                     }
                     _ => {}
                 }
