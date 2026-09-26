@@ -358,7 +358,7 @@ impl<H: Host> Vm<H> {
                 self.string_from_units(&units)
             }
             Native::StringFromCodePoint => {
-                let mut text = String::new();
+                let mut units = Vec::with_capacity(args.len());
                 for value in args {
                     let number = self.to_number(p, *value)?;
                     if !number.is_finite()
@@ -368,12 +368,25 @@ impl<H: Host> Vm<H> {
                         return Err(JsError("invalid code point".into()));
                     }
                     let code_point = number as u32;
-                    if crate::unicode::is_surrogate(code_point) {
-                        return Err(JsError("invalid code point".into()));
+                    if crate::unicode::is_surrogate(code_point)
+                        || code_point <= crate::unicode::UTF16_MAX_CODE_UNIT
+                    {
+                        units.push(code_point as u16);
+                    } else {
+                        let payload = code_point - crate::unicode::SUPPLEMENTARY_CODE_POINT_START;
+                        units.push(
+                            (crate::unicode::SURROGATE_START
+                                + (payload >> crate::unicode::SURROGATE_PAYLOAD_SHIFT))
+                                as u16,
+                        );
+                        units.push(
+                            (crate::unicode::LOW_SURROGATE_START as u32
+                                + (payload & crate::unicode::SURROGATE_PAYLOAD_MASK))
+                                as u16,
+                        );
                     }
-                    text.push(char::from_u32(code_point).expect("validated code point"));
                 }
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                self.string_from_units(&units)
             }
             Native::ParseInt => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
