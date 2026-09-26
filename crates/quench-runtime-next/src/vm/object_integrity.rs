@@ -412,9 +412,7 @@ impl<H: Host> Vm<H> {
         freeze: bool,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if freeze
-            && let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(source)
-        {
+        if freeze && let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(source) {
             let resizable = matches!(
                 self.heap.get(*buffer),
                 Some(Cell::ArrayBuffer {
@@ -422,7 +420,11 @@ impl<H: Host> Vm<H> {
                     ..
                 })
             );
-            if resizable || self.typed_array_length(source).is_some_and(|length| length > 0) {
+            if resizable
+                || self
+                    .typed_array_length(source)
+                    .is_some_and(|length| length > 0)
+            {
                 return Err(self.type_error(
                     p,
                     "cannot freeze a typed array with indexed elements".into(),
@@ -594,17 +596,37 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let current = self.object_get_own_property_descriptor(p, &[target, key])?;
         if current.is_undefined() {
-            if self
-                .object_data(target)
-                .is_some_and(|object| !object.is_extensible())
-            {
-                return Err(JsError(
+            let extensible = self.object_is_extensible(p, &[target])?;
+            if !self.truthy(extensible) {
+                return Err(self.type_error(
+                    p,
                     "proxy defineProperty trap added a property to a non-extensible target".into(),
+                ));
+            }
+            let configurable = self.intern_atom("configurable");
+            if self.own_property(descriptor, configurable).is_some()
+                && !self.descriptor_flag(descriptor, "configurable")
+            {
+                return Err(self.type_error(
+                    p,
+                    "proxy defineProperty trap added a non-configurable property".into(),
                 ));
             }
             return Ok(());
         }
-        if self.descriptor_flag(current, "configurable") {
+        let configurable = self.intern_atom("configurable");
+        let target_configurable = self.descriptor_flag(current, "configurable");
+        if target_configurable
+            && self.own_property(descriptor, configurable).is_some()
+            && !self.descriptor_flag(descriptor, "configurable")
+        {
+            return Err(self.type_error(
+                p,
+                "proxy defineProperty trap made a configurable target property non-configurable"
+                    .into(),
+            ));
+        }
+        if target_configurable {
             return Ok(());
         }
         let enumerable = self.intern_atom("enumerable");
@@ -613,7 +635,8 @@ impl<H: Host> Vm<H> {
                 && self.descriptor_flag(descriptor, "enumerable")
                     != self.descriptor_flag(current, "enumerable"))
         {
-            return Err(JsError(
+            return Err(self.type_error(
+                p,
                 "proxy defineProperty trap changed a non-configurable target property".into(),
             ));
         }
@@ -628,19 +651,27 @@ impl<H: Host> Vm<H> {
         let current_data = self.own_property(current, value).is_some()
             || self.own_property(current, writable).is_some();
         if descriptor_data && !current_data || descriptor_accessor && current_data {
-            return Err(JsError(
+            return Err(self.type_error(
+                p,
                 "proxy defineProperty trap changed a non-configurable property kind".into(),
             ));
         }
         if descriptor_data && current_data {
-            if !self.descriptor_flag(current, "writable")
-                && (self.descriptor_flag(descriptor, "writable")
+            let current_writable = self.descriptor_flag(current, "writable");
+            let descriptor_writable = self.own_property(descriptor, writable).is_some()
+                && self.descriptor_flag(descriptor, "writable");
+            if (!current_writable
+                && (descriptor_writable
                     || self.own_property(descriptor, value).is_some_and(|next| {
                         self.own_property(current, value)
                             .is_some_and(|previous| !self.same_value(previous, next))
-                    }))
+                    })))
+                || (current_writable
+                    && self.own_property(descriptor, writable).is_some()
+                    && !descriptor_writable)
             {
-                return Err(JsError(
+                return Err(self.type_error(
+                    p,
                     "proxy defineProperty trap changed a non-writable target property".into(),
                 ));
             }
@@ -652,7 +683,8 @@ impl<H: Host> Vm<H> {
                         .own_property(current, atom)
                         .is_some_and(|previous| !self.same_value(previous, next))
                 {
-                    return Err(JsError(
+                    return Err(self.type_error(
+                        p,
                         format!(
                             "proxy defineProperty trap changed a non-configurable target {text}"
                         )
