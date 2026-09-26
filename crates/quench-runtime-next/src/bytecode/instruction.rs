@@ -83,6 +83,14 @@ macro_rules! layout_accessors {
                 self.a() & REGISTER_MASK
             }
 
+            #[allow(dead_code)]
+            pub(crate) fn set_result_register(&mut self, register: Register) {
+                debug_assert_ne!(self.op().result_layout(), ResultLayout::NoResult);
+                debug_assert!(register <= REGISTER_MASK);
+                let flags = self.a() & !REGISTER_MASK;
+                *self = Self::new(self.op(), register | flags, self.b(), self.c(), self.imm());
+            }
+
             pub(crate) fn returns_from_frame(self) -> bool {
                 self.op().result_layout().allows_return() && self.a() & RETURN_REGISTER != 0
             }
@@ -458,6 +466,22 @@ macro_rules! layout_accessors {
                         cache_site: self.c(),
                     }
                 }
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn set_field_lookup_site(&mut self, site: usize) {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::FieldLookup);
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::FieldBase
+                );
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::CacheSiteIndex
+                );
+                self.set_b(FieldBase::NESTED);
+                self.set_c(0);
+                self.set_imm(site as u32);
             }
 
             #[allow(dead_code)]
