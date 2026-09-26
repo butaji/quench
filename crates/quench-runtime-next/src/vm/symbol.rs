@@ -35,7 +35,7 @@ impl<H: Host> Vm<H> {
                 let text = format!("Symbol({})", description.as_deref().unwrap_or(""));
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }
-            Native::SymbolValueOf => {
+            Native::SymbolValueOf | Native::SymbolToPrimitive => {
                 if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
                     Ok(this)
                 } else {

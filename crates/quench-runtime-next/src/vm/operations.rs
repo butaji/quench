@@ -489,7 +489,10 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }
             Native::Symbol => self.call_symbol_constructor(p, args),
-            Native::SymbolToString | Native::SymbolValueOf | Native::SymbolDescriptionGetter => {
+            Native::SymbolToString
+            | Native::SymbolToPrimitive
+            | Native::SymbolValueOf
+            | Native::SymbolDescriptionGetter => {
                 self.call_symbol_value_native(p, native, this)
             }
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),

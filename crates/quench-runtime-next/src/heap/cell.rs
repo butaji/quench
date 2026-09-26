@@ -283,7 +283,7 @@ pub(crate) enum Native {
     RegExpSource,
     RegExpFlags,
     String, Boolean, BooleanToString, BooleanValueOf,
-    Symbol, SymbolToString, SymbolValueOf, SymbolDescriptionGetter,
+    Symbol, SymbolToString, SymbolToPrimitive, SymbolValueOf, SymbolDescriptionGetter,
     BigInt, BigIntValueOf, BigIntToString, BigIntAsIntN, BigIntAsUintN,
     SymbolFor,
     SymbolKeyFor,
