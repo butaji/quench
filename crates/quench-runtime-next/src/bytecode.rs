@@ -367,7 +367,7 @@ opcodes!(
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP), @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     MakeClosure => CALL_EFFECT; meaning ClosureFunctionIndex, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     MakeArray => CALL_EFFECT; meaning ArrayLength, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
-    MakeConstArray => CALL_EFFECT; meaning ConstantIndex, @ Register, @ fields(Undeclared, ElementCount, Undeclared),
+    MakeConstArray => CALL_EFFECT; meaning ConstantIndex, @ Register, @ fields(Undeclared, ElementCount, Unused),
     MakeObject => CALL_EFFECT, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     MakeObject2 => CALL_EFFECT; meaning ObjectSiteIndex, @ Returnable, @ fields(Undeclared, Register, Register),
     SuperConstArrayObject2 => CALL_EFFECT; meaning SuperinstructionIndex, @ Returnable, @ fields(Undeclared, Unused, Unused),

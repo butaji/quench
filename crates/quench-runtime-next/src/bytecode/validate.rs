@@ -253,6 +253,7 @@ impl ResidualProgram {
                     }
                     Op::MakeConstArray
                         if !destination(instruction.result_register())
+                            || !instruction.unused_fields_are_zero()
                             || instruction
                                 .constant_index()
                                 .checked_add(instruction.element_count() as usize)
