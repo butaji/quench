@@ -46,7 +46,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let this = self.string_method_receiver(p, native, this)?;
         if Self::is_finalization_native(native) {
-            return self.call_finalization_registry_native(native, this, args);
+            return self.call_finalization_registry_native(p, native, this, args);
         }
         if Self::is_disposal_native(native) {
             return self.call_disposal_native(p, native, this, args);
@@ -450,12 +450,14 @@ impl<H: Host> Vm<H> {
             | Native::WeakMap
             | Native::WeakSet
             | Native::WeakRef
-            | Native::FinalizationRegistry
             | Native::DisposableStack
             | Native::AsyncDisposableStack
             | Native::RegExp => self.construct_native(p, native, args),
             Native::ThrowTypeError => {
                 Err(self.type_error(p, "restricted arguments property".into()))
+            }
+            Native::FinalizationRegistry => {
+                Err(self.type_error(p, "Constructor FinalizationRegistry requires 'new'".into()))
             }
             Native::FunctionCaller => {
                 let restricted = match self.heap.get(this) {

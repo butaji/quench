@@ -308,7 +308,6 @@ impl<H: Host> Vm<H> {
         self.install_atomics(program)?;
         self.install_collections(program)?;
         self.install_weak_collections(program)?;
-        self.install_finalization_registry(program)?;
         self.install_iterators(program)?;
         self.global(
             program,
@@ -386,6 +385,7 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }
+        self.install_finalization_registry(program)?;
         let atomics_name = self.intern_atom("Atomics");
         if let Some(atomics) = self.own_property(self.realm.globals, atomics_name) {
             self.install_builtin_to_string_tag(atomics, "Atomics")?;
