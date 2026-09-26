@@ -61,6 +61,9 @@ impl JsString {
         if search.is_empty() {
             return Some(start.min(self.units.len()));
         }
+        if search.len() > self.units.len() {
+            return None;
+        }
         (start..=self.units.len().saturating_sub(search.len()))
             .find(|index| self.units[*index..*index + search.len()] == *search)
     }

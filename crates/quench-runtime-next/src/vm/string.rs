@@ -1,40 +1,48 @@
 use super::*;
 
-const STRING_METHODS: &[(&str, Native)] = &[
-    ("charAt", Native::StringCharAt),
-    ("charCodeAt", Native::StringCharCodeAt),
-    ("codePointAt", Native::StringCodePointAt),
-    ("concat", Native::StringConcat),
-    ("endsWith", Native::StringEndsWith),
-    ("includes", Native::StringIncludes),
-    ("indexOf", Native::StringIndexOf),
-    ("lastIndexOf", Native::StringLastIndexOf),
-    ("localeCompare", Native::StringLocaleCompare),
-    ("match", Native::StringMatch),
-    ("matchAll", Native::StringMatchAll),
-    ("normalize", Native::StringNormalize),
-    ("padEnd", Native::StringPadEnd),
-    ("padStart", Native::StringPadStart),
-    ("repeat", Native::StringRepeat),
-    ("replace", Native::StringReplace),
-    ("replaceAll", Native::StringReplaceAll),
-    ("search", Native::StringSearch),
-    ("slice", Native::StringSlice),
-    ("split", Native::StringSplit),
-    ("startsWith", Native::StringStartsWith),
-    ("substr", Native::StringSubstr),
-    ("substring", Native::StringSubstring),
-    ("toLowerCase", Native::StringToLowerCase),
-    ("toLocaleLowerCase", Native::StringToLocaleLowerCase),
-    ("toString", Native::StringToString),
-    ("toUpperCase", Native::StringToUpperCase),
-    ("toLocaleUpperCase", Native::StringToLocaleUpperCase),
-    ("trim", Native::StringTrim),
-    ("trimEnd", Native::StringTrimEnd),
-    ("trimStart", Native::StringTrimStart),
-    ("valueOf", Native::StringValueOf),
-    ("at", Native::StringAt),
+const STRING_METHODS: &[(&str, Native, f64)] = &[
+    ("at", Native::StringAt, 1.0),
+    ("charAt", Native::StringCharAt, 1.0),
+    ("charCodeAt", Native::StringCharCodeAt, 1.0),
+    ("codePointAt", Native::StringCodePointAt, 1.0),
+    ("concat", Native::StringConcat, 1.0),
+    ("endsWith", Native::StringEndsWith, 1.0),
+    ("includes", Native::StringIncludes, 1.0),
+    ("isWellFormed", Native::StringIsWellFormed, 0.0),
+    ("indexOf", Native::StringIndexOf, 1.0),
+    ("lastIndexOf", Native::StringLastIndexOf, 1.0),
+    ("localeCompare", Native::StringLocaleCompare, 1.0),
+    ("match", Native::StringMatch, 1.0),
+    ("matchAll", Native::StringMatchAll, 1.0),
+    ("normalize", Native::StringNormalize, 0.0),
+    ("padEnd", Native::StringPadEnd, 1.0),
+    ("padStart", Native::StringPadStart, 1.0),
+    ("repeat", Native::StringRepeat, 1.0),
+    ("replace", Native::StringReplace, 2.0),
+    ("replaceAll", Native::StringReplaceAll, 2.0),
+    ("search", Native::StringSearch, 1.0),
+    ("slice", Native::StringSlice, 2.0),
+    ("split", Native::StringSplit, 2.0),
+    ("startsWith", Native::StringStartsWith, 1.0),
+    ("substr", Native::StringSubstr, 2.0),
+    ("substring", Native::StringSubstring, 2.0),
+    ("toLocaleLowerCase", Native::StringToLocaleLowerCase, 0.0),
+    ("toLocaleUpperCase", Native::StringToLocaleUpperCase, 0.0),
+    ("toLowerCase", Native::StringToLowerCase, 0.0),
+    ("toString", Native::StringToString, 0.0),
+    ("toWellFormed", Native::StringToWellFormed, 0.0),
+    ("toUpperCase", Native::StringToUpperCase, 0.0),
+    ("trim", Native::StringTrim, 0.0),
+    ("trimEnd", Native::StringTrimEnd, 0.0),
+    ("trimStart", Native::StringTrimStart, 0.0),
+    ("valueOf", Native::StringValueOf, 0.0),
 ];
+
+pub(super) fn string_native_length(native: Native) -> Option<f64> {
+    STRING_METHODS
+        .iter()
+        .find_map(|(_, candidate, length)| (*candidate == native).then_some(*length))
+}
 
 fn utf16_index(text: &str, byte_index: usize) -> usize {
     text[..byte_index].encode_utf16().count()
@@ -44,9 +52,12 @@ pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Opti
     if search.is_empty() {
         return Some(position.min(text.len()));
     }
-    (0..=position.min(text.len().saturating_sub(search.len())))
-        .rev()
-        .find(|index| text[*index..*index + search.len()] == *search)
+        (search.len() <= text.len())
+            .then_some(position.min(text.len() - search.len()))
+            .into_iter()
+            .flat_map(|end| 0..=end)
+            .rev()
+            .find(|index| text[*index..*index + search.len()] == *search)
 }
 
 impl<H: Host> Vm<H> {
@@ -56,7 +67,19 @@ impl<H: Host> Vm<H> {
         native: Native,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        let converts_receiver = STRING_METHODS.iter().any(|(_, method)| {
+        if matches!(
+            native,
+            Native::StringMatch
+                | Native::StringMatchAll
+                | Native::StringReplace
+                | Native::StringReplaceAll
+                | Native::StringSearch
+                | Native::StringSplit
+        ) {
+            self.require_object_coercible(p, receiver)?;
+            return Ok(receiver);
+        }
+        let converts_receiver = STRING_METHODS.iter().any(|(_, method, _)| {
             *method == native && !matches!(native, Native::StringToString | Native::StringValueOf)
         });
         if !converts_receiver {
@@ -97,10 +120,56 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        for (name, native) in STRING_METHODS {
+        for (name, native, _) in STRING_METHODS {
             self.set_builtin_named(program, self.string_proto, name, *native)?;
         }
+        let iterator = self.native_value(Native::StringValues);
+        self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
         Ok(())
+    }
+
+    pub(super) fn string_raw(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let template = args.first().copied().unwrap_or(Value::UNDEFINED);
+        self.require_object_coercible(p, template)?;
+        let template = if self.is_object_like(template) {
+            template
+        } else {
+            self.box_primitive_object(template)?
+        };
+        let raw_key = self.intern_atom("raw");
+        let raw = self.get_property(p, template, raw_key)?;
+        self.require_object_coercible(p, raw)?;
+        let raw = if self.is_object_like(raw) {
+            raw
+        } else {
+            self.box_primitive_object(raw)?
+        };
+        let length_key = self.intern_atom("length");
+        let raw_length = self.get_property(p, raw, length_key)?;
+        let length = super::regexp::regexp_to_length(self.to_number(p, raw_length)?);
+        if length == 0 {
+            return self.string_from_units(&[]);
+        }
+        let mut result = JsString::from_str("");
+        for index in 0..length {
+            let key = self.intern_atom(&index.to_string());
+            let segment = self.get_property(p, raw, key)?;
+            let segment = self.coerce_js_string(p, segment)?;
+            result.push_js_string(&segment);
+            if index + 1 < length {
+                let substitution = args
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
+                let substitution = self.coerce_js_string(p, substitution)?;
+                result.push_js_string(&substitution);
+            }
+        }
+        Ok(self.heap.alloc(Cell::String(result)))
     }
 
     pub(super) fn string_basic_native(
@@ -156,7 +225,10 @@ impl<H: Host> Vm<H> {
             }
             Native::StringLocaleCompare => {
                 let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let ordering = receiver.host_string().cmp(&other);
+                use unicode_normalization::UnicodeNormalization;
+                let left = receiver.host_string().nfc().collect::<String>();
+                let right = other.nfc().collect::<String>();
+                let ordering = left.cmp(&right);
                 Ok(Value::number(match ordering {
                     std::cmp::Ordering::Less => -1.0,
                     std::cmp::Ordering::Equal => 0.0,
@@ -178,7 +250,7 @@ impl<H: Host> Vm<H> {
                     "NFD" => receiver.host_string().nfd().collect(),
                     "NFKC" => receiver.host_string().nfkc().collect(),
                     "NFKD" => receiver.host_string().nfkd().collect(),
-                    _ => return Err(JsError("invalid normalization form".into())),
+                    _ => return Err(self.range_error(p, "invalid normalization form".into())),
                 };
                 Ok(self.heap.alloc(Cell::String(text)))
             }
@@ -222,10 +294,9 @@ impl<H: Host> Vm<H> {
         if this.is_null() || this.is_undefined() {
             return Err(self.type_error(p, "String.prototype.split called on nullish value".into()));
         }
-        let input = self.regexp_input_string(p, this)?;
         let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
         let limit = args.get(1).copied();
-        if !separator.is_null() && !separator.is_undefined() {
+        if self.is_object_like(separator) {
             let symbol = self
                 .well_known_symbols
                 .get("split")
@@ -236,29 +307,29 @@ impl<H: Host> Vm<H> {
                 if !self.is_function(method) {
                     return Err(self.type_error(p, "String split method is not callable".into()));
                 }
-                let input = self.heap.alloc(Cell::String(input));
                 return self.call_value(
                     p,
                     method,
                     separator,
-                    &[input, limit.unwrap_or(Value::UNDEFINED)],
+                    &[this, limit.unwrap_or(Value::UNDEFINED)],
                 );
             }
         }
 
+        let input = self.regexp_input_string(p, this)?;
         let limit = self.regexp_split_limit(p, limit)?;
-        if limit == 0 {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(Vec::new()),
-            }));
-        }
         let parts = if separator.is_undefined() {
             vec![input]
         } else {
             let separator = self.regexp_input_string(p, separator)?;
             input.split_units(separator.units())
         };
+        if limit == 0 {
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(Vec::new()),
+            }));
+        }
         let values = parts
             .into_iter()
             .take(limit)
@@ -277,10 +348,6 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
-            return Err(JsError("string method receiver is not a string".into()));
-        };
-        let receiver_host = receiver.host_string();
         let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
         if native == Native::StringSearch && self.is_object_like(pattern) {
             let Some(symbol) = self.well_known_symbols.get("search").copied() else {
@@ -288,78 +355,48 @@ impl<H: Host> Vm<H> {
             };
             let method = self.get_index(p, pattern, symbol)?;
             if self.is_function(method) {
-                let input = self.heap.alloc(Cell::String(receiver));
+                let input = self.regexp_input_string(p, this)?;
+                let input = self.heap.alloc(Cell::String(input));
                 return self.call_value(p, method, pattern, &[input]);
             }
             if !method.is_undefined() && !method.is_null() {
                 return Err(self.type_error(p, "String search method is not callable".into()));
             }
         }
-        if native == Native::StringMatch && self.is_regexp(pattern) {
+        if native == Native::StringMatch && self.is_object_like(pattern) {
             let Some(symbol) = self.well_known_symbols.get("match").copied() else {
                 return Err(JsError("RegExp match symbol is unavailable".into()));
             };
             let method = self.get_index(p, pattern, symbol)?;
             if self.is_function(method) {
-                let input = self.heap.alloc(Cell::String(receiver));
+                let input = self.regexp_input_string(p, this)?;
+                let input = self.heap.alloc(Cell::String(input));
                 return self.call_value(p, method, pattern, &[input]);
             }
             if !method.is_undefined() && !method.is_null() {
                 return Err(self.type_error(p, "RegExp @@match is not callable".into()));
             }
         }
-        let (source, flags) = if self.is_regexp(pattern) {
-            self.regexp_source_and_flags(pattern)
-                .ok_or_else(|| JsError("RegExp method called on incompatible receiver".into()))?
+        let constructor_name = self.intern_atom("RegExp");
+        let constructor = self.get_property(p, self.realm.globals, constructor_name)?;
+        let matcher = self.construct_value(p, constructor, &[pattern, Value::UNDEFINED])?;
+        let symbol_name = if native == Native::StringSearch {
+            "search"
         } else {
-            (regex::escape(&self.to_string(p, pattern)?), String::new())
+            "match"
         };
-        let regex = Self::compile_regexp(&source, &flags)?;
-        let Some(first) = regex.find_from(receiver_host, 0) else {
-            return Ok(if native == Native::StringSearch {
-                Value::number(-1.0)
-            } else {
-                Value::NULL
-            });
-        };
-        if native == Native::StringSearch {
-            return Ok(Value::number(
-                utf16_index(receiver_host, first.range.start) as f64
-            ));
+        let symbol = self
+            .well_known_symbols
+            .get(symbol_name)
+            .copied()
+            .ok_or_else(|| self.type_error(p, "RegExp method symbol is unavailable".into()))?;
+        let method = self.get_index(p, matcher, symbol)?;
+        if !self.is_function(method) {
+            return Err(self.type_error(p, "RegExp method is not callable".into()));
         }
-        let first_index = utf16_index(receiver_host, first.range.start);
-        if flags.contains('g') {
-            let values = regex
-                .find_iter(receiver_host)
-                .map(|matched| {
-                    self.heap
-                        .alloc(Cell::String(receiver_host[matched.range].to_owned().into()))
-                })
-                .collect();
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(values),
-            }));
-        }
-        let values = std::iter::once(Some(first.range.clone()))
-            .chain(first.captures)
-            .map(|range| {
-                range.map_or(Value::UNDEFINED, |range| {
-                    self.heap
-                        .alloc(Cell::String(receiver_host[range].to_owned().into()))
-                })
-            })
-            .collect::<Vec<_>>();
-        let result = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        });
-        let index = self.intern_atom("index");
-        let input = self.intern_atom("input");
-        self.set_property(result, index, Value::number(first_index as f64))?;
-        let input_value = self.heap.alloc(Cell::String(receiver));
-        self.set_property(result, input, input_value)?;
-        Ok(result)
+        let input = self.regexp_input_string(p, this)?;
+        let input = self.heap.alloc(Cell::String(input));
+        self.call_value(p, method, matcher, &[input])
     }
 
     pub(super) fn string_match_all_native(
@@ -374,7 +411,6 @@ impl<H: Host> Vm<H> {
                 "String.prototype.matchAll called on nullish value".into(),
             ));
         }
-        let input = self.regexp_input_string(p, this)?;
         let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
         if self.regexp_is_regexp(p, pattern)? {
             let flags_atom = self.intern_atom("flags");
@@ -392,16 +428,31 @@ impl<H: Host> Vm<H> {
             .get("matchAll")
             .copied()
             .ok_or_else(|| self.type_error(p, "RegExp matchAll symbol is unavailable".into()))?;
-        let method = self.get_index(p, pattern, symbol)?;
-        let method = if method.is_undefined() || method.is_null() {
+        if !self.is_object_like(pattern) {
             let regexp_atom = self.intern_atom("RegExp");
             let constructor = self.get_property(p, self.realm.globals, regexp_atom)?;
-            let pattern_string = self.heap.alloc(Cell::String(input.clone()));
-            let matcher = self.construct_value(p, constructor, &[pattern, Value::UNDEFINED])?;
+            let global_flag = self.heap.alloc(Cell::String("g".into()));
+            let matcher = self.construct_value(p, constructor, &[pattern, global_flag])?;
             let method = self.get_index(p, matcher, symbol)?;
             if !self.is_function(method) {
                 return Err(self.type_error(p, "RegExp @@matchAll is not callable".into()));
             }
+            let input = self.regexp_input_string(p, this)?;
+            let pattern_string = self.heap.alloc(Cell::String(input));
+            return self.call_value(p, method, matcher, &[pattern_string]);
+        }
+        let method = self.get_index(p, pattern, symbol)?;
+        let method = if method.is_undefined() || method.is_null() {
+            let regexp_atom = self.intern_atom("RegExp");
+            let constructor = self.get_property(p, self.realm.globals, regexp_atom)?;
+            let global_flag = self.heap.alloc(Cell::String("g".into()));
+            let matcher = self.construct_value(p, constructor, &[pattern, global_flag])?;
+            let method = self.get_index(p, matcher, symbol)?;
+            if !self.is_function(method) {
+                return Err(self.type_error(p, "RegExp @@matchAll is not callable".into()));
+            }
+            let input = self.regexp_input_string(p, this)?;
+            let pattern_string = self.heap.alloc(Cell::String(input));
             return self.call_value(p, method, matcher, &[pattern_string]);
         } else {
             method
@@ -409,6 +460,7 @@ impl<H: Host> Vm<H> {
         if !self.is_function(method) {
             return Err(self.type_error(p, "@@matchAll is not callable".into()));
         }
+        let input = self.regexp_input_string(p, this)?;
         let input = self.heap.alloc(Cell::String(input));
         self.call_value(p, method, pattern, &[input])
     }
@@ -420,10 +472,6 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         replace_all: bool,
     ) -> Result<Value, JsError> {
-        let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
-            return Err(JsError("string method receiver is not a string".into()));
-        };
-        let receiver_host = receiver.host_string();
         let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let replacement_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         if replace_all && !search_value.is_null() && !search_value.is_undefined() {
@@ -431,6 +479,7 @@ impl<H: Host> Vm<H> {
             if is_regexp {
                 let global_atom = self.intern_atom("global");
                 let global = self.get_property(p, search_value, global_atom)?;
+                self.require_object_coercible(p, global)?;
                 if !self.truthy(global) {
                     return Err(self.type_error(
                         p,
@@ -439,7 +488,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        if !search_value.is_null() && !search_value.is_undefined() {
+        if self.is_object_like(search_value) {
             let symbol = self
                 .well_known_symbols
                 .get("replace")
@@ -450,10 +499,12 @@ impl<H: Host> Vm<H> {
                 if !self.is_function(method) {
                     return Err(self.type_error(p, "String replace method is not callable".into()));
                 }
-                let input = self.heap.alloc(Cell::String(receiver));
-                return self.call_value(p, method, search_value, &[input, replacement_value]);
+                return self.call_value(p, method, search_value, &[this, replacement_value]);
             }
         }
+        let receiver = self.regexp_input_string(p, this)?;
+        let receiver_host = receiver.host_string();
+        let search = self.to_string(p, search_value)?;
         let replacement_function = matches!(
             self.heap.get(replacement_value),
             Some(Cell::Function { .. })
@@ -463,74 +514,6 @@ impl<H: Host> Vm<H> {
         } else {
             self.to_string(p, replacement_value)?
         };
-        if self.is_regexp(search_value) {
-            let (source, flags) = self
-                .regexp_source_and_flags(search_value)
-                .ok_or_else(|| JsError("RegExp method called on incompatible receiver".into()))?;
-            let regex = Self::compile_regexp(&source, &flags)?;
-            if replace_all && !flags.contains('g') {
-                return Err(JsError("replaceAll requires a global RegExp".into()));
-            }
-            let global = flags.contains('g') || replace_all;
-            let mut result = String::with_capacity(receiver_host.len());
-            let mut cursor = 0;
-            let mut replaced = false;
-            for captures in regex.find_iter(receiver_host) {
-                if replaced && !global {
-                    break;
-                }
-                let named = super::regexp::regexp_named_capture_ranges(&captures);
-                let whole = captures.range;
-                result.push_str(&receiver_host[cursor..whole.start]);
-                let replacement_text = if replacement_function {
-                    let mut callback_args = Vec::with_capacity(captures.captures.len() + 3);
-                    callback_args.push(
-                        self.heap
-                            .alloc(Cell::String(receiver_host[whole.clone()].to_owned().into())),
-                    );
-                    callback_args.extend(captures.captures.iter().map(|capture| {
-                        capture.as_ref().map_or(Value::UNDEFINED, |range| {
-                            self.heap
-                                .alloc(Cell::String(receiver_host[range.clone()].to_owned().into()))
-                        })
-                    }));
-                    callback_args
-                        .push(Value::number(utf16_index(receiver_host, whole.start) as f64));
-                    callback_args.push(self.heap.alloc(Cell::String(receiver.clone())));
-                    if !named.is_empty() {
-                        let groups = self.regexp_groups_object_from_str(&named, receiver_host)?;
-                        callback_args.push(groups);
-                    }
-                    let value =
-                        self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
-                    self.to_string(p, value)?
-                } else {
-                    let captured = captures
-                        .captures
-                        .iter()
-                        .map(|capture| capture.as_ref().map(|range| &receiver_host[range.clone()]))
-                        .collect::<Vec<_>>();
-                    expand_replacement(
-                        &replacement,
-                        &receiver_host[whole.clone()],
-                        &captured,
-                        receiver_host,
-                        whole.start,
-                        whole.end,
-                        &named,
-                    )
-                };
-                result.push_str(&replacement_text);
-                cursor = whole.end;
-                replaced = true;
-            }
-            if !replaced {
-                return Ok(self.heap.alloc(Cell::String(receiver)));
-            }
-            result.push_str(&receiver_host[cursor..]);
-            return Ok(self.heap.alloc(Cell::String(result.into())));
-        }
-        let search = self.to_string(p, search_value)?;
         if replace_all && search.is_empty() {
             let input = self.heap.alloc(Cell::String(receiver.clone()));
             let units = receiver.units().to_vec();

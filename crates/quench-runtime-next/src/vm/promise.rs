@@ -219,6 +219,9 @@ fn same_static_module_binding(left: &StaticModuleValue, right: &StaticModuleValu
 }
 
 fn native_length(kind: Native) -> Option<f64> {
+    if let Some(length) = super::string::string_native_length(kind) {
+        return Some(length);
+    }
     if let Some(length) = super::date::date_native_length(kind) {
         return Some(length);
     }
@@ -317,8 +320,9 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::String => 1.0,
         Native::SymbolDescriptionGetter => 0.0,
         Native::StringToLocaleLowerCase | Native::StringToLocaleUpperCase => 0.0,
+        Native::StringValues => 0.0,
         Native::StringLocaleCompare => 1.0,
-        Native::StringFromCharCode | Native::StringFromCodePoint => 1.0,
+        Native::StringFromCharCode | Native::StringFromCodePoint | Native::StringRaw => 1.0,
         Native::RegExp => 2.0,
         Native::RegExpEscape => 1.0,
         Native::ObjectPrototypeToLocaleString | Native::ObjectPrototypeValueOf => 0.0,

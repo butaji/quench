@@ -318,6 +318,7 @@ const NATIVES: &[Native] = &[
     Native::StringSubstring,
     Native::StringSubstr,
     Native::StringIncludes,
+    Native::StringIsWellFormed,
     Native::StringStartsWith,
     Native::StringEndsWith,
     Native::StringIndexOf, Native::StringLastIndexOf, Native::StringToString, Native::StringValueOf,
@@ -331,11 +332,12 @@ const NATIVES: &[Native] = &[
     Native::StringSearch,
     Native::StringReplaceAll,
     Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringToLocaleLowerCase, Native::StringToLocaleUpperCase, Native::StringLocaleCompare, Native::StringConcat, Native::StringNormalize, Native::StringValues,
+    Native::StringToWellFormed,
     Native::EncodeUri,
     Native::EncodeUriComponent,
     Native::DecodeUri,
     Native::DecodeUriComponent,
-    Native::StringFromCharCode, Native::StringFromCodePoint,
+    Native::StringFromCharCode, Native::StringFromCodePoint, Native::StringRaw,
     Native::ParseInt,
     Native::MathLog,
     Native::MathPow,
@@ -554,6 +556,7 @@ impl<H: Host> Vm<H> {
             "fromCodePoint",
             Native::StringFromCodePoint,
         )?;
+        self.set_builtin_named(program, string, "raw", Native::StringRaw)?;
         self.global(program, "String", string)?;
         self.install_iterator_self(program)?;
         self.global(program, "parseInt", self.native_value(Native::ParseInt))?;

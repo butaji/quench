@@ -23,10 +23,6 @@ struct RegExpReplaceMatch {
 }
 
 impl CompiledRegexp {
-    pub(super) fn find_from(&self, input: &str, start: usize) -> Option<quench_regexp::Match> {
-        self.0.find_from(input, start).next()
-    }
-
     pub(super) fn find_from_utf16(
         &self,
         input: &[u16],
@@ -43,58 +39,9 @@ impl CompiledRegexp {
         self.0.find_range_from_utf16(input, start)
     }
 
-    pub(super) fn find_iter<'a>(
-        &'a self,
-        input: &'a str,
-    ) -> impl Iterator<Item = quench_regexp::Match> + 'a {
-        let mut next_start = 0;
-        let mut exhausted = false;
-        std::iter::from_fn(move || {
-            if exhausted {
-                return None;
-            }
-            let matched = self.find_from(input, next_start)?;
-            if matched.range.is_empty() {
-                if matched.range.end == input.len() {
-                    exhausted = true;
-                } else if let Some(next) = input[matched.range.end..].chars().next() {
-                    next_start = matched.range.end + next.len_utf8();
-                } else {
-                    exhausted = true;
-                }
-            } else {
-                next_start = matched.range.end;
-            }
-            Some(matched)
-        })
-    }
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn is_regexp(&self, value: Value) -> bool {
-        let mut current = value;
-        for _ in 0..32 {
-            if matches!(self.heap.get(current), Some(Cell::RegExp { .. })) {
-                return true;
-            }
-            if self
-                .regexp_prototypes
-                .values()
-                .any(|prototype| *prototype == current)
-            {
-                return true;
-            }
-            let Some(Cell::Object(object)) = self.heap.get(current) else {
-                return false;
-            };
-            if object.proto.is_null() {
-                return false;
-            }
-            current = object.proto;
-        }
-        false
-    }
-
     pub(super) fn install_regexp(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         for name in ["source", "flags", "lastIndex", "index", "input"] {
             self.intern_atom(name);
@@ -1310,27 +1257,6 @@ impl<H: Host> Vm<H> {
         Ok(groups)
     }
 
-    pub(super) fn regexp_groups_object_from_str(
-        &mut self,
-        named: &[(String, Option<std::ops::Range<usize>>)],
-        input: &str,
-    ) -> Result<Value, JsError> {
-        if named.is_empty() {
-            return Ok(Value::UNDEFINED);
-        }
-        let groups = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        for (name, range) in named {
-            let atom = self.intern_atom(name);
-            let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
-                self.heap.alloc(Cell::String(input[range.clone()].into()))
-            });
-            self.set_property(groups, atom, value)?;
-        }
-        Ok(groups)
-    }
-
     fn regexp_indices_array(
         &mut self,
         matched: &quench_regexp::Match,
@@ -1394,14 +1320,6 @@ impl<H: Host> Vm<H> {
         Ok(CompiledRegexp(regex))
     }
 
-    pub(super) fn regexp_source_and_flags(&self, value: Value) -> Option<(String, String)> {
-        match self.heap.get(value) {
-            Some(Cell::RegExp { source, flags, .. }) => {
-                Some((source.host_string().to_owned(), flags.clone()))
-            }
-            _ => None,
-        }
-    }
 }
 
 fn escape_regexp_source(source: &JsString) -> JsString {
