@@ -1,6 +1,6 @@
 use super::{
-    Effect, ImmediateLayout, Op, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout,
-    SET_THIS_REGISTER,
+    Effect, FieldLayout, ImmediateLayout, InstructionField, Op, REGISTER_MASK, RETURN_REGISTER,
+    Register, ResultLayout, SET_THIS_REGISTER,
 };
 
 const PACKED_PAIR_LOW_BITS: u32 = 8;
@@ -105,6 +105,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn known_function_index(self) -> u16 {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::FunctionIndex
+                );
+                self.b()
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn capture_depth(self) -> u16 {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
@@ -131,6 +140,10 @@ macro_rules! layout_accessors {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
                     ImmediateLayout::ConstructCountAndFlags
+                );
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::ConstructArguments
                 );
                 let base = self.c();
                 if ImmediateLayout::construct_array_arguments(self.imm()) {

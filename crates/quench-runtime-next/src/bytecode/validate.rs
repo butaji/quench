@@ -359,7 +359,8 @@ impl ResidualProgram {
                     }
                     Op::CallKnown
                         if !destination(instruction.a())
-                            || instruction.b() as usize >= self.functions.len()
+                            || instruction.known_function_index() as usize
+                                >= self.functions.len()
                             || !register_window_in_bounds(
                                 u16::from(instruction.call_window().base),
                                 u32::from(instruction.call_window().count),
