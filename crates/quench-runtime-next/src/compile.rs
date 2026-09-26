@@ -175,13 +175,18 @@ impl Engine {
     pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
+        if !parsed.diagnostics.is_empty() {
             return None;
         }
-        let Statement::ExpressionStatement(statement) = &parsed.program.body[0] else {
-            return None;
+        let span = match parsed.program.body.as_slice() {
+            [Statement::ExpressionStatement(statement)] if parsed.program.directives.is_empty() => {
+                statement.expression.span()
+            }
+            [] if parsed.program.directives.len() == 1 => {
+                parsed.program.directives[0].expression.span()
+            }
+            _ => return None,
         };
-        let span = statement.expression.span();
         source.get(span.start as usize..span.end as usize)
     }
 
