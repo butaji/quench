@@ -127,12 +127,7 @@ impl ResidualProgram {
                 let atom = |value: u32| atom_in_bounds(value, self.atoms.len());
                 match instruction.op() {
                     Op::SuperCallCheck | Op::IteratorCleanupPop
-                        if !instruction
-                            .unused_field_is_zero(crate::bytecode::InstructionField::A)
-                            || !instruction
-                                .unused_field_is_zero(crate::bytecode::InstructionField::B)
-                            || !instruction
-                                .unused_field_is_zero(crate::bytecode::InstructionField::C)
+                        if !instruction.unused_fields_are_zero()
                             || !instruction.unused_immediate_is_zero() =>
                     {
                         return Err(format!(
@@ -463,7 +458,9 @@ impl ResidualProgram {
                     }
                     Op::GetIterator | Op::GetAsyncIterator | Op::SpreadToArray
                         if !register(instruction.result_register())
-                            || !register(instruction.register_b()) =>
+                            || !register(instruction.register_b())
+                            || !instruction.unused_fields_are_zero()
+                            || !instruction.unused_immediate_is_zero() =>
                     {
                         return Err(format!("function {index} iterator register is invalid"));
                     }
@@ -471,13 +468,17 @@ impl ResidualProgram {
                         return Err(format!("function {index} result register is invalid"));
                     }
                     Op::IteratorClose | Op::RequireObjectCoercible | Op::RequireIteratorResult
-                        if !register(instruction.register_b()) =>
+                        if !register(instruction.register_b())
+                            || !instruction.unused_fields_are_zero()
+                            || !instruction.unused_immediate_is_zero() =>
                     {
                         return Err(format!("function {index} iterator operand is invalid"));
                     }
                     Op::IteratorCleanupPush
                         if !register(instruction.register_a())
-                            || !register(instruction.register_b()) =>
+                            || !register(instruction.register_b())
+                            || !instruction.unused_fields_are_zero()
+                            || !instruction.unused_immediate_is_zero() =>
                     {
                         return Err(format!(
                             "function {index} iterator cleanup register is invalid"
