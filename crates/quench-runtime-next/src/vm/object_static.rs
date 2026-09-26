@@ -819,6 +819,11 @@ impl<H: Host> Vm<H> {
             );
         }
         let key = self.coerce_js_string(p, key_value)?;
+        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. }))
+            && let Some(index) = Self::canonical_typed_array_index(key.host_string())
+        {
+            return self.define_typed_array_property(p, target, index, descriptor);
+        }
         if key.host_string() == "length"
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))
             && !self
