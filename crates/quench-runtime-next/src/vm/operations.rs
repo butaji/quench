@@ -432,20 +432,8 @@ impl<H: Host> Vm<H> {
             | Native::NumberIsFinite
             | Native::NumberIsInteger
             | Native::NumberIsSafeInteger => self.call_number_native(p, native, args),
-            Native::NumberFixed => {
-                let number = self.to_number(p, this)?;
-                let digits = args.first().and_then(|v| v.as_number()).unwrap_or(0.0) as usize;
-                Ok(self
-                    .heap
-                    .alloc(Cell::String(format!("{number:.digits$}").into())))
-            }
-            Native::NumberPrecision => {
-                let number = self.to_number(p, this)?;
-                let digits = args.first().and_then(|v| v.as_number()).unwrap_or(3.0) as usize;
-                Ok(self
-                    .heap
-                    .alloc(Cell::String(format!("{number:.digits$}").into())))
-            }
+            Native::NumberFixed => self.number_format(p, this, args, native),
+            Native::NumberPrecision => self.number_format(p, this, args, native),
             Native::String => {
                 let argument = self.string_constructor_argument(args);
                 let text = if let Some(Cell::Symbol(description)) = self.heap.get(argument) {
