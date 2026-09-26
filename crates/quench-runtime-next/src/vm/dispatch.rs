@@ -243,8 +243,8 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.a()),
             )?,
             Op::LoadName => {
-                let v = self.load_name(p, i.atom_index(), i.c())?;
-                self.write(f, i.a(), v);
+                let v = self.load_name(p, i.atom_index(), i.cache_site_index())?;
+                self.write(f, i.result_register(), v);
             }
             Op::LoadNameCall => {
                 let (callee, this) = self.load_name_call(p, i.atom_index(), i.c())?;
@@ -252,8 +252,8 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.b(), this);
             }
             Op::LoadNameTypeof => {
-                let v = self.load_name_typeof(p, i.atom_index(), i.c())?;
-                self.write(f, i.a(), v);
+                let v = self.load_name_typeof(p, i.atom_index(), i.cache_site_index())?;
+                self.write(f, i.result_register(), v);
             }
             Op::StoreName => self.store_name(p, i.atom_index(), self.read(f, i.a()), i.c())?,
             Op::LoadThis => {
