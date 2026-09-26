@@ -187,8 +187,9 @@ impl ResidualProgram {
                     }
                     Op::MakeConstArray
                         if !destination(instruction.a())
-                            || (instruction.imm() as usize)
-                                .checked_add(instruction.b() as usize)
+                            || instruction
+                                .constant_index()
+                                .checked_add(instruction.element_count() as usize)
                                 .is_none_or(|end| end > self.constants.len()) =>
                     {
                         return Err(format!("function {index} constant array is invalid"));
