@@ -285,6 +285,29 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::ArrayBuffer | Native::ArrayBufferIsView | Native::DetachArrayBuffer => 1.0,
+        Native::Iterator => 0.0,
+        Native::IteratorFrom => 1.0,
+        Native::IteratorConcat => 0.0,
+        Native::IteratorZip | Native::IteratorZipKeyed => 1.0,
+        Native::IteratorMap
+        | Native::IteratorFilter
+        | Native::IteratorTake
+        | Native::IteratorDrop
+        | Native::IteratorFlatMap
+        | Native::IteratorReduce
+        | Native::IteratorForEach
+        | Native::IteratorEvery
+        | Native::IteratorFind
+        | Native::IteratorSome => 1.0,
+        Native::IteratorToArray => 0.0,
+        Native::IteratorDispose | Native::IteratorProtocolNext => 0.0,
+        Native::IteratorHelperNext | Native::IteratorHelperReturn => 0.0,
+        Native::IteratorPrototypeConstructorGetter | Native::IteratorPrototypeToStringTagGetter => {
+            0.0
+        }
+        Native::IteratorPrototypeConstructorSetter | Native::IteratorPrototypeToStringTagSetter => {
+            1.0
+        }
         Native::ArrayIteratorNext
         | Native::IteratorSelf
         | Native::AsyncIteratorSelf

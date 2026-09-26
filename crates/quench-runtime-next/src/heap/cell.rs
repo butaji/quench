@@ -172,6 +172,30 @@ pub(crate) enum Native {
     SetValues,
     SetEntries,
     SetForEach,
+    Iterator,
+    IteratorFrom,
+    IteratorConcat,
+    IteratorZip,
+    IteratorZipKeyed,
+    IteratorMap,
+    IteratorFilter,
+    IteratorTake,
+    IteratorDrop,
+    IteratorFlatMap,
+    IteratorReduce,
+    IteratorToArray,
+    IteratorForEach,
+    IteratorEvery,
+    IteratorFind,
+    IteratorSome,
+    IteratorDispose,
+    IteratorProtocolNext,
+    IteratorHelperNext,
+    IteratorHelperReturn,
+    IteratorPrototypeConstructorGetter,
+    IteratorPrototypeConstructorSetter,
+    IteratorPrototypeToStringTagGetter,
+    IteratorPrototypeToStringTagSetter,
     IteratorNext, IteratorClose, IteratorSelf, AsyncIteratorSelf, IteratorReturn, IteratorThrow,
     GeneratorNext, GeneratorReturn, GeneratorThrow,
     AsyncGeneratorNext, AsyncGeneratorReturn, AsyncGeneratorThrow,
@@ -501,9 +525,54 @@ pub(crate) enum IteratorKind {
     MapEntries,
     SetValues,
     SetEntries,
+    Protocol,
+    Map,
+    Filter,
+    Take,
+    Drop,
+    FlatMap,
+    Concat,
     Generator,
     AsyncFromSync,
     AsyncGenerator,
+}
+#[derive(Clone, Debug)]
+pub(crate) enum IteratorHelper {
+    Map {
+        callback: Value,
+        index: usize,
+    },
+    Filter {
+        callback: Value,
+        index: usize,
+    },
+    Take {
+        remaining: f64,
+    },
+    Drop {
+        remaining: f64,
+    },
+    FlatMap {
+        callback: Value,
+        index: usize,
+        inner: Option<Value>,
+    },
+    Concat {
+        items: Vec<Value>,
+        methods: Vec<Value>,
+        opened: Vec<Option<Value>>,
+        next_item: usize,
+        active: Option<Value>,
+    },
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IteratorConsumer {
+    Reduce,
+    ToArray,
+    ForEach,
+    Every,
+    Find,
+    Some,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Object {
@@ -635,6 +704,9 @@ pub(crate) enum Cell {
     Iterator {
         object: Object,
         source: Value,
+        next_method: Option<Value>,
+        helper: Option<Box<IteratorHelper>>,
+        helper_running: bool,
         kind: IteratorKind,
         index: usize,
         done: bool,
