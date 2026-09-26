@@ -198,6 +198,23 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        if let Some(symbol) = self.well_known_symbols.get("split").copied() {
+            let method = self.native_with_realm(Native::RegExpSymbolSplit, realm, realm);
+            self.set_builtin_function_name(method, "[Symbol.split]")?;
+            self.set_symbol_property(prototype, symbol, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         if let Some(symbol) = self.well_known_symbols.get("matchAll").copied() {
             let method = self.native_with_realm(Native::RegExpSymbolMatchAll, realm, realm);
             self.set_builtin_function_name(method, "[Symbol.matchAll]")?;
@@ -285,6 +302,154 @@ impl<H: Host> Vm<H> {
         let index = self.get_property(p, result, index_atom)?;
         let index = regexp_to_length(self.to_number(p, index)?);
         Ok(Value::number(index as f64))
+    }
+
+    pub(super) fn regexp_symbol_split(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(
+                p,
+                "RegExp.prototype[@@split] receiver is not an object".into(),
+            ));
+        }
+        let input =
+            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let flags_atom = self.intern_atom("flags");
+        let flags_value = self.get_property(p, receiver, flags_atom)?;
+        let flags = self.to_string(p, flags_value)?;
+        let unicode = flags.contains('u') || flags.contains('v');
+        let splitter_flags = if flags.contains('y') {
+            flags
+        } else {
+            format!("{flags}y")
+        };
+        let splitter = self.regexp_split_species(p, receiver, &splitter_flags)?;
+        let limit = self.regexp_split_limit(p, args.get(1).copied())?;
+        if limit == 0 {
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(Vec::new()),
+            }));
+        }
+
+        let input_value = self.heap.alloc(Cell::String(input.clone()));
+        let size = input.units().len();
+        if size == 0 {
+            let result = self.regexp_exec_value(p, splitter, input_value)?;
+            let values = if result.is_null() {
+                vec![input_value]
+            } else {
+                Vec::new()
+            };
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(values),
+            }));
+        }
+
+        let last_index_atom = self.intern_atom("lastIndex");
+        let length_atom = self.intern_atom("length");
+        let mut values = Vec::new();
+        let mut p_index = 0usize;
+        let mut q = 0usize;
+        while q < size {
+            self.set_property_with_program_mode(
+                p,
+                splitter,
+                last_index_atom,
+                Value::number(q as f64),
+                true,
+            )?;
+            let result = self.regexp_exec_value(p, splitter, input_value)?;
+            if result.is_null() {
+                q = advance_string_index_units(input.units(), q, unicode);
+                continue;
+            }
+            let end_value = self.get_property(p, splitter, last_index_atom)?;
+            let end = regexp_to_length(self.to_number(p, end_value)?);
+            if end == p_index {
+                q = advance_string_index_units(input.units(), q, unicode);
+                continue;
+            }
+            let piece_end = q.min(size);
+            values.push(self.heap.alloc(Cell::String(JsString::from_units(
+                &input.units()[p_index.min(size)..piece_end],
+            ))));
+            if values.len() >= limit {
+                break;
+            }
+            let length = self.get_property(p, result, length_atom)?;
+            let captures = regexp_to_length(self.to_number(p, length)?).saturating_sub(1);
+            for index in 1..=captures {
+                if values.len() >= limit {
+                    break;
+                }
+                let capture_atom = self.intern_atom(&index.to_string());
+                values.push(self.get_property(p, result, capture_atom)?);
+            }
+            p_index = end;
+            q = p_index;
+        }
+        if values.len() < limit {
+            values.push(self.heap.alloc(Cell::String(JsString::from_units(
+                &input.units()[p_index.min(size)..],
+            ))));
+        }
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
+    }
+
+    fn regexp_split_species(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        flags: &str,
+    ) -> Result<Value, JsError> {
+        let constructor_atom = self.intern_atom("constructor");
+        let constructor = self.get_property(p, receiver, constructor_atom)?;
+        let species = if constructor.is_undefined() {
+            Value::UNDEFINED
+        } else {
+            if !self.is_object_like(constructor) {
+                return Err(self.type_error(p, "RegExp constructor is not an object".into()));
+            }
+            let species_symbol = self
+                .well_known_symbols
+                .get("species")
+                .copied()
+                .ok_or_else(|| self.type_error(p, "RegExp species symbol is unavailable".into()))?;
+            self.get_index(p, constructor, species_symbol)?
+        };
+        let intrinsic = if species.is_undefined() || species.is_null() {
+            let regexp_atom = self.intern_atom("RegExp");
+            self.get_property(p, self.realm.globals, regexp_atom)?
+        } else {
+            species
+        };
+        let flags = self.heap.alloc(Cell::String(flags.into()));
+        self.construct_value(p, intrinsic, &[receiver, flags])
+    }
+
+    pub(super) fn regexp_split_limit(
+        &mut self,
+        p: &ResidualProgram,
+        value: Option<Value>,
+    ) -> Result<usize, JsError> {
+        let Some(value) = value.filter(|value| !value.is_undefined()) else {
+            return Ok(u32::MAX as usize);
+        };
+        let number = self.to_number(p, value)?;
+        if !number.is_finite() || number == 0.0 {
+            return Ok(0);
+        }
+        let modulus = f64::from(u32::MAX) + 1.0;
+        Ok(number.trunc().rem_euclid(modulus) as u32 as usize)
     }
 
     pub(super) fn regexp_symbol_match_all(
@@ -467,10 +632,19 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         input: &str,
     ) -> Result<Value, JsError> {
+        let input = self.heap.alloc(Cell::String(input.into()));
+        self.regexp_exec_value(p, receiver, input)
+    }
+
+    fn regexp_exec_value(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        input: Value,
+    ) -> Result<Value, JsError> {
         let exec = self.intern_atom("exec");
         let method = self.get_property(p, receiver, exec)?;
         if self.is_function(method) {
-            let input = self.heap.alloc(Cell::String(input.into()));
             let result = self.call_value(p, method, receiver, &[input])?;
             return if result.is_null() || self.is_object_like(result) {
                 Ok(result)
@@ -484,7 +658,6 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. })) {
             return Err(self.type_error(p, "RegExp exec is not callable".into()));
         }
-        let input = self.heap.alloc(Cell::String(input.into()));
         self.regexp_native(p, Native::RegExpExec, receiver, &[input])
     }
 

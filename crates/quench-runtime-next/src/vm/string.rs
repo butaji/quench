@@ -213,6 +213,63 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    pub(super) fn string_split_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if this.is_null() || this.is_undefined() {
+            return Err(self.type_error(p, "String.prototype.split called on nullish value".into()));
+        }
+        let input = self.regexp_input_string(p, this)?;
+        let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let limit = args.get(1).copied();
+        if !separator.is_null() && !separator.is_undefined() {
+            let symbol = self
+                .well_known_symbols
+                .get("split")
+                .copied()
+                .ok_or_else(|| self.type_error(p, "RegExp split symbol is unavailable".into()))?;
+            let method = self.get_index(p, separator, symbol)?;
+            if !method.is_undefined() && !method.is_null() {
+                if !self.is_function(method) {
+                    return Err(self.type_error(p, "String split method is not callable".into()));
+                }
+                let input = self.heap.alloc(Cell::String(input));
+                return self.call_value(
+                    p,
+                    method,
+                    separator,
+                    &[input, limit.unwrap_or(Value::UNDEFINED)],
+                );
+            }
+        }
+
+        let limit = self.regexp_split_limit(p, limit)?;
+        if limit == 0 {
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(Vec::new()),
+            }));
+        }
+        let parts = if separator.is_undefined() {
+            vec![input]
+        } else {
+            let separator = self.regexp_input_string(p, separator)?;
+            input.split_units(separator.units())
+        };
+        let values = parts
+            .into_iter()
+            .take(limit)
+            .map(|part| self.heap.alloc(Cell::String(part)))
+            .collect();
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
+    }
+
     pub(super) fn string_match_or_search_native(
         &mut self,
         p: &ResidualProgram,
@@ -354,52 +411,6 @@ impl<H: Host> Vm<H> {
         }
         let input = self.heap.alloc(Cell::String(input));
         self.call_value(p, method, pattern, &[input])
-    }
-
-    pub(super) fn string_split_regexp_native(
-        &mut self,
-        _p: &ResidualProgram,
-        this: Value,
-        separator: Value,
-        limit: usize,
-    ) -> Result<Value, JsError> {
-        let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
-            return Err(JsError("string method receiver is not a string".into()));
-        };
-        let receiver_host = receiver.host_string();
-        let (source, flags) = self
-            .regexp_source_and_flags(separator)
-            .ok_or_else(|| JsError("RegExp method called on incompatible receiver".into()))?;
-        let regex = Self::compile_regexp(&source, &flags)?;
-        let mut values = Vec::new();
-        let mut cursor = 0;
-        for matched in regex.find_iter(receiver_host) {
-            let whole = matched.range;
-            values.push(self.heap.alloc(Cell::String(
-                receiver_host[cursor..whole.start].to_owned().into(),
-            )));
-            for capture in matched.captures {
-                values.push(capture.map_or(Value::UNDEFINED, |range| {
-                    self.heap
-                        .alloc(Cell::String(receiver_host[range].to_owned().into()))
-                }));
-            }
-            cursor = whole.end;
-            if values.len() >= limit {
-                break;
-            }
-        }
-        if values.len() < limit {
-            values.push(
-                self.heap
-                    .alloc(Cell::String(receiver_host[cursor..].to_owned().into())),
-            );
-        }
-        values.truncate(limit);
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
     }
 
     pub(super) fn string_replace_native(
