@@ -2,6 +2,35 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn object_prototype_define_accessor(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let target = self.box_object_or_type_error(p, receiver)?;
+        let accessor = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if !accessor.is_undefined() && self.call_target(accessor).is_err() {
+            return Err(self.type_error(p, "accessor is not callable".into()));
+        }
+        let key = self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let descriptor = self.object();
+        let field = if native == Native::ObjectPrototypeDefineGetter {
+            "get"
+        } else {
+            "set"
+        };
+        let field = self.intern_atom(field);
+        let enumerable = self.intern_atom("enumerable");
+        let configurable = self.intern_atom("configurable");
+        self.set_property(descriptor, field, accessor)?;
+        self.set_property(descriptor, enumerable, Value::TRUE)?;
+        self.set_property(descriptor, configurable, Value::TRUE)?;
+        self.object_define_property(p, &[target, key, descriptor])?;
+        Ok(Value::UNDEFINED)
+    }
+
     pub(super) fn define_class_field(
         &mut self,
         p: &ResidualProgram,
@@ -98,8 +127,6 @@ impl<H: Host> Vm<H> {
             ("\0rqj:string-value", "String"),
             ("\0rqj:boolean-value", "Boolean"),
             ("\0rqj:number-value", "Number"),
-            ("\0rqj:bigint-value", "BigInt"),
-            ("\0rqj:symbol-value", "Symbol"),
         ]
         .into_iter()
         .find_map(|(marker, brand)| {
@@ -128,8 +155,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
                 Some(Cell::String(_)) => "String",
-                Some(Cell::BigInt(_)) => "BigInt",
-                Some(Cell::Symbol(_)) => "Symbol",
+                Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
                 Some(Cell::Array { .. })
                     if self
                         .object_data(value)
@@ -156,19 +182,35 @@ impl<H: Host> Vm<H> {
                     TypedArrayKind::Float32 => "Float32Array",
                     TypedArrayKind::Float64 => "Float64Array",
                 },
-                Some(Cell::Iterator { .. }) => "Iterator",
+                Some(Cell::Iterator { kind, .. }) => match kind {
+                    IteratorKind::Array
+                    | IteratorKind::ArrayKeys
+                    | IteratorKind::ArrayValues
+                    | IteratorKind::ArrayEntries => "Array Iterator",
+                    IteratorKind::String => "String Iterator",
+                    IteratorKind::MapKeys
+                    | IteratorKind::MapValues
+                    | IteratorKind::MapEntries => "Map Iterator",
+                    IteratorKind::SetValues | IteratorKind::SetEntries => "Set Iterator",
+                    IteratorKind::Generator => "Generator",
+                    IteratorKind::AsyncGenerator => "AsyncGenerator",
+                    _ => "Object",
+                },
                 Some(Cell::WeakRef { .. }) => "WeakRef",
                 Some(Cell::FinalizationRegistry { .. }) => "FinalizationRegistry",
                 Some(Cell::Error(_)) => "Error",
                 _ => "Object",
             }
         };
-        let tag = self
-            .well_known_symbols
-            .get("toStringTag")
-            .copied()
-            .map(|symbol| self.get_index(p, value, symbol))
-            .transpose()?;
+        let tag = if value.is_null() || value.is_undefined() {
+            None
+        } else {
+            self.well_known_symbols
+                .get("toStringTag")
+                .copied()
+                .map(|symbol| self.get_index(p, value, symbol))
+                .transpose()?
+        };
         let brand = tag
             .and_then(|tag| match self.heap.get(tag) {
                 Some(Cell::String(text)) => Some(text.to_string()),
@@ -199,12 +241,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let target = args
-            .first()
-            .copied()
-            .filter(|value| self.object_data(*value).is_some())
-            .ok_or_else(|| JsError("Object.assign target is not an object".into()))?;
+        let target =
+            self.box_object_or_type_error(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         for source in args.iter().copied().skip(1) {
+            if source.is_null() || source.is_undefined() {
+                continue;
+            }
             let source = self.box_object(source)?;
             let enumerable_atom = self.intern_atom("enumerable");
             for key in self.object_own_key_values(p, source)? {
@@ -311,10 +353,30 @@ impl<H: Host> Vm<H> {
             ),
             ("__lookupGetter__", Native::ObjectPrototypeLookupGetter),
             ("__lookupSetter__", Native::ObjectPrototypeLookupSetter),
+            ("__defineGetter__", Native::ObjectPrototypeDefineGetter),
+            ("__defineSetter__", Native::ObjectPrototypeDefineSetter),
             ("isPrototypeOf", Native::ObjectPrototypeIsPrototypeOf),
         ] {
             self.set_builtin_named(program, self.object_proto, name, native)?;
         }
+        let prototype_atom = self.intern_atom("__proto__");
+        let getter = self.native_value(Native::ObjectPrototypeProtoGetter);
+        let setter = self.native_value(Native::ObjectPrototypeProtoSetter);
+        self.set_builtin_function_name(getter, "get __proto__")?;
+        self.set_builtin_function_name(setter, "set __proto__")?;
+        self.set_property(self.object_proto, prototype_atom, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            self.object_proto,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: Some(setter),
+            },
+        );
         for (name, native) in [
             ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
             (
@@ -395,6 +457,7 @@ impl<H: Host> Vm<H> {
             Native::ObjectFromEntries => {
                 self.object_from_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
+            Native::ObjectGroupBy => self.object_group_by(p, args),
             Native::ObjectIs => {
                 let left = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let right = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -429,7 +492,7 @@ impl<H: Host> Vm<H> {
             Native::ObjectHasOwn => {
                 let target = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if target.is_null() || target.is_undefined() {
-                    return Err(JsError("Object.hasOwn target is nullish".into()));
+                    return Err(self.type_error(p, "Object.hasOwn target is nullish".into()));
                 }
                 let target = self.box_object(target)?;
                 let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -444,15 +507,117 @@ impl<H: Host> Vm<H> {
             Native::ObjectPreventExtensions => self.object_prevent_extensions(p, args),
             Native::ObjectIsExtensible => self.object_is_extensible(p, args),
             Native::ObjectSeal => self.object_set_integrity(p, args, false),
-            Native::ObjectIsSealed => Ok(Self::integrity_bool(
-                self.object_is_integrity_level(args, false),
-            )),
+            Native::ObjectIsSealed => self.object_is_integrity_level(p, args, false),
             Native::ObjectFreeze => self.object_set_integrity(p, args, true),
-            Native::ObjectIsFrozen => Ok(Self::integrity_bool(
-                self.object_is_integrity_level(args, true),
-            )),
+            Native::ObjectIsFrozen => self.object_is_integrity_level(p, args, true),
             _ => Err(JsError("invalid object native".into())),
         }
+    }
+
+    fn object_group_by(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+        let iterable = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if self.call_target(callback).is_err() {
+            return Err(self.type_error(p, "Object.groupBy callback is not callable".into()));
+        }
+        let iterator = self.get_iterator(p, iterable)?;
+        let result = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        let roots = [self.heap.root(iterator), self.heap.root(result)];
+        let outcome = (|| {
+            let done_atom = self.intern_atom("done");
+            let value_atom = self.intern_atom("value");
+            let mut index = 0usize;
+            loop {
+                let iterator = self.heap.root_value(roots[0]).unwrap_or(iterator);
+                let result = self.heap.root_value(roots[1]).unwrap_or(result);
+                let step = match self.iterator_next(p, iterator) {
+                    Ok(step) => step,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                let step_root = self.heap.root(step);
+                let step = self.heap.root_value(step_root).unwrap_or(step);
+                let done = match self.get_property(p, step, done_atom) {
+                    Ok(done) => done,
+                    Err(error) => {
+                        self.heap.release_root(step_root);
+                        return Err(self.iterator_abrupt(p, iterator, error));
+                    }
+                };
+                if self.truthy(done) {
+                    self.heap.release_root(step_root);
+                    return Ok(result);
+                }
+                let value = match self.get_property(p, step, value_atom) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.heap.release_root(step_root);
+                        return Err(self.iterator_abrupt(p, iterator, error));
+                    }
+                };
+                let value_root = self.heap.root(value);
+                let value = self.heap.root_value(value_root).unwrap_or(value);
+                let key = match self.call_value(
+                    p,
+                    callback,
+                    Value::UNDEFINED,
+                    &[value, Value::number(index as f64)],
+                ) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        self.heap.release_root(value_root);
+                        self.heap.release_root(step_root);
+                        return Err(self.iterator_abrupt(p, iterator, error));
+                    }
+                };
+                let key = match self.to_property_key(p, key) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        self.heap.release_root(value_root);
+                        self.heap.release_root(step_root);
+                        return Err(self.iterator_abrupt(p, iterator, error));
+                    }
+                };
+                let group = match self.heap.get(key).cloned() {
+                    Some(Cell::Symbol(_)) => self.symbol_property(result, key),
+                    Some(Cell::String(name)) => {
+                        let atom = self.intern_js_atom(&name);
+                        self.own_property(result, atom)
+                    }
+                    _ => None,
+                };
+                if let Some(group) = group {
+                    if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(group) {
+                        Rc::make_mut(elements).push(value);
+                    }
+                } else {
+                    let group = self.heap.alloc(Cell::Array {
+                        object: Self::empty_object(self.array_proto),
+                        elements: Rc::new(vec![value]),
+                    });
+                    let set_result = match self.heap.get(key).cloned() {
+                        Some(Cell::Symbol(_)) => self.set_index(p, result, key, group),
+                        Some(Cell::String(name)) => {
+                            let atom = self.intern_js_atom(&name);
+                            self.set_property(result, atom, group)
+                        }
+                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
+                    };
+                    if let Err(error) = set_result {
+                        self.heap.release_root(value_root);
+                        self.heap.release_root(step_root);
+                        return Err(self.iterator_abrupt(p, iterator, error));
+                    }
+                }
+                self.heap.release_root(value_root);
+                self.heap.release_root(step_root);
+                index += 1;
+            }
+        })();
+        self.heap.release_root(roots[0]);
+        self.heap.release_root(roots[1]);
+        outcome
     }
 
     fn object_from_entries(

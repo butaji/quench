@@ -9,6 +9,7 @@ const STRING_METHODS: &[(&str, Native)] = &[
     ("includes", Native::StringIncludes),
     ("indexOf", Native::StringIndexOf),
     ("lastIndexOf", Native::StringLastIndexOf),
+    ("localeCompare", Native::StringLocaleCompare),
     ("match", Native::StringMatch),
     ("normalize", Native::StringNormalize),
     ("padEnd", Native::StringPadEnd),
@@ -23,8 +24,10 @@ const STRING_METHODS: &[(&str, Native)] = &[
     ("substr", Native::StringSubstr),
     ("substring", Native::StringSubstring),
     ("toLowerCase", Native::StringToLowerCase),
+    ("toLocaleLowerCase", Native::StringToLocaleLowerCase),
     ("toString", Native::StringToString),
     ("toUpperCase", Native::StringToUpperCase),
+    ("toLocaleUpperCase", Native::StringToLocaleUpperCase),
     ("trim", Native::StringTrim),
     ("trimEnd", Native::StringTrimEnd),
     ("trimStart", Native::StringTrimStart),
@@ -80,6 +83,19 @@ impl<H: Host> Vm<H> {
         self.set_named_constant(program, self.string_proto, "length", Value::number(0.0))?;
         self.set_builtin_named(program, self.string_proto, "constructor", Native::String)?;
         self.set_named(program, constructor, "prototype", self.string_proto)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            super::property_key::PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         for (name, native) in STRING_METHODS {
             self.set_builtin_named(program, self.string_proto, name, *native)?;
         }
@@ -123,13 +139,28 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| u32::from(first));
                 Ok(Value::number(code_point as f64))
             }
-            Native::StringToUpperCase | Native::StringToLowerCase => {
-                let text = if native == Native::StringToUpperCase {
+            Native::StringToUpperCase
+            | Native::StringToLowerCase
+            | Native::StringToLocaleUpperCase
+            | Native::StringToLocaleLowerCase => {
+                let text = if matches!(
+                    native,
+                    Native::StringToUpperCase | Native::StringToLocaleUpperCase
+                ) {
                     receiver.host_string().to_uppercase()
                 } else {
                     receiver.host_string().to_lowercase()
                 };
                 Ok(self.heap.alloc(Cell::String(text.into())))
+            }
+            Native::StringLocaleCompare => {
+                let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let ordering = receiver.host_string().cmp(&other);
+                Ok(Value::number(match ordering {
+                    std::cmp::Ordering::Less => -1.0,
+                    std::cmp::Ordering::Equal => 0.0,
+                    std::cmp::Ordering::Greater => 1.0,
+                }))
             }
             Native::StringConcat => {
                 let mut text = receiver;
