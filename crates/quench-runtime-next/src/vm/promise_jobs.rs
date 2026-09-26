@@ -254,7 +254,7 @@ impl<H: Host> Vm<H> {
                         self.reject_aggregate_completion(p, reject, error)?;
                     }
                 } else if mode == AggregateMode::Any {
-                    let error = self.aggregate_error(vec![])?;
+                    let error = self.aggregate_error(values)?;
                     if let Err(completion) = self.call_value(p, reject, Value::UNDEFINED, &[error])
                     {
                         return Err(completion);
@@ -452,7 +452,8 @@ impl<H: Host> Vm<H> {
             )?;
             return Ok(Value::UNDEFINED);
         }
-        let (state, result) = match self.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
+        let (state, result) = match self.call_value(p, reaction.handler, Value::UNDEFINED, &[value])
+        {
             Ok(result) => (PromiseState::Fulfilled, result),
             Err(error) => (
                 PromiseState::Rejected,
@@ -563,12 +564,7 @@ impl<H: Host> Vm<H> {
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise finally continuation".into()))?;
         if continuation.cleanup_rejected {
-            self.settle_reaction(
-                p,
-                continuation.next,
-                PromiseState::Rejected,
-                cleanup_value,
-            )?;
+            self.settle_reaction(p, continuation.next, PromiseState::Rejected, cleanup_value)?;
         } else if continuation.original_rejected {
             self.settle_reaction(
                 p,
