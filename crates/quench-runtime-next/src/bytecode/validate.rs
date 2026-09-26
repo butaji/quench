@@ -1,6 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
-    DispatchClass, FieldBase, Op, Operand, OperandKind, REGISTER_MASK, Register, ResidualProgram,
+    DispatchClass, FieldBase, FieldLayout, InstructionField, Op, Operand, OperandKind,
+    REGISTER_MASK, Register, ResidualProgram, ResultLayout,
 };
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
@@ -47,6 +48,31 @@ fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
     u32::from(base)
         .checked_add(count)
         .is_some_and(|end| end <= u32::from(registers))
+}
+
+fn register_fields_in_bounds(instruction: super::WideInstruction, registers: u16) -> bool {
+    let fields = [
+        (InstructionField::A, instruction.a()),
+        (InstructionField::B, instruction.b()),
+        (InstructionField::C, instruction.c()),
+    ];
+    if instruction.op().result_layout() != ResultLayout::NoResult
+        && !register_in_bounds(instruction.result_register(), registers, 0)
+    {
+        return false;
+    }
+
+    fields.into_iter().all(
+        |(field, value)| match instruction.op().field_layout(field) {
+            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
+                register_in_bounds(value, registers, 0)
+            }
+            FieldLayout::OptionalRegister => instruction
+                .optional_register_b()
+                .is_none_or(|register| register_in_bounds(register, registers, 0)),
+            _ => true,
+        },
+    )
 }
 
 impl ResidualProgram {
@@ -123,6 +149,12 @@ impl ResidualProgram {
                 if !instruction.unused_operands_are_zero() {
                     return Err(format!(
                         "function {index} {:?} has nonzero unused operands",
+                        instruction.op()
+                    ));
+                }
+                if !register_fields_in_bounds(instruction, function.registers) {
+                    return Err(format!(
+                        "function {index} {:?} has an out-of-bounds register",
                         instruction.op()
                     ));
                 }
