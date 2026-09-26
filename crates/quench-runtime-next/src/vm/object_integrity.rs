@@ -412,6 +412,23 @@ impl<H: Host> Vm<H> {
         freeze: bool,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if freeze
+            && let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(source)
+        {
+            let resizable = matches!(
+                self.heap.get(*buffer),
+                Some(Cell::ArrayBuffer {
+                    resizable: true,
+                    ..
+                })
+            );
+            if resizable || self.typed_array_length(source).is_some_and(|length| length > 0) {
+                return Err(self.type_error(
+                    p,
+                    "cannot freeze a typed array with indexed elements".into(),
+                ));
+            }
+        }
         if matches!(self.heap.get(source), Some(Cell::Proxy { .. })) {
             self.object_prevent_extensions(p, args)?;
             let configurable_atom = self.intern_atom("configurable");
