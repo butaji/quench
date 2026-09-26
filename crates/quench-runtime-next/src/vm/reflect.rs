@@ -37,11 +37,7 @@ impl<H: Host> Vm<H> {
             Native::ReflectGetOwnPropertyDescriptor => {
                 self.object_get_own_property_descriptor(p, args)
             }
-            Native::ReflectDefineProperty => Ok(if self.object_define_property(p, args).is_ok() {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            }),
+            Native::ReflectDefineProperty => self.reflect_define_property(p, args),
             Native::ReflectDeleteProperty => self.object_delete_property(p, args),
             Native::ReflectPreventExtensions => {
                 if self.object_data(target).is_none() {
@@ -137,5 +133,55 @@ impl<H: Host> Vm<H> {
             }
             _ => Err(JsError("invalid Reflect native".into())),
         }
+    }
+
+    fn reflect_define_property(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(source).cloned()
+        {
+            if handler.is_null() {
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+            }
+            let trap_atom = self.intern_atom("defineProperty");
+            let trap = self.get_property(p, handler, trap_atom)?;
+            if trap.is_null() || trap.is_undefined() {
+                let mut forwarded = args.to_vec();
+                if let Some(receiver) = forwarded.first_mut() {
+                    *receiver = target;
+                }
+                return self.reflect_define_property(p, &forwarded);
+            }
+            if !self.is_function(trap) {
+                return Err(self.type_error(p, "proxy defineProperty trap is not callable".into()));
+            }
+            let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+            let key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+                key_value
+            } else {
+                let text = self.coerce_js_string(p, key_value)?;
+                self.heap.alloc(Cell::String(text))
+            };
+            let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+            if self.object_data(descriptor).is_none() {
+                return Err(self.type_error(p, "property descriptor is not an object".into()));
+            }
+            let result = self.call_value(p, trap, handler, &[target, key, descriptor])?;
+            if !self.truthy(result) {
+                return Ok(Value::FALSE);
+            }
+            self.validate_proxy_define_property(p, target, key, descriptor)?;
+            return Ok(Value::TRUE);
+        }
+        Ok(if self.object_define_property(p, args).is_ok() {
+            Value::TRUE
+        } else {
+            Value::FALSE
+        })
     }
 }

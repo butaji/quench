@@ -798,6 +798,14 @@ impl<H: Host> Vm<H> {
                 }
                 self.validate_proxy_define_property(p, target, key, descriptor)?;
                 return Ok(source);
+            } else if !trap.is_null() && !trap.is_undefined() {
+                return Err(self.type_error(p, "proxy defineProperty trap is not callable".into()));
+            } else {
+                let mut forwarded = args.to_vec();
+                if let Some(receiver) = forwarded.first_mut() {
+                    *receiver = target;
+                }
+                return self.object_define_property(p, &forwarded);
             }
         }
         let target = self.proxy_target(source);
