@@ -182,8 +182,8 @@ impl ResidualProgram {
                     }
                     Op::MarkPrivateName
                         if !atom(instruction.atom_index())
-                            || !register(instruction.b())
-                            || !register(instruction.c()) =>
+                            || !register(instruction.register_b())
+                            || !register(instruction.register_c()) =>
                     {
                         return Err(format!("function {index} private-name mark is invalid"));
                     }

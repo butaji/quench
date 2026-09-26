@@ -388,7 +388,7 @@ opcodes!(
     ToPropertyKey => READ_THROW,
     ToNumeric => READ_THROW,
     CopyDataProperties => CALL_EFFECT, @ NoResult, @ fields(Register, Register, Register),
-    MarkPrivateName => Effect::WRITES_HEAP; meaning AtomIndex,
+    MarkPrivateName => Effect::WRITES_HEAP; meaning AtomIndex, @ NoResult, @ fields(Undeclared, Register, Register),
     SetField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, CacheSiteIndex),
     DefineComputedField => WRITE_THROW, @ NoResult, @ fields(Register, Register, Register),
     SetThisField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Undeclared, CacheSiteIndex),
