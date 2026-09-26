@@ -205,7 +205,8 @@ impl<H: Host> Vm<H> {
             | Native::RegExpUnicodeSets
             | Native::RegExpSticky
             | Native::RegExpHasIndices => self.regexp_flag_native(p, native, this),
-            Native::RegExpSource | Native::RegExpFlags => self.regexp_slot_native(p, native, this),
+            Native::RegExpSource => self.regexp_slot_native(p, native, this),
+            Native::RegExpFlags => self.regexp_flags_native(p, this),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let key_value =
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;

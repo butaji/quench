@@ -322,6 +322,7 @@ pub struct Vm<H> {
     async_generator_proto: Value,
     async_from_sync_iterator_proto: Value,
     regexp_proto: Value,
+    regexp_prototypes: FxHashMap<Value, Value>,
     natives: Vec<(Native, Value)>,
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
