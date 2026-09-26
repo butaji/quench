@@ -687,7 +687,8 @@ impl<H: Host> Vm<H> {
                     self.read(f, i.b()),
                     self.read(f, i.c()),
                     self.read(f, i.a()),
-                    p.functions[self.frames[f].function as usize].strict || i.imm() != 0,
+                    p.functions[self.frames[f].function as usize].strict
+                        || i.boolean_flag().expect("validated boolean immediate"),
                 )?
             }
             Op::DefineArrayElement => self.define_array_literal_element(
@@ -721,15 +722,16 @@ impl<H: Host> Vm<H> {
             }
             Op::IncDec => {
                 let input = self.read(f, i.b());
-                let delta = if i.imm() == 0 { 1.0 } else { -1.0 };
+                let is_decrement = i.boolean_flag().expect("validated boolean immediate");
+                let delta = if is_decrement { -1.0 } else { 1.0 };
                 let value = if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
                     let one = self.heap.alloc(Cell::BigInt("1".into()));
-                    self.binary(p, if i.imm() == 0 { 8 } else { 9 }, input, one)?
+                    self.binary(p, if is_decrement { 9 } else { 8 }, input, one)?
                 } else if let Some(integer) = input.as_int() {
-                    let next = if i.imm() == 0 {
-                        integer.checked_add(1)
-                    } else {
+                    let next = if is_decrement {
                         integer.checked_sub(1)
+                    } else {
+                        integer.checked_add(1)
                     };
                     next.map(Value::integer)
                         .unwrap_or_else(|| Value::number(f64::from(integer) + delta))
