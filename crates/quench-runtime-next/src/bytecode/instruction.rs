@@ -10,6 +10,13 @@ const PACKED_PAIR_SOURCE_MASK: u32 = u16::MAX as u32;
 const PACKED_PAIR_LOW_MASK: u32 = (1 << PACKED_PAIR_LOW_BITS) - 1;
 const PACKED_PAIR_HIGH_MASK: u32 = (1 << PACKED_PAIR_HIGH_BITS) - 1;
 
+const fn is_register_field(layout: FieldLayout) -> bool {
+    matches!(
+        layout,
+        FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RegisterWindow {
     pub(crate) base: Register,
@@ -151,19 +158,17 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn register_a(self) -> Register {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::A),
-                    FieldLayout::Register
-                );
+                debug_assert!(is_register_field(
+                    self.op().field_layout(InstructionField::A)
+                ));
                 self.a()
             }
 
             #[allow(dead_code)]
             pub(crate) fn register_b(self) -> Register {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::B),
-                    FieldLayout::Register
-                );
+                debug_assert!(is_register_field(
+                    self.op().field_layout(InstructionField::B)
+                ));
                 self.b()
             }
 
@@ -264,10 +269,9 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn register_c(self) -> Register {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::C),
-                    FieldLayout::Register
-                );
+                debug_assert!(is_register_field(
+                    self.op().field_layout(InstructionField::C)
+                ));
                 self.c()
             }
 

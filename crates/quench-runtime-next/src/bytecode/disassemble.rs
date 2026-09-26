@@ -87,6 +87,8 @@ fn write_field(
     }
     match layout {
         FieldLayout::Register
+        | FieldLayout::WriteRegister
+        | FieldLayout::ReadWriteRegister
         | FieldLayout::OptionalRegister
         | FieldLayout::FunctionIndex
         | FieldLayout::ElementCount
@@ -132,13 +134,22 @@ fn write_scalar_field(
     layout: FieldLayout,
 ) -> fmt::Result {
     match (field, layout) {
-        (InstructionField::A, FieldLayout::Register) => {
+        (
+            InstructionField::A,
+            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister,
+        ) => {
             write!(output, " a={}", instruction.register_a())
         }
-        (InstructionField::B, FieldLayout::Register) => {
+        (
+            InstructionField::B,
+            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister,
+        ) => {
             write!(output, " b={}", instruction.register_b())
         }
-        (InstructionField::C, FieldLayout::Register) => {
+        (
+            InstructionField::C,
+            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister,
+        ) => {
             write!(output, " c={}", instruction.register_c())
         }
         (InstructionField::B, FieldLayout::OptionalRegister) => {

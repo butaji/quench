@@ -66,6 +66,7 @@ pub(crate) enum ImmediateLayout {
 pub(crate) enum ResultLayout {
     NoResult,
     Register,
+    RegisterReadWrite,
     Returnable,
     ReturnableAndThis,
     NumericReturnable,
@@ -76,6 +77,8 @@ pub(crate) enum FieldLayout {
     Undeclared,
     Unused,
     Register,
+    WriteRegister,
+    ReadWriteRegister,
     OptionalRegister,
     NumericLocalTarget,
     NumericLocalStoreMarker,
@@ -163,6 +166,7 @@ impl ResultLayout {
         match self {
             Self::NoResult => NO_RESULT_FLAGS,
             Self::Register => NO_RESULT_FLAGS,
+            Self::RegisterReadWrite => NO_RESULT_FLAGS,
             Self::Returnable => RETURN_REGISTER,
             Self::ReturnableAndThis => RETURN_REGISTER | SET_THIS_REGISTER,
             Self::NumericReturnable => RETURN_REGISTER | NUMERIC_LOCAL_TARGET,
@@ -178,6 +182,10 @@ impl ResultLayout {
 
     const fn allows_this_write(self) -> bool {
         matches!(self, Self::ReturnableAndThis)
+    }
+
+    pub(crate) const fn reads_result_register(self) -> bool {
+        matches!(self, Self::RegisterReadWrite)
     }
 
     const fn allows_numeric_local(self) -> bool {
@@ -374,7 +382,7 @@ opcodes!(
     LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(Undeclared, Unused, Unused),
     StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot, @ NoResult, @ fields(Register, Unused, Unused),
     LoadName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Unused, CacheSiteIndex),
-    LoadNameCall => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Register, CacheSiteIndex),
+    LoadNameCall => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, WriteRegister, CacheSiteIndex),
     LoadNameTypeof => Effect::READS_HEAP; meaning AtomIndex, @ Register, @ fields(Undeclared, Unused, CacheSiteIndex),
     ResolveName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, BooleanFlag, CacheSiteIndex),
     LoadResolvedName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Register, BooleanFlag),
@@ -403,7 +411,7 @@ opcodes!(
     InitializeTdz => Effect::PURE; meaning LocalSlot, @ NoResult, @ fields(Unused, Unused, Unused),
     Await => READ_THROW.union(Effect::CONTROL); meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     Yield => READ_THROW.union(Effect::CONTROL); meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
-    YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ Register, @ fields(Undeclared, Register, Register),
+    YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(Undeclared, Register, ReadWriteRegister),
     GetField => READ_THROW; meaning FieldLookup, @ ReturnableAndThis, @ fields(Undeclared, FieldBase, CacheSiteIndex),
     GetIndex => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Operand, Operand),
     ToPropertyKey => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
