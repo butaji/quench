@@ -196,10 +196,16 @@ fn write_immediate(output: &mut String, instruction: WideInstruction) -> fmt::Re
             instruction.capture_depth(),
             instruction.capture_slot()
         ),
-        ImmediateLayout::CallWindow | ImmediateLayout::CallWindowWithEvalFlags => {
+        ImmediateLayout::CallWindow
+        | ImmediateLayout::CallWindowWithEvalFlags
+        | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags => {
             let window = instruction.call_window();
             write!(output, " args={}+{}", window.base, window.count)?;
-            if instruction.op().immediate_layout() == ImmediateLayout::CallWindowWithEvalFlags {
+            if matches!(
+                instruction.op().immediate_layout(),
+                ImmediateLayout::CallWindowWithEvalFlags
+                    | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
+            ) {
                 write!(
                     output,
                     " direct-eval={} parameter-eval={}",
@@ -239,6 +245,8 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::BooleanFlag
         | ImmediateRole::ArrayIndex
         | ImmediateRole::BinaryOperator
+        | ImmediateRole::AdditionOperator
+        | ImmediateRole::MultiplicationOperator
         | ImmediateRole::UnaryOperator
         | ImmediateRole::JumpTarget => write_scalar_value(output, instruction),
     }
@@ -290,7 +298,9 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
         }
         ImmediateRole::BooleanFlag => write!(output, " flag={:?}", instruction.boolean_flag()),
         ImmediateRole::ArrayIndex => write!(output, " index={}", instruction.array_index()),
-        ImmediateRole::BinaryOperator => {
+        ImmediateRole::BinaryOperator
+        | ImmediateRole::AdditionOperator
+        | ImmediateRole::MultiplicationOperator => {
             write!(output, " operator={}", instruction.binary_operator())
         }
         ImmediateRole::UnaryOperator => {
