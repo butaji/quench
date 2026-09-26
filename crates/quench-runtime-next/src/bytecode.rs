@@ -749,9 +749,9 @@ pub struct ResidualProgram {
 #[inline(never)]
 fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) -> bool {
     code.iter().all(|instruction| {
-        instruction.op() != Op::LoadLocal || instruction.imm() < u32::from(locals)
+        instruction.op() != Op::LoadLocal || instruction.local_slot() < usize::from(locals)
     }) && wide.iter().all(|instruction| {
-        instruction.op() != Op::LoadLocal || instruction.imm() < u32::from(locals)
+        instruction.op() != Op::LoadLocal || instruction.local_slot() < usize::from(locals)
     })
 }
 
