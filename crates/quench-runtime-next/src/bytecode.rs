@@ -420,7 +420,7 @@ opcodes!(
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex, @ Register, @ fields(Register, Undeclared, Undeclared),
     LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     DefineField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Undeclared),
-    ValidateClassHeritage => READ_THROW,
+    ValidateClassHeritage => READ_THROW, @ NoResult, @ fields(Register, Undeclared, Undeclared),
 );
 #[derive(Clone, Debug)]
 pub struct Function {

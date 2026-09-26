@@ -429,6 +429,11 @@ impl ResidualProgram {
                             "function {index} cached template-object load is invalid"
                         ));
                     }
+                    Op::ValidateClassHeritage if !register(instruction.register_a()) => {
+                        return Err(format!(
+                            "function {index} class heritage register is invalid"
+                        ));
+                    }
                     Op::CopyDataProperties
                         if !register(instruction.register_a())
                             || !register(instruction.register_b())

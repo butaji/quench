@@ -483,7 +483,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::ValidateClassHeritage => {
-                let heritage = self.read(f, i.a());
+                let heritage = self.read(f, i.register_a());
                 if !heritage.is_null() && !self.is_constructable(p, heritage) {
                     return Err(self
                         .type_error(p, "Class extends value is not a constructor or null".into()));
