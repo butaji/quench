@@ -593,6 +593,9 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "RegExp.prototype[@@match] called on non-object".into()));
         }
         let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let flags_atom = self.intern_atom("flags");
+        let flags_value = self.get_property(p, receiver, flags_atom)?;
+        let flags = self.to_string(p, flags_value)?;
         let global = self.intern_atom("global");
         let global_value = self.get_property(p, receiver, global)?;
         if !self.truthy(global_value) {
@@ -605,7 +608,7 @@ impl<H: Host> Vm<H> {
             true
         } else {
             let unicode_sets_value = self.get_property(p, receiver, unicode_sets)?;
-            self.truthy(unicode_sets_value)
+            self.truthy(unicode_sets_value) || flags.contains('v')
         };
         let last_index = self.intern_atom("lastIndex");
         self.set_property(receiver, last_index, Value::number(0.0))?;
@@ -698,22 +701,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn regexp_source_string(
-        &mut self,
-        p: &ResidualProgram,
-        value: Value,
-    ) -> Result<JsString, JsError> {
-        if let Some(Cell::RegExp { source, .. }) = self.heap.get(value) {
-            return Ok(source.clone());
-        }
-        let primitive = self.to_primitive(p, value, "string")?;
-        if let Some(Cell::String(source)) = self.heap.get(primitive) {
-            return Ok(source.clone());
-        }
-        self.to_string(p, primitive)
-            .map(|source| JsString::from_str(&source))
-    }
-
     pub(super) fn regexp_flag_native(
         &mut self,
         p: &ResidualProgram,
@@ -779,17 +766,37 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let pattern = match args.first().copied() {
-            None | Some(Value::UNDEFINED) => JsString::from_str(""),
-            Some(value) => self.regexp_source_string(p, value)?,
+        let pattern_value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let flags_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let pattern_is_regexp = self.regexp_is_regexp(p, pattern_value)?;
+        let flags_omitted = flags_value.is_undefined();
+        if flags_omitted && pattern_is_regexp {
+            let constructor_atom = self.intern_atom("constructor");
+            let constructor = self.get_property(p, pattern_value, constructor_atom)?;
+            let regexp_atom = self.intern_atom("RegExp");
+            let intrinsic = self.get_property(p, self.realm.globals, regexp_atom)?;
+            if self.same_value(constructor, intrinsic) {
+                return Ok(pattern_value);
+            }
+        }
+        let source_value = if pattern_value.is_undefined() {
+            self.heap.alloc(Cell::String(String::new().into()))
+        } else if pattern_is_regexp {
+            let source_atom = self.intern_atom("source");
+            self.get_property(p, pattern_value, source_atom)?
+        } else {
+            pattern_value
         };
-        let flags = args
-            .get(1)
-            .copied()
-            .filter(|value| !value.is_undefined())
-            .map(|value| self.to_string(p, value))
-            .transpose()?
-            .unwrap_or_default();
+        let pattern = self.regexp_input_string(p, source_value)?;
+        let flags = if flags_omitted && pattern_is_regexp {
+            let flags_atom = self.intern_atom("flags");
+            let value = self.get_property(p, pattern_value, flags_atom)?;
+            self.to_string(p, value)?
+        } else if flags_omitted {
+            String::new()
+        } else {
+            self.to_string(p, flags_value)?
+        };
         let regex = Self::compile_regexp(pattern.host_string(), &flags)?;
         drop(regex);
         let object = self.heap.alloc(Cell::RegExp {
@@ -874,6 +881,20 @@ impl<H: Host> Vm<H> {
         let last_index = self.get_property(p, this, last_index_atom)?;
         let last_index = regexp_to_length(self.to_number(p, last_index)?);
         let start = if stateful { last_index } else { 0 };
+        if stateful && start > input.units().len() {
+            self.set_property_with_program_mode(
+                p,
+                this,
+                last_index_atom,
+                Value::number(0.0),
+                true,
+            )?;
+            return Ok(if native == Native::RegExpTest {
+                Value::FALSE
+            } else {
+                Value::NULL
+            });
+        }
         let matched = regex.find_from_utf16(input.units(), start);
         let matched = matched.filter(|matched| !sticky || matched.range.start == start);
         let Some(matched) = matched else {
