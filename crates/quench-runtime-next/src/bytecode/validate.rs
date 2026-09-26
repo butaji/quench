@@ -1,7 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
-    DispatchClass, FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand,
-    OperandKind, REGISTER_MASK, Register, ResidualProgram, ResultLayout,
+    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
+    REGISTER_MASK, Register, ResidualProgram, ResultLayout,
 };
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
@@ -34,6 +34,17 @@ fn is_numeric_index_operand(operand: Operand) -> bool {
         operand.kind(),
         Some(OperandKind::Register | OperandKind::Local)
     )
+}
+
+fn numeric_index_operand_in_bounds(operand: u16, bounds: ValidationBounds) -> bool {
+    is_numeric_index_operand(Operand(operand))
+        && operand_in_bounds(
+            operand,
+            bounds.registers,
+            bounds.locals,
+            bounds.constants,
+            bounds.field_sites,
+        )
 }
 
 fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
@@ -103,6 +114,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                 bounds.constants,
                 bounds.field_sites,
             ),
+            FieldLayout::NumericIndexOperand => numeric_index_operand_in_bounds(value, bounds),
             FieldLayout::BinaryOperator => {
                 u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
             }
@@ -312,16 +324,6 @@ impl ResidualProgram {
                         "function {index} {:?} has an out-of-domain operand",
                         instruction.op()
                     ));
-                }
-                match instruction.op() {
-                    Op::GetIndex
-                        if function.dispatch == DispatchClass::Numeric
-                            && (!is_numeric_index_operand(instruction.operand_b())
-                                || !is_numeric_index_operand(instruction.operand_c())) =>
-                    {
-                        return Err(format!("function {index} indexed load is invalid"));
-                    }
-                    _ => {}
                 }
             }
             for handler in &function.handlers {

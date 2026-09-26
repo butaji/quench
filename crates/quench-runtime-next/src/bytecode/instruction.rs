@@ -17,6 +17,13 @@ const fn is_register_field(layout: FieldLayout) -> bool {
     )
 }
 
+const fn is_operand_field(layout: FieldLayout) -> bool {
+    matches!(
+        layout,
+        FieldLayout::Operand | FieldLayout::NumericIndexOperand
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RegisterWindow {
     pub(crate) base: Register,
@@ -335,37 +342,33 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn operand_b(self) -> Operand {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::B),
-                    FieldLayout::Operand
-                );
+                debug_assert!(is_operand_field(
+                    self.op().field_layout(InstructionField::B)
+                ));
                 Operand(self.b())
             }
 
             #[allow(dead_code)]
             pub(crate) fn set_operand_b(&mut self, operand: Operand) {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::B),
-                    FieldLayout::Operand
-                );
+                debug_assert!(is_operand_field(
+                    self.op().field_layout(InstructionField::B)
+                ));
                 self.set_b(operand.0);
             }
 
             #[allow(dead_code)]
             pub(crate) fn operand_c(self) -> Operand {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::C),
-                    FieldLayout::Operand
-                );
+                debug_assert!(is_operand_field(
+                    self.op().field_layout(InstructionField::C)
+                ));
                 Operand(self.c())
             }
 
             #[allow(dead_code)]
             pub(crate) fn set_operand_c(&mut self, operand: Operand) {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::C),
-                    FieldLayout::Operand
-                );
+                debug_assert!(is_operand_field(
+                    self.op().field_layout(InstructionField::C)
+                ));
                 self.set_c(operand.0);
             }
 
