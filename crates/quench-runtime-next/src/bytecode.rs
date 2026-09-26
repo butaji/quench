@@ -12,7 +12,11 @@ pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
+pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
+pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
+pub(crate) const NUMERIC_LOCAL_DECREMENT_FLAG: Register = RETURN_REGISTER;
 pub(crate) const NUMERIC_LOCAL_INC_STORE: u16 = 1;
+pub(crate) const NO_NUMERIC_LOCAL_STORE_MARKER: u16 = 0;
 pub(crate) const NUMERIC_LOCAL_TARGET: u16 = SET_THIS_REGISTER;
 pub(crate) const FUNCTION_NAME_PREFIX_NONE: u32 = 0;
 pub(crate) const FUNCTION_NAME_PREFIX_GETTER: u32 = 1;
@@ -72,6 +76,9 @@ pub(crate) enum FieldLayout {
     Undeclared,
     Unused,
     Register,
+    OptionalRegister,
+    NumericLocalTarget,
+    NumericLocalStoreMarker,
     FunctionIndex,
     ConstructArguments,
     ElementCount,
@@ -115,6 +122,12 @@ pub(crate) enum ImmediateRole {
 pub(crate) enum FieldLookup {
     Atom(Atom),
     Site(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NumericLocalStoreTarget {
+    pub(crate) register: Register,
+    pub(crate) decrement: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -349,10 +362,10 @@ opcodes!(
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
     Wide => Effect::PURE,
     LoadConst => Effect::PURE; meaning ConstantIndex, @ Register, @ fields(Undeclared, Unused, Unused),
-    LoadLocal => Effect::PURE; meaning LocalSlot, @ Register, @ fields(Undeclared, Unused, Unused),
-    StoreLocal => Effect::PURE; meaning LocalSlot,
+    LoadLocal => Effect::PURE; meaning LocalSlot, @ Register, @ fields(Undeclared, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocal => Effect::PURE; meaning LocalSlot, @ NoResult, @ fields(Register, OptionalRegister, BooleanFlag),
     LoadEnvLocal => Effect::READS_HEAP; meaning LocalSlot, @ Register, @ fields(Undeclared, Unused, Unused),
-    StoreEnvLocal => Effect::WRITES_HEAP; meaning LocalSlot,
+    StoreEnvLocal => Effect::WRITES_HEAP; meaning LocalSlot, @ NoResult, @ fields(Register, OptionalRegister, BooleanFlag),
     LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(Undeclared, Unused, Unused),
     StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot, @ NoResult, @ fields(Register, Unused, Unused),
     LoadName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Unused, CacheSiteIndex),
