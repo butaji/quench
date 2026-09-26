@@ -131,7 +131,7 @@ fn uses(
             bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c())
         }
         Op::MakeObject2 => bit(instruction.b()) | bit(instruction.c()),
-        Op::SuperConstArrayObject2 => superinstructions[instruction.imm() as usize]
+        Op::SuperConstArrayObject2 => superinstructions[instruction.superinstruction_index()]
             .code
             .iter()
             .fold(0, |mask, nested| {
@@ -232,7 +232,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
             let (state, next_method) = instruction.register_pair();
             bit(instruction.a()) | bit(instruction.c()) | bit(state) | bit(next_method)
         }
-        Op::SuperConstArrayObject2 => superinstructions[instruction.imm() as usize]
+        Op::SuperConstArrayObject2 => superinstructions[instruction.superinstruction_index()]
             .code
             .iter()
             .fold(0, |mask, nested| {
@@ -269,7 +269,7 @@ fn operand(value: u16, fields: &[FieldSite]) -> u64 {
 }
 
 fn method_arguments(instruction: Instr, methods: &[MethodSite]) -> u64 {
-    methods[instruction.imm() as usize]
+    methods[instruction.method_site_index()]
         .2
         .iter()
         .copied()
