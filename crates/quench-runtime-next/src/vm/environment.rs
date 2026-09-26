@@ -16,6 +16,33 @@ impl<H: Host> Vm<H> {
         root.global_var_atoms.contains(&atom).then_some(atom)
     }
 
+    pub(super) fn root_global_lexical_atom(
+        &self,
+        program: &ResidualProgram,
+        function: u32,
+        slot: usize,
+    ) -> Option<Atom> {
+        if program.module || function != super::ROOT_FUNCTION_ID {
+            return None;
+        }
+        let root = program.functions.first()?;
+        let atom = *root.local_atoms.get(slot)?;
+        root.global_lexical_atoms.contains(&atom).then_some(atom)
+    }
+
+    pub(super) fn root_global_lexical_value(
+        &self,
+        program: &ResidualProgram,
+        function: u32,
+        slot: usize,
+    ) -> Option<Value> {
+        if !self.eval_script_context {
+            return None;
+        }
+        self.root_global_lexical_atom(program, function, slot)
+            .and_then(|atom| self.realm.global_lexical_bindings.get(&atom).copied())
+    }
+
     fn root_declares_binding(&self, program: &ResidualProgram, atom: Atom) -> bool {
         program.functions.first().is_some_and(|root| {
             root.global_var_atoms.contains(&atom) || root.global_lexical_atoms.contains(&atom)
@@ -626,6 +653,20 @@ impl<H: Host> Vm<H> {
         if let Some(atom) = atom {
             return self.get_property(p, self.realm.globals, atom);
         }
+        let lexical_atom = program
+            .and_then(|program| {
+                self.programs
+                    .get(super::program_store::ProgramId::from_raw(program))
+            })
+            .as_deref()
+            .and_then(|program| self.root_global_lexical_atom(program, *function, slot))
+            .or_else(|| self.root_global_lexical_atom(p, *function, slot));
+        if self.eval_script_context
+            && let Some(atom) = lexical_atom
+            && let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied()
+        {
+            return self.checked_binding_read(p, atom, value);
+        }
         let value = program
             .and_then(|program| {
                 self.module_import_value(
@@ -736,10 +777,34 @@ impl<H: Host> Vm<H> {
         let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) else {
             return Err(JsError("invalid capture".into()));
         };
+        let slot_index = usize::from(slot);
         let slot = slots
-            .get_mut(usize::from(slot))
+            .get_mut(slot_index)
             .ok_or_else(|| JsError("invalid capture slot".into()))?;
         *slot = value;
+        if let Some(atom) = self.root_global_lexical_atom(p, function, slot_index) {
+            if self.eval_script_context {
+                self.realm.global_lexical_bindings.insert(atom, value);
+            }
+            let program = self.frames[frame].program;
+            let owner = self.frames.iter().rposition(|active| {
+                active.function == super::ROOT_FUNCTION_ID && active.program == program
+            });
+            if let Some(owner) = owner {
+                let (owner_env, captured) = (self.frames[owner].env, self.frames[owner].captured);
+                if captured && owner_env != env {
+                    if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(owner_env)
+                        && let Some(slot) = slots.get_mut(slot_index)
+                    {
+                        *slot = value;
+                    }
+                } else if !captured {
+                    if let Some(slot) = self.frames[owner].locals.get_mut(slot_index) {
+                        *slot = value;
+                    }
+                }
+            }
+        }
         if function == 0
             && let Some(atom) = atom
             && !p.functions[0].global_lexical_atoms.contains(&atom)
