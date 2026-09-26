@@ -847,7 +847,14 @@ impl<H: Host> Vm<H> {
                 let callee = self.read(f, i.register_b());
                 let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
-                let direct_eval = i.direct_eval() && callee == self.native_value(Native::Eval);
+                let direct_eval = i.direct_eval()
+                    && matches!(
+                        self.heap.get(callee),
+                        Some(Cell::Function {
+                            kind: FunctionKind::Native(Native::Eval),
+                            ..
+                        })
+                    );
                 let parameter_eval = direct_eval && i.parameter_eval();
                 let previous_direct_eval = self.direct_eval;
                 let previous_parameter_eval = self.parameter_eval;
