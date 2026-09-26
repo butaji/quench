@@ -792,6 +792,18 @@ impl<H: Host> Vm<H> {
                 "cannot write inherited non-writable property".into(),
             ));
         }
+        if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && let Some(index) = super::object_static::array_index(self.atom_name(atom))
+        {
+            let writable = self
+                .array_descriptor(object, index as usize)
+                .is_none_or(|attributes| attributes.writable);
+            let written = writable && self.set_array_element(object, index as usize, value);
+            if !written && strict {
+                return Err(self.type_error(p, "cannot write array index".into()));
+            }
+            return Ok(());
+        }
         self.set_property(object, atom, value)?;
         self.mirror_global_var_property_write(p, object, atom, value);
         Ok(())
