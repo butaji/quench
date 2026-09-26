@@ -120,31 +120,24 @@ impl ResidualProgram {
                 if !instruction.result_flags_valid() {
                     return Err(format!("function {index} result flags are invalid"));
                 }
+                if !instruction.unused_operands_are_zero() {
+                    return Err(format!("function {index} unused operands are not zero"));
+                }
                 let register = |value: u16| register_in_bounds(value, function.registers, 0);
                 let destination =
                     |value: u16| register_in_bounds(value & REGISTER_MASK, function.registers, 0);
                 let cache = |value: u16| cache_in_bounds(value, self.cache_sites);
                 let atom = |value: u32| atom_in_bounds(value, self.atoms.len());
                 match instruction.op() {
-                    Op::SuperCallCheck | Op::IteratorCleanupPop
-                        if !instruction.unused_fields_are_zero()
-                            || !instruction.unused_immediate_is_zero() =>
-                    {
-                        return Err(format!(
-                            "function {index} empty control opcode has operands"
-                        ));
-                    }
                     Op::LoadConst
                         if instruction.constant_index() >= self.constants.len()
-                            || !destination(instruction.result_register())
-                            || !instruction.unused_fields_are_zero() =>
+                            || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} constant load is invalid"));
                     }
                     Op::LoadLocal | Op::LoadEnvLocal
                         if instruction.local_slot() >= usize::from(function.locals)
-                            || !destination(instruction.result_register())
-                            || !instruction.unused_fields_are_zero() =>
+                            || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} local access is invalid"));
                     }
@@ -158,10 +151,7 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} capture depth is invalid"));
                     }
-                    Op::LoadCapture
-                        if !destination(instruction.result_register())
-                            || !instruction.unused_fields_are_zero() =>
-                    {
+                    Op::LoadCapture if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} capture load is invalid"));
                     }
                     Op::LoadName | Op::LoadNameTypeof
@@ -252,14 +242,12 @@ impl ResidualProgram {
                     Op::MakeClosure
                         if instruction.closure_function_index() as usize
                             >= self.functions.len()
-                            || !destination(instruction.result_register())
-                            || !instruction.unused_fields_are_zero() =>
+                            || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} closure site is invalid"));
                     }
                     Op::MakeConstArray
                         if !destination(instruction.result_register())
-                            || !instruction.unused_fields_are_zero()
                             || instruction
                                 .constant_index()
                                 .checked_add(instruction.element_count() as usize)
@@ -269,16 +257,11 @@ impl ResidualProgram {
                     }
                     Op::MakeArray
                         if !destination(instruction.result_register())
-                            || !instruction.unused_fields_are_zero()
                             || instruction.array_length() > usize::from(u16::MAX) =>
                     {
                         return Err(format!("function {index} array allocation is invalid"));
                     }
-                    Op::MakeObject
-                        if !destination(instruction.result_register())
-                            || !instruction.unused_fields_are_zero()
-                            || !instruction.unused_immediate_is_zero() =>
-                    {
+                    Op::MakeObject if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} object allocation is invalid"));
                     }
                     Op::GetField
@@ -304,8 +287,7 @@ impl ResidualProgram {
                     Op::DefineField
                         if !register(instruction.register_a())
                             || !register(instruction.register_b())
-                            || !atom(instruction.atom_index())
-                            || !instruction.unused_fields_are_zero() =>
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} field definition is invalid"));
                     }
@@ -321,23 +303,20 @@ impl ResidualProgram {
                     Op::SetThisField
                         if !register(instruction.register_a())
                             || !atom(instruction.atom_index())
-                            || !cache(instruction.cache_site_index())
-                            || !instruction.unused_fields_are_zero() =>
+                            || !cache(instruction.cache_site_index()) =>
                     {
                         return Err(format!("function {index} this-field store is invalid"));
                     }
                     Op::CheckPrivate
                         if !register(instruction.register_a())
-                            || !atom(instruction.atom_index())
-                            || !instruction.unused_fields_are_zero() =>
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} private check is invalid"));
                     }
                     Op::PrivateIn
                         if !destination(instruction.result_register())
                             || !register(instruction.register_b())
-                            || !atom(instruction.atom_index())
-                            || !instruction.unused_fields_are_zero() =>
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} private-in operation is invalid"));
                     }
@@ -380,7 +359,6 @@ impl ResidualProgram {
                     Op::DefineArrayElement
                         if !register(instruction.register_a())
                             || !register(instruction.register_b())
-                            || !instruction.unused_fields_are_zero()
                             || instruction.array_index() == super::ARRAY_INDEX_SENTINEL =>
                     {
                         return Err(format!("function {index} array literal element is invalid"));
@@ -445,9 +423,7 @@ impl ResidualProgram {
                         return Err(format!("function {index} move operand is invalid"));
                     }
                     Op::LoadThis | Op::LoadImportMeta
-                        if !destination(instruction.result_register())
-                            || !instruction.unused_fields_are_zero()
-                            || !instruction.unused_immediate_is_zero() =>
+                        if !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} this/import-meta load is invalid"));
                     }
@@ -459,11 +435,7 @@ impl ResidualProgram {
                             "function {index} cached template-object load is invalid"
                         ));
                     }
-                    Op::ValidateClassHeritage
-                        if !register(instruction.register_a())
-                            || !instruction.unused_fields_are_zero()
-                            || !instruction.unused_immediate_is_zero() =>
-                    {
+                    Op::ValidateClassHeritage if !register(instruction.register_a()) => {
                         return Err(format!(
                             "function {index} class heritage register is invalid"
                         ));
@@ -477,20 +449,14 @@ impl ResidualProgram {
                             "function {index} copy-data-properties operand is invalid"
                         ));
                     }
-                    Op::InitializeThis
-                        if !register(instruction.register_a())
-                            || !instruction.unused_fields_are_zero()
-                            || !instruction.unused_immediate_is_zero() =>
-                    {
+                    Op::InitializeThis if !register(instruction.register_a()) => {
                         return Err(format!(
                             "function {index} initialized this operand is invalid"
                         ));
                     }
                     Op::GetIterator | Op::GetAsyncIterator | Op::SpreadToArray
                         if !register(instruction.result_register())
-                            || !register(instruction.register_b())
-                            || !instruction.unused_fields_are_zero()
-                            || !instruction.unused_immediate_is_zero() =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} iterator register is invalid"));
                     }
@@ -498,17 +464,13 @@ impl ResidualProgram {
                         return Err(format!("function {index} result register is invalid"));
                     }
                     Op::IteratorClose | Op::RequireObjectCoercible | Op::RequireIteratorResult
-                        if !register(instruction.register_b())
-                            || !instruction.unused_fields_are_zero()
-                            || !instruction.unused_immediate_is_zero() =>
+                        if !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} iterator operand is invalid"));
                     }
                     Op::IteratorCleanupPush
                         if !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || !instruction.unused_fields_are_zero()
-                            || !instruction.unused_immediate_is_zero() =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!(
                             "function {index} iterator cleanup register is invalid"
@@ -601,8 +563,7 @@ impl ResidualProgram {
                     Op::SuperConstArrayObject2
                         if !destination(instruction.result_register())
                             || instruction.superinstruction_index()
-                                >= self.superinstructions.len()
-                            || !instruction.unused_fields_are_zero() =>
+                                >= self.superinstructions.len() =>
                     {
                         return Err(format!("function {index} superinstruction is invalid"));
                     }

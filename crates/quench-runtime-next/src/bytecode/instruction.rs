@@ -200,9 +200,9 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
-            pub(crate) fn unused_immediate_is_zero(self) -> bool {
-                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::Unused);
-                self.imm() == 0
+            pub(crate) fn unused_operands_are_zero(self) -> bool {
+                self.unused_fields_are_zero()
+                    && (self.op().immediate_role() != ImmediateRole::Unused || self.imm() == 0)
             }
 
             #[allow(dead_code)]
