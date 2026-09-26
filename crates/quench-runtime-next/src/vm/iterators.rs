@@ -358,7 +358,38 @@ impl<H: Host> Vm<H> {
         let next = self.iterator_native(Native::IteratorProtocolNext, realm);
         self.set_builtin_function_name(next, "next")?;
         self.set_builtin_value_named(prototype, "next", next)?;
+        let return_method = self.iterator_native(Native::IteratorProtocolReturn, realm);
+        self.set_builtin_function_name(return_method, "return")?;
+        self.set_builtin_value_named(prototype, "return", return_method)?;
         Ok(())
+    }
+
+    pub(super) fn iterator_protocol_return(
+        &mut self,
+        p: &ResidualProgram,
+        wrapper: Value,
+    ) -> Result<Value, JsError> {
+        let source = match self.heap.get(wrapper) {
+            Some(Cell::Iterator {
+                source,
+                kind: IteratorKind::Protocol,
+                ..
+            }) => *source,
+            _ => return Err(self.type_error(p, "iterator wrapper receiver is invalid".into())),
+        };
+        let atom = self.intern_atom("return");
+        let method = self.get_property(p, source, atom)?;
+        if method.is_null() || method.is_undefined() {
+            return self.iterator_result(Value::UNDEFINED, true);
+        }
+        if !self.is_function(method) {
+            return Err(self.type_error(p, "iterator return method is not callable".into()));
+        }
+        let result = self.call_value(p, method, source, &[])?;
+        if !self.is_object_like(result) {
+            return Err(self.type_error(p, "iterator return result is not an object".into()));
+        }
+        Ok(result)
     }
 
     pub(super) fn install_iterator_constructor(
@@ -842,9 +873,6 @@ impl<H: Host> Vm<H> {
         }
         let next_atom = self.intern_atom("next");
         let next_method = self.get_property(p, iterator, next_atom)?;
-        if !self.is_function(next_method) {
-            return Err(self.type_error(p, "iterator next method is not callable".into()));
-        }
         self.protocol_iterator(iterator, next_method)
     }
 
@@ -982,10 +1010,10 @@ impl<H: Host> Vm<H> {
             *helper_running = true;
         }
         let result = (|| {
+            self.mark_iterator_done(iterator);
             if !done && let Some(active) = active {
                 self.iterator_close(p, active)?;
             }
-            self.mark_iterator_done(iterator);
             self.iterator_result(Value::UNDEFINED, true)
         })();
         if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
@@ -1002,6 +1030,40 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let next_atom = self.intern_atom("next");
         let next = self.get_property(p, source, next_atom)?;
+        self.iterator_step_with_method(p, source, next, args)
+    }
+
+    fn iterator_helper_step_for(
+        &mut self,
+        p: &ResidualProgram,
+        helper: Value,
+        source: Value,
+        args: &[Value],
+    ) -> Result<Option<Value>, JsError> {
+        let next = match self.heap.get(helper) {
+            Some(Cell::Iterator { next_method, .. }) => *next_method,
+            _ => None,
+        };
+        let next = if let Some(next) = next {
+            next
+        } else {
+            let atom = self.intern_atom("next");
+            let next = self.get_property(p, source, atom)?;
+            if let Some(Cell::Iterator { next_method, .. }) = self.heap.get_mut(helper) {
+                *next_method = Some(next);
+            }
+            next
+        };
+        self.iterator_step_with_method(p, source, next, args)
+    }
+
+    fn iterator_step_with_method(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        next: Value,
+        args: &[Value],
+    ) -> Result<Option<Value>, JsError> {
         if !self.is_function(next) {
             return Err(self.type_error(p, "iterator next method is not callable".into()));
         }
@@ -1043,7 +1105,7 @@ impl<H: Host> Vm<H> {
         index: usize,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(value) = self.iterator_helper_step(p, source, args)? else {
+        let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
             self.mark_iterator_done(iterator);
             return self.iterator_result(Value::UNDEFINED, true);
         };
@@ -1073,7 +1135,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         loop {
-            let Some(value) = self.iterator_helper_step(p, source, args)? else {
+            let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
                 self.mark_iterator_done(iterator);
                 return self.iterator_result(Value::UNDEFINED, true);
             };
@@ -1100,11 +1162,11 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if remaining <= 0.0 {
-            self.iterator_close(p, source)?;
             self.mark_iterator_done(iterator);
+            self.iterator_close(p, source)?;
             return self.iterator_result(Value::UNDEFINED, true);
         }
-        let Some(value) = self.iterator_helper_step(p, source, args)? else {
+        let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
             self.mark_iterator_done(iterator);
             return self.iterator_result(Value::UNDEFINED, true);
         };
@@ -1126,13 +1188,16 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         while remaining > 0.0 {
-            if self.iterator_helper_step(p, source, args)?.is_none() {
+            if self
+                .iterator_helper_step_for(p, iterator, source, args)?
+                .is_none()
+            {
                 self.mark_iterator_done(iterator);
                 return self.iterator_result(Value::UNDEFINED, true);
             }
             remaining -= 1.0;
         }
-        let Some(value) = self.iterator_helper_step(p, source, args)? else {
+        let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
             self.mark_iterator_done(iterator);
             return self.iterator_result(Value::UNDEFINED, true);
         };
@@ -1152,7 +1217,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         loop {
             if let Some(current) = inner.take() {
-                if let Some(value) = self.iterator_helper_step(p, current, &[])? {
+                if let Some(value) = self.iterator_helper_step_for(p, iterator, current, &[])? {
                     self.update_iterator_helper(
                         iterator,
                         IteratorHelper::FlatMap {
@@ -1164,7 +1229,7 @@ impl<H: Host> Vm<H> {
                     return self.iterator_result(value, false);
                 }
             }
-            let Some(value) = self.iterator_helper_step(p, source, args)? else {
+            let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
                 self.mark_iterator_done(iterator);
                 return self.iterator_result(Value::UNDEFINED, true);
             };
@@ -1290,12 +1355,24 @@ impl<H: Host> Vm<H> {
                 (kind, helper)
             }
             Native::IteratorTake | Native::IteratorDrop => {
+                if !self.is_object_like(receiver) {
+                    return Err(
+                        self.type_error(p, "iterator helper receiver is not an object".into())
+                    );
+                }
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let count = self.to_number(p, value)?;
-                let count = if count.is_nan() { 0.0 } else { count.trunc() };
-                if count < 0.0 {
+                let count = match self.to_number(p, value) {
+                    Ok(count) => count,
+                    Err(error) => {
+                        let _ = self.iterator_close(p, receiver);
+                        return Err(error);
+                    }
+                };
+                if count.is_nan() || count.trunc() < 0.0 {
+                    let _ = self.iterator_close(p, receiver);
                     return Err(self.range_error(p, "iterator limit must not be negative".into()));
                 }
+                let count = count.trunc();
                 let helper = if native == Native::IteratorTake {
                     IteratorHelper::Take { remaining: count }
                 } else {

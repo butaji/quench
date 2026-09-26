@@ -300,7 +300,9 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::IteratorFind
         | Native::IteratorSome => 1.0,
         Native::IteratorToArray => 0.0,
-        Native::IteratorDispose | Native::IteratorProtocolNext => 0.0,
+        Native::IteratorDispose | Native::IteratorProtocolNext | Native::IteratorProtocolReturn => {
+            0.0
+        }
         Native::IteratorHelperNext | Native::IteratorHelperReturn => 0.0,
         Native::IteratorPrototypeConstructorGetter | Native::IteratorPrototypeToStringTagGetter => {
             0.0
