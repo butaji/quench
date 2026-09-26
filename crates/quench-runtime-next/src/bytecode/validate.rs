@@ -268,13 +268,14 @@ impl ResidualProgram {
                         return Err(format!("function {index} this-field store is invalid"));
                     }
                     Op::CheckPrivate
-                        if !register(instruction.a()) || !atom(instruction.atom_index()) =>
+                        if !register(instruction.register_a())
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} private check is invalid"));
                     }
                     Op::PrivateIn
-                        if !destination(instruction.a())
-                            || !register(instruction.b())
+                        if !destination(instruction.result_register())
+                            || !register(instruction.register_b())
                             || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} private-in operation is invalid"));
