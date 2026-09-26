@@ -129,7 +129,7 @@ fn uses(
         Op::GetIndex => {
             operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
         }
-        Op::ToPropertyKey | Op::ToNumeric => bit(instruction.b()),
+        Op::ToPropertyKey | Op::ToNumeric => bit(instruction.register_b()),
         Op::CopyDataProperties => {
             bit(instruction.register_a())
                 | bit(instruction.register_b())

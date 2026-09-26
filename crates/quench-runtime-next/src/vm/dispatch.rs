@@ -487,12 +487,12 @@ impl<H: Host> Vm<H> {
                 self.store_resolved_name(p, object, atom, self.read(f, i.a()), i.c() != 0)?;
             }
             Op::ToPropertyKey => {
-                let value = self.to_property_key(p, self.read(f, i.b()))?;
-                self.write(f, i.a(), value);
+                let value = self.to_property_key(p, self.read(f, i.register_b()))?;
+                self.write(f, i.result_register(), value);
             }
             Op::ToNumeric => {
-                let value = self.to_numeric(p, self.read(f, i.b()))?;
-                self.write(f, i.a(), value);
+                let value = self.to_numeric(p, self.read(f, i.register_b()))?;
+                self.write(f, i.result_register(), value);
             }
             Op::CopyDataProperties => self.copy_data_properties(
                 p,

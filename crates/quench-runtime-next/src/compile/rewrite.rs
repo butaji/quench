@@ -361,7 +361,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
                 || instruction.register_b() == register
                 || instruction.register_c() == register
         }
-        Op::ToPropertyKey | Op::ToNumeric => instruction.b() == register,
+        Op::ToPropertyKey | Op::ToNumeric => instruction.register_b() == register,
         Op::SuperConstArrayObject2 => true,
         Op::SetField | Op::DefineField => {
             instruction.register_a() == register || instruction.register_b() == register
