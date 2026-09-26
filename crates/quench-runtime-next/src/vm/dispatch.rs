@@ -325,11 +325,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.closure(p, i.closure_function_index(), env)?
                 };
-                self.write(f, i.a(), v);
+                self.write(f, i.result_register(), v);
             }
             Op::MakeObject => {
                 let v = self.object();
-                self.write(f, i.a(), v);
+                self.write(f, i.result_register(), v);
             }
             Op::MakeObject2 => {
                 let v = self.object_pair(
@@ -353,7 +353,7 @@ impl<H: Host> Vm<H> {
                     object: Self::empty_object(self.array_proto),
                     elements: Rc::new(vec![Value::DELETED; i.array_length()]),
                 });
-                self.write(f, i.a(), v);
+                self.write(f, i.result_register(), v);
             }
             Op::MakeConstArray => {
                 let start = i.constant_index();
