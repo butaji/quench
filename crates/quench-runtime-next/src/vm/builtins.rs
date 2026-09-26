@@ -281,6 +281,7 @@ const NATIVES: &[Native] = &[
     Native::RegExpEscape,
     Native::RegExpToString,
     Native::RegExpSymbolMatch,
+    Native::RegExpSymbolSearch,
     Native::RegExpSymbolReplace,
     Native::RegExpSymbolMatchAll,
     Native::RegExpSpecies,
