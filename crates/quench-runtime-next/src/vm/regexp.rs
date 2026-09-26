@@ -14,6 +14,14 @@ impl CompiledRegexp {
         self.0.find_from(input, start).next()
     }
 
+    pub(super) fn find_from_utf16(
+        &self,
+        input: &[u16],
+        start: usize,
+    ) -> Option<quench_regexp::Match> {
+        self.0.find_from_utf16(input, start).next()
+    }
+
     pub(super) fn find_iter<'a>(
         &'a self,
         input: &'a str,
@@ -39,27 +47,6 @@ impl CompiledRegexp {
             Some(matched)
         })
     }
-}
-
-fn utf16_to_byte_index(text: &str, target: usize) -> usize {
-    if target == 0 {
-        return 0;
-    }
-    let mut units = 0;
-    for (byte, character) in text.char_indices() {
-        if units >= target {
-            return byte;
-        }
-        units += character.len_utf16();
-        if units >= target {
-            return byte + character.len_utf8();
-        }
-    }
-    text.len()
-}
-
-fn utf16_index(text: &str, byte_index: usize) -> usize {
-    text[..byte_index].encode_utf16().count()
 }
 
 impl<H: Host> Vm<H> {
@@ -223,6 +210,18 @@ impl<H: Host> Vm<H> {
         let input = self.heap.alloc(Cell::String(input.into()));
         let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         self.string_replace_native(p, input, &[receiver, replacement], false)
+    }
+
+    fn regexp_input_string(
+        &mut self,
+        program: &ResidualProgram,
+        value: Value,
+    ) -> Result<JsString, JsError> {
+        let primitive = self.to_primitive(program, value, "string")?;
+        if let Some(Cell::String(string)) = self.heap.get(primitive) {
+            return Ok(string.clone());
+        }
+        self.to_string(program, primitive).map(JsString::from)
     }
 
     pub(super) fn regexp_symbol_match(
@@ -459,7 +458,8 @@ impl<H: Host> Vm<H> {
             }
         };
         let regex = Self::compile_regexp(&source, &flags)?;
-        let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input =
+            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let stateful = flags.contains('g') || flags.contains('y');
         let sticky = flags.contains('y');
         let last_index_atom = self.intern_atom("lastIndex");
@@ -467,14 +467,14 @@ impl<H: Host> Vm<H> {
             let value = self.get_property(p, this, last_index_atom)?;
             let number = self.to_number(p, value)?;
             if number.is_finite() && number > 0.0 {
-                utf16_to_byte_index(&input, number.floor() as usize)
+                number.floor() as usize
             } else {
                 0
             }
         } else {
             0
         };
-        let matched = regex.find_from(&input, start);
+        let matched = regex.find_from_utf16(input.units(), start);
         let matched = matched.filter(|matched| !sticky || matched.range.start == start);
         let Some(matched) = matched else {
             if stateful {
@@ -494,7 +494,7 @@ impl<H: Host> Vm<H> {
             .map(|range| {
                 range.map_or(Value::UNDEFINED, |range| {
                     self.heap
-                        .alloc(Cell::String(input[range].to_owned().into()))
+                        .alloc(Cell::String(JsString::from_units(&input.units()[range])))
                 })
             })
             .collect::<Vec<_>>();
@@ -502,14 +502,14 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),
         });
-        let index = utf16_index(&input, matched.range.start);
+        let index = matched.range.start;
         if stateful {
-            let end = utf16_index(&input, matched.range.end);
+            let end = matched.range.end;
             self.set_property(this, last_index_atom, Value::number(end as f64))?;
         }
         let index_atom = self.intern_atom("index");
         self.set_property(result, index_atom, Value::number(index as f64))?;
-        let input_value = self.heap.alloc(Cell::String(input.into()));
+        let input_value = self.heap.alloc(Cell::String(input));
         let input_atom = self.intern_atom("input");
         self.set_property(result, input_atom, input_value)?;
         Ok(result)
