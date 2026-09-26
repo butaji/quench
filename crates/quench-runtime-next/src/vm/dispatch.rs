@@ -232,10 +232,16 @@ impl<H: Host> Vm<H> {
                 self.mapped_argument_store(p, f, slot, value);
             }
             Op::LoadCapture => {
-                let v = self.capture(p, f, i.imm())?;
+                let v = self.capture(p, f, i.capture_depth(), i.capture_slot())?;
                 self.write(f, i.a(), v);
             }
-            Op::StoreCapture => self.store_capture(p, f, i.imm(), self.read(f, i.a()))?,
+            Op::StoreCapture => self.store_capture(
+                p,
+                f,
+                i.capture_depth(),
+                i.capture_slot(),
+                self.read(f, i.a()),
+            )?,
             Op::LoadName => {
                 let v = self.load_name(p, i.atom_index(), i.c())?;
                 self.write(f, i.a(), v);
