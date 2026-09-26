@@ -326,6 +326,15 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::ResolveName | Op::DeleteName => false,
         Op::LoadResolvedName => instruction.b() == register,
         Op::LoadImportMeta => false,
+        Op::GetIterator
+        | Op::GetAsyncIterator
+        | Op::IteratorClose
+        | Op::SpreadToArray
+        | Op::RequireObjectCoercible
+        | Op::RequireIteratorResult => instruction.register_b() == register,
+        Op::IteratorCleanupPush => {
+            instruction.register_a() == register || instruction.register_b() == register
+        }
         Op::GetField => match instruction.field_lookup() {
             crate::bytecode::FieldLookup::Site(index) => {
                 fields
