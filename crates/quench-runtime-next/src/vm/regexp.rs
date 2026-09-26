@@ -850,14 +850,18 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(receiver) {
             return Err(self.type_error(p, "RegExp.prototype[@@match] called on non-object".into()));
         }
-        let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input = self.regexp_input_string(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+        )?;
+        let input_value = self.heap.alloc(Cell::String(input.clone()));
         let flags_atom = self.intern_atom("flags");
         let flags_value = self.get_property(p, receiver, flags_atom)?;
         let flags = self.to_string(p, flags_value)?;
         let global = self.intern_atom("global");
         let global_value = self.get_property(p, receiver, global)?;
         if !self.truthy(global_value) {
-            return self.regexp_exec(p, receiver, &input);
+            return self.regexp_exec_value(p, receiver, input_value);
         }
         let unicode = self.intern_atom("unicode");
         let unicode_sets = self.intern_atom("unicodeSets");
@@ -872,7 +876,7 @@ impl<H: Host> Vm<H> {
         self.set_property(receiver, last_index, Value::number(0.0))?;
         let mut matches = Vec::new();
         loop {
-            let result = self.regexp_exec(p, receiver, &input)?;
+            let result = self.regexp_exec_value(p, receiver, input_value)?;
             if result.is_null() {
                 break;
             }
@@ -881,9 +885,9 @@ impl<H: Host> Vm<H> {
             }
             let zero = self.intern_atom("0");
             let matched_value = self.get_property(p, result, zero)?;
-            let matched = self.to_string(p, matched_value)?;
-            let empty = matched.is_empty();
-            matches.push(self.heap.alloc(Cell::String(matched.into())));
+            let matched = self.coerce_js_string(p, matched_value)?;
+            let empty = matched.units().is_empty();
+            matches.push(self.heap.alloc(Cell::String(matched)));
             if empty {
                 let current_value = self.get_property(p, receiver, last_index)?;
                 let current = self.to_number(p, current_value)?;
@@ -892,7 +896,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     current.trunc().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize
                 };
-                let next = advance_string_index(&input, current, full_unicode);
+                let next = advance_string_index_units(input.units(), current, full_unicode);
                 self.set_property(receiver, last_index, Value::number(next as f64))?;
             }
         }
@@ -1357,22 +1361,6 @@ fn escape_regexp_source(source: &JsString) -> JsString {
         };
     }
     JsString::from_units(&escaped)
-}
-
-fn advance_string_index(input: &str, index: usize, unicode: bool) -> usize {
-    let units = input.encode_utf16().collect::<Vec<_>>();
-    if unicode
-        && units.get(index).is_some_and(|unit| {
-            (HIGH_SURROGATE_START..=HIGH_SURROGATE_END).contains(unit)
-                && units
-                    .get(index + 1)
-                    .is_some_and(|next| (LOW_SURROGATE_START..=LOW_SURROGATE_END).contains(next))
-        })
-    {
-        index + 2
-    } else {
-        index + 1
-    }
 }
 
 pub(super) fn advance_string_index_units(input: &[u16], index: usize, unicode: bool) -> usize {

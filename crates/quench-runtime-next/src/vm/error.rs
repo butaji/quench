@@ -1267,17 +1267,6 @@ impl<H: Host> Vm<H> {
         let array_buffer_name = self.heap.alloc(Cell::String("ArrayBuffer".into()));
         self.set_builtin_value_named(array_buffer, "name", array_buffer_name)?;
         self.set_named(program, global, "ArrayBuffer", array_buffer)?;
-        for (name, native) in [
-            ("Number", Native::Number),
-            ("String", Native::String),
-            ("Boolean", Native::Boolean),
-        ] {
-            let constructor = self.native_with_realm(native, global, global);
-            let prototype = self.object();
-            self.set_builtin_value_named(constructor, "prototype", prototype)?;
-            self.set_builtin_value_named(prototype, "constructor", constructor)?;
-            self.set_builtin_value_named(global, name, constructor)?;
-        }
         let realm_error_prototype = self.object();
         let realm_error_constructor = self.native_with_realm(Native::Error, global, global);
         self.set_builtin_value_named(realm_error_constructor, "prototype", realm_error_prototype)?;
