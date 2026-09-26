@@ -126,6 +126,19 @@ impl ResidualProgram {
                 let cache = |value: u16| cache_in_bounds(value, self.cache_sites);
                 let atom = |value: u32| atom_in_bounds(value, self.atoms.len());
                 match instruction.op() {
+                    Op::SuperCallCheck | Op::IteratorCleanupPop
+                        if !instruction
+                            .unused_field_is_zero(crate::bytecode::InstructionField::A)
+                            || !instruction
+                                .unused_field_is_zero(crate::bytecode::InstructionField::B)
+                            || !instruction
+                                .unused_field_is_zero(crate::bytecode::InstructionField::C)
+                            || !instruction.unused_immediate_is_zero() =>
+                    {
+                        return Err(format!(
+                            "function {index} empty control opcode has operands"
+                        ));
+                    }
                     Op::LoadConst
                         if instruction.constant_index() >= self.constants.len()
                             || !destination(instruction.result_register()) =>

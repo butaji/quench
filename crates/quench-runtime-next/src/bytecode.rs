@@ -92,6 +92,7 @@ pub(crate) enum InstructionField {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImmediateRole {
     Undeclared,
+    Unused,
     ConstantIndex,
     ClosureFunctionIndex,
     ArrayLength,
@@ -376,9 +377,9 @@ opcodes!(
     SpreadToArray => CALL_EFFECT, @ Register, @ fields(Undeclared, Register, Undeclared),
     RequireObjectCoercible => READ_THROW, @ NoResult, @ fields(Undeclared, Register, Undeclared),
     RequireIteratorResult => READ_THROW, @ NoResult, @ fields(Undeclared, Register, Undeclared),
-    SuperCallCheck => READ_THROW, @ NoResult,
+    SuperCallCheck => READ_THROW; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
     IteratorCleanupPush => Effect::CONTROL, @ NoResult, @ fields(Register, Register, Undeclared),
-    IteratorCleanupPop => Effect::CONTROL, @ NoResult,
+    IteratorCleanupPop => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
     SetFunctionName => Effect::WRITES_HEAP; meaning AtomIndex, @ NoResult, @ fields(Register, Undeclared, Undeclared),
     SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning FunctionNamePrefix, @ NoResult, @ fields(Register, Register, Undeclared),
     InitializeTdz => Effect::PURE; meaning LocalSlot,
