@@ -313,6 +313,7 @@ pub struct Vm<H> {
     finalization_registry_proto: Value,
     iterator_proto: Value,
     string_iterator_proto: Value,
+    regexp_string_iterator_proto: Value,
     generator_proto: Value,
     iterator_helper_proto: Value,
     wrap_for_valid_iterator_proto: Value,

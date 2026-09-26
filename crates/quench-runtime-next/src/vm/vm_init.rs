@@ -43,6 +43,7 @@ impl<H: Host> Vm<H> {
             finalization_registry_proto: Value::NULL,
             iterator_proto: Value::NULL,
             string_iterator_proto: Value::NULL,
+            regexp_string_iterator_proto: Value::NULL,
             generator_proto: Value::NULL,
             iterator_helper_proto: Value::NULL,
             wrap_for_valid_iterator_proto: Value::NULL,

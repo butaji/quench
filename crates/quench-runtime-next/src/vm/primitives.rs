@@ -274,6 +274,7 @@ impl<H: Host> Vm<H> {
             Native::StringMatch | Native::StringSearch => {
                 self.string_match_or_search_native(p, native, this, args)
             }
+            Native::StringMatchAll => self.string_match_all_native(p, this, args),
             Native::StringAt
             | Native::StringCodePointAt
             | Native::StringToUpperCase

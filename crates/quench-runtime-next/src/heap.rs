@@ -420,7 +420,9 @@ impl Heap {
                         IteratorHelper::Map { callback, .. }
                         | IteratorHelper::Filter { callback, .. }
                         | IteratorHelper::FlatMap { callback, .. } => work.push(*callback),
-                        IteratorHelper::Take { .. } | IteratorHelper::Drop { .. } => {}
+                        IteratorHelper::Take { .. }
+                        | IteratorHelper::Drop { .. }
+                        | IteratorHelper::RegExpStringMatchAll { .. } => {}
                         IteratorHelper::Concat {
                             items,
                             methods,
@@ -454,7 +456,8 @@ impl Heap {
                         | IteratorHelper::Filter { .. }
                         | IteratorHelper::Take { .. }
                         | IteratorHelper::Drop { .. }
-                        | IteratorHelper::Concat { .. } => {}
+                        | IteratorHelper::Concat { .. }
+                        | IteratorHelper::RegExpStringMatchAll { .. } => {}
                     }
                 }
                 if let Some(record) = generator {

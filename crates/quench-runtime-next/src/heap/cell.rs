@@ -258,7 +258,8 @@ pub(crate) enum Native {
     DateToLocaleString, DateToLocaleDateString, DateToLocaleTimeString, DateToISOString,
     DateToJSON, DateToPrimitive, DateToTemporalInstant, DateParse, DateUTC,
     Error, ErrorToString, ErrorIsError, ErrorStackGetter, ErrorStackSetter, AggregateError, SuppressedError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
-    RegExp, RegExpEscape, RegExpToString, RegExpSymbolMatch, RegExpSymbolReplace, RegExpSpecies,
+    RegExp, RegExpEscape, RegExpToString, RegExpSymbolMatch, RegExpSymbolReplace,
+    RegExpSymbolMatchAll, RegExpSpecies,
     RegExpExec,
     RegExpTest,
     RegExpGlobal,
@@ -286,7 +287,7 @@ pub(crate) enum Native {
     StringIndexOf, StringLastIndexOf,
     StringToString, StringValueOf, StringLocaleCompare, StringToLocaleLowerCase, StringToLocaleUpperCase,
     StringReplace, StringSplit, StringTrim, StringTrimStart, StringTrimEnd,
-    StringRepeat, StringPadStart, StringPadEnd, StringMatch, StringSearch,
+    StringRepeat, StringPadStart, StringPadEnd, StringMatch, StringMatchAll, StringSearch,
     StringReplaceAll, StringAt, StringCodePointAt, StringToUpperCase, StringToLowerCase, StringConcat, StringNormalize, StringValues,
     EncodeUri, EncodeUriComponent,
     DecodeUri, DecodeUriComponent,
@@ -549,6 +550,7 @@ pub(crate) enum IteratorKind {
     SetValues,
     SetEntries,
     Protocol,
+    RegExpStringMatchAll,
     Map,
     Filter,
     Take,
@@ -562,6 +564,11 @@ pub(crate) enum IteratorKind {
 }
 #[derive(Clone, Debug)]
 pub(crate) enum IteratorHelper {
+    RegExpStringMatchAll {
+        input: JsString,
+        global: bool,
+        unicode: bool,
+    },
     Map {
         callback: Value,
         index: usize,

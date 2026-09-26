@@ -11,6 +11,7 @@ const STRING_METHODS: &[(&str, Native)] = &[
     ("lastIndexOf", Native::StringLastIndexOf),
     ("localeCompare", Native::StringLocaleCompare),
     ("match", Native::StringMatch),
+    ("matchAll", Native::StringMatchAll),
     ("normalize", Native::StringNormalize),
     ("padEnd", Native::StringPadEnd),
     ("padStart", Native::StringPadStart),
@@ -289,6 +290,57 @@ impl<H: Host> Vm<H> {
         let input_value = self.heap.alloc(Cell::String(receiver));
         self.set_property(result, input, input_value)?;
         Ok(result)
+    }
+
+    pub(super) fn string_match_all_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if this.is_null() || this.is_undefined() {
+            return Err(self.type_error(
+                p,
+                "String.prototype.matchAll called on nullish value".into(),
+            ));
+        }
+        let input = self.regexp_input_string(p, this)?;
+        let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if self.regexp_is_regexp(p, pattern)? {
+            let flags_atom = self.intern_atom("flags");
+            let flags_value = self.get_property(p, pattern, flags_atom)?;
+            let flags = self.to_string(p, flags_value)?;
+            if !flags.contains('g') {
+                return Err(self.type_error(
+                    p,
+                    "String.prototype.matchAll requires a global RegExp".into(),
+                ));
+            }
+        }
+        let symbol = self
+            .well_known_symbols
+            .get("matchAll")
+            .copied()
+            .ok_or_else(|| self.type_error(p, "RegExp matchAll symbol is unavailable".into()))?;
+        let method = self.get_index(p, pattern, symbol)?;
+        let method = if method.is_undefined() || method.is_null() {
+            let regexp_atom = self.intern_atom("RegExp");
+            let constructor = self.get_property(p, self.realm.globals, regexp_atom)?;
+            let pattern_string = self.heap.alloc(Cell::String(input.clone()));
+            let matcher = self.construct_value(p, constructor, &[pattern, Value::UNDEFINED])?;
+            let method = self.get_index(p, matcher, symbol)?;
+            if !self.is_function(method) {
+                return Err(self.type_error(p, "RegExp @@matchAll is not callable".into()));
+            }
+            return self.call_value(p, method, matcher, &[pattern_string]);
+        } else {
+            method
+        };
+        if !self.is_function(method) {
+            return Err(self.type_error(p, "@@matchAll is not callable".into()));
+        }
+        let input = self.heap.alloc(Cell::String(input));
+        self.call_value(p, method, pattern, &[input])
     }
 
     pub(super) fn string_split_regexp_native(
