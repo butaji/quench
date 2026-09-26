@@ -310,6 +310,7 @@ pub struct Vm<H> {
     weak_ref_proto: Value,
     finalization_registry_proto: Value,
     iterator_proto: Value,
+    string_iterator_proto: Value,
     generator_proto: Value,
     iterator_helper_proto: Value,
     wrap_for_valid_iterator_proto: Value,
