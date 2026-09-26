@@ -899,57 +899,12 @@ impl<H: Host> Vm<H> {
         let object_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        self.install_object_prototype_methods(program, object_prototype, Some(global))?;
         self.object_data_mut(global)
             .expect("realm global is an object")
             .proto = object_prototype;
         self.install_number_for_realm(program, global, object_prototype)?;
-        let object_constructor = self.native_with_realm(Native::Object, global, global);
-        self.set_builtin_function_name(object_constructor, "Object")?;
-        self.set_builtin_value_named(object_constructor, "prototype", object_prototype)?;
-        self.set_builtin_value_named(object_prototype, "constructor", object_constructor)?;
         self.install_function_prototype_for_realm(global, object_prototype, function)?;
-        let object_name = self.intern_atom("Object");
-        self.set_property(global, object_name, object_constructor)?;
-        self.set_property_attributes(
-            global,
-            PropertyKey::string(object_name),
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        for (name, native) in [
-            ("defineProperty", Native::ObjectDefineProperty),
-            ("defineProperties", Native::ObjectDefineProperties),
-            ("setPrototypeOf", Native::ObjectSetPrototypeOf),
-            ("getPrototypeOf", Native::ObjectGetPrototypeOf),
-            ("create", Native::ObjectCreate),
-            ("keys", Native::ObjectKeys),
-            ("values", Native::ObjectValues),
-            ("entries", Native::ObjectEntries),
-            ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
-            ("getOwnPropertySymbols", Native::ObjectGetOwnPropertySymbols),
-            (
-                "getOwnPropertyDescriptor",
-                Native::ObjectGetOwnPropertyDescriptor,
-            ),
-            (
-                "getOwnPropertyDescriptors",
-                Native::ObjectGetOwnPropertyDescriptors,
-            ),
-            ("fromEntries", Native::ObjectFromEntries),
-            ("assign", Native::ObjectAssign),
-            ("is", Native::ObjectIs),
-            ("hasOwn", Native::ObjectHasOwn),
-            ("preventExtensions", Native::ObjectPreventExtensions),
-            ("isExtensible", Native::ObjectIsExtensible),
-        ] {
-            self.set_builtin_named(program, object_constructor, name, native)?;
-        }
         let set = self.native_with_realm(Native::Set, global, global);
         self.install_set_prototype(program, set, object_prototype)?;
         self.install_set_species(set)?;
@@ -1150,21 +1105,63 @@ impl<H: Host> Vm<H> {
             Some(global),
         )?;
         let object = self.native_with_realm(Native::Object, global, global);
+        self.set_builtin_function_name(object, "Object")?;
         self.set_named(program, object, "prototype", object_prototype)?;
         self.set_named(program, object_prototype, "constructor", object)?;
+        self.set_property_attributes(
+            object,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         for (name, native) in [
             ("defineProperty", Native::ObjectDefineProperty),
+            ("defineProperties", Native::ObjectDefineProperties),
             ("setPrototypeOf", Native::ObjectSetPrototypeOf),
+            ("getPrototypeOf", Native::ObjectGetPrototypeOf),
             ("create", Native::ObjectCreate),
+            ("keys", Native::ObjectKeys),
+            ("values", Native::ObjectValues),
+            ("entries", Native::ObjectEntries),
+            ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
+            ("getOwnPropertySymbols", Native::ObjectGetOwnPropertySymbols),
             (
                 "getOwnPropertyDescriptor",
                 Native::ObjectGetOwnPropertyDescriptor,
             ),
+            (
+                "getOwnPropertyDescriptors",
+                Native::ObjectGetOwnPropertyDescriptors,
+            ),
+            ("fromEntries", Native::ObjectFromEntries),
+            ("assign", Native::ObjectAssign),
+            ("is", Native::ObjectIs),
+            ("hasOwn", Native::ObjectHasOwn),
+            ("preventExtensions", Native::ObjectPreventExtensions),
+            ("isExtensible", Native::ObjectIsExtensible),
         ] {
-            let method = self.native_with_realm(native, global, global);
-            self.set_named(program, object, name, method)?;
+            self.set_realm_builtin_named(program, object, name, native, Some(global))?;
         }
-        self.set_named(program, global, "Object", object)?;
+        self.set_builtin_value_named(global, "Object", object)?;
+        let object_name = self.intern_atom("Object");
+        self.set_property_attributes(
+            global,
+            PropertyKey::string(object_name),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         let array = self.native_with_realm(Native::Array, global, global);
         let array_prototype = self
             .heap
@@ -1254,7 +1251,6 @@ impl<H: Host> Vm<H> {
             ("Number", Native::Number),
             ("String", Native::String),
             ("Boolean", Native::Boolean),
-            ("Symbol", Native::Symbol),
         ] {
             let constructor = self.native_with_realm(native, global, global);
             let prototype = self.object();
@@ -1353,6 +1349,7 @@ impl<H: Host> Vm<H> {
             "Int16Array",
             "Int32Array",
             "SharedArrayBuffer",
+            "Symbol",
             "Uint8Array",
             "Uint8ClampedArray",
             "Uint16Array",
@@ -1377,6 +1374,7 @@ impl<H: Host> Vm<H> {
                 continue;
             };
             let value = match self.heap.get(value) {
+                _ if *name == "Symbol" => value,
                 Some(Cell::Function {
                     kind: FunctionKind::Native(native),
                     ..
