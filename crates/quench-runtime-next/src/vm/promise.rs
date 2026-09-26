@@ -318,6 +318,24 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::Object => 1.0,
         Native::ShadowRealmImportValueFulfilled => 1.0,
         Native::String => 1.0,
+        Native::TemporalDuration => 0.0,
+        Native::TemporalDurationFrom => 1.0,
+        Native::TemporalDurationCompare => 2.0,
+        Native::TemporalDurationToString => 1.0,
+        Native::TemporalDurationToJSON
+        | Native::TemporalDurationValueOf
+        | Native::TemporalDurationYearsGetter
+        | Native::TemporalDurationMonthsGetter
+        | Native::TemporalDurationWeeksGetter
+        | Native::TemporalDurationDaysGetter
+        | Native::TemporalDurationHoursGetter
+        | Native::TemporalDurationMinutesGetter
+        | Native::TemporalDurationSecondsGetter
+        | Native::TemporalDurationMillisecondsGetter
+        | Native::TemporalDurationMicrosecondsGetter
+        | Native::TemporalDurationNanosecondsGetter
+        | Native::TemporalDurationSignGetter
+        | Native::TemporalDurationBlankGetter => 0.0,
         Native::Symbol => 0.0,
         Native::SymbolFor | Native::SymbolKeyFor => 1.0,
         Native::SymbolToString | Native::SymbolValueOf => 0.0,

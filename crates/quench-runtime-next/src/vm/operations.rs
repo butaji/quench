@@ -496,6 +496,26 @@ impl<H: Host> Vm<H> {
                 self.call_symbol_value_native(p, native, this)
             }
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
+            Native::TemporalDuration
+            | Native::TemporalDurationFrom
+            | Native::TemporalDurationCompare
+            | Native::TemporalDurationToString
+            | Native::TemporalDurationToJSON
+            | Native::TemporalDurationValueOf
+            | Native::TemporalDurationYearsGetter
+            | Native::TemporalDurationMonthsGetter
+            | Native::TemporalDurationWeeksGetter
+            | Native::TemporalDurationDaysGetter
+            | Native::TemporalDurationHoursGetter
+            | Native::TemporalDurationMinutesGetter
+            | Native::TemporalDurationSecondsGetter
+            | Native::TemporalDurationMillisecondsGetter
+            | Native::TemporalDurationMicrosecondsGetter
+            | Native::TemporalDurationNanosecondsGetter
+            | Native::TemporalDurationSignGetter
+            | Native::TemporalDurationBlankGetter => {
+                self.temporal_duration_native(p, native, this, args)
+            }
             Native::Object
             | Native::Array
             | Native::Map

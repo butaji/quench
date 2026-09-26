@@ -285,6 +285,14 @@ const NATIVES: &[Native] = &[
     Native::DateToLocaleDateString, Native::DateToLocaleTimeString,
     Native::DateToISOString, Native::DateToJSON, Native::DateToPrimitive,
     Native::DateToTemporalInstant, Native::DateParse, Native::DateUTC,
+    Native::TemporalDuration, Native::TemporalDurationFrom, Native::TemporalDurationCompare,
+    Native::TemporalDurationToString, Native::TemporalDurationToJSON, Native::TemporalDurationValueOf,
+    Native::TemporalDurationYearsGetter, Native::TemporalDurationMonthsGetter,
+    Native::TemporalDurationWeeksGetter, Native::TemporalDurationDaysGetter,
+    Native::TemporalDurationHoursGetter, Native::TemporalDurationMinutesGetter,
+    Native::TemporalDurationSecondsGetter, Native::TemporalDurationMillisecondsGetter,
+    Native::TemporalDurationMicrosecondsGetter, Native::TemporalDurationNanosecondsGetter,
+    Native::TemporalDurationSignGetter, Native::TemporalDurationBlankGetter,
     Native::Error, Native::ErrorToString, Native::ErrorIsError, Native::ErrorStackGetter, Native::ErrorStackSetter,
     Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
@@ -621,7 +629,8 @@ impl<H: Host> Vm<H> {
         self.install_json(program)?;
         self.install_reflect(program)?;
         self.install_math(program)?;
-        self.install_promise(program)
+        self.install_promise(program)?;
+        self.install_temporal(program)
     }
     fn install_prototypes(&mut self) {
         self.object_proto = self

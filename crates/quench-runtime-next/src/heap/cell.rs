@@ -303,6 +303,14 @@ pub(crate) enum Native {
     DecodeUri, DecodeUriComponent,
     StringFromCharCode, StringFromCodePoint, StringRaw, StringIsWellFormed,
     StringToWellFormed, ParseInt,
+    TemporalDuration, TemporalDurationFrom, TemporalDurationCompare,
+    TemporalDurationToString, TemporalDurationToJSON, TemporalDurationValueOf,
+    TemporalDurationYearsGetter, TemporalDurationMonthsGetter,
+    TemporalDurationWeeksGetter, TemporalDurationDaysGetter,
+    TemporalDurationHoursGetter, TemporalDurationMinutesGetter,
+    TemporalDurationSecondsGetter, TemporalDurationMillisecondsGetter,
+    TemporalDurationMicrosecondsGetter, TemporalDurationNanosecondsGetter,
+    TemporalDurationSignGetter, TemporalDurationBlankGetter,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
     MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, MathAcos, MathAsin, MathAtan, MathCos, MathExp, MathSin, MathTan, MathAtan2, NumberString, NumberToLocaleString, Number, NumberValueOf,
     MathAcosh, MathAsinh, MathAtanh, MathCbrt, MathCosh, MathExpm1, MathFround,
@@ -804,4 +812,8 @@ pub(crate) enum Cell {
         flags: String,
     },
     Error(String),
+    TemporalDuration {
+        object: Box<Object>,
+        fields: [f64; 10],
+    },
 }

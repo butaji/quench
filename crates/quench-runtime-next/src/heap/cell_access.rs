@@ -27,6 +27,7 @@ impl Cell {
             Self::RegExp { object, .. } => Some(object),
             Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
+            Self::TemporalDuration { object, .. } => Some(object),
             _ => None,
         }
     }
@@ -50,6 +51,7 @@ impl Cell {
             Self::RegExp { object, .. } => Some(object),
             Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
+            Self::TemporalDuration { object, .. } => Some(object),
             _ => None,
         }
     }
