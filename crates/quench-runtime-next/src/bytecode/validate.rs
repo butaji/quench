@@ -281,6 +281,12 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} private-in operation is invalid"));
                     }
+                    Op::ToPropertyKey | Op::ToNumeric
+                        if !destination(instruction.result_register())
+                            || !register(instruction.register_b()) =>
+                    {
+                        return Err(format!("function {index} conversion operand is invalid"));
+                    }
                     Op::GetIndex
                         if !register(instruction.result_register())
                             || !operand_in_bounds(
