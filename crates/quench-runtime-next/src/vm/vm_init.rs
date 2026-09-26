@@ -40,6 +40,7 @@ impl<H: Host> Vm<H> {
             weak_ref_proto: Value::NULL,
             finalization_registry_proto: Value::NULL,
             iterator_proto: Value::NULL,
+            string_iterator_proto: Value::NULL,
             generator_proto: Value::NULL,
             iterator_helper_proto: Value::NULL,
             wrap_for_valid_iterator_proto: Value::NULL,
