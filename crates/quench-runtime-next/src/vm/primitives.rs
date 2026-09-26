@@ -1,5 +1,21 @@
 use super::*;
 
+fn is_ecma_whitespace(unit: u16) -> bool {
+    matches!(
+        unit,
+        0x0009..=0x000D
+            | 0x0020
+            | 0x00A0
+            | 0x1680
+            | 0x2000..=0x200A
+            | 0x2028..=0x2029
+            | 0x202F
+            | 0x205F
+            | 0x3000
+            | 0xFEFF
+    )
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
         match self.heap.get(callee) {
@@ -37,6 +53,52 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
+            Native::StringRaw => self.string_raw(p, args),
+            Native::StringIsWellFormed => {
+                let units = self.string_units(this)?;
+                let mut index = 0;
+                while index < units.len() {
+                    let unit = units[index];
+                    if (0xD800..=0xDBFF).contains(&unit) {
+                        if !units
+                            .get(index + 1)
+                            .is_some_and(|low| (0xDC00..=0xDFFF).contains(low))
+                        {
+                            return Ok(Value::FALSE);
+                        }
+                        index += 1;
+                    } else if (0xDC00..=0xDFFF).contains(&unit) {
+                        return Ok(Value::FALSE);
+                    }
+                    index += 1;
+                }
+                Ok(Value::TRUE)
+            }
+            Native::StringToWellFormed => {
+                let units = self.string_units(this)?;
+                let mut well_formed = Vec::with_capacity(units.len());
+                let mut index = 0;
+                while index < units.len() {
+                    let unit = units[index];
+                    if (0xD800..=0xDBFF).contains(&unit) {
+                        if let Some(low) = units
+                            .get(index + 1)
+                            .filter(|low| (0xDC00..=0xDFFF).contains(*low))
+                        {
+                            well_formed.extend([unit, *low]);
+                            index += 1;
+                        } else {
+                            well_formed.push(0xFFFD);
+                        }
+                    } else if (0xDC00..=0xDFFF).contains(&unit) {
+                        well_formed.push(0xFFFD);
+                    } else {
+                        well_formed.push(unit);
+                    }
+                    index += 1;
+                }
+                self.string_from_units(&well_formed)
+            }
             Native::BigIntValueOf => {
                 if matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
                     return Ok(this);
@@ -51,7 +113,12 @@ impl<H: Host> Vm<H> {
                     Ok(this)
                 } else {
                     let value_atom = self.intern_atom("\0rqj:string-value");
-                    Ok(self.own_property(this, value_atom).unwrap_or(this))
+                    self.own_property(this, value_atom).ok_or_else(|| {
+                        self.type_error(
+                            p,
+                            "String method called on incompatible receiver".into(),
+                        )
+                    })
                 }
             }
             Native::NumberValueOf => {
@@ -183,12 +250,33 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
-                let search =
-                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if self.regexp_is_regexp(p, search_value)? {
+                    return Err(self.type_error(p, "search string cannot be a RegExp".into()));
+                }
+                let search = self.coerce_js_string(p, search_value)?;
+                let length = receiver.units().len();
+                let position_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let position = if native == Native::StringEndsWith && position_value.is_undefined()
+                {
+                    length
+                } else {
+                    let number = self.to_number(p, position_value)?;
+                    if number.is_nan() || number <= 0.0 {
+                        0
+                    } else if number.is_infinite() || number >= length as f64 {
+                        length
+                    } else {
+                        number.trunc() as usize
+                    }
+                };
                 let matched = match native {
-                    Native::StringIncludes => receiver.find_units(search.units(), 0).is_some(),
-                    Native::StringStartsWith => receiver.units().starts_with(search.units()),
-                    Native::StringEndsWith => receiver.units().ends_with(search.units()),
+                    Native::StringIncludes => receiver.find_units(search.units(), position).is_some(),
+                    Native::StringStartsWith => receiver.units()[position..].starts_with(search.units()),
+                    Native::StringEndsWith => {
+                        let start = position.saturating_sub(search.units().len());
+                        receiver.units()[start..position] == *search.units()
+                    }
                     _ => unreachable!(),
                 };
                 Ok(if matched { Value::TRUE } else { Value::FALSE })
@@ -229,13 +317,18 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
-                let text = match native {
-                    Native::StringTrim => receiver.host_string().trim(),
-                    Native::StringTrimStart => receiver.host_string().trim_start(),
-                    Native::StringTrimEnd => receiver.host_string().trim_end(),
-                    _ => unreachable!(),
+                let units = receiver.units();
+                let start = if native == Native::StringTrimEnd {
+                    0
+                } else {
+                    units.iter().position(|unit| !is_ecma_whitespace(*unit)).unwrap_or(units.len())
                 };
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                let end = if native == Native::StringTrimStart {
+                    units.len()
+                } else {
+                    units.iter().rposition(|unit| !is_ecma_whitespace(*unit)).map_or(start, |i| i + 1)
+                };
+                self.string_from_units(&units[start..end])
             }
             Native::StringMatch | Native::StringSearch => {
                 self.string_match_or_search_native(p, native, this, args)
@@ -255,15 +348,15 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let count = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                if !count.is_finite() || count < 0.0 {
-                    return Err(JsError("invalid string repeat count".into()));
+                if count.is_infinite() || count < 0.0 {
+                    return Err(self.range_error(p, "invalid string repeat count".into()));
                 }
-                let count = count.trunc() as usize;
+                let count = if count.is_nan() { 0 } else { count.trunc() as usize };
                 let Some(size) = receiver.units().len().checked_mul(count) else {
-                    return Err(JsError("string repeat count is too large".into()));
+                    return Err(self.range_error(p, "string repeat count is too large".into()));
                 };
                 if size > 64 * 1024 * 1024 {
-                    return Err(JsError("string repeat count is too large".into()));
+                    return Err(self.range_error(p, "string repeat count is too large".into()));
                 }
                 Ok(self.heap.alloc(Cell::String(receiver.repeat(count))))
             }
@@ -281,8 +374,12 @@ impl<H: Host> Vm<H> {
                 if receiver_units.len() >= target {
                     return Ok(self.heap.alloc(Cell::String(receiver)));
                 }
-                let fill =
-                    self.coerce_js_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let fill = match args.get(1).copied() {
+                    None | Some(Value::UNDEFINED) => {
+                        super::wtf16::JsString::from_str(" ")
+                    }
+                    Some(value) => self.coerce_js_string(p, value)?,
+                };
                 let fill_units = fill.units();
                 if fill_units.is_empty() {
                     return Ok(self.heap.alloc(Cell::String(receiver)));
@@ -320,7 +417,7 @@ impl<H: Host> Vm<H> {
             Native::StringFromCharCode => {
                 let mut units = Vec::with_capacity(args.len());
                 for value in args {
-                    units.push(self.to_number(p, *value)? as i64 as u16);
+                    units.push(Self::uint16_from_value(self.to_number(p, *value)?));
                 }
                 self.string_from_units(&units)
             }
@@ -332,7 +429,7 @@ impl<H: Host> Vm<H> {
                         || number.fract() != 0.0
                         || !(0.0..=crate::unicode::UNICODE_MAX_CODE_POINT as f64).contains(&number)
                     {
-                        return Err(JsError("invalid code point".into()));
+                        return Err(self.range_error(p, "invalid code point".into()));
                     }
                     let code_point = number as u32;
                     if crate::unicode::is_surrogate(code_point)
@@ -501,10 +598,14 @@ impl<H: Host> Vm<H> {
         index: usize,
         default: i64,
     ) -> Result<i64, JsError> {
-        Ok(match args.get(index).copied() {
-            Some(value) => self.to_number(p, value)?.trunc() as i64,
-            None => default,
-        })
+        match args.get(index).copied() {
+            Some(value) if value.is_undefined() => Ok(default),
+            Some(value) => {
+                let number = self.to_number(p, value)?;
+                Ok(if number.is_nan() { 0 } else { number.trunc() as i64 })
+            }
+            None => Ok(default),
+        }
     }
 
     fn string_units(&self, value: Value) -> Result<Vec<u16>, JsError> {
