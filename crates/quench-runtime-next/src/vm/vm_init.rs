@@ -14,6 +14,7 @@ impl<H: Host> Vm<H> {
                 jobs: vec![],
                 template_objects: FxHashMap::default(),
             },
+            global_lexical_states: FxHashMap::default(),
             object_proto: Value::NULL,
             function_proto: Value::NULL,
             array_proto: Value::NULL,

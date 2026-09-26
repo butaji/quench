@@ -8,14 +8,14 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let previous_global = self.realm.globals;
-        if let Some(global) = self.active_native_env()
-            && self.object_data(global).is_some()
-        {
-            self.realm.globals = global;
-        }
+        let previous_global = self
+            .active_native_env()
+            .filter(|global| self.object_data(*global).is_some())
+            .map(|global| self.switch_realm_global(global));
         let result = self.eval_script_native_in_realm(p, args);
-        self.realm.globals = previous_global;
+        if let Some(previous_global) = previous_global {
+            self.switch_realm_global(previous_global);
+        }
         result
     }
 
@@ -70,14 +70,14 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let previous_global = self.realm.globals;
-        if let Some(global) = self.active_native_env()
-            && self.object_data(global).is_some()
-        {
-            self.realm.globals = global;
-        }
+        let previous_global = self
+            .active_native_env()
+            .filter(|global| self.object_data(*global).is_some())
+            .map(|global| self.switch_realm_global(global));
         let result = self.eval_native_in_realm(p, args);
-        self.realm.globals = previous_global;
+        if let Some(previous_global) = previous_global {
+            self.switch_realm_global(previous_global);
+        }
         result
     }
 
@@ -220,7 +220,7 @@ impl<H: Host> Vm<H> {
                 .copied()
             {
                 if self.realm.global_lexical_declarations.contains(&atom)
-                    || self.direct_eval_lexical_binding(p, atom).is_some()
+                    || (direct_eval && self.direct_eval_lexical_binding(p, atom).is_some())
                 {
                     return self.syntax_error_result(
                         p,

@@ -182,29 +182,29 @@ impl<H: Host> Vm<H> {
             false,
         )
         .is_err();
-        let prior_global = std::mem::replace(&mut self.realm.globals, realm_global);
+        let prior_global = self.switch_realm_global(realm_global);
         let result = self.eval_global_script(p, &source);
-        self.realm.globals = prior_global;
+        self.switch_realm_global(prior_global);
         match result {
             Ok(value) if self.is_function(value) => {
                 self.wrap_shadow_callable(p, value, evaluation_caller)
             }
             Ok(value) if !self.is_object_like(value) => Ok(value),
             Ok(_) => {
-                let prior_global = std::mem::replace(&mut self.realm.globals, caller_global);
+                let prior_global = self.switch_realm_global(caller_global);
                 let error =
                     self.type_error(p, "ShadowRealm evaluation must return a primitive".into());
-                self.realm.globals = prior_global;
+                self.switch_realm_global(prior_global);
                 Err(error)
             }
             Err(error) => {
                 if source_is_invalid {
                     return self.with_realm_syntax_error(p, caller_global, error.to_string());
                 }
-                let prior_global = std::mem::replace(&mut self.realm.globals, caller_global);
+                let prior_global = self.switch_realm_global(caller_global);
                 let _ = error;
                 let error = self.type_error(p, "ShadowRealm evaluation threw an exception".into());
-                self.realm.globals = prior_global;
+                self.switch_realm_global(prior_global);
                 Err(error)
             }
         }
@@ -236,7 +236,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::ShadowRealm { caller_global, .. }) => *caller_global,
             _ => self.realm.globals,
         };
-        let prior_global = std::mem::replace(&mut self.realm.globals, caller_global);
+        let prior_global = self.switch_realm_global(caller_global);
         let promise = (|| {
             let error = self
                 .type_error(p, "ShadowRealm import failed".into())
@@ -248,7 +248,7 @@ impl<H: Host> Vm<H> {
             let reject = self.get_property(p, promise_constructor, reject_atom)?;
             self.call_value(p, reject, promise_constructor, &[error])
         })();
-        self.realm.globals = prior_global;
+        self.switch_realm_global(prior_global);
         promise
     }
 
@@ -465,9 +465,9 @@ impl<H: Host> Vm<H> {
         realm: Value,
         message: &str,
     ) -> Result<Value, JsError> {
-        let prior = std::mem::replace(&mut self.realm.globals, realm);
+        let prior = self.switch_realm_global(realm);
         let error = self.realm_error_value(p, realm, "TypeError", message);
-        self.realm.globals = prior;
+        self.switch_realm_global(prior);
         Err(error)
     }
 
@@ -477,9 +477,9 @@ impl<H: Host> Vm<H> {
         realm: Value,
         message: String,
     ) -> Result<Value, JsError> {
-        let prior = std::mem::replace(&mut self.realm.globals, realm);
+        let prior = self.switch_realm_global(realm);
         let result = self.realm_error_value(p, realm, "SyntaxError", &message);
-        self.realm.globals = prior;
+        self.switch_realm_global(prior);
         Err(result)
     }
 
