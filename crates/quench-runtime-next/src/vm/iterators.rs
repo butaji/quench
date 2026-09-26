@@ -1676,10 +1676,15 @@ impl<H: Host> Vm<H> {
         iterators: &[Value],
         final_: Option<Value>,
     ) -> Result<(), JsError> {
+        let mut abrupt = None;
         for iterator in iterators.iter().rev().copied().chain(final_) {
-            self.iterator_close(p, iterator)?;
+            if let Err(error) = self.iterator_close(p, iterator)
+                && abrupt.is_none()
+            {
+                abrupt = Some(error);
+            }
         }
-        Ok(())
+        abrupt.map_or(Ok(()), Err)
     }
 
     fn iterator_helper_zip(
