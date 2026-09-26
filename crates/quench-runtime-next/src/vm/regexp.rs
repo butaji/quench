@@ -176,6 +176,23 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        if let Some(symbol) = self.well_known_symbols.get("replace").copied() {
+            let method = self.native_with_realm(Native::RegExpSymbolReplace, realm, realm);
+            self.set_builtin_function_name(method, "[Symbol.replace]")?;
+            self.set_symbol_property(prototype, symbol, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         if let Some(symbol) = self.well_known_symbols.get("species").copied() {
             let getter = self.native_with_realm(Native::RegExpSpecies, realm, realm);
             self.set_builtin_function_name(getter, "get [Symbol.species]")?;
@@ -194,6 +211,18 @@ impl<H: Host> Vm<H> {
             );
         }
         Ok(())
+    }
+
+    pub(super) fn regexp_symbol_replace(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input = self.heap.alloc(Cell::String(input.into()));
+        let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        self.string_replace_native(p, input, &[receiver, replacement], false)
     }
 
     pub(super) fn regexp_symbol_match(
