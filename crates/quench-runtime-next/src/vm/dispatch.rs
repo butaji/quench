@@ -757,15 +757,18 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::Delete => {
-                let result =
-                    self.delete_reference_property(p, self.read(f, i.b()), self.read(f, i.c()))?;
+                let result = self.delete_reference_property(
+                    p,
+                    self.read(f, i.register_b()),
+                    self.read(f, i.register_c()),
+                )?;
                 if !self.truthy(result)
                     && (p.functions[self.frames[f].function as usize].strict
                         || i.boolean_flag().expect("validated boolean immediate"))
                 {
                     return Err(self.type_error(p, "Cannot delete property in strict mode".into()));
                 }
-                self.write(f, i.a(), result);
+                self.write(f, i.result_register(), result);
             }
             Op::Jump => {
                 *pc = i.jump_target() as usize;
