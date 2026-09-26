@@ -323,14 +323,16 @@ impl ResidualProgram {
                     }
                     Op::CheckPrivate
                         if !register(instruction.register_a())
-                            || !atom(instruction.atom_index()) =>
+                            || !atom(instruction.atom_index())
+                            || !instruction.unused_fields_are_zero() =>
                     {
                         return Err(format!("function {index} private check is invalid"));
                     }
                     Op::PrivateIn
                         if !destination(instruction.result_register())
                             || !register(instruction.register_b())
-                            || !atom(instruction.atom_index()) =>
+                            || !atom(instruction.atom_index())
+                            || !instruction.unused_fields_are_zero() =>
                     {
                         return Err(format!("function {index} private-in operation is invalid"));
                     }
