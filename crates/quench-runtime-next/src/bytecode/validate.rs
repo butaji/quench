@@ -85,7 +85,9 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::OptionalRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
-            FieldLayout::CacheSiteIndex if instruction.op() != Op::GetField => {
+            FieldLayout::CacheSiteIndex
+                if instruction.op().field_layout(InstructionField::B) != FieldLayout::FieldBase =>
+            {
                 cache_in_bounds(value, bounds.cache_sites)
             }
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
@@ -105,7 +107,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                 u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
             }
             FieldLayout::FieldBase => match instruction.field_lookup() {
-                super::FieldLookup::Site(site) => site < bounds.field_sites,
+                super::FieldLookup::Site(site) => site < bounds.field_sites && instruction.c() == 0,
                 super::FieldLookup::Atom {
                     atom,
                     base,
