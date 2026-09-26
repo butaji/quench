@@ -199,11 +199,16 @@ fn uses(
 fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
     match instruction.op() {
         Op::LoadNameCall => bit(instruction.result_register()) | bit(instruction.register_b()),
+        Op::LoadLocal => {
+            bit(instruction.result_register())
+                | instruction
+                    .numeric_local_store_target()
+                    .map_or(0, |target| bit(target.register))
+        }
         Op::Binary | Op::NumericAdd | Op::NumericMultiply if instruction.writes_numeric_local() => {
             0
         }
         Op::LoadConst
-        | Op::LoadLocal
         | Op::LoadEnvLocal
         | Op::LoadCapture
         | Op::LoadName
@@ -253,7 +258,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
             .fold(0, |mask, nested| {
                 mask | definitions(*nested, superinstructions)
             }),
-        Op::StoreLocal | Op::StoreEnvLocal if instruction.b() != 0 => bit(instruction.b() - 1),
+        Op::StoreLocal | Op::StoreEnvLocal => instruction.optional_register_b().map_or(0, bit),
         _ => 0,
     }
 }

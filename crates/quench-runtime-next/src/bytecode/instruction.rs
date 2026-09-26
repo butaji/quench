@@ -143,6 +143,101 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn optional_register_b(self) -> Option<Register> {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::OptionalRegister
+                );
+                match self.b() {
+                    super::NO_OPTIONAL_REGISTER => None,
+                    encoded => encoded.checked_sub(super::OPTIONAL_REGISTER_BIAS),
+                }
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn set_optional_register_b(&mut self, register: Option<Register>) {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::OptionalRegister
+                );
+                let encoded = register.map_or(super::NO_OPTIONAL_REGISTER, |register| {
+                    register + super::OPTIONAL_REGISTER_BIAS
+                });
+                self.set_b(encoded);
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn numeric_local_store_target(
+                self,
+            ) -> Option<super::NumericLocalStoreTarget> {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::NumericLocalTarget
+                );
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::NumericLocalStoreMarker
+                );
+                (self.c() == super::NUMERIC_LOCAL_INC_STORE).then_some(
+                    super::NumericLocalStoreTarget {
+                        register: self.b() & REGISTER_MASK,
+                        decrement: self.b() & super::NUMERIC_LOCAL_DECREMENT_FLAG != 0,
+                    },
+                )
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn numeric_local_store_fields_valid(self) -> bool {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::NumericLocalTarget
+                );
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::NumericLocalStoreMarker
+                );
+                match self.c() {
+                    super::NO_NUMERIC_LOCAL_STORE_MARKER => self.b() == super::NO_OPTIONAL_REGISTER,
+                    super::NUMERIC_LOCAL_INC_STORE => {
+                        self.b() & !(REGISTER_MASK | super::NUMERIC_LOCAL_DECREMENT_FLAG) == 0
+                    }
+                    _ => false,
+                }
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn set_numeric_local_store_target(
+                &mut self,
+                target: Option<super::NumericLocalStoreTarget>,
+            ) {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::NumericLocalTarget
+                );
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::NumericLocalStoreMarker
+                );
+                let (encoded_target, marker) = match target {
+                    Some(target) => (
+                        target.register
+                            | if target.decrement {
+                                super::NUMERIC_LOCAL_DECREMENT_FLAG
+                            } else {
+                                super::NO_OPTIONAL_REGISTER
+                            },
+                        super::NUMERIC_LOCAL_INC_STORE,
+                    ),
+                    None => (
+                        super::NO_OPTIONAL_REGISTER,
+                        super::NO_NUMERIC_LOCAL_STORE_MARKER,
+                    ),
+                };
+                self.set_b(encoded_target);
+                self.set_c(marker);
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn register_c(self) -> Register {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::C),

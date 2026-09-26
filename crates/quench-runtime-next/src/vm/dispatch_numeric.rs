@@ -186,14 +186,14 @@ impl<H: Host> Vm<H> {
                         let local = ins.local_slot();
                         let value = self.frames[frame].locals[local];
                         self.write(frame, ins.result_register(), value);
-                        if ins.c() == crate::bytecode::NUMERIC_LOCAL_INC_STORE
+                        if let Some(target) = ins.numeric_local_store_target()
                             && let Some(integer) = value.as_int()
                         {
                             self.numeric_local_inc_store(
                                 frame,
                                 &mut pc,
                                 integer,
-                                ins.b(),
+                                target,
                                 local as u32,
                             );
                         }
@@ -203,8 +203,8 @@ impl<H: Host> Vm<H> {
                         let local = ins.local_slot();
                         self.frames[frame].locals[local] = value;
                         self.mirror_global_lexical_binding(p, frame, local, value);
-                        if ins.b() != 0 {
-                            self.write(frame, ins.b() - 1, value);
+                        if let Some(register) = ins.optional_register_b() {
+                            self.write(frame, register, value);
                         }
                     }
                     Op::GetIndex => {
@@ -396,20 +396,16 @@ impl<H: Host> Vm<H> {
         frame: usize,
         pc: &mut usize,
         integer: i32,
-        metadata: u16,
+        target: crate::bytecode::NumericLocalStoreTarget,
         local: u32,
     ) {
         let function = self.frames[frame].function as usize;
-        let delta = if metadata & RETURN_REGISTER == 0 {
-            1
-        } else {
-            -1
-        };
+        let delta = if target.decrement { -1 } else { 1 };
         let next = integer
             .checked_add(delta)
             .map(Value::integer)
             .unwrap_or_else(|| Value::number(f64::from(integer) + f64::from(delta)));
-        self.write(frame, metadata & REGISTER_MASK, next);
+        self.write(frame, target.register, next);
         self.frames[frame].locals[local as usize] = next;
         self.profile_numeric_fusion(frame, function as u32, *pc, Op::IncDec);
         self.profile_numeric_fusion(frame, function as u32, *pc + 1, Op::StoreLocal);

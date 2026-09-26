@@ -1,11 +1,11 @@
 use crate::bytecode::{
-    Function, Instr, NUMERIC_LOCAL_INC_STORE, NUMERIC_LOCAL_TARGET, Op, Operand, REGISTER_MASK,
-    RETURN_REGISTER, specialized_numeric_op,
+    Function, Instr, NUMERIC_LOCAL_TARGET, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK,
+    specialized_numeric_op,
 };
 
 use super::rewrite::{protected_positions, relocate};
 
-type Rule = fn(&[Instr]) -> Option<(u16, u16)>;
+type Rule = fn(&[Instr]) -> Option<NumericLocalStoreTarget>;
 
 struct CompactRule {
     pattern: [Op; 2],
@@ -32,9 +32,8 @@ pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
         compact_binary_stores(function, live);
     }
     for pc in 0..function.code.len() {
-        if let Some((metadata, marker)) = RULES.iter().find_map(|rule| rule(&function.code[pc..])) {
-            function.code[pc].set_b(metadata);
-            function.code[pc].set_c(marker);
+        if let Some(target) = RULES.iter().find_map(|rule| rule(&function.code[pc..])) {
+            function.code[pc].set_numeric_local_store_target(Some(target));
         }
     }
     for instruction in &mut function.code {
@@ -109,54 +108,45 @@ fn local_index_sources(
     mut index: Instr,
     live_after: u64,
 ) -> Option<Instr> {
-    (first.a() <= REGISTER_MASK
-        && second.a() <= REGISTER_MASK
-        && index.operand_b().register_index() == Some(first.a())
-        && index.operand_c().register_index() == Some(second.a())
-        && first.imm() <= u32::from(REGISTER_MASK)
-        && second.imm() <= u32::from(REGISTER_MASK)
-        && live_after & ((1 << first.a()) | (1 << second.a())) == 0)
+    (index.operand_b().register_index() == Some(first.result_register())
+        && index.operand_c().register_index() == Some(second.result_register())
+        && first.local_slot() <= usize::from(REGISTER_MASK)
+        && second.local_slot() <= usize::from(REGISTER_MASK)
+        && live_after & ((1 << first.result_register()) | (1 << second.result_register())) == 0)
         .then(|| {
-            index.set_operand_b(Operand::local(first.imm() as u16));
-            index.set_operand_c(Operand::local(second.imm() as u16));
+            index.set_operand_b(Operand::local(first.local_slot() as u16));
+            index.set_operand_c(Operand::local(second.local_slot() as u16));
             index
         })
 }
 
 fn binary_local_target(mut binary: Instr, store: Instr, live_after: u64) -> Option<Instr> {
-    (binary.a() <= REGISTER_MASK
-        && store.a() == binary.a()
-        && store.b() == 0
-        && store.imm() <= u32::from(REGISTER_MASK)
-        && live_after & (1 << binary.a()) == 0)
+    (store.register_a() == binary.result_register()
+        && store.optional_register_b().is_none()
+        && store.local_slot() <= usize::from(REGISTER_MASK)
+        && live_after & (1 << binary.result_register()) == 0)
         .then(|| {
-            binary.set_a(NUMERIC_LOCAL_TARGET | store.imm() as u16);
+            binary.set_a(NUMERIC_LOCAL_TARGET | store.local_slot() as u16);
             binary
         })
 }
 
-fn local_inc_store(code: &[Instr]) -> Option<(u16, u16)> {
+fn local_inc_store(code: &[Instr]) -> Option<NumericLocalStoreTarget> {
     let [load, update, store, ..] = code else {
         return None;
     };
     (load.op() == Op::LoadLocal
         && update.op() == Op::IncDec
-        && update.register_b() == load.a()
-        && update.a() <= REGISTER_MASK
-        && update.imm() <= 1
+        && update.register_b() == load.result_register()
+        && update.boolean_flag().is_some()
         && store.op() == Op::StoreLocal
-        && store.a() == update.a()
-        && store.b() == 0
-        && store.imm() == load.imm())
-    .then_some((
-        update.a()
-            | if update.imm() == 0 {
-                0
-            } else {
-                RETURN_REGISTER
-            },
-        NUMERIC_LOCAL_INC_STORE,
-    ))
+        && store.register_a() == update.result_register()
+        && store.optional_register_b().is_none()
+        && store.local_slot() == load.local_slot())
+    .then_some(NumericLocalStoreTarget {
+        register: update.result_register(),
+        decrement: update.boolean_flag() == Some(true),
+    })
 }
 
 #[cfg(test)]
@@ -170,7 +160,13 @@ mod tests {
             Instr::new(Op::IncDec, 3, 2, 0, 0),
             Instr::new(Op::StoreLocal, 3, 0, 0, 4),
         ];
-        assert_eq!(local_inc_store(&code), Some((3, NUMERIC_LOCAL_INC_STORE)));
+        assert_eq!(
+            local_inc_store(&code),
+            Some(NumericLocalStoreTarget {
+                register: 3,
+                decrement: false,
+            })
+        );
         let mut mismatch = code;
         mismatch[2].set_a(2);
         assert_eq!(local_inc_store(&mismatch), None);

@@ -105,8 +105,8 @@ impl<H: Host> Vm<H> {
                             self.type_error(p, "assignment to function name binding".into())
                         );
                     }
-                    if i.b() != 0 {
-                        self.write(f, i.b() - 1, value);
+                    if let Some(register) = i.optional_register_b() {
+                        self.write(f, register, value);
                     }
                     return Ok(StepResult::Continue);
                 }
@@ -119,7 +119,9 @@ impl<H: Host> Vm<H> {
                     } else {
                         self.frames[f].locals.get(slot).copied()
                     };
-                    if current.is_some_and(Value::is_deleted) && i.c() == 0 {
+                    if current.is_some_and(Value::is_deleted)
+                        && i.boolean_field(crate::bytecode::InstructionField::C) == Some(false)
+                    {
                         let atom = function.local_atoms.get(slot).copied().unwrap_or_default();
                         return Err(self.reference_error(
                             p,
@@ -133,7 +135,7 @@ impl<H: Host> Vm<H> {
                         .local_atoms
                         .get(slot)
                         .is_some_and(|atom| function.global_immutable_atoms.contains(atom))
-                        && i.c() == 0
+                        && i.boolean_field(crate::bytecode::InstructionField::C) == Some(false)
                     {
                         return Err(self.type_error(p, "assignment to constant binding".into()));
                     }
@@ -152,8 +154,8 @@ impl<H: Host> Vm<H> {
                 }
                 self.mirror_global_lexical_binding(p, f, slot, value);
                 self.mapped_argument_store(p, f, slot, value);
-                if i.b() != 0 {
-                    self.write(f, i.b() - 1, value);
+                if let Some(register) = i.optional_register_b() {
+                    self.write(f, register, value);
                 }
             }
             Op::LoadEnvLocal => {
@@ -230,6 +232,9 @@ impl<H: Host> Vm<H> {
                     self.frames[f].locals[slot] = value;
                 }
                 self.mapped_argument_store(p, f, slot, value);
+                if let Some(register) = i.optional_register_b() {
+                    self.write(f, register, value);
+                }
             }
             Op::LoadCapture => {
                 let v = self.capture(p, f, i.capture_depth(), i.capture_slot())?;

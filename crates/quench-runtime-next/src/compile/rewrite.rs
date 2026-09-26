@@ -51,8 +51,8 @@ fusion_recipes! {
         };
     StoreLoadLocal: [StoreLocal, LoadLocal] =>
         |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
-            if first.b() != 0 || first.imm() != second.imm() || second.a() == u16::MAX { return None; }
-            first.set_b(second.a() + 1);
+            if first.optional_register_b().is_some() || first.local_slot() != second.local_slot() { return None; }
+            first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
     ProducerMove: [
