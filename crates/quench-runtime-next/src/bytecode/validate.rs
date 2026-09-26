@@ -435,7 +435,9 @@ impl ResidualProgram {
                         return Err(format!("function {index} move operand is invalid"));
                     }
                     Op::LoadThis | Op::LoadImportMeta
-                        if !destination(instruction.result_register()) =>
+                        if !destination(instruction.result_register())
+                            || !instruction.unused_fields_are_zero()
+                            || !instruction.unused_immediate_is_zero() =>
                     {
                         return Err(format!("function {index} this/import-meta load is invalid"));
                     }
@@ -447,7 +449,11 @@ impl ResidualProgram {
                             "function {index} cached template-object load is invalid"
                         ));
                     }
-                    Op::ValidateClassHeritage if !register(instruction.register_a()) => {
+                    Op::ValidateClassHeritage
+                        if !register(instruction.register_a())
+                            || !instruction.unused_fields_are_zero()
+                            || !instruction.unused_immediate_is_zero() =>
+                    {
                         return Err(format!(
                             "function {index} class heritage register is invalid"
                         ));
@@ -461,7 +467,11 @@ impl ResidualProgram {
                             "function {index} copy-data-properties operand is invalid"
                         ));
                     }
-                    Op::InitializeThis if !register(instruction.register_a()) => {
+                    Op::InitializeThis
+                        if !register(instruction.register_a())
+                            || !instruction.unused_fields_are_zero()
+                            || !instruction.unused_immediate_is_zero() =>
+                    {
                         return Err(format!(
                             "function {index} initialized this operand is invalid"
                         ));
