@@ -517,6 +517,7 @@ impl<H: Host> Vm<H> {
                 native,
                 Native::Proxy | Native::Array | Native::ArrayBuffer | Native::SharedArrayBuffer
             ) && !(native == Native::Object
+                && new_target == self.native_value(Native::Object)
                 && args
                     .first()
                     .is_some_and(|value| !value.is_null() && !value.is_undefined()))
@@ -796,6 +797,9 @@ impl<H: Host> Vm<H> {
                 )),
             Native::Iterator => Ok(self.object()),
             Native::Object => {
+                if new_target != self.native_value(Native::Object) {
+                    return Ok(self.object());
+                }
                 if let Some(value) = args.first().copied() {
                     if self.object_data(value).is_some() {
                         return Ok(value);
