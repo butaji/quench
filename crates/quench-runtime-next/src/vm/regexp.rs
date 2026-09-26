@@ -515,6 +515,10 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(values),
         });
+        let named = regexp_named_capture_ranges(&matched);
+        let groups = self.regexp_groups_object(&named, input.units())?;
+        let groups_atom = self.intern_atom("groups");
+        self.set_property(result, groups_atom, groups)?;
         let index = matched.range.start;
         if stateful {
             let end = matched.range.end;
@@ -526,14 +530,61 @@ impl<H: Host> Vm<H> {
         let input_atom = self.intern_atom("input");
         self.set_property(result, input_atom, input_value)?;
         if flags.contains('d') {
-            let indices = self.regexp_indices_array(&matched)?;
+            let indices = self.regexp_indices_array(&matched, &named)?;
             let indices_atom = self.intern_atom("indices");
             self.set_property(result, indices_atom, indices)?;
         }
         Ok(result)
     }
 
-    fn regexp_indices_array(&mut self, matched: &quench_regexp::Match) -> Result<Value, JsError> {
+    pub(super) fn regexp_groups_object(
+        &mut self,
+        named: &[(String, Option<std::ops::Range<usize>>)],
+        input: &[u16],
+    ) -> Result<Value, JsError> {
+        if named.is_empty() {
+            return Ok(Value::UNDEFINED);
+        }
+        let groups = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        for (name, range) in named {
+            let atom = self.intern_atom(name);
+            let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
+                self.heap
+                    .alloc(Cell::String(JsString::from_units(&input[range.clone()])))
+            });
+            self.set_property(groups, atom, value)?;
+        }
+        Ok(groups)
+    }
+
+    pub(super) fn regexp_groups_object_from_str(
+        &mut self,
+        named: &[(String, Option<std::ops::Range<usize>>)],
+        input: &str,
+    ) -> Result<Value, JsError> {
+        if named.is_empty() {
+            return Ok(Value::UNDEFINED);
+        }
+        let groups = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        for (name, range) in named {
+            let atom = self.intern_atom(name);
+            let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
+                self.heap.alloc(Cell::String(input[range.clone()].into()))
+            });
+            self.set_property(groups, atom, value)?;
+        }
+        Ok(groups)
+    }
+
+    fn regexp_indices_array(
+        &mut self,
+        matched: &quench_regexp::Match,
+        named: &[(String, Option<std::ops::Range<usize>>)],
+    ) -> Result<Value, JsError> {
         let ranges = std::iter::once(Some(matched.range.clone()))
             .chain(matched.captures.iter().cloned())
             .collect::<Vec<_>>();
@@ -545,14 +596,13 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(entries),
         });
-        let named = matched.named_groups().collect::<Vec<_>>();
         let groups = if !named.is_empty() {
             let groups = self
                 .heap
                 .alloc(Cell::Object(Self::empty_object(Value::NULL)));
             for (name, range) in named {
                 let atom = self.intern_atom(name);
-                let pair = self.regexp_index_pair(range);
+                let pair = self.regexp_index_pair(range.clone());
                 self.set_property(groups, atom, pair)?;
             }
             groups
@@ -615,6 +665,22 @@ fn advance_string_index(input: &str, index: usize, unicode: bool) -> usize {
     } else {
         index + 1
     }
+}
+
+pub(super) fn regexp_named_capture_ranges(
+    matched: &quench_regexp::Match,
+) -> Vec<(String, Option<std::ops::Range<usize>>)> {
+    let mut groups: Vec<(String, Option<std::ops::Range<usize>>)> = Vec::new();
+    for (name, range) in matched.named_groups() {
+        if let Some((_, existing)) = groups.iter_mut().find(|(known, _)| known == name) {
+            if existing.is_none() {
+                *existing = range;
+            }
+        } else {
+            groups.push((name.to_owned(), range));
+        }
+    }
+    groups
 }
 
 fn escape_regexp_string(input: &JsString) -> JsString {

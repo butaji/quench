@@ -375,6 +375,7 @@ impl<H: Host> Vm<H> {
                 if replaced && !global {
                     break;
                 }
+                let named = super::regexp::regexp_named_capture_ranges(&captures);
                 let whole = captures.range;
                 result.push_str(&receiver_host[cursor..whole.start]);
                 let replacement_text = if replacement_function {
@@ -392,6 +393,10 @@ impl<H: Host> Vm<H> {
                     callback_args
                         .push(Value::number(utf16_index(receiver_host, whole.start) as f64));
                     callback_args.push(self.heap.alloc(Cell::String(receiver.clone())));
+                    if !named.is_empty() {
+                        let groups = self.regexp_groups_object_from_str(&named, receiver_host)?;
+                        callback_args.push(groups);
+                    }
                     let value =
                         self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
                     self.to_string(p, value)?
@@ -408,6 +413,7 @@ impl<H: Host> Vm<H> {
                         receiver_host,
                         whole.start,
                         whole.end,
+                        &named,
                     )
                 };
                 result.push_str(&replacement_text);
@@ -481,6 +487,7 @@ impl<H: Host> Vm<H> {
                         receiver_host,
                         index,
                         index + search.len(),
+                        &[],
                     )
                 };
                 result.push_str(&replacement_text);
@@ -505,6 +512,7 @@ impl<H: Host> Vm<H> {
                 receiver_host,
                 index,
                 index + search.len(),
+                &[],
             )
         };
         let mut result = String::with_capacity(
@@ -524,6 +532,7 @@ fn expand_replacement(
     input: &str,
     start: usize,
     end: usize,
+    named_captures: &[(String, Option<std::ops::Range<usize>>)],
 ) -> String {
     let chars = template.chars().collect::<Vec<_>>();
     let mut output = String::with_capacity(template.len());
@@ -551,6 +560,26 @@ fn expand_replacement(
             '\'' => {
                 output.push_str(&input[end..]);
                 index += 2;
+            }
+            '<' if !named_captures.is_empty() => {
+                let name_start = index + 2;
+                if let Some(close) = chars[name_start..]
+                    .iter()
+                    .position(|character| *character == '>')
+                {
+                    let name = chars[name_start..name_start + close]
+                        .iter()
+                        .collect::<String>();
+                    if let Some((_, Some(range))) =
+                        named_captures.iter().find(|(group, _)| group == &name)
+                    {
+                        output.push_str(&input[range.clone()]);
+                    }
+                    index = name_start + close + 1;
+                } else {
+                    output.push('$');
+                    index += 1;
+                }
             }
             '0'..='9' if next != '0' => {
                 let first = next.to_digit(10).unwrap() as usize;
