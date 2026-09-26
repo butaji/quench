@@ -224,6 +224,19 @@ impl<H: Host> Vm<H> {
         };
         let receiver_host = receiver.host_string();
         let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if native == Native::StringMatch && self.is_regexp(pattern) {
+            let Some(symbol) = self.well_known_symbols.get("match").copied() else {
+                return Err(JsError("RegExp match symbol is unavailable".into()));
+            };
+            let method = self.get_index(p, pattern, symbol)?;
+            if self.is_function(method) {
+                let input = self.heap.alloc(Cell::String(receiver));
+                return self.call_value(p, method, pattern, &[input]);
+            }
+            if !method.is_undefined() && !method.is_null() {
+                return Err(self.type_error(p, "RegExp @@match is not callable".into()));
+            }
+        }
         let (source, flags) = if self.is_regexp(pattern) {
             self.regexp_source_and_flags(pattern)
                 .ok_or_else(|| JsError("RegExp method called on incompatible receiver".into()))?
