@@ -185,8 +185,46 @@ impl<H: Host> Vm<H> {
         self.set_named(program, set, "prototype", self.set_proto)?;
         self.global(program, "Set", set)
     }
-    #[rustfmt::skip]
-    pub(super) fn install_collection_iterators(&mut self) -> Result<(), JsError> { let Some(iterator) = self.well_known_symbols.get("iterator").copied() else { return Ok(()) }; self.set_symbol_property(self.map_proto, iterator, self.native_value(Native::MapEntries))?; self.set_symbol_property(self.set_proto, iterator, self.native_value(Native::SetValues)) }
+    pub(super) fn install_collection_iterators(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        self.map_iterator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+        self.set_builtin_named(
+            program,
+            self.map_iterator_proto,
+            "next",
+            Native::IteratorNext,
+        )?;
+        self.install_builtin_to_string_tag(self.map_iterator_proto, "Map Iterator")?;
+
+        self.set_iterator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+        self.set_builtin_named(
+            program,
+            self.set_iterator_proto,
+            "next",
+            Native::IteratorNext,
+        )?;
+        self.install_builtin_to_string_tag(self.set_iterator_proto, "Set Iterator")?;
+
+        if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
+            self.set_symbol_property(
+                self.map_proto,
+                iterator,
+                self.native_value(Native::MapEntries),
+            )?;
+            self.set_symbol_property(
+                self.set_proto,
+                iterator,
+                self.native_value(Native::SetValues),
+            )?;
+        }
+        Ok(())
+    }
     pub(super) fn construct_collection_native(
         &mut self,
         p: &ResidualProgram,

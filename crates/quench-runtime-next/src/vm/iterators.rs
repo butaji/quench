@@ -304,7 +304,7 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::Array),
         )?;
         self.install_builtin_to_string_tag(self.array_iterator_proto, "Array Iterator")?;
-        self.install_collection_iterators()?;
+        self.install_collection_iterators(p)?;
         let Some(iterator) = self.well_known_symbols.get("iterator").copied() else {
             return Ok(());
         };
@@ -825,8 +825,15 @@ impl<H: Host> Vm<H> {
         if !valid {
             return Err(JsError("collection iterator receiver is invalid".into()));
         }
+        let prototype = match kind {
+            IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => {
+                self.map_iterator_proto
+            }
+            IteratorKind::SetValues | IteratorKind::SetEntries => self.set_iterator_proto,
+            _ => return Err(JsError("collection iterator kind is invalid".into())),
+        };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.iterator_proto),
+            object: Self::empty_object(prototype),
             source,
             next_method: None,
             helper: None,
