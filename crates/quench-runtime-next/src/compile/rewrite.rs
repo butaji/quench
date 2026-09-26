@@ -351,9 +351,9 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::GetIndex => operand(instruction.operand_b().0) || operand(instruction.operand_c().0),
         Op::MakeObject2 => instruction.b() == register || instruction.c() == register,
         Op::CopyDataProperties => {
-            instruction.a() == register
-                || instruction.b() == register
-                || instruction.c() == register
+            instruction.register_a() == register
+                || instruction.register_b() == register
+                || instruction.register_c() == register
         }
         Op::ToPropertyKey | Op::ToNumeric => instruction.b() == register,
         Op::SuperConstArrayObject2 => true,

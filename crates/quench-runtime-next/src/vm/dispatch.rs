@@ -492,9 +492,9 @@ impl<H: Host> Vm<H> {
             }
             Op::CopyDataProperties => self.copy_data_properties(
                 p,
-                self.read(f, i.a()),
-                self.read(f, i.b()),
-                self.read(f, i.c()),
+                self.read(f, i.register_a()),
+                self.read(f, i.register_b()),
+                self.read(f, i.register_c()),
             )?,
             Op::GetIterator => {
                 let value = self.get_iterator(p, self.read(f, i.register_b()))?;
