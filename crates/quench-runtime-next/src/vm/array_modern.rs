@@ -182,40 +182,55 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "iterator method did not return an object".into())
                     );
                 }
-                let mut index = 0;
-                loop {
-                    let step = match self.iterator_next(p, iterator) {
-                        Ok(step) => step,
-                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                    };
-                    let done = match self.get_property(p, step, done_atom) {
-                        Ok(done) => done,
-                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                    };
-                    if self.truthy(done) {
-                        break;
-                    }
-                    let mut value = match self.get_property(p, step, value_atom) {
-                        Ok(value) => value,
-                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                    };
-                    if let Some(mapfn) = mapfn {
-                        let key = Value::number(index as f64);
-                        value = match self.call_value(p, mapfn, map_this, &[value, key]) {
-                            Ok(value) => value,
-                            Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                let iterator_root = self.heap.root(iterator);
+                let outcome = (|| {
+                    let mut index = 0;
+                    loop {
+                        let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
+                        let step = match self.iterator_next(p, iterator) {
+                            Ok(step) => step,
+                            Err(error) => {
+                                return Err(self.iterator_abrupt(p, iterator, error));
+                            }
                         };
+                        let done = match self.get_property(p, step, done_atom) {
+                            Ok(done) => done,
+                            Err(error) => {
+                                return Err(self.iterator_abrupt(p, iterator, error));
+                            }
+                        };
+                        if self.truthy(done) {
+                            break;
+                        }
+                        let mut value = match self.get_property(p, step, value_atom) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                return Err(self.iterator_abrupt(p, iterator, error));
+                            }
+                        };
+                        if let Some(mapfn) = mapfn {
+                            let key = Value::number(index as f64);
+                            value = match self.call_value(p, mapfn, map_this, &[value, key]) {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    return Err(self.iterator_abrupt(p, iterator, error));
+                                }
+                            };
+                        }
+                        let target = self.heap.root_value(root).unwrap();
+                        if let Err(error) =
+                            self.create_data_property_or_throw(p, target, index, value)
+                        {
+                            return Err(self.iterator_abrupt(p, iterator, error));
+                        }
+                        index += 1;
                     }
                     let target = self.heap.root_value(root).unwrap();
-                    if let Err(error) = self.create_data_property_or_throw(p, target, index, value)
-                    {
-                        return Err(self.iterator_abrupt(p, iterator, error));
-                    }
-                    index += 1;
-                }
-                let target = self.heap.root_value(root).unwrap();
-                self.set_array_like_length(p, target, index)?;
-                Ok(target)
+                    self.set_array_like_length(p, target, index)
+                        .map(|()| target)
+                })();
+                self.heap.release_root(iterator_root);
+                outcome
             })();
             self.heap.release_root(root);
             return outcome;
