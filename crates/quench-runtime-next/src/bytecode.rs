@@ -397,7 +397,7 @@ opcodes!(
     Binary => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     IncDec => READ_THROW; meaning BooleanFlag, @ Register, @ fields(Undeclared, Register, Undeclared),
     Unary => READ_THROW; meaning UnaryOperator, @ Register, @ fields(Undeclared, Register, Undeclared),
-    Delete => READ_THROW; meaning BooleanFlag,
+    Delete => READ_THROW; meaning BooleanFlag, @ Register, @ fields(Undeclared, Register, Register),
     CheckPrivate => READ_THROW; meaning AtomIndex,
     PrivateIn => READ_THROW; meaning AtomIndex,
     Move => Effect::PURE, @ Register, @ fields(Undeclared, Register, Undeclared),

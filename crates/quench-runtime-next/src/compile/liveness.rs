@@ -169,7 +169,7 @@ fn uses(
             operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
         }
         Op::IncDec | Op::Unary | Op::Move => bit(instruction.register_b()),
-        Op::Delete => bit(instruction.b()) | bit(instruction.c()),
+        Op::Delete => bit(instruction.register_b()) | bit(instruction.register_c()),
         Op::JumpFalse | Op::Return | Op::Throw => bit(instruction.register_a()),
         Op::Call | Op::CallDirectEvalArray => {
             let window = instruction.call_window();
