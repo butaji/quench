@@ -2,6 +2,15 @@ use super::property_key::PropertyKey;
 use super::*;
 
 const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;
+
+pub(super) fn error_native_length(native: Native) -> Option<f64> {
+    Some(match native {
+        Native::ErrorIsError => 1.0,
+        Native::ErrorStackSetter => 1.0,
+        Native::ErrorToString | Native::ErrorStackGetter => 0.0,
+        _ => return None,
+    })
+}
 use crate::Value;
 use crate::host::{CapabilityId, HostContext};
 use std::fmt;
@@ -87,6 +96,95 @@ impl JsError {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn error_is_error(&self, value: Value) -> bool {
+        if !matches!(self.heap.get(value), Some(Cell::Object(_))) {
+            return false;
+        }
+        self.lookup_atom("\0rqj:error-brand")
+            .and_then(|atom| self.own_property(value, atom))
+            .is_some_and(|brand| brand == Value::TRUE)
+    }
+
+    pub(super) fn error_stack_getter(
+        &mut self,
+        program: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(program, "Error stack getter requires an object".into()));
+        }
+        if !self.error_is_error(receiver) {
+            return Ok(Value::UNDEFINED);
+        }
+        self.error_to_string(program, receiver)
+    }
+
+    pub(super) fn error_stack_setter(
+        &mut self,
+        program: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(program, "Error stack setter requires an object".into()));
+        }
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !matches!(self.heap.get(value), Some(Cell::String(_))) {
+            return Err(self.type_error(program, "Error stack must be a string".into()));
+        }
+        let error_atom = self.intern_atom("Error");
+        let error_constructor = self.get_property(program, self.realm.globals, error_atom)?;
+        let prototype_atom = self.intern_atom("prototype");
+        let error_prototype = self.get_property(program, error_constructor, prototype_atom)?;
+        if receiver == error_prototype {
+            return Err(self.type_error(program, "cannot set Error.prototype.stack".into()));
+        }
+        let key = self.heap.alloc(Cell::String("stack".into()));
+        let descriptor = self.object_get_own_property_descriptor(program, &[receiver, key])?;
+        if !descriptor.is_undefined() {
+            if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
+                let atom = self.intern_atom("stack");
+                self.set_property_with_receiver(program, receiver, atom, value, receiver)?;
+                return Ok(Value::UNDEFINED);
+            }
+            let get = self.intern_atom("get");
+            let set = self.intern_atom("set");
+            let descriptor_getter = self.get_property(program, descriptor, get)?;
+            let descriptor_setter = self.get_property(program, descriptor, set)?;
+            if !descriptor_getter.is_undefined() || !descriptor_setter.is_undefined() {
+                if descriptor_setter.is_undefined() {
+                    return Err(self.type_error(program, "cannot set Error stack property".into()));
+                }
+                self.call_value(program, descriptor_setter, receiver, &[value])?;
+                return Ok(Value::UNDEFINED);
+            }
+            let writable = self.intern_atom("writable");
+            let writable = self.get_property(program, descriptor, writable)?;
+            if !self.truthy(writable) {
+                return Err(self.type_error(program, "cannot set Error stack property".into()));
+            }
+            let atom = self.intern_atom("stack");
+            if !self.set_property_with_receiver(program, receiver, atom, value, receiver)? {
+                return Err(self.type_error(program, "cannot set Error stack property".into()));
+            }
+            return Ok(Value::UNDEFINED);
+        }
+        let descriptor = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        for (name, field_value) in [
+            ("value", value),
+            ("writable", Value::TRUE),
+            ("enumerable", Value::TRUE),
+            ("configurable", Value::TRUE),
+        ] {
+            let atom = self.intern_atom(name);
+            self.set_property(descriptor, atom, field_value)?;
+        }
+        self.object_define_property(program, &[receiver, key, descriptor])?;
+        Ok(Value::UNDEFINED)
+    }
+
     pub(super) fn error_to_string(
         &mut self,
         program: &ResidualProgram,
@@ -96,6 +194,12 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(
                 program,
                 "Error.prototype.toString called on nullish value".into(),
+            ));
+        }
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(
+                program,
+                "Error.prototype.toString called on non-object value".into(),
             ));
         }
         let name_atom = self.intern_atom("name");
@@ -901,6 +1005,17 @@ impl<H: Host> Vm<H> {
             );
         }
         self.set_named(program, global, "Array", array)?;
+        let regexp = self.native_with_realm(Native::RegExp, global, global);
+        let regexp_prototype = self.heap.alloc(Cell::RegExp {
+            object: Self::empty_object(object_prototype),
+            source: JsString::from_str("(?:)"),
+            flags: String::new(),
+        });
+        self.set_builtin_value_named(regexp, "prototype", regexp_prototype)?;
+        self.set_builtin_value_named(regexp_prototype, "constructor", regexp)?;
+        let regexp_name = self.heap.alloc(Cell::String("RegExp".into()));
+        self.set_builtin_value_named(regexp, "name", regexp_name)?;
+        self.set_builtin_value_named(global, "RegExp", regexp)?;
         let async_disposable_stack =
             self.native_with_realm(Native::AsyncDisposableStack, global, global);
         let async_disposable_stack_prototype = self
@@ -951,6 +1066,27 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(realm_error_prototype, "name", realm_error_name)?;
         let realm_empty_message = self.heap.alloc(Cell::String("".into()));
         self.set_builtin_value_named(realm_error_prototype, "message", realm_empty_message)?;
+        let realm_is_error = self.native_with_realm(Native::ErrorIsError, global, global);
+        self.set_builtin_function_name(realm_is_error, "isError")?;
+        self.set_builtin_value_named(realm_error_constructor, "isError", realm_is_error)?;
+        let stack_getter = self.native_with_realm(Native::ErrorStackGetter, global, global);
+        let stack_setter = self.native_with_realm(Native::ErrorStackSetter, global, global);
+        self.set_builtin_function_name(stack_getter, "get stack")?;
+        self.set_builtin_function_name(stack_setter, "set stack")?;
+        let stack_atom = self.intern_atom("stack");
+        self.set_property(realm_error_prototype, stack_atom, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            realm_error_prototype,
+            PropertyKey::string(stack_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(stack_getter),
+                setter: Some(stack_setter),
+            },
+        );
         self.set_builtin_value_named(global, "Error", realm_error_constructor)?;
         for (name, native) in [
             ("AggregateError", Native::AggregateError),
@@ -1053,6 +1189,26 @@ impl<H: Host> Vm<H> {
             self.object_data_mut(aggregate).unwrap().proto = error;
         }
         self.set_builtin_named(program, error_prototype, "toString", Native::ErrorToString)?;
+        let error_constructor = self.native_value(Native::Error);
+        self.set_builtin_named(program, error_constructor, "isError", Native::ErrorIsError)?;
+        let stack_getter = self.native_value(Native::ErrorStackGetter);
+        let stack_setter = self.native_value(Native::ErrorStackSetter);
+        self.set_builtin_function_name(stack_getter, "get stack")?;
+        self.set_builtin_function_name(stack_setter, "set stack")?;
+        let stack_atom = self.intern_atom("stack");
+        self.set_property(error_prototype, stack_atom, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            error_prototype,
+            PropertyKey::string(stack_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(stack_getter),
+                setter: Some(stack_setter),
+            },
+        );
         let realm_constructor = self.native_value(Native::RealmTypeError);
         let realm_prototype = self
             .heap
@@ -1120,6 +1276,18 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        if let Some(options) = args
+            .get(1)
+            .copied()
+            .filter(|value| self.is_object_like(*value))
+        {
+            let cause_atom = self.intern_atom("cause");
+            let cause_key = self.heap.alloc(Cell::String("cause".into()));
+            if self.has_property(program, options, cause_key)? {
+                let cause = self.get_property(program, options, cause_atom)?;
+                self.set_builtin_value_named(object, "cause", cause)?;
+            }
+        }
         Ok(object)
     }
 
@@ -1148,6 +1316,7 @@ impl<H: Host> Vm<H> {
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)?;
         self.set_builtin_value_named(object, "errors", errors)?;
         if let Some(message) = message {
             let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));

@@ -488,6 +488,15 @@ impl<H: Host> Vm<H> {
                 }
             }
             Native::ErrorToString => self.error_to_string(p, this),
+            Native::ErrorIsError => Ok(
+                if self.error_is_error(args.first().copied().unwrap_or(Value::UNDEFINED)) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            ),
+            Native::ErrorStackGetter => self.error_stack_getter(p, this),
+            Native::ErrorStackSetter => self.error_stack_setter(p, this, args),
             Native::ArrayBufferSpecies => Ok(this),
             Native::NumberExponential => self.number_exponential(p, this, args),
             native if native.is_error_constructor() => self.construct_native(p, native, args),
