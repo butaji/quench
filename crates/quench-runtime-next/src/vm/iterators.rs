@@ -110,7 +110,7 @@ impl<H: Host> Vm<H> {
             program,
             self.regexp_string_iterator_proto,
             "next",
-            Native::IteratorNext,
+            Native::RegExpStringIteratorNext,
         )?;
         self.generator_proto = self
             .heap
@@ -2571,6 +2571,27 @@ impl<H: Host> Vm<H> {
         self.iterator_next_with_args(p, this, &[])
     }
 
+    pub(super) fn regexp_string_iterator_next(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !matches!(
+            self.heap.get(this),
+            Some(Cell::Iterator {
+                kind: IteratorKind::RegExpStringMatchAll,
+                ..
+            })
+        ) {
+            return Err(self.type_error(
+                p,
+                "RegExp string iterator next called on incompatible receiver".into(),
+            ));
+        }
+        self.iterator_next_with_args(p, this, args)
+    }
+
     pub(super) fn array_iterator_next(
         &mut self,
         p: &ResidualProgram,
@@ -2819,7 +2840,7 @@ impl<H: Host> Vm<H> {
                     let last_index_atom = self.intern_atom("lastIndex");
                     let last_index = self.get_property(p, source, last_index_atom)?;
                     let index = self.to_number(p, last_index)?;
-                    let index = super::regexp::regexp_to_length(index).min(input.units().len());
+                    let index = super::regexp::regexp_to_length(index);
                     let next =
                         super::regexp::advance_string_index_units(input.units(), index, unicode);
                     self.set_property(source, last_index_atom, Value::number(next as f64))?;

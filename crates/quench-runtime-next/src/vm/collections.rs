@@ -56,6 +56,7 @@ impl<H: Host> Vm<H> {
                 | Native::SetForEach
                 | Native::SetSizeGetter
                 | Native::IteratorNext
+                | Native::RegExpStringIteratorNext
                 | Native::ArrayIteratorNext
                 | Native::IteratorClose
                 | Native::IteratorSelf
@@ -716,6 +717,7 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             }
             Native::IteratorNext => self.iterator_next_with_args(p, this, args),
+            Native::RegExpStringIteratorNext => self.regexp_string_iterator_next(p, this, args),
             Native::IteratorProtocolNext => self.iterator_next_with_args(p, this, args),
             Native::IteratorProtocolReturn => self.iterator_protocol_return(p, this),
             Native::IteratorFrom => self.iterator_from(p, args),
