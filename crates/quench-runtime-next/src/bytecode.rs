@@ -84,7 +84,11 @@ pub(crate) enum InstructionField {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImmediateRole {
     Undeclared,
+    ConstantIndex,
+    ClosureFunctionIndex,
     MethodSiteIndex,
+    ObjectSiteIndex,
+    SuperinstructionIndex,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,7 +248,7 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr $(; $layout:ident)? $(, @ $result:ident)? $(, @ fields($a:ident, $b:ident, $c:ident))? $(, @ immediate($immediate_role:ident))?),+ $(,)?) => {
+    ($($name:ident => $effect:expr $(; layout $layout:ident)? $(; meaning $immediate_role:ident)? $(, @ $result:ident)? $(, @ fields($a:ident, $b:ident, $c:ident))?),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -317,13 +321,13 @@ opcodes!(
     Nop => Effect::PURE,
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
     Wide => Effect::PURE,
-    LoadConst => Effect::PURE,
+    LoadConst => Effect::PURE; meaning ConstantIndex,
     LoadLocal => Effect::PURE,
     StoreLocal => Effect::PURE,
     LoadEnvLocal => Effect::READS_HEAP,
     StoreEnvLocal => Effect::WRITES_HEAP,
-    LoadCapture => Effect::READS_HEAP; CaptureDepthAndSlot,
-    StoreCapture => Effect::WRITES_HEAP; CaptureDepthAndSlot,
+    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot,
+    StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot,
     LoadName => READ_THROW,
     LoadNameCall => READ_THROW,
     LoadNameTypeof => Effect::READS_HEAP,
@@ -334,12 +338,12 @@ opcodes!(
     StoreResolvedName => WRITE_THROW,
     LoadThis => Effect::PURE,
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP),
-    MakeClosure => CALL_EFFECT,
+    MakeClosure => CALL_EFFECT; meaning ClosureFunctionIndex,
     MakeArray => CALL_EFFECT,
     MakeConstArray => CALL_EFFECT,
     MakeObject => CALL_EFFECT,
-    MakeObject2 => CALL_EFFECT, @ Returnable,
-    SuperConstArrayObject2 => CALL_EFFECT, @ Returnable,
+    MakeObject2 => CALL_EFFECT; meaning ObjectSiteIndex, @ Returnable,
+    SuperConstArrayObject2 => CALL_EFFECT; meaning SuperinstructionIndex, @ Returnable,
     GetIterator => READ_THROW,
     GetAsyncIterator => READ_THROW,
     IteratorClose => READ_THROW,
@@ -354,7 +358,7 @@ opcodes!(
     InitializeTdz => Effect::PURE,
     Await => READ_THROW.union(Effect::CONTROL),
     Yield => READ_THROW.union(Effect::CONTROL),
-    YieldStar => READ_THROW.union(Effect::CONTROL); RegisterPair,
+    YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair,
     GetField => READ_THROW, @ ReturnableAndThis,
     GetIndex => READ_THROW,
     ToPropertyKey => READ_THROW,
@@ -373,12 +377,12 @@ opcodes!(
     CheckPrivate => READ_THROW,
     PrivateIn => READ_THROW,
     Move => Effect::PURE,
-    Call => CALL_EFFECT; CallWindowWithEvalFlags, @ Returnable,
-    CallDirectEvalArray => CALL_EFFECT; CallWindowWithEvalFlags, @ Returnable,
-    CallKnown => CALL_EFFECT; CallWindow, @ Returnable, @ fields(Undeclared, FunctionIndex, Undeclared),
-    CallMethod => CALL_EFFECT, @ Returnable, @ fields(Undeclared, Register, Undeclared), @ immediate(MethodSiteIndex),
-    CallThisMethod => CALL_EFFECT, @ Returnable, @ immediate(MethodSiteIndex),
-    Construct => CALL_EFFECT; ConstructCountAndFlags, @ Returnable, @ fields(Undeclared, Register, ConstructArguments),
+    Call => CALL_EFFECT; layout CallWindowWithEvalFlags, @ Returnable,
+    CallDirectEvalArray => CALL_EFFECT; layout CallWindowWithEvalFlags, @ Returnable,
+    CallKnown => CALL_EFFECT; layout CallWindow, @ Returnable, @ fields(Undeclared, FunctionIndex, Undeclared),
+    CallMethod => CALL_EFFECT; meaning MethodSiteIndex, @ Returnable, @ fields(Undeclared, Register, Undeclared),
+    CallThisMethod => CALL_EFFECT; meaning MethodSiteIndex, @ Returnable,
+    Construct => CALL_EFFECT; layout ConstructCountAndFlags, @ Returnable, @ fields(Undeclared, Register, ConstructArguments),
     Jump => Effect::CONTROL,
     JumpFalse => Effect::CONTROL,
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL),
