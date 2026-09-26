@@ -358,14 +358,14 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::ToPropertyKey | Op::ToNumeric => instruction.b() == register,
         Op::SuperConstArrayObject2 => true,
         Op::SetField | Op::DefineField => {
-            instruction.a() == register || instruction.b() == register
+            instruction.register_a() == register || instruction.register_b() == register
         }
         Op::DefineComputedField => {
-            instruction.a() == register
-                || instruction.b() == register
-                || instruction.c() == register
+            instruction.register_a() == register
+                || instruction.register_b() == register
+                || instruction.register_c() == register
         }
-        Op::SetThisField => instruction.a() == register,
+        Op::SetThisField => instruction.register_a() == register,
         Op::InitializeThis => instruction.a() == register,
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();

@@ -139,11 +139,15 @@ fn uses(
             .fold(0, |mask, nested| {
                 mask | uses(*nested, methods, fields, superinstructions)
             }),
-        Op::SetField | Op::DefineField => bit(instruction.a()) | bit(instruction.b()),
-        Op::DefineComputedField => {
-            bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c())
+        Op::SetField | Op::DefineField => {
+            bit(instruction.register_a()) | bit(instruction.register_b())
         }
-        Op::SetThisField => bit(instruction.a()),
+        Op::DefineComputedField => {
+            bit(instruction.register_a())
+                | bit(instruction.register_b())
+                | bit(instruction.register_c())
+        }
+        Op::SetThisField => bit(instruction.register_a()),
         Op::InitializeThis => bit(instruction.a()),
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
