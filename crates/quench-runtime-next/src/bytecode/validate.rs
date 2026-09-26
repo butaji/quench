@@ -386,10 +386,10 @@ impl ResidualProgram {
                     Op::LoadImportMeta if !destination(instruction.a()) => {
                         return Err(format!("function {index} import-meta load is invalid"));
                     }
-                    Op::CacheTemplateObject if !register(instruction.a()) => {
+                    Op::CacheTemplateObject if !register(instruction.register_a()) => {
                         return Err(format!("function {index} template-object cache is invalid"));
                     }
-                    Op::LoadCachedTemplateObject if !destination(instruction.a()) => {
+                    Op::LoadCachedTemplateObject if !destination(instruction.result_register()) => {
                         return Err(format!(
                             "function {index} cached template-object load is invalid"
                         ));

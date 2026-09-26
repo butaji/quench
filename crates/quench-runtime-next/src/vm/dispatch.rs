@@ -286,11 +286,11 @@ impl<H: Host> Vm<H> {
                 let value = if let Some(value) = self.realm.template_objects.get(&key).copied() {
                     value
                 } else {
-                    let value = self.read(f, i.a());
+                    let value = self.read(f, i.register_a());
                     self.realm.template_objects.insert(key, value);
                     value
                 };
-                self.write(f, i.a(), value);
+                self.write(f, i.register_a(), value);
             }
             Op::LoadCachedTemplateObject => {
                 let key = (
@@ -304,7 +304,7 @@ impl<H: Host> Vm<H> {
                     .get(&key)
                     .copied()
                     .unwrap_or(Value::UNDEFINED);
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::MakeClosure => {
                 let env = self.promote_frame_environment(f);
