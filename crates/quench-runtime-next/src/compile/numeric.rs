@@ -141,7 +141,7 @@ fn local_inc_store(code: &[Instr]) -> Option<(u16, u16)> {
     };
     (load.op() == Op::LoadLocal
         && update.op() == Op::IncDec
-        && update.b() == load.a()
+        && update.register_b() == load.a()
         && update.a() <= REGISTER_MASK
         && update.imm() <= 1
         && store.op() == Op::StoreLocal

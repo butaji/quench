@@ -185,7 +185,7 @@ impl<H: Host> Vm<H> {
                     Op::LoadLocal => {
                         let local = ins.local_slot();
                         let value = self.frames[frame].locals[local];
-                        self.write(frame, ins.a(), value);
+                        self.write(frame, ins.result_register(), value);
                         if ins.c() == crate::bytecode::NUMERIC_LOCAL_INC_STORE
                             && let Some(integer) = value.as_int()
                         {
@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
                         execute_specialized_numeric!(self, p, frame, ins, multiply)
                     }
                     Op::IncDec => {
-                        let input = self.read(frame, ins.b());
+                        let input = self.read(frame, ins.register_b());
                         let is_decrement = ins.boolean_flag().expect("validated boolean immediate");
                         let delta = if is_decrement { -1.0 } else { 1.0 };
                         let value = if let Some(integer) = input.as_int() {
@@ -289,7 +289,7 @@ impl<H: Host> Vm<H> {
                         } else {
                             Value::number(self.to_number(p, input)? + delta)
                         };
-                        self.write(frame, ins.a(), value);
+                        self.write(frame, ins.result_register(), value);
                     }
                     Op::Jump => {
                         pc = ins.jump_target() as usize;

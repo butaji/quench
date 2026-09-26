@@ -705,7 +705,7 @@ impl<H: Host> Vm<H> {
                 i.array_index() as usize,
                 self.read(f, i.a()),
             )?,
-            Op::Move => self.write(f, i.a(), self.read(f, i.b())),
+            Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 let operator = i.binary_operator();
                 let left_operand = i.operand_b();
@@ -733,7 +733,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::IncDec => {
-                let input = self.read(f, i.b());
+                let input = self.read(f, i.register_b());
                 let is_decrement = i.boolean_flag().expect("validated boolean immediate");
                 let delta = if is_decrement { -1.0 } else { 1.0 };
                 let value = if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
@@ -750,11 +750,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     Value::number(self.to_number(p, input)? + delta)
                 };
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::Unary => {
-                let v = self.unary(p, i.unary_operator(), self.read(f, i.b()))?;
-                self.write(f, i.a(), v);
+                let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
+                self.write(f, i.result_register(), v);
             }
             Op::Delete => {
                 let result =
