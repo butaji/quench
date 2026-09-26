@@ -449,11 +449,11 @@ impl<H: Host> Vm<H> {
         let symbol_prototype = self.object();
         self.set_builtin_value_named(symbol, "prototype", symbol_prototype)?;
         self.set_builtin_value_named(symbol_prototype, "constructor", symbol)?;
-        self.set_named(
+        self.set_builtin_named(
             program,
             symbol_prototype,
             "valueOf",
-            self.native_value(Native::SymbolValueOf),
+            Native::SymbolValueOf,
         )?;
         self.set_builtin_named(
             program,
@@ -1331,6 +1331,7 @@ impl<H: Host> Vm<H> {
             self.set_named(program, global, name, intrinsic)?;
         }
         self.install_realm_default_bindings(global)?;
+        self.install_symbol_for_realm(program, global, object_prototype)?;
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
         let eval_script = self.native_with_realm(Native::EvalScript, global, global);
@@ -1358,7 +1359,6 @@ impl<H: Host> Vm<H> {
             "Int16Array",
             "Int32Array",
             "SharedArrayBuffer",
-            "Symbol",
             "Uint8Array",
             "Uint8ClampedArray",
             "Uint16Array",

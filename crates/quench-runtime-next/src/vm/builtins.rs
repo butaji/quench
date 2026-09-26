@@ -446,12 +446,13 @@ impl<H: Host> Vm<H> {
         self.install_regexp(program)?;
         self.install_shadow_realm(program)?;
         let symbol = self.native_value(Native::Symbol);
-        self.set_named(program, symbol, "for", self.native_value(Native::SymbolFor))?;
-        self.set_named(
+        self.set_builtin_function_name(symbol, "Symbol")?;
+        self.set_builtin_named(program, symbol, "for", Native::SymbolFor)?;
+        self.set_builtin_named(
             program,
             symbol,
             "keyFor",
-            self.native_value(Native::SymbolKeyFor),
+            Native::SymbolKeyFor,
         )?;
         for name in [
             "asyncDispose",
@@ -475,7 +476,7 @@ impl<H: Host> Vm<H> {
                 .heap
                 .alloc(Cell::Symbol(Some(format!("Symbol.{name}").into())));
             self.well_known_symbols.insert(name.into(), value);
-            self.set_named(program, symbol, name, value)?;
+            self.set_named_constant(program, symbol, name, value)?;
         }
         let symbol_prototype_atom = self.intern_atom("prototype");
         let symbol_prototype = self.get_property(program, symbol, symbol_prototype_atom)?;
@@ -486,6 +487,21 @@ impl<H: Host> Vm<H> {
         self.set_property_attributes(
             symbol_prototype,
             PropertyKey::symbol(to_primitive),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let to_string_tag = self.well_known_symbols["toStringTag"];
+        let symbol_tag = self.heap.alloc(Cell::String(JsString::from_str("Symbol")));
+        self.set_symbol_property(symbol_prototype, to_string_tag, symbol_tag)?;
+        self.set_property_attributes(
+            symbol_prototype,
+            PropertyKey::symbol(to_string_tag),
             PropertyAttributes {
                 writable: false,
                 enumerable: false,

@@ -1,6 +1,75 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn install_symbol_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<(), JsError> {
+        let constructor = self.native_with_realm(Native::Symbol, global, global);
+        self.set_builtin_function_name(constructor, "Symbol")?;
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        self.set_builtin_value_named(global, "Symbol", constructor)?;
+        for (name, native) in [
+            ("for", Native::SymbolFor),
+            ("keyFor", Native::SymbolKeyFor),
+        ] {
+            let method = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(constructor, name, method)?;
+        }
+        for (name, symbol) in self.well_known_symbols.clone() {
+            self.set_named_constant(program, constructor, &name, symbol)?;
+        }
+        for (name, native) in [
+            ("toString", Native::SymbolToString),
+            ("valueOf", Native::SymbolValueOf),
+        ] {
+            let method = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(prototype, name, method)?;
+        }
+        if let Some(to_primitive) = self.well_known_symbols.get("toPrimitive").copied() {
+            let method = self.native_with_realm(Native::SymbolToPrimitive, global, global);
+            self.set_builtin_function_name(method, "[Symbol.toPrimitive]")?;
+            self.set_symbol_property(prototype, to_primitive, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(to_primitive),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        if let Some(to_string_tag) = self.well_known_symbols.get("toStringTag").copied() {
+            let tag = self.heap.alloc(Cell::String(JsString::from_str("Symbol")));
+            self.set_symbol_property(prototype, to_string_tag, tag)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(to_string_tag),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        Ok(())
+    }
+
     pub(super) fn call_symbol_constructor(
         &mut self,
         p: &ResidualProgram,
@@ -27,7 +96,9 @@ impl<H: Host> Vm<H> {
                     let value_atom = self.intern_atom("\0rqj:symbol-value");
                     self.own_property(this, value_atom)
                         .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
-                        .ok_or_else(|| JsError("Symbol method receiver is not a symbol".into()))?
+                        .ok_or_else(|| {
+                            self.type_error(p, "Symbol method receiver is not a symbol".into())
+                        })?
                 };
                 let Some(Cell::Symbol(description)) = self.heap.get(value) else {
                     unreachable!("symbol value was checked above")
@@ -41,7 +112,10 @@ impl<H: Host> Vm<H> {
                 } else {
                     let value_atom = self.intern_atom("\0rqj:symbol-value");
                     self.own_property(this, value_atom).ok_or_else(|| {
-                        JsError("Symbol.prototype.valueOf called on incompatible receiver".into())
+                        self.type_error(
+                            p,
+                            "Symbol.prototype.valueOf called on incompatible receiver".into(),
+                        )
                     })
                 }
             }
@@ -91,7 +165,7 @@ impl<H: Host> Vm<H> {
             Native::SymbolKeyFor => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if !matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
-                    return Err(JsError("symbol keyFor argument is not a symbol".into()));
+                    return Err(self.type_error(p, "symbol keyFor argument is not a symbol".into()));
                 }
                 Ok(self
                     .symbol_registry
