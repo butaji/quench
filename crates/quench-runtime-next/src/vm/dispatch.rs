@@ -258,7 +258,7 @@ impl<H: Host> Vm<H> {
             Op::StoreName => self.store_name(p, i.atom_index(), self.read(f, i.a()), i.c())?,
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
-                self.write(f, i.a(), this);
+                self.write(f, i.result_register(), this);
             }
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
@@ -271,7 +271,7 @@ impl<H: Host> Vm<H> {
                     self.programs.set_import_meta(program, value);
                     value
                 };
-                self.write(f, i.a(), import_meta);
+                self.write(f, i.result_register(), import_meta);
             }
             Op::InitializeThis => {
                 let value = self.read(f, i.register_a());
