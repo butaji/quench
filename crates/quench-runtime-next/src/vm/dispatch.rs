@@ -773,7 +773,7 @@ impl<H: Host> Vm<H> {
                 self.maybe_collect(p);
             }
             Op::JumpFalse => {
-                let value = self.read(f, i.a());
+                let value = self.read(f, i.register_a());
                 let truthy = self.truthy(value);
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.branch_value(value.profile_kind(), truthy);
@@ -979,9 +979,9 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
-            Op::Return => return Ok(StepResult::Return(self.read(f, i.a()))),
+            Op::Return => return Ok(StepResult::Return(self.read(f, i.register_a()))),
             Op::Throw => {
-                let value = self.read(f, i.a());
+                let value = self.read(f, i.register_a());
                 let message = if self.object_data(value).is_some() {
                     let atom = self.intern_atom("message");
                     match self.get_property(p, value, atom)? {
