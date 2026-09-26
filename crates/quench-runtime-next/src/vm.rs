@@ -1,7 +1,7 @@
 use crate::Value;
 use crate::bytecode::{
-    Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, Op, Operand, REGISTER_MASK,
-    Register, ResidualProgram, WideInstruction,
+    Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, Op, Operand, Register,
+    ResidualProgram, WideInstruction,
 };
 use crate::heap::{
     Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object,
