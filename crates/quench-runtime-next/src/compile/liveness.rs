@@ -1,5 +1,6 @@
 use crate::bytecode::{
-    FieldBase, FieldSite, Function, Instr, Op, Operand, REGISTER_MASK, Register, Superinstruction,
+    FieldBase, FieldLookup, FieldSite, Function, Instr, Op, Operand, REGISTER_MASK, Register,
+    Superinstruction,
 };
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -244,13 +245,12 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
 }
 
 fn field_base(instruction: Instr, fields: &[FieldSite]) -> u64 {
-    if instruction.b() == FieldBase::NESTED {
-        fields
-            .get(instruction.imm() as usize)
+    match instruction.field_lookup() {
+        FieldLookup::Site(index) => fields
+            .get(index)
             .and_then(|site| site.base.register_index())
-            .map_or(0, bit)
-    } else {
-        FieldBase(instruction.b()).register_index().map_or(0, bit)
+            .map_or(0, bit),
+        FieldLookup::Atom(_) => FieldBase(instruction.b()).register_index().map_or(0, bit),
     }
 }
 

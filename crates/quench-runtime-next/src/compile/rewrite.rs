@@ -315,13 +315,17 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::ResolveName | Op::DeleteName => false,
         Op::LoadResolvedName => instruction.b() == register,
         Op::LoadImportMeta => false,
-        Op::GetField if instruction.b() == FieldBase::NESTED => {
-            fields
-                .get(instruction.imm() as usize)
-                .and_then(|site| site.base.register_index())
-                == Some(register)
-        }
-        Op::GetField => FieldBase(instruction.b()).register_index() == Some(register),
+        Op::GetField => match instruction.field_lookup() {
+            crate::bytecode::FieldLookup::Site(index) => {
+                fields
+                    .get(index)
+                    .and_then(|site| site.base.register_index())
+                    == Some(register)
+            }
+            crate::bytecode::FieldLookup::Atom(_) => {
+                FieldBase(instruction.b()).register_index() == Some(register)
+            }
+        },
         Op::CheckPrivate => instruction.a() == register,
         Op::PrivateIn => instruction.b() == register,
         Op::GetIndex | Op::MakeObject2 => {

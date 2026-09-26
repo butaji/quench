@@ -1,6 +1,6 @@
 use super::{
-    Effect, FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Op, REGISTER_MASK,
-    RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
+    Effect, FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField,
+    Op, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
 };
 
 const PACKED_PAIR_LOW_BITS: u32 = 8;
@@ -153,6 +153,16 @@ macro_rules! layout_accessors {
                     ImmediateRole::FunctionNamePrefix
                 );
                 self.imm()
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn field_lookup(self) -> FieldLookup {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::FieldLookup);
+                if self.b() == FieldBase::NESTED {
+                    FieldLookup::Site(self.imm() as usize)
+                } else {
+                    FieldLookup::Atom(self.imm())
+                }
             }
 
             #[allow(dead_code)]
