@@ -82,6 +82,7 @@ pub(crate) enum FieldLayout {
     FunctionIndex,
     ConstructArguments,
     ElementCount,
+    FieldBase,
     CacheSiteIndex,
     BooleanFlag,
     Operand,
@@ -120,7 +121,11 @@ pub(crate) enum ImmediateRole {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FieldLookup {
-    Atom(Atom),
+    Atom {
+        atom: Atom,
+        base: FieldBase,
+        cache_site: u16,
+    },
     Site(usize),
 }
 
@@ -399,7 +404,7 @@ opcodes!(
     Await => READ_THROW.union(Effect::CONTROL); meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     Yield => READ_THROW.union(Effect::CONTROL); meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ Register, @ fields(Undeclared, Register, Register),
-    GetField => READ_THROW; meaning FieldLookup, @ ReturnableAndThis,
+    GetField => READ_THROW; meaning FieldLookup, @ ReturnableAndThis, @ fields(Undeclared, FieldBase, CacheSiteIndex),
     GetIndex => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Operand, Operand),
     ToPropertyKey => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     ToNumeric => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),

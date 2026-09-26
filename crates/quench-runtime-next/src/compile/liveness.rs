@@ -1,5 +1,5 @@
 use crate::bytecode::{
-    FieldBase, FieldLookup, FieldSite, Function, Instr, Op, Operand, Register, Superinstruction,
+    FieldLookup, FieldSite, Function, Instr, Op, Operand, Register, Superinstruction,
 };
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -107,7 +107,7 @@ fn uses(
     superinstructions: &[Superinstruction],
 ) -> u64 {
     match instruction.op() {
-        Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture => bit(instruction.a()),
+        Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture => bit(instruction.register_a()),
         Op::StoreName => bit(instruction.register_a()),
         Op::StoreResolvedName => bit(instruction.register_a()) | bit(instruction.register_b()),
         Op::LoadResolvedName => bit(instruction.register_b()),
@@ -193,7 +193,7 @@ fn uses(
                 }
                 crate::bytecode::ConstructArguments::Array(register) => bit(register),
             };
-            bit(instruction.b()) | arguments
+            bit(instruction.register_b()) | arguments
         }
         _ => 0,
     }
@@ -277,7 +277,7 @@ fn field_base(instruction: Instr, fields: &[FieldSite]) -> u64 {
             .get(index)
             .and_then(|site| site.base.register_index())
             .map_or(0, bit),
-        FieldLookup::Atom(_) => FieldBase(instruction.b()).register_index().map_or(0, bit),
+        FieldLookup::Atom { base, .. } => base.register_index().map_or(0, bit),
     }
 }
 

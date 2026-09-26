@@ -115,6 +115,23 @@ macro_rules! layout_accessors {
                 }
             }
 
+            pub(crate) fn direct_eval(self) -> bool {
+                debug_assert_eq!(
+                    self.op().immediate_layout(),
+                    ImmediateLayout::CallWindowWithEvalFlags
+                );
+                ImmediateLayout::direct_eval(self.imm())
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn parameter_eval(self) -> bool {
+                debug_assert_eq!(
+                    self.op().immediate_layout(),
+                    ImmediateLayout::CallWindowWithEvalFlags
+                );
+                ImmediateLayout::parameter_eval(self.imm())
+            }
+
             #[allow(dead_code)]
             pub(crate) fn known_function_index(self) -> u16 {
                 debug_assert_eq!(
@@ -424,10 +441,22 @@ macro_rules! layout_accessors {
             #[allow(dead_code)]
             pub(crate) fn field_lookup(self) -> FieldLookup {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::FieldLookup);
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::FieldBase
+                );
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::CacheSiteIndex
+                );
                 if self.b() == FieldBase::NESTED {
                     FieldLookup::Site(self.imm() as usize)
                 } else {
-                    FieldLookup::Atom(self.imm())
+                    FieldLookup::Atom {
+                        atom: self.imm(),
+                        base: FieldBase(self.b()),
+                        cache_site: self.c(),
+                    }
                 }
             }
 
