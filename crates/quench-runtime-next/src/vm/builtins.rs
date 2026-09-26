@@ -221,6 +221,14 @@ const NATIVES: &[Native] = &[
     Native::SetEntries,
     Native::SetForEach,
     Native::SetSizeGetter,
+    Native::SetDifference,
+    Native::SetIntersection,
+    Native::SetSymmetricDifference,
+    Native::SetUnion,
+    Native::SetIsDisjointFrom,
+    Native::SetIsSubsetOf,
+    Native::SetIsSupersetOf,
+    Native::SetSpeciesGetter,
     Native::Iterator, Native::IteratorFrom, Native::IteratorConcat, Native::IteratorZip,
     Native::IteratorZipKeyed, Native::IteratorMap, Native::IteratorFilter, Native::IteratorTake,
     Native::IteratorDrop, Native::IteratorFlatMap, Native::IteratorReduce, Native::IteratorToArray,
@@ -465,6 +473,7 @@ impl<H: Host> Vm<H> {
             self.set_named(program, symbol, name, value)?;
         }
         self.install_map_species()?;
+        self.install_set_species(self.native_value(Native::Set))?;
         self.install_regexp_symbol_properties(
             self.native_value(Native::RegExp),
             self.regexp_proto,
