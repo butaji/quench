@@ -22,9 +22,49 @@ impl<H: Host> Vm<H> {
         Ok(descriptor)
     }
 
-    fn canonical_typed_array_index(key: &str) -> Option<usize> {
+    pub(super) fn canonical_typed_array_index(key: &str) -> Option<usize> {
         let index = key.parse::<usize>().ok()?;
         (index.to_string() == key).then_some(index)
+    }
+
+    pub(super) fn define_typed_array_property(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        index: usize,
+        descriptor: Value,
+    ) -> Result<Value, JsError> {
+        let getter = self.descriptor_field(p, descriptor, "get")?;
+        let setter = self.descriptor_field(p, descriptor, "set")?;
+        let value = self.descriptor_field(p, descriptor, "value")?;
+        let writable = self.descriptor_field(p, descriptor, "writable")?;
+        let enumerable = self.descriptor_field(p, descriptor, "enumerable")?;
+        let configurable = self.descriptor_field(p, descriptor, "configurable")?;
+        let invalid_kind = getter.is_some() || setter.is_some();
+        let invalid_attributes = writable.is_some_and(|value| !self.truthy(value))
+            || enumerable.is_some_and(|value| !self.truthy(value))
+            || configurable.is_some_and(|value| !self.truthy(value));
+        if invalid_kind || invalid_attributes {
+            return Err(self.type_error(
+                p,
+                "cannot define incompatible typed array index descriptor".into(),
+            ));
+        }
+        if self.typed_array_length(target).is_none_or(|length| index >= length) {
+            return Err(self.type_error(
+                p,
+                "cannot define a property on an out-of-bounds typed array".into(),
+            ));
+        }
+        if let Some(value) = value
+            && !self.typed_array_set(p, target, index, value)?
+        {
+            return Err(self.type_error(
+                p,
+                "cannot define a property on an out-of-bounds typed array".into(),
+            ));
+        }
+        Ok(target)
     }
 
     pub(super) fn object_get_own_property_descriptor(
