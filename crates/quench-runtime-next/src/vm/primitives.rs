@@ -60,7 +60,10 @@ impl<H: Host> Vm<H> {
                 } else {
                     let value_atom = self.intern_atom("\0rqj:number-value");
                     self.own_property(this, value_atom).ok_or_else(|| {
-                        JsError("Number.prototype.valueOf called on incompatible receiver".into())
+                        self.type_error(
+                            p,
+                            "Number.prototype.valueOf called on incompatible receiver".into(),
+                        )
                     })
                 }
             }
@@ -480,14 +483,25 @@ impl<H: Host> Vm<H> {
                 self.random_state = state;
                 Ok(Value::number((state >> 11) as f64 / (1u64 << 53) as f64))
             }
+            Native::NumberToLocaleString => {
+                let number = self.number_receiver_value(p, this)?;
+                Ok(self.heap.alloc(Cell::String(
+                    super::number::number_to_decimal(number).into(),
+                )))
+            }
             Native::NumberString => {
-                let number = self.to_number(p, this)?;
+                let number = self.number_receiver_value(p, this)?;
                 let radix = match args.first().copied() {
                     Some(value) if !value.is_undefined() => self.to_number(p, value)? as u32,
                     _ => 10,
                 };
                 if !(2..=36).contains(&radix) {
-                    return Err(JsError("invalid number radix".into()));
+                    return Err(self.range_error(p, "Invalid radix".into()));
+                }
+                if radix == 10 || !number.is_finite() {
+                    return Ok(self.heap.alloc(Cell::String(
+                        super::number::number_to_decimal(number).into(),
+                    )));
                 }
                 Ok(self.heap.alloc(Cell::String(
                     super::string_extra::number_to_radix(number, radix).into(),

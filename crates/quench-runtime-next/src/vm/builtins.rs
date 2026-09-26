@@ -333,6 +333,7 @@ const NATIVES: &[Native] = &[
     Native::MathSinh, Native::MathTanh, Native::MathClz32, Native::MathF16Round,
     Native::MathSumPrecise,
     Native::NumberString,
+    Native::NumberToLocaleString,
     Native::Number, Native::NumberValueOf,
     Native::GlobalIsNaN, Native::GlobalIsFinite, Native::NumberIsNaN,
     Native::NumberIsFinite,

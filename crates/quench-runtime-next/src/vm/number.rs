@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 use num_bigint::{BigInt, Sign};
 
@@ -36,14 +37,82 @@ pub(super) fn parse_number_string(text: &str) -> f64 {
     )
 }
 
+fn fixed_decimal(number: f64, digits: usize) -> String {
+    let bits = number.abs().to_bits();
+    let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1_u64 << 52) - 1);
+    let (significand, exponent) = if exponent_bits == 0 {
+        (fraction, -1074)
+    } else {
+        (fraction | (1_u64 << 52), exponent_bits - 1023 - 52)
+    };
+    let scaled = BigInt::from(significand) * BigInt::from(10_u8).pow(digits as u32);
+    let rounded = if exponent >= 0 {
+        scaled << exponent as usize
+    } else {
+        let shift = (-exponent) as usize;
+        let quotient = &scaled >> shift;
+        let remainder = &scaled - (&quotient << shift);
+        if (&remainder << 1_usize) >= (BigInt::from(1_u8) << shift) {
+            quotient + 1_u8
+        } else {
+            quotient
+        }
+    };
+    let mut text = rounded.to_string();
+    if digits > 0 {
+        if text.len() <= digits {
+            text.insert_str(0, &"0".repeat(digits + 1 - text.len()));
+        }
+        text.insert(text.len() - digits, '.');
+    }
+    if number.is_sign_negative() && number != 0.0 {
+        text.insert(0, '-');
+    }
+    text
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn install_number(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let number = self.native_value(Native::Number);
         let prototype = self.object();
         self.set_builtin_value_named(number, "prototype", prototype)?;
+        let prototype_key = self.intern_atom("prototype");
+        self.set_property_attributes(
+            number,
+            PropertyKey::string(prototype_key),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let number_value = self.intern_atom("\0rqj:number-value");
+        self.set_property(prototype, number_value, Value::number(0.0))?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(number_value),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_named(program, prototype, "constructor", Native::Number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
+        self.set_builtin_named(
+            program,
+            prototype,
+            "toLocaleString",
+            Native::NumberToLocaleString,
+        )?;
         self.set_builtin_named(program, prototype, "toFixed", Native::NumberFixed)?;
         self.set_builtin_named(
             program,
@@ -52,6 +121,7 @@ impl<H: Host> Vm<H> {
             Native::NumberExponential,
         )?;
         self.set_builtin_named(program, prototype, "toPrecision", Native::NumberPrecision)?;
+        self.set_builtin_function_name(number, "Number")?;
         for (name, native) in [
             ("isNaN", Native::NumberIsNaN),
             ("isFinite", Native::NumberIsFinite),
@@ -60,7 +130,7 @@ impl<H: Host> Vm<H> {
             ("parseInt", Native::ParseInt),
             ("parseFloat", Native::NumberParseFloat),
         ] {
-            self.set_builtin_value_named(number, name, self.native_value(native))?;
+            self.set_builtin_named(program, number, name, native)?;
         }
         for (name, value) in [
             ("EPSILON", f64::EPSILON),
@@ -77,25 +147,193 @@ impl<H: Host> Vm<H> {
         self.global(program, "Number", number)
     }
 
+    pub(super) fn install_number_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<(), JsError> {
+        let constructor = self.native_with_realm(Native::Number, global, global);
+        self.set_builtin_function_name(constructor, "Number")?;
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        let prototype_key = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_key),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let number_value = self.intern_atom("\0rqj:number-value");
+        self.set_property(prototype, number_value, Value::number(0.0))?;
+        let methods = [
+            ("constructor", Native::Number),
+            ("toString", Native::NumberString),
+            ("valueOf", Native::NumberValueOf),
+            ("toLocaleString", Native::NumberToLocaleString),
+            ("toFixed", Native::NumberFixed),
+            ("toExponential", Native::NumberExponential),
+            ("toPrecision", Native::NumberPrecision),
+            ("isNaN", Native::NumberIsNaN),
+            ("isFinite", Native::NumberIsFinite),
+            ("isInteger", Native::NumberIsInteger),
+            ("isSafeInteger", Native::NumberIsSafeInteger),
+            ("parseInt", Native::ParseInt),
+            ("parseFloat", Native::NumberParseFloat),
+        ];
+        for (name, native) in methods {
+            let function = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(function, name)?;
+            let target = if matches!(
+                name,
+                "constructor"
+                    | "toString"
+                    | "valueOf"
+                    | "toLocaleString"
+                    | "toFixed"
+                    | "toExponential"
+                    | "toPrecision"
+            ) {
+                prototype
+            } else {
+                constructor
+            };
+            self.set_builtin_value_named(target, name, function)?;
+        }
+        for (name, value) in [
+            ("EPSILON", f64::EPSILON),
+            ("MAX_SAFE_INTEGER", MAX_SAFE_INTEGER),
+            ("MIN_SAFE_INTEGER", -MAX_SAFE_INTEGER),
+            ("MAX_VALUE", f64::MAX),
+            ("MIN_VALUE", MINIMUM_POSITIVE_SUBNORMAL),
+            ("NaN", f64::NAN),
+            ("POSITIVE_INFINITY", f64::INFINITY),
+            ("NEGATIVE_INFINITY", f64::NEG_INFINITY),
+        ] {
+            self.set_named_constant(program, constructor, name, Value::number(value))?;
+        }
+        self.set_builtin_value_named(global, "Number", constructor)
+    }
+
+    pub(super) fn number_receiver_value(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<f64, JsError> {
+        if let Some(number) = receiver.as_number() {
+            return Ok(number);
+        }
+        let value_atom = self.intern_atom("\0rqj:number-value");
+        self.own_property(receiver, value_atom)
+            .and_then(Value::as_number)
+            .ok_or_else(|| {
+                self.type_error(p, "Number method called on incompatible receiver".into())
+            })
+    }
+
+    pub(super) fn number_format(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+        kind: Native,
+    ) -> Result<Value, JsError> {
+        let number = self.number_receiver_value(p, receiver)?;
+        let number = if number == 0.0 { 0.0 } else { number };
+        let number = if number == 0.0 { 0.0 } else { number };
+        let digits_value = args.first().copied().filter(|value| !value.is_undefined());
+        if !number.is_finite() {
+            if let Some(value) = digits_value {
+                if kind == Native::NumberFixed {
+                    let _ = self.number_format_digits(p, value)?;
+                } else {
+                    let _ = self.to_number(p, value)?;
+                }
+            }
+            return Ok(self
+                .heap
+                .alloc(Cell::String(number_to_decimal(number).into())));
+        }
+        let digits = digits_value
+            .map(|value| self.number_format_digits(p, value))
+            .transpose()?;
+        let text = match kind {
+            Native::NumberFixed => {
+                if number.abs() >= 1e21 {
+                    number_to_decimal(number)
+                } else {
+                    fixed_decimal(number, digits.unwrap_or(0))
+                }
+            }
+            Native::NumberPrecision => match digits {
+                None => number_to_decimal(number),
+                Some(0) => return Err(self.range_error(p, "Invalid precision".into())),
+                Some(digits) => {
+                    let magnitude = if number == 0.0 {
+                        0
+                    } else {
+                        number.abs().log10().floor() as i32
+                    };
+                    if magnitude >= digits as i32 || magnitude < -6 {
+                        format_scientific(number, digits - 1)
+                    } else {
+                        format!(
+                            "{number:.precision$}",
+                            precision = (digits as i32 - magnitude - 1) as usize
+                        )
+                    }
+                }
+            },
+            _ => unreachable!(),
+        };
+        Ok(self.heap.alloc(Cell::String(text.into())))
+    }
+
+    fn number_format_digits(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<usize, JsError> {
+        let value = self.to_number(p, value)?;
+        if value.is_nan() {
+            return Ok(0);
+        }
+        if !value.is_finite() || !(0.0..=MAX_NUMBER_FORMAT_DIGITS as f64).contains(&value.trunc()) {
+            return Err(self.range_error(p, "Invalid precision".into()));
+        }
+        Ok(value.trunc() as usize)
+    }
+
     pub(super) fn number_exponential(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let number = self.to_number(p, receiver)?;
+        let number = self.number_receiver_value(p, receiver)?;
+        let number = if number == 0.0 { 0.0 } else { number };
         let digits = match args.first().copied() {
             None | Some(Value::UNDEFINED) => None,
             Some(value) => {
                 let value = self.to_number(p, value)?;
                 let digits = if value.is_nan() || value == 0.0 {
                     0
+                } else if !number.is_finite() {
+                    0
                 } else if !value.is_finite() || value.trunc() < 0.0 {
                     return Err(self.range_error(p, "toExponential() argument out of range".into()));
                 } else {
                     value.trunc() as usize
                 };
-                if digits > MAX_NUMBER_FORMAT_DIGITS {
+                if number.is_finite() && digits > MAX_NUMBER_FORMAT_DIGITS {
                     return Err(self.range_error(p, "toExponential() argument out of range".into()));
                 }
                 Some(digits)
@@ -114,7 +352,11 @@ impl<H: Host> Vm<H> {
                 Some(digits) => format!("{number:.digits$e}"),
                 None => format!("{number:e}"),
             };
-            normalize_exponent_sign(&scientific)
+            if digits.is_some() {
+                format_scientific_exponential(number, digits.unwrap_or_default())
+            } else {
+                normalize_exponent_sign(&scientific)
+            }
         };
         Ok(self.heap.alloc(Cell::String(text.into())))
     }
@@ -125,9 +367,10 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let value = args.first().copied().unwrap_or(Value::number(0.0));
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         Ok(match native {
             Native::Number => {
+                let value = args.first().copied().unwrap_or(Value::number(0.0));
                 let primitive = if self.is_object_like(value) {
                     self.to_primitive(p, value, "number")?
                 } else {
@@ -177,6 +420,36 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("invalid Number native".into())),
         })
     }
+}
+
+fn format_scientific(number: f64, digits: usize) -> String {
+    let value = format!("{number:.digits$e}");
+    let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
+    let exponent = exponent.parse::<i32>().unwrap_or_default();
+    format!("{coefficient}e{exponent:+}")
+}
+
+pub(super) fn number_to_decimal(number: f64) -> String {
+    crate::number_to_string::format(number)
+}
+
+fn format_scientific_exponential(number: f64, digits: usize) -> String {
+    let value = format!("{number:.digits$e}");
+    let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
+    let exponent = exponent.parse::<i32>().unwrap_or_default();
+    let scaled = number.abs() / 10_f64.powi(exponent - digits as i32);
+    if scaled.fract() == 0.5 {
+        let mut rounded = scaled.floor() + 1.0;
+        let mut exponent = exponent;
+        if rounded == 10_f64.powi(digits as i32 + 1) {
+            rounded /= 10.0;
+            exponent += 1;
+        }
+        let coefficient = rounded / 10_f64.powi(digits as i32);
+        let sign = if number.is_sign_negative() { "-" } else { "" };
+        return format!("{sign}{coefficient:.digits$}e{exponent:+}");
+    }
+    format!("{coefficient}e{exponent:+}")
 }
 
 fn normalize_exponent_sign(text: &str) -> String {

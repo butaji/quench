@@ -27,7 +27,7 @@ pub(crate) fn format(value: f64) -> String {
         return format!("{mantissa}e{exponent:+}");
     }
     if value.fract() == 0.0 {
-        format!("{value:.0}")
+        value.to_string()
     } else {
         value.to_string()
     }

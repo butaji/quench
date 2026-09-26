@@ -292,7 +292,7 @@ pub(crate) enum Native {
     DecodeUri, DecodeUriComponent,
     StringFromCharCode, StringFromCodePoint, ParseInt,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
-    MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, MathAcos, MathAsin, MathAtan, MathCos, MathExp, MathSin, MathTan, MathAtan2, NumberString, Number, NumberValueOf,
+    MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, MathAcos, MathAsin, MathAtan, MathCos, MathExp, MathSin, MathTan, MathAtan2, NumberString, NumberToLocaleString, Number, NumberValueOf,
     MathAcosh, MathAsinh, MathAtanh, MathCbrt, MathCosh, MathExpm1, MathFround,
     MathHypot, MathImul, MathLog10, MathLog1p, MathLog2, MathSinh, MathTanh,
     MathClz32, MathF16Round, MathSumPrecise,

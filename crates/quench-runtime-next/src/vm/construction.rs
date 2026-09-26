@@ -646,6 +646,7 @@ impl<H: Host> Vm<H> {
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = (match native {
                 Native::Object => Some("Object"),
+                Native::Number => Some("Number"),
                 Native::Iterator => Some("Iterator"),
                 Native::Boolean => Some("Boolean"),
                 Native::DataView => Some("DataView"),
@@ -864,9 +865,19 @@ impl<H: Host> Vm<H> {
                 self.box_primitive_object(value)
             }
             Native::Number => {
-                let value = Value::number(
-                    self.to_number(p, args.first().copied().unwrap_or(Value::number(0.0)))?,
-                );
+                let argument = args.first().copied().unwrap_or(Value::number(0.0));
+                let primitive = if self.is_object_like(argument) {
+                    self.to_primitive(p, argument, "number")?
+                } else {
+                    argument
+                };
+                let number = match self.heap.get(primitive) {
+                    Some(Cell::BigInt(value)) => value.parse::<f64>().map_err(|_| {
+                        self.type_error(p, "invalid BigInt numeric representation".into())
+                    })?,
+                    _ => self.to_number(p, primitive)?,
+                };
+                let value = Value::number(number);
                 self.box_primitive_object(value)
             }
             Native::Boolean => {
