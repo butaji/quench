@@ -54,6 +54,7 @@ fn field_domains_in_bounds(
     instruction: super::WideInstruction,
     registers: u16,
     locals: u16,
+    functions: usize,
     constants: usize,
     field_sites: usize,
     cache_sites: u16,
@@ -81,6 +82,11 @@ fn field_domains_in_bounds(
                 cache_in_bounds(value, cache_sites)
             }
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
+            FieldLayout::FunctionIndex => usize::from(value) < functions,
+            FieldLayout::ElementCount => instruction
+                .constant_index()
+                .checked_add(usize::from(value))
+                .is_some_and(|end| end <= constants),
             FieldLayout::Operand => {
                 operand_in_bounds(value, registers, locals, constants, field_sites)
             }
@@ -90,6 +96,20 @@ fn field_domains_in_bounds(
             _ => true,
         },
     )
+}
+
+fn immediate_domains_in_bounds(
+    instruction: super::WideInstruction,
+    functions: usize,
+    constants: usize,
+) -> bool {
+    match instruction.op().immediate_role() {
+        super::ImmediateRole::ConstantIndex => instruction.constant_index() < constants,
+        super::ImmediateRole::ClosureFunctionIndex => {
+            (instruction.closure_function_index() as usize) < functions
+        }
+        _ => true,
+    }
 }
 
 impl ResidualProgram {
@@ -173,9 +193,14 @@ impl ResidualProgram {
                     instruction,
                     function.registers,
                     function.locals,
+                    self.functions.len(),
                     self.constants.len(),
                     self.field_sites.len(),
                     self.cache_sites,
+                ) || !immediate_domains_in_bounds(
+                    instruction,
+                    self.functions.len(),
+                    self.constants.len(),
                 ) {
                     return Err(format!(
                         "function {index} {:?} has an invalid field value",
@@ -188,10 +213,7 @@ impl ResidualProgram {
                 let cache = |value: u16| cache_in_bounds(value, self.cache_sites);
                 let atom = |value: u32| atom_in_bounds(value, self.atoms.len());
                 match instruction.op() {
-                    Op::LoadConst
-                        if instruction.constant_index() >= self.constants.len()
-                            || !destination(instruction.result_register()) =>
-                    {
+                    Op::LoadConst if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} constant load is invalid"));
                     }
                     Op::LoadLocal
@@ -304,20 +326,10 @@ impl ResidualProgram {
                             "function {index} computed function name is invalid"
                         ));
                     }
-                    Op::MakeClosure
-                        if instruction.closure_function_index() as usize
-                            >= self.functions.len()
-                            || !destination(instruction.result_register()) =>
-                    {
+                    Op::MakeClosure if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} closure site is invalid"));
                     }
-                    Op::MakeConstArray
-                        if !destination(instruction.result_register())
-                            || instruction
-                                .constant_index()
-                                .checked_add(instruction.element_count() as usize)
-                                .is_none_or(|end| end > self.constants.len()) =>
-                    {
+                    Op::MakeConstArray if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} constant array is invalid"));
                     }
                     Op::MakeArray
@@ -575,8 +587,6 @@ impl ResidualProgram {
                     }
                     Op::CallKnown
                         if !destination(instruction.result_register())
-                            || instruction.known_function_index() as usize
-                                >= self.functions.len()
                             || !register_window_in_bounds(
                                 u16::from(instruction.call_window().base),
                                 u32::from(instruction.call_window().count),
