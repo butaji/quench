@@ -199,6 +199,8 @@ pub(crate) enum Native {
     AsyncDisposableStackMove,
     AsyncDisposableStackDisposeAsync,
     AsyncDisposableStackDisposed,
+    DisposableStackMove,
+    DisposableStackDisposed,
     DisposableStackUse,
     DisposableStackAdopt,
     DisposableStackDefer,

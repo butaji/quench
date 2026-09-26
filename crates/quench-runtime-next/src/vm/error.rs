@@ -758,6 +758,7 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_date_for_realm(program, global, date, date_prototype)?;
+        self.install_disposal_for_realm(program, global, object_prototype)?;
         let realm_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));

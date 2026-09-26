@@ -194,7 +194,7 @@ const NATIVES: &[Native] = &[
     Native::FinalizationRegistryUnregister,
     Native::DisposableStack, Native::AsyncDisposableStack, Native::AsyncDisposableStackUse, Native::AsyncDisposableStackAdopt,
     Native::AsyncDisposableStackDefer, Native::AsyncDisposableStackMove, Native::AsyncDisposableStackDisposeAsync,
-    Native::AsyncDisposableStackDisposed,
+    Native::AsyncDisposableStackDisposed, Native::DisposableStackMove, Native::DisposableStackDisposed,
     Native::DisposableStackUse, Native::DisposableStackAdopt, Native::DisposableStackDefer, Native::DisposableStackDispose,
     Native::DisposableStackUseAsync, Native::DisposableStackDisposeAsync, Native::DisposableStackDisposeWithCompletion,
     Native::DisposableStackDisposeAsyncWithCompletion, Native::DisposableStackAsyncDisposalFulfilled,

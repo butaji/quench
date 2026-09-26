@@ -223,6 +223,9 @@ fn native_length(kind: Native) -> Option<f64> {
     if let Some(length) = super::date::date_native_length(kind) {
         return Some(length);
     }
+    if let Some(length) = super::finalization::disposal_native_length(kind) {
+        return Some(length);
+    }
     Some(match kind {
         Native::AbstractModuleSource => 0.0,
         Native::AbstractModuleSourceToStringTag => 0.0,
