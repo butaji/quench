@@ -581,28 +581,28 @@ impl<H: Host> Vm<H> {
             }
             Op::Await => {
                 return Ok(StepResult::Await {
-                    value: self.read(f, i.b()),
-                    destination: i.a(),
+                    value: self.read(f, i.register_b()),
+                    destination: i.result_register(),
                 });
             }
             Op::Yield => {
                 return Ok(StepResult::Yield {
-                    value: self.read(f, i.b()),
-                    destination: i.a(),
+                    value: self.read(f, i.register_b()),
+                    destination: i.result_register(),
                     delegated_result: None,
                 });
             }
             Op::YieldStar => {
-                let iterator = self.read(f, i.c());
+                let iterator = self.read(f, i.register_c());
                 let iterator = if iterator.is_undefined() {
-                    let source = self.read(f, i.b());
+                    let source = self.read(f, i.register_b());
                     let asynchronous = p.functions[self.frames[f].function as usize].is_async;
                     let iterator = if asynchronous {
                         self.get_async_iterator(p, source)?
                     } else {
                         self.get_iterator(p, source)?
                     };
-                    self.write(f, i.c(), iterator);
+                    self.write(f, i.register_c(), iterator);
                     iterator
                 } else {
                     iterator
@@ -636,7 +636,7 @@ impl<H: Host> Vm<H> {
                     self.write(f, state_register, Value::UNDEFINED);
                     awaited_result
                 } else {
-                    let input = self.read(f, i.a());
+                    let input = self.read(f, i.result_register());
                     let result =
                         self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
                     if asynchronous {
@@ -653,7 +653,7 @@ impl<H: Host> Vm<H> {
                 if self.truthy(done) {
                     let value_atom = self.intern_atom("value");
                     let value = self.get_property(p, result, value_atom)?;
-                    self.write(f, i.a(), value);
+                    self.write(f, i.result_register(), value);
                 } else {
                     *pc -= 1;
                     if asynchronous {
@@ -667,7 +667,7 @@ impl<H: Host> Vm<H> {
                     };
                     return Ok(StepResult::Yield {
                         value,
-                        destination: i.a(),
+                        destination: i.result_register(),
                         delegated_result: Some(result),
                     });
                 }

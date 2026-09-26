@@ -153,11 +153,12 @@ fn uses(
         Op::InitializeThis => bit(instruction.register_a()),
         Op::ValidateClassHeritage => bit(instruction.register_a()),
         Op::CacheTemplateObject => bit(instruction.register_a()),
+        Op::Await | Op::Yield => bit(instruction.register_b()),
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
-            bit(instruction.a())
-                | bit(instruction.b())
-                | bit(instruction.c())
+            bit(instruction.result_register())
+                | bit(instruction.register_b())
+                | bit(instruction.register_c())
                 | bit(state)
                 | bit(next_method)
         }
@@ -246,13 +247,18 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::CallMethod
         | Op::CallThisMethod
         | Op::Construct
+        | Op::Await
+        | Op::Yield
             if !instruction.returns_from_frame() =>
         {
             bit(instruction.result_register())
         }
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
-            bit(instruction.a()) | bit(instruction.c()) | bit(state) | bit(next_method)
+            bit(instruction.result_register())
+                | bit(instruction.register_c())
+                | bit(state)
+                | bit(next_method)
         }
         Op::SuperConstArrayObject2 => superinstructions[instruction.superinstruction_index()]
             .code
