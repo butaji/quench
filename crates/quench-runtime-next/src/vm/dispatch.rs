@@ -374,7 +374,7 @@ impl<H: Host> Vm<H> {
                     object: Self::empty_object(self.array_proto),
                     elements,
                 });
-                self.write(f, i.a(), v);
+                self.write(f, i.result_register(), v);
             }
             Op::GetField => {
                 let lookup = i.field_lookup();
