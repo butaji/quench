@@ -898,6 +898,10 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        let set = self.native_with_realm(Native::Set, global, global);
+        self.install_set_prototype(program, set, object_prototype)?;
+        self.install_set_species(set)?;
+        self.set_builtin_value_named(global, "Set", set)?;
         let proxy = self.native_with_realm(Native::Proxy, global, global);
         self.set_builtin_function_name(proxy, "Proxy")?;
         let revocable = self.native_with_realm(Native::ProxyRevocable, global, global);
