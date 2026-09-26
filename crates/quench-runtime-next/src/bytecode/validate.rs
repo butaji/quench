@@ -299,7 +299,8 @@ impl ResidualProgram {
                     Op::DefineField
                         if !register(instruction.register_a())
                             || !register(instruction.register_b())
-                            || !atom(instruction.atom_index()) =>
+                            || !atom(instruction.atom_index())
+                            || !instruction.unused_fields_are_zero() =>
                     {
                         return Err(format!("function {index} field definition is invalid"));
                     }
