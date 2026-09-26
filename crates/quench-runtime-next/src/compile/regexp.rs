@@ -11,7 +11,7 @@ pub(crate) fn validate_pattern(pattern: &str, flags: &str) -> Result<(), String>
     if unicode {
         validate_unicode_escapes(pattern, flags.contains('v'))?;
         validate_unicode_quantifier_braces(pattern, flags.contains('v'))?;
-        validate_unicode_class_ranges(pattern)?;
+        validate_unicode_class_ranges(pattern, flags.contains('v'))?;
     }
     validate_named_groups(pattern, unicode)
 }
@@ -379,7 +379,7 @@ fn is_closed_decimal_quantifier(suffix: &str) -> bool {
     is_decimal_quantifier(suffix) && suffix.as_bytes().contains(&b'}')
 }
 
-fn validate_unicode_class_ranges(pattern: &str) -> Result<(), String> {
+fn validate_unicode_class_ranges(pattern: &str, unicode_sets: bool) -> Result<(), String> {
     let bytes = pattern.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
@@ -393,6 +393,7 @@ fn validate_unicode_class_ranges(pattern: &str) -> Result<(), String> {
             if bytes[dash] == b'-'
                 && dash > start
                 && dash + 1 < end
+                && !is_unicode_sets_subtraction(bytes, dash, start, end, unicode_sets)
                 && (set_escape_ends_at(bytes, dash) || set_escape_starts_at(bytes, dash + 1))
             {
                 return Err(invalid_pattern());
@@ -401,6 +402,18 @@ fn validate_unicode_class_ranges(pattern: &str) -> Result<(), String> {
         index = end.saturating_add(1);
     }
     Ok(())
+}
+
+fn is_unicode_sets_subtraction(
+    bytes: &[u8],
+    dash: usize,
+    start: usize,
+    end: usize,
+    unicode_sets: bool,
+) -> bool {
+    unicode_sets
+        && (bytes.get(dash + 1) == Some(&b'-') && dash + 1 < end
+            || dash > start && bytes[dash - 1] == b'-')
 }
 
 fn character_class_end(bytes: &[u8], mut index: usize) -> usize {
