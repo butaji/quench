@@ -53,6 +53,9 @@ fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
 fn field_domains_in_bounds(
     instruction: super::WideInstruction,
     registers: u16,
+    locals: u16,
+    constants: usize,
+    field_sites: usize,
     cache_sites: u16,
 ) -> bool {
     let fields = [
@@ -78,6 +81,12 @@ fn field_domains_in_bounds(
                 cache_in_bounds(value, cache_sites)
             }
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
+            FieldLayout::Operand => {
+                operand_in_bounds(value, registers, locals, constants, field_sites)
+            }
+            FieldLayout::BinaryOperator => {
+                u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
+            }
             _ => true,
         },
     )
@@ -160,7 +169,14 @@ impl ResidualProgram {
                         instruction.op()
                     ));
                 }
-                if !field_domains_in_bounds(instruction, function.registers, self.cache_sites) {
+                if !field_domains_in_bounds(
+                    instruction,
+                    function.registers,
+                    function.locals,
+                    self.constants.len(),
+                    self.field_sites.len(),
+                    self.cache_sites,
+                ) {
                     return Err(format!(
                         "function {index} {:?} has an invalid field value",
                         instruction.op()
@@ -380,23 +396,9 @@ impl ResidualProgram {
                     }
                     Op::GetIndex
                         if !register(instruction.result_register())
-                            || !operand_in_bounds(
-                                instruction.operand_b().0,
-                                function.registers,
-                                function.locals,
-                                self.constants.len(),
-                                self.field_sites.len(),
-                            )
                             || (function.dispatch == DispatchClass::Numeric
                                 && (!is_numeric_index_operand(instruction.operand_b())
-                                    || !is_numeric_index_operand(instruction.operand_c())))
-                            || !operand_in_bounds(
-                                instruction.operand_c().0,
-                                function.registers,
-                                function.locals,
-                                self.constants.len(),
-                                self.field_sites.len(),
-                            ) =>
+                                    || !is_numeric_index_operand(instruction.operand_c()))) =>
                     {
                         return Err(format!("function {index} indexed load is invalid"));
                     }
@@ -431,21 +433,7 @@ impl ResidualProgram {
                                         != oxc_ast::ast::BinaryOperator::Multiplication as u32
                                 }
                                 _ => unreachable!("matched binary opcode family"),
-                            }
-                            || !operand_in_bounds(
-                                instruction.operand_b().0,
-                                function.registers,
-                                function.locals,
-                                self.constants.len(),
-                                self.field_sites.len(),
-                            )
-                            || !operand_in_bounds(
-                                instruction.operand_c().0,
-                                function.registers,
-                                function.locals,
-                                self.constants.len(),
-                                self.field_sites.len(),
-                            ) =>
+                            } =>
                     {
                         return Err(format!("function {index} binary operand is invalid"));
                     }
