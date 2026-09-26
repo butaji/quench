@@ -126,11 +126,15 @@ impl ResidualProgram {
                 let cache = |value: u16| cache_in_bounds(value, self.cache_sites);
                 let atom = |value: u32| atom_in_bounds(value, self.atoms.len());
                 match instruction.op() {
-                    Op::LoadConst if instruction.constant_index() >= self.constants.len() => {
+                    Op::LoadConst
+                        if instruction.constant_index() >= self.constants.len()
+                            || !destination(instruction.result_register()) =>
+                    {
                         return Err(format!("function {index} constant load is invalid"));
                     }
                     Op::LoadLocal | Op::LoadEnvLocal
-                        if instruction.local_slot() >= usize::from(function.locals) =>
+                        if instruction.local_slot() >= usize::from(function.locals)
+                            || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} local access is invalid"));
                     }
@@ -143,6 +147,9 @@ impl ResidualProgram {
                         if usize::from(instruction.capture_depth()) >= self.functions.len() =>
                     {
                         return Err(format!("function {index} capture depth is invalid"));
+                    }
+                    Op::LoadCapture if !destination(instruction.result_register()) => {
+                        return Err(format!("function {index} capture result is invalid"));
                     }
                     Op::LoadName | Op::LoadNameTypeof | Op::StoreName | Op::DeleteName
                         if !atom(instruction.atom_index()) || !cache(instruction.c()) =>

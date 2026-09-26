@@ -53,7 +53,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| {
                         JsError::validation("constant index is outside program".into())
                     })?;
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::LoadLocal => {
                 let slot = i.local_slot();
@@ -89,7 +89,7 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 let v = self.mapped_argument_load(p, f, slot, v);
-                self.write(f, i.a(), v);
+                self.write(f, i.result_register(), v);
             }
             Op::StoreLocal => {
                 let value = self.read(f, i.a());
@@ -186,7 +186,7 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 let value = self.mapped_argument_load(p, f, slot, value);
-                self.write(f, i.a(), value);
+                self.write(f, i.result_register(), value);
             }
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.a());
@@ -233,7 +233,7 @@ impl<H: Host> Vm<H> {
             }
             Op::LoadCapture => {
                 let v = self.capture(p, f, i.capture_depth(), i.capture_slot())?;
-                self.write(f, i.a(), v);
+                self.write(f, i.result_register(), v);
             }
             Op::StoreCapture => self.store_capture(
                 p,
