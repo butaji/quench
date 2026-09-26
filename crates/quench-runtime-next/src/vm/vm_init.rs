@@ -52,6 +52,7 @@ impl<H: Host> Vm<H> {
             async_generator_proto: Value::NULL,
             async_from_sync_iterator_proto: Value::NULL,
             regexp_proto: Value::NULL,
+            regexp_prototypes: FxHashMap::default(),
             natives: vec![],
             frames: vec![],
             frame_pool: vec![],
