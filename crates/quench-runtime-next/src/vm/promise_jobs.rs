@@ -499,14 +499,11 @@ impl<H: Host> Vm<H> {
             .thenable_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise thenable job".into()))?;
-        let resolve = self.native_with_env(Native::PromiseResolve, thenable.promise);
-        let reject = self.native_with_env(Native::PromiseReject, thenable.promise);
+        let (resolve, reject) = self.promise_resolving_functions(thenable.promise);
         if let Err(error) = self.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
         {
-            let reason = error
-                .thrown_value()
-                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-            self.promise_settle(p, thenable.promise, PromiseState::Rejected, reason)?;
+            let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
+            self.call_value(p, reject, Value::UNDEFINED, &[reason])?;
         }
         Ok(Value::UNDEFINED)
     }

@@ -350,6 +350,7 @@ const NATIVES: &[Native] = &[
     Native::PromiseSpeciesGetter,
     Native::PromiseResolve,
     Native::PromiseReject,
+    Native::PromiseTry,
     Native::PromiseWithResolvers,
     Native::PromiseCapabilityExecutor,
     Native::PromiseThen,

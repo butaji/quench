@@ -918,6 +918,14 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_date_for_realm(program, global, date, date_prototype)?;
+        let promise = self.native_with_realm(Native::Promise, global, global);
+        self.set_builtin_function_name(promise, "Promise")?;
+        let promise_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.set_builtin_value_named(promise, "prototype", promise_prototype)?;
+        self.set_builtin_value_named(promise_prototype, "constructor", promise)?;
+        self.set_builtin_value_named(global, "Promise", promise)?;
         self.install_disposal_for_realm(program, global, object_prototype)?;
         self.install_finalization_registry_for_realm(global, object_prototype)?;
         let realm_iterator_proto = self
