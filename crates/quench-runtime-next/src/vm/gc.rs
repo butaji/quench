@@ -170,6 +170,12 @@ impl<H: Host> Vm<H> {
                 )
                 .chain(
                     self.promise
+                        .resolving_functions
+                        .iter()
+                        .flat_map(|(state, resolving)| [*state, resolving.promise]),
+                )
+                .chain(
+                    self.promise
                         .async_resume_jobs
                         .iter()
                         .flat_map(|(job, resume)| {
@@ -266,6 +272,9 @@ impl<H: Host> Vm<H> {
         self.promise
             .reaction_capabilities
             .retain(|promise, _| self.heap.get(*promise).is_some());
+        self.promise
+            .resolving_functions
+            .retain(|state, _| self.heap.get(*state).is_some());
         self.promise
             .async_resume_jobs
             .retain(|job, _| self.heap.get(*job).is_some());

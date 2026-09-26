@@ -294,6 +294,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::PromiseSpeciesGetter => 0.0,
         Native::PromiseResolve
         | Native::PromiseReject
+        | Native::PromiseTry
         | Native::PromiseCatch
         | Native::PromiseFinally => 1.0,
         Native::PromiseThen => 2.0,
@@ -541,6 +542,12 @@ pub(super) struct PromiseRecord {
     pub(super) reactions: Vec<PromiseReaction>,
     pub(super) finally_reactions: Vec<FinallyReaction>,
 }
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PromiseResolvingFunctions {
+    pub(super) promise: Value,
+    pub(super) already_resolved: bool,
+}
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PromiseJob {
     pub(super) handler: Value,
@@ -656,6 +663,7 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) reaction_capabilities: FxHashMap<Value, (Value, Value)>,
+    pub(super) resolving_functions: FxHashMap<Value, PromiseResolvingFunctions>,
     pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
@@ -679,6 +687,7 @@ impl Default for PromiseRuntime {
             aggregates: FxHashMap::default(),
             aggregate_jobs: FxHashMap::default(),
             reaction_capabilities: FxHashMap::default(),
+            resolving_functions: FxHashMap::default(),
             async_resume_jobs: FxHashMap::default(),
             modules: FxHashMap::default(),
             dynamic_import_jobs: Vec::new(),
@@ -743,6 +752,8 @@ impl<H: Host> Vm<H> {
                     | Native::PromiseAggregateJob
                     | Native::PromiseFinallyJob
             );
+        let anonymous_capability_executor =
+            !env.is_null() && kind == Native::PromiseCapabilityExecutor;
         let length = promise_resolver
             .then_some(1.0)
             .or_else(|| native_length(kind));
@@ -762,7 +773,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if promise_resolver {
+        if promise_resolver || anonymous_capability_executor {
             let atom = self.intern_atom("name");
             let empty_name = self.heap.alloc(Cell::String("".into()));
             let _ = self.set_property(function, atom, empty_name);
@@ -853,6 +864,7 @@ impl<H: Host> Vm<H> {
             Native::PromiseAllSettledKeyed,
         )?;
         self.set_builtin_named(program, promise, "any", Native::PromiseAny)?;
+        self.set_builtin_named(program, promise, "try", Native::PromiseTry)?;
         if let Some(species) = self.well_known_symbols.get("species").copied() {
             let getter = self.native_value(Native::PromiseSpeciesGetter);
             self.set_builtin_function_name(getter, "get [Symbol.species]")?;
@@ -899,17 +911,29 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Promise resolver is not a function".into()));
         }
         let promise = self.promise_object();
-        let resolve = self.native_with_env(Native::PromiseResolve, promise);
-        let reject = self.native_with_env(Native::PromiseReject, promise);
+        let (resolve, reject) = self.promise_resolving_functions(promise);
         if let Err(error) = self.call_value(p, executor, Value::UNDEFINED, &[resolve, reject]) {
-            self.promise_settle(
-                p,
-                promise,
-                PromiseState::Rejected,
-                error.thrown_value().unwrap_or(Value::UNDEFINED),
-            )?;
+            let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
+            self.call_value(p, reject, Value::UNDEFINED, &[reason])?;
         }
         Ok(promise)
+    }
+
+    pub(super) fn promise_resolving_functions(&mut self, promise: Value) -> (Value, Value) {
+        let state = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        self.promise.resolving_functions.insert(
+            state,
+            PromiseResolvingFunctions {
+                promise,
+                already_resolved: false,
+            },
+        );
+        (
+            self.native_with_env(Native::PromiseResolve, state),
+            self.native_with_env(Native::PromiseReject, state),
+        )
     }
 
     fn promise_with_resolvers(
@@ -1003,7 +1027,15 @@ impl<H: Host> Vm<H> {
             Native::PromiseCapabilityExecutor => self.promise_capability_executor(p, args),
             Native::PromiseSpeciesGetter => Ok(this),
             Native::PromiseResolve => {
-                if let Some(promise) = self.active_native_env() {
+                if let Some(state) = self.active_native_env() {
+                    let Some(resolving) = self.promise.resolving_functions.get_mut(&state) else {
+                        return Err(self.type_error(p, "invalid Promise resolver state".into()));
+                    };
+                    if resolving.already_resolved {
+                        return Ok(Value::UNDEFINED);
+                    }
+                    resolving.already_resolved = true;
+                    let promise = resolving.promise;
                     self.promise_resolve_value(
                         p,
                         promise,
@@ -1036,7 +1068,15 @@ impl<H: Host> Vm<H> {
                 }
             }
             Native::PromiseReject => {
-                if let Some(promise) = self.active_native_env() {
+                if let Some(state) = self.active_native_env() {
+                    let Some(resolving) = self.promise.resolving_functions.get_mut(&state) else {
+                        return Err(self.type_error(p, "invalid Promise resolver state".into()));
+                    };
+                    if resolving.already_resolved {
+                        return Ok(Value::UNDEFINED);
+                    }
+                    resolving.already_resolved = true;
+                    let promise = resolving.promise;
                     self.promise_settle(
                         p,
                         promise,
@@ -1055,6 +1095,7 @@ impl<H: Host> Vm<H> {
                     Ok(promise)
                 }
             }
+            Native::PromiseTry => self.promise_try(p, this, args),
             Native::PromiseThen => self.promise_then(
                 p,
                 this,
@@ -4049,6 +4090,68 @@ impl<H: Host> Vm<H> {
                 args.first().copied().unwrap_or(Value::UNDEFINED),
             ],
         )
+    }
+
+    fn promise_try(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.is_constructable(p, constructor) {
+            return Err(self.type_error(p, "Promise.try receiver is not a constructor".into()));
+        }
+        let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_function(callback) {
+            return Err(self.type_error(p, "Promise.try callback is not callable".into()));
+        }
+        let callback_root = self.heap.root(callback);
+        let argument_roots = args
+            .iter()
+            .skip(1)
+            .map(|argument| self.heap.root(*argument))
+            .collect::<Vec<_>>();
+        let outcome = (|| {
+            let (promise, resolve, reject) = self.new_promise_capability(p, constructor)?;
+            let promise_root = self.heap.root(promise);
+            let resolve_root = self.heap.root(resolve);
+            let reject_root = self.heap.root(reject);
+            let callback = self.heap.root_value(callback_root).unwrap_or(callback);
+            let callback_args = argument_roots
+                .iter()
+                .map(|root| self.heap.root_value(*root).unwrap_or(Value::UNDEFINED))
+                .collect::<Vec<_>>();
+            let call_result = self.call_value(p, callback, Value::UNDEFINED, &callback_args);
+            let settlement = match call_result {
+                Ok(value) => {
+                    let value_root = self.heap.root(value);
+                    let resolve = self.heap.root_value(resolve_root).unwrap_or(resolve);
+                    let value = self.heap.root_value(value_root).unwrap_or(value);
+                    let result = self.call_value(p, resolve, Value::UNDEFINED, &[value]);
+                    self.heap.release_root(value_root);
+                    result
+                }
+                Err(error) => {
+                    let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
+                    let reason_root = self.heap.root(reason);
+                    let reject = self.heap.root_value(reject_root).unwrap_or(reject);
+                    let reason = self.heap.root_value(reason_root).unwrap_or(reason);
+                    let result = self.call_value(p, reject, Value::UNDEFINED, &[reason]);
+                    self.heap.release_root(reason_root);
+                    result
+                }
+            };
+            self.heap.release_root(promise_root);
+            self.heap.release_root(resolve_root);
+            self.heap.release_root(reject_root);
+            settlement?;
+            Ok(promise)
+        })();
+        self.heap.release_root(callback_root);
+        for root in argument_roots {
+            self.heap.release_root(root);
+        }
+        outcome
     }
 
     fn promise_finally(

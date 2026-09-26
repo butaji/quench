@@ -652,6 +652,7 @@ impl<H: Host> Vm<H> {
                 Native::Boolean => Some("Boolean"),
                 Native::DataView => Some("DataView"),
                 Native::Date => Some("Date"),
+                Native::Promise => Some("Promise"),
                 Native::Error => Some("Error"),
                 Native::AggregateError => Some("AggregateError"),
                 Native::SuppressedError => Some("SuppressedError"),
