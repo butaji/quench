@@ -1226,6 +1226,15 @@ impl<H: Host> Vm<H> {
                 Value::NULL
             });
         };
+        if stateful {
+            self.set_property_with_program_mode(
+                p,
+                this,
+                last_index_atom,
+                Value::number(matched.range.end as f64),
+                true,
+            )?;
+        }
         if native == Native::RegExpTest {
             return Ok(Value::TRUE);
         }
@@ -1247,16 +1256,6 @@ impl<H: Host> Vm<H> {
         let groups_atom = self.intern_atom("groups");
         self.set_property(result, groups_atom, groups)?;
         let index = matched.range.start;
-        if stateful {
-            let end = matched.range.end;
-            self.set_property_with_program_mode(
-                p,
-                this,
-                last_index_atom,
-                Value::number(end as f64),
-                true,
-            )?;
-        }
         let index_atom = self.intern_atom("index");
         self.set_property(result, index_atom, Value::number(index as f64))?;
         let input_value = self.heap.alloc(Cell::String(input));
