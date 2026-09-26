@@ -239,7 +239,7 @@ const NATIVES: &[Native] = &[
     Native::IteratorHelperReturn,
     Native::IteratorPrototypeConstructorGetter, Native::IteratorPrototypeConstructorSetter,
     Native::IteratorPrototypeToStringTagGetter, Native::IteratorPrototypeToStringTagSetter,
-    Native::IteratorNext, Native::RegExpStringIteratorNext, Native::IteratorClose,
+    Native::IteratorNext, Native::StringIteratorNext, Native::RegExpStringIteratorNext, Native::IteratorClose,
     Native::IteratorSelf, Native::AsyncIteratorSelf,
     Native::IteratorReturn, Native::IteratorThrow,
     Native::GeneratorNext, Native::GeneratorReturn, Native::GeneratorThrow,
