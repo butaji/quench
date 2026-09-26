@@ -94,7 +94,9 @@ fn write_field(
         | FieldLayout::ElementCount
         | FieldLayout::CacheSiteIndex
         | FieldLayout::BooleanFlag => write_scalar_field(output, instruction, field, layout),
-        FieldLayout::Operand => write_operand_field(output, instruction, field),
+        FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
+            write_operand_field(output, instruction, field)
+        }
         FieldLayout::BinaryOperator => {
             write!(output, " operator={}", instruction.binary_operator_field())
         }

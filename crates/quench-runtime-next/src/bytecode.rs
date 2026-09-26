@@ -91,6 +91,7 @@ pub(crate) enum FieldLayout {
     CacheSiteIndex,
     BooleanFlag,
     Operand,
+    NumericIndexOperand,
     BinaryOperator,
 }
 
@@ -420,7 +421,7 @@ opcodes!(
     Yield => READ_THROW.union(Effect::CONTROL); meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(Undeclared, Register, ReadWriteRegister),
     GetField => READ_THROW; meaning FieldLookup, @ ReturnableAndThis, @ fields(Undeclared, FieldBase, CacheSiteIndex),
-    GetIndex => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Operand, Operand),
+    GetIndex => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, NumericIndexOperand, NumericIndexOperand),
     ToPropertyKey => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     ToNumeric => READ_THROW; meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     CopyDataProperties => CALL_EFFECT; meaning Unused, @ NoResult, @ fields(Register, Register, Register),
