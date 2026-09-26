@@ -50,7 +50,10 @@ impl<H: Host> Vm<H> {
                 "cannot define incompatible typed array index descriptor".into(),
             ));
         }
-        if self.typed_array_length(target).is_none_or(|length| index >= length) {
+        if self
+            .typed_array_length(target)
+            .is_none_or(|length| index >= length)
+        {
             return Err(self.type_error(
                 p,
                 "cannot define a property on an out-of-bounds typed array".into(),
@@ -89,47 +92,29 @@ impl<H: Host> Vm<H> {
                 if result.is_undefined() {
                     let target_descriptor =
                         self.object_get_own_property_descriptor(p, &[target, key])?;
-                    if !target_descriptor.is_undefined() {
-                        let configurable = self.descriptor_flag(target_descriptor, "configurable");
-                        if !configurable
-                            || self
-                                .object_data(target)
-                                .is_some_and(|object| !object.is_extensible())
-                        {
-                            return Err(JsError(
-                                "proxy descriptor trap cannot hide a target property".into(),
-                            ));
-                        }
-                    }
+                    self.validate_proxy_get_own_property_descriptor(
+                        p,
+                        target,
+                        target_descriptor,
+                        None,
+                    )?;
                     return Ok(Value::UNDEFINED);
                 }
                 if self.object_data(result).is_none() {
-                    return Err(JsError(
+                    return Err(self.type_error(
+                        p,
                         "proxy getOwnPropertyDescriptor trap must return an object or undefined"
                             .into(),
                     ));
                 }
                 let target_descriptor =
                     self.object_get_own_property_descriptor(p, &[target, key])?;
-                if target_descriptor.is_undefined()
-                    && self
-                        .object_data(target)
-                        .is_some_and(|object| !object.is_extensible())
-                {
-                    return Err(JsError(
-                        "proxy descriptor trap added a property to a sealed target".into(),
-                    ));
-                }
-                if !target_descriptor.is_undefined()
-                    && !self.descriptor_flag(target_descriptor, "configurable")
-                    && (self.descriptor_flag(result, "configurable")
-                        || self.descriptor_flag(result, "enumerable")
-                            != self.descriptor_flag(target_descriptor, "enumerable"))
-                {
-                    return Err(JsError(
-                        "proxy descriptor trap changed a non-configurable target property".into(),
-                    ));
-                }
+                self.validate_proxy_get_own_property_descriptor(
+                    p,
+                    target,
+                    target_descriptor,
+                    Some(result),
+                )?;
                 return Ok(result);
             }
             if trap.is_undefined() || trap.is_null() {
@@ -138,7 +123,8 @@ impl<H: Host> Vm<H> {
                     &[target, args.get(1).copied().unwrap_or(Value::UNDEFINED)],
                 );
             }
-            return Err(JsError(
+            return Err(self.type_error(
+                p,
                 "proxy getOwnPropertyDescriptor trap is not callable".into(),
             ));
         }
@@ -365,6 +351,68 @@ impl<H: Host> Vm<H> {
             self.set_property(descriptor, atom, value)?;
         }
         Ok(descriptor)
+    }
+
+    fn validate_proxy_get_own_property_descriptor(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        target_descriptor: Value,
+        result: Option<Value>,
+    ) -> Result<(), JsError> {
+        let extensible = self.object_is_extensible(p, &[target])?;
+        let extensible = self.truthy(extensible);
+        let Some(result) = result else {
+            if !target_descriptor.is_undefined()
+                && (!extensible || !self.descriptor_flag(target_descriptor, "configurable"))
+            {
+                return Err(self.type_error(
+                    p,
+                    "proxy getOwnPropertyDescriptor trap cannot hide a target property".into(),
+                ));
+            }
+            return Ok(());
+        };
+        let result_configurable = self.descriptor_field(p, result, "configurable")?;
+        if target_descriptor.is_undefined() {
+            if !extensible || result_configurable.is_some_and(|value| !self.truthy(value)) {
+                return Err(self.type_error(
+                    p,
+                    "proxy getOwnPropertyDescriptor trap added an incompatible property".into(),
+                ));
+            }
+            return Ok(());
+        }
+        let target_configurable = self.descriptor_flag(target_descriptor, "configurable");
+        if result_configurable.is_some_and(|value| !self.truthy(value)) && target_configurable {
+            return Err(self.type_error(
+                p,
+                "proxy getOwnPropertyDescriptor trap made a property non-configurable".into(),
+            ));
+        }
+        if !target_configurable {
+            if result_configurable.is_some_and(|value| self.truthy(value)) {
+                return Err(self.type_error(
+                    p,
+                    "proxy getOwnPropertyDescriptor trap changed configurability".into(),
+                ));
+            }
+            for field in ["value", "writable", "get", "set", "enumerable"] {
+                let Some(expected) = self.descriptor_field(p, target_descriptor, field)? else {
+                    continue;
+                };
+                if let Some(actual) = self.descriptor_field(p, result, field)?
+                    && !self.same_value(expected, actual)
+                {
+                    return Err(self.type_error(
+                        p,
+                        "proxy getOwnPropertyDescriptor trap changed a non-configurable property"
+                            .into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn descriptor_flag(&mut self, descriptor: Value, name: &str) -> bool {
