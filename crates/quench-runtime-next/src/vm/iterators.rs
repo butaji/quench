@@ -1,6 +1,7 @@
 use super::promise::PromiseState;
 use super::property_key::PropertyKey;
 use super::*;
+use crate::heap::IteratorZipMode;
 
 impl<H: Host> Vm<H> {
     pub(super) fn spread_to_array(
@@ -975,6 +976,24 @@ impl<H: Host> Vm<H> {
             } => self.iterator_helper_concat(
                 p, iterator, items, methods, opened, next_item, active, args,
             ),
+            IteratorHelper::Zip {
+                iterators,
+                padding,
+                mode,
+                keys,
+                opened,
+                done,
+            } => {
+                self.iterator_helper_zip(p, iterator, iterators, padding, mode, keys, opened, done)
+            }
+        };
+        let result = match result {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                self.mark_iterator_done(iterator);
+                let _ = self.iterator_close(p, source);
+                Err(error)
+            }
         };
         if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
             *helper_running = false;
@@ -996,8 +1015,16 @@ impl<H: Host> Vm<H> {
                 ..
             }) => {
                 let active = match helper.as_ref() {
-                    IteratorHelper::Concat { active, .. } => *active,
-                    _ => Some(*source),
+                    IteratorHelper::Concat { active, .. } => active.iter().copied().collect(),
+                    IteratorHelper::Zip {
+                        iterators, opened, ..
+                    } => iterators
+                        .iter()
+                        .copied()
+                        .zip(opened.iter().copied())
+                        .filter_map(|(iterator, is_open)| is_open.then_some(iterator))
+                        .collect(),
+                    _ => vec![*source],
                 };
                 (*done, *helper_running, active)
             }
@@ -1011,8 +1038,8 @@ impl<H: Host> Vm<H> {
         }
         let result = (|| {
             self.mark_iterator_done(iterator);
-            if !done && let Some(active) = active {
-                self.iterator_close(p, active)?;
+            if !done {
+                self.iterator_close_all(p, &active, None)?;
             }
             self.iterator_result(Value::UNDEFINED, true)
         })();
@@ -1409,8 +1436,11 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if native == Native::IteratorZip || native == Native::IteratorZipKeyed {
+            return self.iterator_zip(p, native == Native::IteratorZipKeyed, args);
+        }
         if native != Native::IteratorConcat {
-            return Err(self.type_error(p, "Iterator.zip is not implemented".into()));
+            return Err(self.type_error(p, "unsupported Iterator static method".into()));
         }
         let iterator_symbol = self
             .well_known_symbols
@@ -1445,6 +1475,327 @@ impl<H: Host> Vm<H> {
                 active: None,
             },
         )
+    }
+
+    fn iterator_zip(
+        &mut self,
+        p: &ResidualProgram,
+        keyed: bool,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let input = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_object_like(input) {
+            return Err(self.type_error(p, "Iterator.zip requires an object".into()));
+        }
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let (mode, padding_object) = self.iterator_zip_options(p, options)?;
+        let (iterators, keys) = if keyed {
+            self.iterator_zip_keyed_inputs(p, input)?
+        } else {
+            (self.iterator_zip_inputs(p, input)?, None)
+        };
+        let padding =
+            self.iterator_zip_padding(p, padding_object, keys.as_deref(), iterators.len())?;
+        let opened = vec![true; iterators.len()];
+        self.iterator_helper(
+            p,
+            Value::UNDEFINED,
+            IteratorKind::Zip,
+            IteratorHelper::Zip {
+                iterators,
+                padding,
+                mode,
+                keys,
+                opened,
+                done: false,
+            },
+        )
+    }
+
+    fn iterator_zip_options(
+        &mut self,
+        p: &ResidualProgram,
+        options: Value,
+    ) -> Result<(IteratorZipMode, Value), JsError> {
+        if options.is_undefined() {
+            return Ok((IteratorZipMode::Shortest, Value::UNDEFINED));
+        }
+        if !self.is_object_like(options) {
+            return Err(self.type_error(p, "Iterator.zip options must be an object".into()));
+        }
+        let mode_atom = self.intern_atom("mode");
+        let mode_value = self.get_property(p, options, mode_atom)?;
+        let mode = match self.heap.get(mode_value) {
+            Some(Cell::String(value)) if value.host_string() == "shortest" => {
+                IteratorZipMode::Shortest
+            }
+            Some(Cell::String(value)) if value.host_string() == "longest" => {
+                IteratorZipMode::Longest
+            }
+            Some(Cell::String(value)) if value.host_string() == "strict" => IteratorZipMode::Strict,
+            _ if mode_value.is_undefined() => IteratorZipMode::Shortest,
+            _ => return Err(self.type_error(p, "Iterator.zip mode is invalid".into())),
+        };
+        let padding = if matches!(mode, IteratorZipMode::Longest) {
+            let padding_atom = self.intern_atom("padding");
+            self.get_property(p, options, padding_atom)?
+        } else {
+            Value::UNDEFINED
+        };
+        if !padding.is_undefined() && !self.is_object_like(padding) {
+            return Err(self.type_error(p, "Iterator.zip padding must be an object".into()));
+        }
+        Ok((mode, padding))
+    }
+
+    fn iterator_zip_inputs(
+        &mut self,
+        p: &ResidualProgram,
+        input: Value,
+    ) -> Result<Vec<Value>, JsError> {
+        let outer = self.iterator_get_direct(p, input)?;
+        let mut iterators = Vec::new();
+        loop {
+            let next = self.iterator_helper_step(p, outer, &[]);
+            let value = match next {
+                Ok(Some(value)) => value,
+                Ok(None) => return Ok(iterators),
+                Err(error) => {
+                    let _ = self.iterator_close_all(p, &iterators, Some(outer));
+                    return Err(error);
+                }
+            };
+            if matches!(self.heap.get(value), Some(Cell::String(_))) {
+                let _ = self.iterator_close_all(p, &iterators, Some(outer));
+                return Err(self.type_error(p, "Iterator.zip does not accept strings".into()));
+            }
+            match self.iterator_from(p, &[value]) {
+                Ok(iterator) => iterators.push(iterator),
+                Err(error) => {
+                    let _ = self.iterator_close_all(p, &iterators, Some(outer));
+                    return Err(error);
+                }
+            }
+        }
+    }
+
+    fn iterator_zip_keyed_inputs(
+        &mut self,
+        p: &ResidualProgram,
+        input: Value,
+    ) -> Result<(Vec<Value>, Option<Vec<Value>>), JsError> {
+        let keys_value = self.object_own_keys(p, input)?;
+        let keys = match self.heap.get(keys_value) {
+            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+            _ => Vec::new(),
+        };
+        let mut iterators = Vec::new();
+        let mut output_keys = Vec::new();
+        for key in keys {
+            let property_key = self.to_property_key(p, key)?;
+            let (attributes_key, atom) =
+                if matches!(self.heap.get(property_key), Some(Cell::Symbol(_))) {
+                    (PropertyKey::symbol(property_key), None)
+                } else {
+                    let name = self.coerce_js_string(p, property_key)?;
+                    let atom = self.intern_atom(&name.host_string());
+                    (PropertyKey::string(atom), Some(atom))
+                };
+            if !self
+                .property_attributes(input, attributes_key)
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
+                .enumerable
+            {
+                continue;
+            }
+            let value = match atom {
+                Some(atom) => self.get_property(p, input, atom)?,
+                None => self.get_index(p, input, property_key)?,
+            };
+            if value.is_undefined() {
+                continue;
+            }
+            if matches!(self.heap.get(value), Some(Cell::String(_))) {
+                let _ = self.iterator_close_all(p, &iterators, None);
+                return Err(self.type_error(p, "Iterator.zipKeyed does not accept strings".into()));
+            }
+            match self.iterator_from(p, &[value]) {
+                Ok(iterator) => {
+                    iterators.push(iterator);
+                    output_keys.push(property_key);
+                }
+                Err(error) => {
+                    let _ = self.iterator_close_all(p, &iterators, None);
+                    return Err(error);
+                }
+            }
+        }
+        Ok((iterators, Some(output_keys)))
+    }
+
+    fn iterator_zip_padding(
+        &mut self,
+        p: &ResidualProgram,
+        padding: Value,
+        keys: Option<&[Value]>,
+        count: usize,
+    ) -> Result<Vec<Value>, JsError> {
+        if padding.is_undefined() {
+            return Ok(vec![Value::UNDEFINED; count]);
+        }
+        if let Some(keys) = keys {
+            return keys
+                .iter()
+                .copied()
+                .map(|key| self.get_index(p, padding, key))
+                .collect();
+        }
+        let iterator = self.iterator_get_direct(p, padding)?;
+        let mut values = Vec::with_capacity(count);
+        while values.len() < count {
+            let Some(value) = self.iterator_helper_step(p, iterator, &[])? else {
+                values.resize(count, Value::UNDEFINED);
+                return Ok(values);
+            };
+            values.push(value);
+        }
+        self.iterator_close(p, iterator)?;
+        Ok(values)
+    }
+
+    fn iterator_get_direct(
+        &mut self,
+        p: &ResidualProgram,
+        iterable: Value,
+    ) -> Result<Value, JsError> {
+        let iterator = self.get_iterator(p, iterable)?;
+        let next_atom = self.intern_atom("next");
+        let next = self.get_property(p, iterator, next_atom)?;
+        self.protocol_iterator(iterator, next)
+    }
+
+    fn iterator_close_all(
+        &mut self,
+        p: &ResidualProgram,
+        iterators: &[Value],
+        final_: Option<Value>,
+    ) -> Result<(), JsError> {
+        for iterator in iterators.iter().rev().copied().chain(final_) {
+            self.iterator_close(p, iterator)?;
+        }
+        Ok(())
+    }
+
+    fn iterator_helper_zip(
+        &mut self,
+        p: &ResidualProgram,
+        helper: Value,
+        iterators: Vec<Value>,
+        padding: Vec<Value>,
+        mode: IteratorZipMode,
+        keys: Option<Vec<Value>>,
+        mut opened: Vec<bool>,
+        done: bool,
+    ) -> Result<Value, JsError> {
+        if done {
+            return self.iterator_result(Value::UNDEFINED, true);
+        }
+        if iterators.is_empty() {
+            self.mark_iterator_done(helper);
+            return self.iterator_result(Value::UNDEFINED, true);
+        }
+        let mut values = Vec::with_capacity(iterators.len());
+        let mut ended_count = 0;
+        for (index, iterator) in iterators.iter().copied().enumerate() {
+            if !opened.get(index).copied().unwrap_or(false) {
+                values.push(padding.get(index).copied().unwrap_or(Value::UNDEFINED));
+                continue;
+            }
+            match self.iterator_helper_step(p, iterator, &[]) {
+                Ok(Some(value)) => {
+                    values.push(value);
+                }
+                Ok(None) => {
+                    values.push(padding.get(index).copied().unwrap_or(Value::UNDEFINED));
+                    opened[index] = false;
+                    ended_count += 1;
+                    if matches!(mode, IteratorZipMode::Shortest | IteratorZipMode::Strict) {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    self.mark_iterator_done(helper);
+                    let remaining = iterators
+                        .iter()
+                        .copied()
+                        .zip(opened.iter().copied())
+                        .filter_map(|(iterator, is_open)| is_open.then_some(iterator))
+                        .collect::<Vec<_>>();
+                    let _ = self.iterator_close_all(p, &remaining, None);
+                    return Err(error);
+                }
+            }
+        }
+        if opened.iter().all(|is_open| !is_open) {
+            self.mark_iterator_done(helper);
+            self.update_iterator_helper(
+                helper,
+                IteratorHelper::Zip {
+                    iterators,
+                    padding,
+                    mode,
+                    keys,
+                    opened,
+                    done: true,
+                },
+            );
+            return self.iterator_result(Value::UNDEFINED, true);
+        }
+        if ended_count > 0 && matches!(mode, IteratorZipMode::Shortest) {
+            self.mark_iterator_done(helper);
+            let active = iterators
+                .iter()
+                .copied()
+                .zip(opened.iter().copied())
+                .filter_map(|(iterator, is_open)| is_open.then_some(iterator))
+                .collect::<Vec<_>>();
+            self.iterator_close_all(p, &active, None)?;
+            return self.iterator_result(Value::UNDEFINED, true);
+        }
+        if ended_count > 0 && matches!(mode, IteratorZipMode::Strict) {
+            self.mark_iterator_done(helper);
+            let active = iterators
+                .iter()
+                .copied()
+                .zip(opened.iter().copied())
+                .filter_map(|(iterator, is_open)| is_open.then_some(iterator))
+                .collect::<Vec<_>>();
+            self.iterator_close_all(p, &active, None)?;
+            return Err(self.type_error(p, "Iterator.zip iterators have different lengths".into()));
+        }
+        self.update_iterator_helper(
+            helper,
+            IteratorHelper::Zip {
+                iterators,
+                padding,
+                mode,
+                keys: keys.clone(),
+                opened,
+                done: false,
+            },
+        );
+        let result = if let Some(keys) = keys {
+            let object = self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            for (key, value) in keys.into_iter().zip(values) {
+                self.set_index(p, object, key, value)?;
+            }
+            object
+        } else {
+            self.new_array(values)
+        };
+        Ok(self.iterator_result(result, false)?)
     }
 
     fn iterator_terminal_method(
@@ -1500,10 +1851,10 @@ impl<H: Host> Vm<H> {
                 IteratorConsumer::ToArray => values.push(value),
                 IteratorConsumer::Reduce => {
                     if let Some(current) = accumulator {
-                        accumulator = Some(self.call_value(
+                        accumulator = Some(self.call_iterator_callback(
                             p,
+                            iterator,
                             callback,
-                            Value::UNDEFINED,
                             &[current, value, Value::number(index as f64)],
                         )?);
                     } else {
@@ -1511,18 +1862,18 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 IteratorConsumer::ForEach => {
-                    self.call_value(
+                    self.call_iterator_callback(
                         p,
+                        iterator,
                         callback,
-                        Value::UNDEFINED,
                         &[value, Value::number(index as f64)],
                     )?;
                 }
                 IteratorConsumer::Every | IteratorConsumer::Some | IteratorConsumer::Find => {
-                    let selected = self.call_value(
+                    let selected = self.call_iterator_callback(
                         p,
+                        iterator,
                         callback,
-                        Value::UNDEFINED,
                         &[value, Value::number(index as f64)],
                     )?;
                     let truthy = self.truthy(selected);
@@ -1554,6 +1905,22 @@ impl<H: Host> Vm<H> {
             IteratorConsumer::Every => Ok(Value::TRUE),
             IteratorConsumer::Some => Ok(Value::FALSE),
             IteratorConsumer::Find => Ok(Value::UNDEFINED),
+        }
+    }
+
+    fn call_iterator_callback(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+        callback: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        match self.call_value(p, callback, Value::UNDEFINED, args) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                let _ = self.iterator_close(p, iterator);
+                Err(error)
+            }
         }
     }
 
@@ -1930,6 +2297,7 @@ impl<H: Host> Vm<H> {
                 | IteratorKind::Drop
                 | IteratorKind::FlatMap
                 | IteratorKind::Concat
+                | IteratorKind::Zip
         ) {
             return self.iterator_helper_next(p, this, args);
         }
