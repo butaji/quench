@@ -1,6 +1,6 @@
 use super::{
     Effect, FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField,
-    Op, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
+    Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
 };
 
 const PACKED_PAIR_LOW_BITS: u32 = 8;
@@ -69,6 +69,7 @@ macro_rules! layout_accessors {
     ($instruction:ty) => {
         impl $instruction {
             pub(crate) fn result_register(self) -> Register {
+                debug_assert_ne!(self.op().result_layout(), ResultLayout::NoResult);
                 self.a() & REGISTER_MASK
             }
 
@@ -111,6 +112,33 @@ macro_rules! layout_accessors {
                     FieldLayout::FunctionIndex
                 );
                 self.b()
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn operand_b(self) -> Operand {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::Operand
+                );
+                Operand(self.b())
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn operand_c(self) -> Operand {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::Operand
+                );
+                Operand(self.c())
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn binary_operator_field(self) -> u32 {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::A),
+                    FieldLayout::BinaryOperator
+                );
+                u32::from(self.a())
             }
 
             #[allow(dead_code)]
