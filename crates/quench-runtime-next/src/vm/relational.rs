@@ -130,6 +130,9 @@ impl<H: Host> Vm<H> {
                 return Ok(self.truthy(result));
             }
         }
+        if !self.is_function(constructor) {
+            return Err(self.type_error(p, "right-hand side of 'instanceof' is not callable".into()));
+        }
         self.ordinary_has_instance(p, constructor, value)
     }
 
