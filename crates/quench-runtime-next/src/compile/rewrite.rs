@@ -36,17 +36,19 @@ macro_rules! fusion_recipes {
 fusion_recipes! {
     ConstantLeft: [LoadConst, Binary] =>
         |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
-            if Operand(second.b()).register_index() != Some(first.a()) { return None; }
-            second.set_b(Operand::constant(first.imm()).0);
-            if Operand(second.c()).register_index() == Some(first.a()) {
-                second.set_c(Operand::constant(first.imm()).0);
+            let result = first.result_register();
+            let constant = Operand::constant(first.constant_index() as u32);
+            if second.operand_b().register_index() != Some(result) { return None; }
+            second.set_operand_b(constant);
+            if second.operand_c().register_index() == Some(result) {
+                second.set_operand_c(constant);
             }
             Some(second)
         };
     ConstantRight: [LoadConst, Binary] =>
         |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
-            if Operand(second.c()).register_index() != Some(first.a()) { return None; }
-            second.set_c(Operand::constant(first.imm()).0);
+            if second.operand_c().register_index() != Some(first.result_register()) { return None; }
+            second.set_operand_c(Operand::constant(first.constant_index() as u32));
             Some(second)
         };
     StoreLoadLocal: [StoreLocal, LoadLocal] =>
@@ -59,41 +61,49 @@ fusion_recipes! {
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move
     ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
-        if first.a() > REGISTER_MASK || second.b() != first.a() { return None; }
-        first.set_a(second.a());
+        if second.register_b() != first.result_register() { return None; }
+        first.set_result_register(second.result_register());
         Some(first)
     };
     BinaryJumpFalse: [Binary, JumpFalse] =>
         |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
-            if first.a() != second.a() || first.a() > REGISTER_MASK { return None; }
-            Some(Instr::new(Op::JumpBinaryFalse, first.imm() as u16, first.b(), first.c(), second.imm()))
+            if first.result_register() != second.register_a() { return None; }
+            Some(Instr::new(
+                Op::JumpBinaryFalse,
+                first.binary_operator() as u16,
+                first.operand_b().0,
+                first.operand_c().0,
+                second.jump_target(),
+            ))
         };
     ReturnResult: [
         Binary, Return; GetField, Return; Call, Return; CallKnown, Return;
         CallMethod, Return; CallThisMethod, Return; Construct, Return;
         MakeObject2, Return; SuperConstArrayObject2, Return
     ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
-        if first.a() != second.a() || first.a() > REGISTER_MASK { return None; }
+        if first.result_register() != second.register_a() { return None; }
         first.set_returns_from_frame();
         Some(first)
     };
     GetSetThis: [GetField, SetThisField] =>
         |mut first: Instr, second: Instr, fields: &mut Vec<FieldSite>| {
-            if first.a() != second.a() || first.a() > REGISTER_MASK { return None; }
-            let sink = (second.imm(), second.c());
-            if first.b() == FieldBase::NESTED {
-                let site = fields.get_mut(first.imm() as usize)?;
-                if site.sink.is_some() { return None; }
-                site.sink = Some(sink);
-            } else {
-                let site = FieldSite {
-                    base: FieldBase(first.b()), first: (first.imm(), first.c()),
-                    second: None, sink: Some(sink),
-                };
-                first.set_imm(fields.len() as u32);
-                first.set_b(FieldBase::NESTED);
-                first.set_c(0);
-                fields.push(site);
+            if first.result_register() != second.register_a() { return None; }
+            let sink = (second.atom_index(), second.cache_site_index());
+            match first.field_lookup() {
+                crate::bytecode::FieldLookup::Site(index) => {
+                    let site = fields.get_mut(index)?;
+                    if site.sink.is_some() { return None; }
+                    site.sink = Some(sink);
+                }
+                crate::bytecode::FieldLookup::Atom { atom, base, cache_site } => {
+                    fields.push(FieldSite {
+                        base,
+                        first: (atom, cache_site),
+                        second: None,
+                        sink: Some(sink),
+                    });
+                    first.set_field_lookup_site(fields.len() - 1);
+                }
             }
             first.set_this_result();
             Some(first)
