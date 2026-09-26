@@ -44,12 +44,15 @@ const MATH_FUNCTIONS: &[(&str, Native)] = &[
 const NATIVES: &[Native] = &[
     Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
     Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
+    Native::ObjectGroupBy,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
     Native::ObjectSetPrototypeOf, Native::ObjectHasOwn, Native::ObjectPreventExtensions,
     Native::ObjectIsExtensible, Native::ObjectSeal, Native::ObjectIsSealed,
     Native::ObjectFreeze, Native::ObjectIsFrozen,
     Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf, Native::ObjectPrototypeLookupGetter, Native::ObjectPrototypeLookupSetter, Native::ObjectPrototypeToLocaleString, Native::ObjectPrototypeToString, Native::ObjectPrototypeValueOf,
+    Native::ObjectPrototypeDefineGetter, Native::ObjectPrototypeDefineSetter,
+    Native::ObjectPrototypeProtoGetter, Native::ObjectPrototypeProtoSetter,
     Native::ReflectGet, Native::ReflectHas, Native::ReflectApply, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty, Native::ReflectDeleteProperty, Native::ReflectPreventExtensions, Native::ReflectIsExtensible,
     Native::ReflectSet,
     Native::SuperSet,
@@ -310,7 +313,7 @@ const NATIVES: &[Native] = &[
     Native::StringMatch,
     Native::StringSearch,
     Native::StringReplaceAll,
-    Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringConcat, Native::StringNormalize, Native::StringValues,
+    Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringToLocaleLowerCase, Native::StringToLocaleUpperCase, Native::StringLocaleCompare, Native::StringConcat, Native::StringNormalize, Native::StringValues,
     Native::EncodeUri,
     Native::EncodeUriComponent,
     Native::DecodeUri,
@@ -522,17 +525,12 @@ impl<H: Host> Vm<H> {
         self.install_disposal(program)?;
         let string = self.native_value(Native::String);
         self.install_string(program, string)?;
-        self.set_named(
-            program,
-            string,
-            "fromCharCode",
-            self.native_value(Native::StringFromCharCode),
-        )?;
-        self.set_named(
+        self.set_builtin_named(program, string, "fromCharCode", Native::StringFromCharCode)?;
+        self.set_builtin_named(
             program,
             string,
             "fromCodePoint",
-            self.native_value(Native::StringFromCodePoint),
+            Native::StringFromCodePoint,
         )?;
         self.global(program, "String", string)?;
         self.install_iterator_self(program)?;
