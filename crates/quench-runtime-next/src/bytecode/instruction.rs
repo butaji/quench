@@ -120,6 +120,36 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn constant_index(self) -> usize {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ConstantIndex);
+                self.imm() as usize
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn closure_function_index(self) -> u32 {
+                debug_assert_eq!(
+                    self.op().immediate_role(),
+                    ImmediateRole::ClosureFunctionIndex
+                );
+                self.imm()
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn object_site_index(self) -> usize {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ObjectSiteIndex);
+                self.imm() as usize
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn superinstruction_index(self) -> usize {
+                debug_assert_eq!(
+                    self.op().immediate_role(),
+                    ImmediateRole::SuperinstructionIndex
+                );
+                self.imm() as usize
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn capture_depth(self) -> u16 {
                 debug_assert_eq!(
                     self.op().immediate_layout(),

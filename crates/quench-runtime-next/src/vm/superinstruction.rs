@@ -8,7 +8,7 @@ impl<H: Host> Vm<H> {
         instruction: WideInstruction,
     ) -> Result<Option<Value>, JsError> {
         let destination = instruction.result_register();
-        let site = instruction.imm() as usize;
+        let site = instruction.superinstruction_index();
         let [array, first, second, object] = program.superinstructions[site].code;
         debug_assert_eq!(array.op(), Op::MakeConstArray);
         debug_assert_eq!(first.op(), Op::Binary);

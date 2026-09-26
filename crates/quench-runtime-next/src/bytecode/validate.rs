@@ -117,7 +117,7 @@ impl ResidualProgram {
                 let cache = |value: u16| cache_in_bounds(value, self.cache_sites);
                 let atom = |value: u32| atom_in_bounds(value, self.atoms.len());
                 match instruction.op() {
-                    Op::LoadConst if instruction.imm() as usize >= self.constants.len() => {
+                    Op::LoadConst if instruction.constant_index() >= self.constants.len() => {
                         return Err(format!("function {index} constant load is invalid"));
                     }
                     Op::LoadLocal | Op::LoadEnvLocal
@@ -157,7 +157,8 @@ impl ResidualProgram {
                         return Err(format!("function {index} call-name site is invalid"));
                     }
                     Op::MakeClosure
-                        if instruction.imm() as usize >= self.functions.len()
+                        if instruction.closure_function_index() as usize
+                            >= self.functions.len()
                             || !destination(instruction.a()) =>
                     {
                         return Err(format!("function {index} closure site is invalid"));
@@ -397,13 +398,14 @@ impl ResidualProgram {
                         if !destination(instruction.a())
                             || !register(instruction.b())
                             || !register(instruction.c())
-                            || instruction.imm() as usize >= self.object_sites.len() =>
+                            || instruction.object_site_index() >= self.object_sites.len() =>
                     {
                         return Err(format!("function {index} object site is invalid"));
                     }
                     Op::SuperConstArrayObject2
                         if !destination(instruction.a())
-                            || instruction.imm() as usize >= self.superinstructions.len() =>
+                            || instruction.superinstruction_index()
+                                >= self.superinstructions.len() =>
                     {
                         return Err(format!("function {index} superinstruction is invalid"));
                     }
@@ -411,9 +413,6 @@ impl ResidualProgram {
                         if instruction.imm() >= code_len =>
                     {
                         return Err(format!("function {index} branch at {pc} is out of bounds"));
-                    }
-                    Op::MakeClosure if instruction.imm() as usize >= self.functions.len() => {
-                        return Err(format!("function {index} closure target is invalid"));
                     }
                     _ => {}
                 }

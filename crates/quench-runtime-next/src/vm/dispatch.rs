@@ -49,7 +49,7 @@ impl<H: Host> Vm<H> {
             Op::LoadConst => {
                 let value = self
                     .programs
-                    .constant(self.frames[f].program, i.imm() as usize)
+                    .constant(self.frames[f].program, i.constant_index())
                     .ok_or_else(|| {
                         JsError::validation("constant index is outside program".into())
                     })?;
@@ -299,7 +299,7 @@ impl<H: Host> Vm<H> {
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
                 let v = if module_root {
                     self.function_values
-                        .get(&(self.frames[f].program, i.imm()))
+                        .get(&(self.frames[f].program, i.closure_function_index()))
                         .and_then(|closures| {
                             closures
                                 .iter()
@@ -307,9 +307,9 @@ impl<H: Host> Vm<H> {
                                 .map(|(_, closure)| *closure)
                         })
                         .map(Ok)
-                        .unwrap_or_else(|| self.closure(p, i.imm(), env))?
+                        .unwrap_or_else(|| self.closure(p, i.closure_function_index(), env))?
                 } else {
-                    self.closure(p, i.imm(), env)?
+                    self.closure(p, i.closure_function_index(), env)?
                 };
                 self.write(f, i.a(), v);
             }
@@ -320,7 +320,7 @@ impl<H: Host> Vm<H> {
             Op::MakeObject2 => {
                 let v = self.object_pair(
                     p,
-                    i.imm() as usize,
+                    i.object_site_index(),
                     self.read(f, i.b()),
                     self.read(f, i.c()),
                 );
