@@ -1916,7 +1916,16 @@ impl<H: Host> Vm<H> {
         if let Some(keys) = keys {
             let mut values = Vec::with_capacity(keys.len());
             for key in keys.iter().copied() {
-                values.push(self.get_index(p, padding, key)?);
+                let value = match self.heap.get(key) {
+                    Some(Cell::String(name)) => {
+                        let name = name.clone();
+                        let atom = self.intern_js_atom(&name);
+                        self.get_property(p, padding, atom)?
+                    }
+                    Some(Cell::Symbol(_)) => self.get_index(p, padding, key)?,
+                    _ => return Err(JsError::validation("invalid zipKeyed property key".into())),
+                };
+                values.push(value);
             }
             return Ok(values);
         }
