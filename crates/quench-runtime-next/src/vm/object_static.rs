@@ -328,41 +328,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         object: Value,
     ) -> Result<(), JsError> {
-        for (name, native) in [
-            ("toLocaleString", Native::ObjectPrototypeToLocaleString),
-            ("toString", Native::ObjectPrototypeToString),
-            ("valueOf", Native::ObjectPrototypeValueOf),
-            ("hasOwnProperty", Native::ObjectPrototypeHasOwnProperty),
-            (
-                "propertyIsEnumerable",
-                Native::ObjectPrototypePropertyIsEnumerable,
-            ),
-            ("__lookupGetter__", Native::ObjectPrototypeLookupGetter),
-            ("__lookupSetter__", Native::ObjectPrototypeLookupSetter),
-            ("__defineGetter__", Native::ObjectPrototypeDefineGetter),
-            ("__defineSetter__", Native::ObjectPrototypeDefineSetter),
-            ("isPrototypeOf", Native::ObjectPrototypeIsPrototypeOf),
-        ] {
-            self.set_builtin_named(program, self.object_proto, name, native)?;
-        }
-        let prototype_atom = self.intern_atom("__proto__");
-        let getter = self.native_value(Native::ObjectPrototypeProtoGetter);
-        let setter = self.native_value(Native::ObjectPrototypeProtoSetter);
-        self.set_builtin_function_name(getter, "get __proto__")?;
-        self.set_builtin_function_name(setter, "set __proto__")?;
-        self.set_property(self.object_proto, prototype_atom, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            self.object_proto,
-            PropertyKey::string(prototype_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: Some(setter),
-            },
-        );
+        self.install_object_prototype_methods(program, self.object_proto, None)?;
         for (name, native) in [
             ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
             (
@@ -384,6 +350,70 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(program, object, name, native)?;
         }
         Ok(())
+    }
+
+    pub(super) fn install_object_prototype_methods(
+        &mut self,
+        program: &ResidualProgram,
+        prototype: Value,
+        realm: Option<Value>,
+    ) -> Result<(), JsError> {
+        for (name, native) in [
+            ("toLocaleString", Native::ObjectPrototypeToLocaleString),
+            ("toString", Native::ObjectPrototypeToString),
+            ("valueOf", Native::ObjectPrototypeValueOf),
+            ("hasOwnProperty", Native::ObjectPrototypeHasOwnProperty),
+            (
+                "propertyIsEnumerable",
+                Native::ObjectPrototypePropertyIsEnumerable,
+            ),
+            ("__lookupGetter__", Native::ObjectPrototypeLookupGetter),
+            ("__lookupSetter__", Native::ObjectPrototypeLookupSetter),
+            ("__defineGetter__", Native::ObjectPrototypeDefineGetter),
+            ("__defineSetter__", Native::ObjectPrototypeDefineSetter),
+            ("isPrototypeOf", Native::ObjectPrototypeIsPrototypeOf),
+        ] {
+            self.set_realm_builtin_named(program, prototype, name, native, realm)?;
+        }
+        let prototype_atom = self.intern_atom("__proto__");
+        let getter = self.realm_native_value(Native::ObjectPrototypeProtoGetter, realm);
+        let setter = self.realm_native_value(Native::ObjectPrototypeProtoSetter, realm);
+        self.set_builtin_function_name(getter, "get __proto__")?;
+        self.set_builtin_function_name(setter, "set __proto__")?;
+        self.set_property(prototype, prototype_atom, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: Some(setter),
+            },
+        );
+        Ok(())
+    }
+
+    fn realm_native_value(&mut self, native: Native, realm: Option<Value>) -> Value {
+        match realm {
+            Some(realm) => self.native_with_realm(native, Value::NULL, realm),
+            None => self.native_value(native),
+        }
+    }
+
+    pub(super) fn set_realm_builtin_named(
+        &mut self,
+        _program: &ResidualProgram,
+        object: Value,
+        name: &str,
+        native: Native,
+        realm: Option<Value>,
+    ) -> Result<(), JsError> {
+        let function = self.realm_native_value(native, realm);
+        self.set_builtin_function_name(function, name)?;
+        self.set_builtin_value_named(object, name, function)
     }
 
     pub(super) fn call_object_native(
