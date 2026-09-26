@@ -30,6 +30,9 @@ impl<H: Host> Vm<H> {
                 | Native::AsyncIteratorSelf
                 | Native::IteratorReturn
                 | Native::IteratorThrow
+                | Native::GeneratorNext
+                | Native::GeneratorReturn
+                | Native::GeneratorThrow
                 | Native::AsyncGeneratorNext
                 | Native::AsyncGeneratorReturn
                 | Native::AsyncGeneratorThrow
@@ -378,6 +381,9 @@ impl<H: Host> Vm<H> {
             Native::AsyncIteratorSelf => Ok(this),
             Native::IteratorReturn => self.generator_return(p, this, args),
             Native::IteratorThrow => self.generator_throw(p, this, args),
+            Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => {
+                self.generator_prototype_method(p, native, this, args)
+            }
             Native::AsyncGeneratorNext
             | Native::AsyncGeneratorReturn
             | Native::AsyncGeneratorThrow => self.async_generator_method(p, native, this, args),

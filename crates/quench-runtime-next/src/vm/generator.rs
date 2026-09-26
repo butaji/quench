@@ -5,6 +5,44 @@ use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn generator_prototype_method(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let is_running = match self.heap.get(receiver) {
+            Some(Cell::Iterator {
+                kind: IteratorKind::Generator,
+                generator: Some(record),
+                ..
+            }) => Some(record.running),
+            _ => None,
+        };
+        let Some(is_running) = is_running else {
+            let name = match native {
+                Native::GeneratorNext => "next",
+                Native::GeneratorReturn => "return",
+                Native::GeneratorThrow => "throw",
+                _ => unreachable!(),
+            };
+            return Err(self.type_error(
+                p,
+                format!("Generator.prototype.{name} called on incompatible receiver"),
+            ));
+        };
+        if is_running {
+            return Err(self.type_error(p, "Generator is already executing".into()));
+        }
+        match native {
+            Native::GeneratorNext => self.generator_next(p, receiver, args),
+            Native::GeneratorReturn => self.generator_return(p, receiver, args),
+            Native::GeneratorThrow => self.generator_throw(p, receiver, args),
+            _ => unreachable!(),
+        }
+    }
+
     pub(super) fn generator_record_mut(
         &mut self,
         generator: Value,
@@ -130,7 +168,7 @@ impl<H: Host> Vm<H> {
         let default_prototype = if function.is_async {
             self.async_generator_proto
         } else {
-            self.iterator_proto
+            self.generator_proto
         };
         let function_object = self
             .function_values
@@ -162,20 +200,6 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::Iterator { source, .. }) = self.heap.get_mut(generator) {
             *source = generator;
         }
-        let root = self.heap.root(generator);
-        self.set_named(
-            p,
-            generator,
-            "return",
-            self.native_value(Native::IteratorReturn),
-        )?;
-        self.set_named(
-            p,
-            generator,
-            "throw",
-            self.native_value(Native::IteratorThrow),
-        )?;
-        self.heap.release_root(root);
         if let Some(Cell::Iterator {
             generator: slot, ..
         }) = self.heap.get_mut(generator)
@@ -573,7 +597,7 @@ impl<H: Host> Vm<H> {
             return Err(JsError("generator is already running".into()));
         }
         if record.done {
-            return self.iterator_result(Value::UNDEFINED, true);
+            return self.iterator_result(value, true);
         }
         if self.prepare_generator_return(p, generator, value)? {
             return self.resume_generator(p, generator, &[], None);

@@ -242,7 +242,7 @@ impl<H: Host> Vm<H> {
                         self.own_property(function_prototype, prototype_atom)
                     })
                     .filter(|prototype| self.object_data(*prototype).is_some())
-                    .unwrap_or(self.iterator_proto)
+                    .unwrap_or(self.generator_proto)
             } else {
                 self.realm_object_prototype(realm)
             };

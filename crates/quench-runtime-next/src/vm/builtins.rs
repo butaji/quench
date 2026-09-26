@@ -174,6 +174,7 @@ const NATIVES: &[Native] = &[
     Native::SetForEach,
     Native::IteratorNext, Native::IteratorClose, Native::IteratorSelf, Native::AsyncIteratorSelf,
     Native::IteratorReturn, Native::IteratorThrow,
+    Native::GeneratorNext, Native::GeneratorReturn, Native::GeneratorThrow,
     Native::AsyncGeneratorNext, Native::AsyncGeneratorReturn, Native::AsyncGeneratorThrow,
     Native::AsyncGeneratorReturnFulfilled, Native::AsyncGeneratorReturnRejected,
     Native::AsyncIteratorDispose, Native::AsyncIteratorDisposeFulfilled,

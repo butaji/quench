@@ -307,6 +307,7 @@ pub struct Vm<H> {
     weak_ref_proto: Value,
     finalization_registry_proto: Value,
     iterator_proto: Value,
+    generator_proto: Value,
     async_iterator_proto: Value,
     async_generator_proto: Value,
     async_from_sync_iterator_proto: Value,
