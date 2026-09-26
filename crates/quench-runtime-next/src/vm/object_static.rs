@@ -393,32 +393,7 @@ impl<H: Host> Vm<H> {
                 self.object_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectFromEntries => {
-                let input = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let Some(Cell::Array { elements, .. }) = self.heap.get(input).cloned() else {
-                    return Err(JsError("Object.fromEntries input is not iterable".into()));
-                };
-                let object = self.object();
-                let object_root = self.heap.root(object);
-                let outcome = (|| {
-                    for entry in elements.iter().copied() {
-                        let Some(Cell::Array { elements: pair, .. }) =
-                            self.heap.get(entry).cloned()
-                        else {
-                            return Err(JsError("Object.fromEntries entry is not an array".into()));
-                        };
-                        let key = self.coerce_js_string(
-                            p,
-                            pair.first().copied().unwrap_or(Value::UNDEFINED),
-                        )?;
-                        let value = pair.get(1).copied().unwrap_or(Value::UNDEFINED);
-                        let atom = self.intern_js_atom(&key);
-                        let object = self.heap.root_value(object_root).unwrap_or(object);
-                        self.set_property(object, atom, value)?;
-                    }
-                    Ok(self.heap.root_value(object_root).unwrap_or(object))
-                })();
-                self.heap.release_root(object_root);
-                outcome
+                self.object_from_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::ObjectIs => {
                 let left = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -478,6 +453,104 @@ impl<H: Host> Vm<H> {
             )),
             _ => Err(JsError("invalid object native".into())),
         }
+    }
+
+    fn object_from_entries(
+        &mut self,
+        p: &ResidualProgram,
+        iterable: Value,
+    ) -> Result<Value, JsError> {
+        let iterator = self.get_iterator(p, iterable)?;
+        let result = self.object();
+        let mut roots = vec![self.heap.root(iterator), self.heap.root(result)];
+        let outcome = (|| {
+            let done_atom = self.intern_atom("done");
+            let value_atom = self.intern_atom("value");
+            let mut object = result;
+            loop {
+                let iteration_roots = roots.len();
+                let iterator = self.heap.root_value(roots[0]).unwrap_or(iterator);
+                let step = match self.iterator_next(p, iterator) {
+                    Ok(step) => step,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                roots.push(self.heap.root(step));
+                let step = self.heap.root_value(*roots.last().unwrap()).unwrap_or(step);
+                let done = match self.get_property(p, step, done_atom) {
+                    Ok(done) => done,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                if self.truthy(done) {
+                    for root in roots.drain(iteration_roots..) {
+                        self.heap.release_root(root);
+                    }
+                    break;
+                }
+                let entry = match self.get_property(p, step, value_atom) {
+                    Ok(entry) => entry,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                if !self.is_object_like(entry) {
+                    let error =
+                        self.type_error(p, "Object.fromEntries entry is not an object".into());
+                    return Err(self.iterator_abrupt(p, iterator, error));
+                }
+                roots.push(self.heap.root(entry));
+                let entry = self
+                    .heap
+                    .root_value(*roots.last().unwrap())
+                    .unwrap_or(entry);
+                let raw_key = match self.get_index(p, entry, Value::number(0.0)) {
+                    Ok(key) => key,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                roots.push(self.heap.root(raw_key));
+                let raw_key = self
+                    .heap
+                    .root_value(*roots.last().unwrap())
+                    .unwrap_or(raw_key);
+                let value = match self.get_index(p, entry, Value::number(1.0)) {
+                    Ok(value) => value,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                roots.push(self.heap.root(value));
+                let value = self
+                    .heap
+                    .root_value(*roots.last().unwrap())
+                    .unwrap_or(value);
+                let key = match self.to_property_key(p, raw_key) {
+                    Ok(key) => key,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                roots.push(self.heap.root(key));
+                let key = self.heap.root_value(*roots.last().unwrap()).unwrap_or(key);
+                let descriptor = self.object();
+                roots.push(self.heap.root(descriptor));
+                for (name, field) in [
+                    ("value", value),
+                    ("writable", Value::TRUE),
+                    ("enumerable", Value::TRUE),
+                    ("configurable", Value::TRUE),
+                ] {
+                    let atom = self.intern_atom(name);
+                    if let Err(error) = self.set_property(descriptor, atom, field) {
+                        return Err(self.iterator_abrupt(p, iterator, error));
+                    }
+                }
+                object = self.heap.root_value(roots[1]).unwrap_or(object);
+                if let Err(error) = self.object_define_property(p, &[object, key, descriptor]) {
+                    return Err(self.iterator_abrupt(p, iterator, error));
+                }
+                for root in roots.drain(iteration_roots..) {
+                    self.heap.release_root(root);
+                }
+            }
+            Ok(self.heap.root_value(roots[1]).unwrap_or(object))
+        })();
+        roots.into_iter().for_each(|root| {
+            self.heap.release_root(root);
+        });
+        outcome
     }
 
     pub(super) fn same_value(&self, left: Value, right: Value) -> bool {
