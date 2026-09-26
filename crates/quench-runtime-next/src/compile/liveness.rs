@@ -1,5 +1,6 @@
 use crate::bytecode::{
-    FieldLookup, FieldSite, Function, Instr, Op, Operand, Register, ResultLayout, Superinstruction,
+    FieldLayout, FieldLookup, FieldSite, Function, Instr, InstructionField, Op, Operand, Register,
+    ResultLayout, Superinstruction,
 };
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -106,95 +107,68 @@ fn uses(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> u64 {
+    let field_reads = [
+        InstructionField::A,
+        InstructionField::B,
+        InstructionField::C,
+    ]
+    .into_iter()
+    .fold(0, |mask, field| {
+        mask | field_uses(instruction, field, fields)
+    });
+    let result = if instruction.op().result_layout().reads_result_register() {
+        bit(instruction.result_register())
+    } else {
+        0
+    };
     match instruction.op() {
-        Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture => bit(instruction.register_a()),
-        Op::StoreName => bit(instruction.register_a()),
-        Op::StoreResolvedName => bit(instruction.register_a()) | bit(instruction.register_b()),
-        Op::LoadResolvedName => bit(instruction.register_b()),
-        Op::ResolveName | Op::DeleteName | Op::LoadNameCall => 0,
-        Op::GetIterator
-        | Op::GetAsyncIterator
-        | Op::IteratorClose
-        | Op::SpreadToArray
-        | Op::RequireObjectCoercible
-        | Op::RequireIteratorResult => bit(instruction.register_b()),
-        Op::IteratorCleanupPush => bit(instruction.register_a()) | bit(instruction.register_b()),
-        Op::SetFunctionName => bit(instruction.register_a()),
-        Op::SetFunctionNameKey => bit(instruction.register_a()) | bit(instruction.register_b()),
-        Op::MarkPrivateName => bit(instruction.register_b()) | bit(instruction.register_c()),
-        Op::GetField => field_base(instruction, fields),
-        Op::CheckPrivate => bit(instruction.register_a()),
-        Op::PrivateIn => bit(instruction.register_b()),
-        Op::GetIndex => {
-            operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
+        Op::SuperConstArrayObject2 => {
+            field_reads
+                | superinstructions[instruction.superinstruction_index()]
+                    .code
+                    .iter()
+                    .fold(0, |mask, nested| {
+                        mask | uses(*nested, methods, fields, superinstructions)
+                    })
         }
-        Op::ToPropertyKey | Op::ToNumeric => bit(instruction.register_b()),
-        Op::CopyDataProperties => {
-            bit(instruction.register_a())
-                | bit(instruction.register_b())
-                | bit(instruction.register_c())
-        }
-        Op::MakeObject2 => bit(instruction.register_b()) | bit(instruction.register_c()),
-        Op::SuperConstArrayObject2 => superinstructions[instruction.superinstruction_index()]
-            .code
-            .iter()
-            .fold(0, |mask, nested| {
-                mask | uses(*nested, methods, fields, superinstructions)
-            }),
-        Op::SetField | Op::DefineField => {
-            bit(instruction.register_a()) | bit(instruction.register_b())
-        }
-        Op::DefineComputedField => {
-            bit(instruction.register_a())
-                | bit(instruction.register_b())
-                | bit(instruction.register_c())
-        }
-        Op::SetThisField => bit(instruction.register_a()),
-        Op::InitializeThis => bit(instruction.register_a()),
-        Op::ValidateClassHeritage => bit(instruction.register_a()),
-        Op::CacheTemplateObject => bit(instruction.register_a()),
-        Op::Await | Op::Yield => bit(instruction.register_b()),
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
-            bit(instruction.result_register())
-                | bit(instruction.register_b())
-                | bit(instruction.register_c())
-                | bit(state)
-                | bit(next_method)
+            field_reads | result | bit(state) | bit(next_method)
         }
-        Op::SetIndex => {
-            bit(instruction.register_a())
-                | bit(instruction.register_b())
-                | bit(instruction.register_c())
-        }
-        Op::DefineArrayElement => bit(instruction.register_a()) | bit(instruction.register_b()),
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
-            operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
-        }
-        Op::IncDec | Op::Unary | Op::Move => bit(instruction.register_b()),
-        Op::Delete => bit(instruction.register_b()) | bit(instruction.register_c()),
-        Op::JumpFalse | Op::Return | Op::Throw => bit(instruction.register_a()),
         Op::Call | Op::CallDirectEvalArray => {
             let window = instruction.call_window();
-            bit(instruction.register_b())
-                | bit(instruction.register_c())
-                | range(window.base, window.count)
+            field_reads | range(window.base, window.count)
         }
         Op::CallKnown => {
             let window = instruction.call_window();
-            range(window.base, window.count)
+            field_reads | range(window.base, window.count)
         }
-        Op::CallMethod => bit(instruction.register_b()) | method_arguments(instruction, methods),
-        Op::CallThisMethod => method_arguments(instruction, methods),
-        Op::Construct => {
-            let arguments = match instruction.construct_arguments() {
-                crate::bytecode::ConstructArguments::Registers(window) => {
-                    range(window.base, window.count)
-                }
-                crate::bytecode::ConstructArguments::Array(register) => bit(register),
+        Op::CallMethod | Op::CallThisMethod => field_reads | method_arguments(instruction, methods),
+        _ => field_reads,
+    }
+}
+
+fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite]) -> u64 {
+    let layout = instruction.op().field_layout(field);
+    match layout {
+        FieldLayout::Register | FieldLayout::ReadWriteRegister => {
+            bit(field_register(instruction, field))
+        }
+        FieldLayout::Operand => {
+            let input_operand = match field {
+                InstructionField::B => instruction.operand_b(),
+                InstructionField::C => instruction.operand_c(),
+                InstructionField::A => return 0,
             };
-            bit(instruction.register_b()) | arguments
+            operand(input_operand.0, fields)
         }
+        FieldLayout::FieldBase => field_base(instruction, fields),
+        FieldLayout::ConstructArguments => match instruction.construct_arguments() {
+            crate::bytecode::ConstructArguments::Registers(window) => {
+                range(window.base, window.count)
+            }
+            crate::bytecode::ConstructArguments::Array(register) => bit(register),
+        },
         _ => 0,
     }
 }
@@ -208,20 +182,23 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
     } else {
         0
     };
+    let field_writes = [
+        InstructionField::A,
+        InstructionField::B,
+        InstructionField::C,
+    ]
+    .into_iter()
+    .fold(0, |mask, field| {
+        mask | field_definitions(instruction, field)
+    });
     match instruction.op() {
-        Op::LoadNameCall => result | bit(instruction.register_b()),
-        Op::LoadLocal => {
-            result
-                | instruction
-                    .numeric_local_store_target()
-                    .map_or(0, |target| bit(target.register))
-        }
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
-            result | bit(instruction.register_c()) | bit(state) | bit(next_method)
+            result | field_writes | bit(state) | bit(next_method)
         }
         Op::SuperConstArrayObject2 => {
             result
+                | field_writes
                 | superinstructions[instruction.superinstruction_index()]
                     .code
                     .iter()
@@ -229,10 +206,28 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
                         mask | definitions(*nested, superinstructions)
                     })
         }
-        Op::StoreLocal | Op::StoreEnvLocal => {
-            result | instruction.optional_register_b().map_or(0, bit)
+        _ => result | field_writes,
+    }
+}
+
+fn field_definitions(instruction: Instr, field: InstructionField) -> u64 {
+    match instruction.op().field_layout(field) {
+        FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
+            bit(field_register(instruction, field))
         }
-        _ => result,
+        FieldLayout::OptionalRegister => instruction.optional_register_b().map_or(0, bit),
+        FieldLayout::NumericLocalTarget => instruction
+            .numeric_local_store_target()
+            .map_or(0, |target| bit(target.register)),
+        _ => 0,
+    }
+}
+
+fn field_register(instruction: Instr, field: InstructionField) -> Register {
+    match field {
+        InstructionField::A => instruction.register_a(),
+        InstructionField::B => instruction.register_b(),
+        InstructionField::C => instruction.register_c(),
     }
 }
 
