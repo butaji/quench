@@ -286,7 +286,9 @@ impl ResidualProgram {
                         return Err(format!("function {index} indexed store is invalid"));
                     }
                     Op::DefineArrayElement
-                        if !register(instruction.a()) || !register(instruction.b()) =>
+                        if !register(instruction.a())
+                            || !register(instruction.b())
+                            || instruction.array_index() == super::ARRAY_INDEX_SENTINEL =>
                     {
                         return Err(format!("function {index} array literal element is invalid"));
                     }

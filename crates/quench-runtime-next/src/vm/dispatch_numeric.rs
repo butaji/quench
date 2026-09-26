@@ -232,7 +232,7 @@ impl<H: Host> Vm<H> {
                     Op::DefineArrayElement => self.define_array_literal_element(
                         p,
                         self.read(frame, ins.b()),
-                        ins.imm() as usize,
+                        ins.array_index() as usize,
                         self.read(frame, ins.a()),
                     )?,
                     Op::Binary => {
