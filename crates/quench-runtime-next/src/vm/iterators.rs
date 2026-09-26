@@ -840,6 +840,7 @@ impl<H: Host> Vm<H> {
             next_method: None,
             helper: None,
             helper_running: false,
+            helper_started: false,
             kind,
             index: 0,
             done: false,
@@ -879,6 +880,7 @@ impl<H: Host> Vm<H> {
             next_method: None,
             helper: None,
             helper_running: false,
+            helper_started: false,
             kind,
             index: 0,
             done: false,
@@ -943,6 +945,7 @@ impl<H: Host> Vm<H> {
             next_method: Some(next_method),
             helper: None,
             helper_running: false,
+            helper_started: false,
             kind: IteratorKind::Protocol,
             index: 0,
             done: false,
@@ -974,6 +977,7 @@ impl<H: Host> Vm<H> {
             next_method: None,
             helper: Some(Box::new(helper)),
             helper_running: false,
+            helper_started: false,
             kind,
             index: 0,
             done: false,
@@ -1011,6 +1015,9 @@ impl<H: Host> Vm<H> {
         }
         if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
             *helper_running = true;
+        }
+        if let Some(Cell::Iterator { helper_started, .. }) = self.heap.get_mut(iterator) {
+            *helper_started = true;
         }
         let result = match state {
             IteratorHelper::Map { callback, index } => {
@@ -1069,11 +1076,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         iterator: Value,
     ) -> Result<Value, JsError> {
-        let (done, running, active) = match self.heap.get(iterator) {
+        let (done, running, started, active) = match self.heap.get(iterator) {
             Some(Cell::Iterator {
                 source,
                 done,
                 helper_running,
+                helper_started,
                 helper: Some(helper),
                 ..
             }) => {
@@ -1092,24 +1100,26 @@ impl<H: Host> Vm<H> {
                     } => vec![*source, *inner],
                     _ => vec![*source],
                 };
-                (*done, *helper_running, active)
+                (*done, *helper_running, *helper_started, active)
             }
             _ => return Err(self.type_error(p, "iterator helper receiver is invalid".into())),
         };
-        if running {
-            return Err(self.type_error(p, "iterator helper is already executing".into()));
-        }
         if done {
             return self.iterator_result(Value::UNDEFINED, true);
+        }
+        if running {
+            return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
         if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
             *helper_running = true;
         }
         let result = (|| {
-            self.mark_iterator_done(iterator);
-            if !done {
-                self.iterator_close_all(p, &active, None)?;
+            if !started {
+                self.mark_iterator_done(iterator);
             }
+            let close_result = self.iterator_close_all(p, &active, None);
+            self.mark_iterator_done(iterator);
+            close_result?;
             self.iterator_result(Value::UNDEFINED, true)
         })();
         if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
@@ -1800,9 +1810,21 @@ impl<H: Host> Vm<H> {
                     let name = self.coerce_js_string(p, property_key)?;
                     Some(self.intern_atom(&name.host_string()))
                 };
-                let descriptor =
-                    self.object_get_own_property_descriptor(p, &[input, property_key])?;
-                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                let enumerable = if matches!(
+                    self.heap.get(input),
+                    Some(Cell::Proxy { .. } | Cell::Array { .. } | Cell::TypedArray { .. })
+                ) {
+                    let descriptor =
+                        self.object_get_own_property_descriptor(p, &[input, property_key])?;
+                    !descriptor.is_undefined() && self.descriptor_flag(descriptor, "enumerable")
+                } else {
+                    let key =
+                        atom.map_or_else(|| PropertyKey::symbol(property_key), PropertyKey::string);
+                    self.property_attributes(input, key)
+                        .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
+                        .enumerable
+                };
+                if !enumerable {
                     self.heap.release_root(property_key_root);
                     continue;
                 }
@@ -1822,7 +1844,6 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 if matches!(self.heap.get(value), Some(Cell::String(_))) {
-                    let _ = self.iterator_close_all(p, &iterators, None);
                     self.heap.release_root(property_key_root);
                     return Err(
                         self.type_error(p, "Iterator.zipKeyed does not accept strings".into())
@@ -1845,11 +1866,6 @@ impl<H: Host> Vm<H> {
                         self.heap.release_root(value_root);
                     }
                     Err(error) => {
-                        let iterators = roots
-                            .iter()
-                            .filter_map(|root| self.heap.root_value(*root))
-                            .collect::<Vec<_>>();
-                        let _ = self.iterator_close_all(p, &iterators, None);
                         self.heap.release_root(value_root);
                         self.heap.release_root(property_key_root);
                         return Err(error);
@@ -1869,6 +1885,17 @@ impl<H: Host> Vm<H> {
                 .collect::<Vec<_>>();
             Ok((iterators, Some(output_keys)))
         })();
+        let result = match result {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let iterators = roots
+                    .chunks_exact(2)
+                    .filter_map(|pair| self.heap.root_value(pair[0]))
+                    .collect::<Vec<_>>();
+                let _ = self.iterator_close_all(p, &iterators, None);
+                Err(error)
+            }
+        };
         roots.into_iter().for_each(|root| {
             self.heap.release_root(root);
         });
@@ -2460,6 +2487,7 @@ impl<H: Host> Vm<H> {
             next_method: None,
             helper: None,
             helper_running: false,
+            helper_started: false,
             kind: IteratorKind::AsyncFromSync,
             index: 0,
             done: false,
@@ -2502,6 +2530,7 @@ impl<H: Host> Vm<H> {
             next_method: None,
             helper: None,
             helper_running: false,
+            helper_started: false,
             kind,
             index: 0,
             done: false,
