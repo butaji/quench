@@ -168,7 +168,7 @@ impl<H: Host> Vm<H> {
             }
         };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.iterator_proto),
+            object: Self::empty_object(self.string_iterator_proto),
             source,
             next_method: None,
             helper: None,

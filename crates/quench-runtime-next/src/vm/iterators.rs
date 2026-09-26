@@ -71,6 +71,15 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn install_iterators(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.iterator_proto = self.object();
+        self.string_iterator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        self.set_builtin_named(
+            program,
+            self.string_iterator_proto,
+            "next",
+            Native::IteratorNext,
+        )?;
         self.generator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
@@ -213,6 +222,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_iterator_self(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let prototype_atom = self.intern_atom("prototype");
         self.install_iterator_prototype(self.iterator_proto, None)?;
+        self.install_builtin_to_string_tag(self.string_iterator_proto, "String Iterator")?;
         self.iterator_helper_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
@@ -278,6 +288,12 @@ impl<H: Host> Vm<H> {
         self.set_index(
             p,
             self.iterator_proto,
+            iterator,
+            self.native_value(Native::IteratorSelf),
+        )?;
+        self.set_index(
+            p,
+            self.string_iterator_proto,
             iterator,
             self.native_value(Native::IteratorSelf),
         )?;
@@ -1024,6 +1040,9 @@ impl<H: Host> Vm<H> {
                         .zip(opened.iter().copied())
                         .filter_map(|(iterator, is_open)| is_open.then_some(iterator))
                         .collect(),
+                    IteratorHelper::FlatMap {
+                        inner: Some(inner), ..
+                    } => vec![*source, *inner],
                     _ => vec![*source],
                 };
                 (*done, *helper_running, active)
@@ -1057,30 +1076,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let next_atom = self.intern_atom("next");
         let next = self.get_property(p, source, next_atom)?;
-        self.iterator_step_with_method(p, source, next, args)
-    }
-
-    fn iterator_helper_step_for(
-        &mut self,
-        p: &ResidualProgram,
-        helper: Value,
-        source: Value,
-        args: &[Value],
-    ) -> Result<Option<Value>, JsError> {
-        let next = match self.heap.get(helper) {
-            Some(Cell::Iterator { next_method, .. }) => *next_method,
-            _ => None,
-        };
-        let next = if let Some(next) = next {
-            next
-        } else {
-            let atom = self.intern_atom("next");
-            let next = self.get_property(p, source, atom)?;
-            if let Some(Cell::Iterator { next_method, .. }) = self.heap.get_mut(helper) {
-                *next_method = Some(next);
-            }
-            next
-        };
         self.iterator_step_with_method(p, source, next, args)
     }
 
@@ -1132,7 +1127,7 @@ impl<H: Host> Vm<H> {
         index: usize,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
+        let Some(value) = self.iterator_helper_step(p, source, args)? else {
             self.mark_iterator_done(iterator);
             return self.iterator_result(Value::UNDEFINED, true);
         };
@@ -1162,7 +1157,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         loop {
-            let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
+            let Some(value) = self.iterator_helper_step(p, source, args)? else {
                 self.mark_iterator_done(iterator);
                 return self.iterator_result(Value::UNDEFINED, true);
             };
@@ -1193,7 +1188,7 @@ impl<H: Host> Vm<H> {
             self.iterator_close(p, source)?;
             return self.iterator_result(Value::UNDEFINED, true);
         }
-        let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
+        let Some(value) = self.iterator_helper_step(p, source, args)? else {
             self.mark_iterator_done(iterator);
             return self.iterator_result(Value::UNDEFINED, true);
         };
@@ -1215,16 +1210,13 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         while remaining > 0.0 {
-            if self
-                .iterator_helper_step_for(p, iterator, source, args)?
-                .is_none()
-            {
+            if self.iterator_helper_step(p, source, args)?.is_none() {
                 self.mark_iterator_done(iterator);
                 return self.iterator_result(Value::UNDEFINED, true);
             }
             remaining -= 1.0;
         }
-        let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
+        let Some(value) = self.iterator_helper_step(p, source, args)? else {
             self.mark_iterator_done(iterator);
             return self.iterator_result(Value::UNDEFINED, true);
         };
@@ -1244,7 +1236,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         loop {
             if let Some(current) = inner.take() {
-                if let Some(value) = self.iterator_helper_step_for(p, iterator, current, &[])? {
+                if let Some(value) = self.iterator_helper_step(p, current, &[])? {
+                    inner = Some(current);
                     self.update_iterator_helper(
                         iterator,
                         IteratorHelper::FlatMap {
@@ -1256,7 +1249,7 @@ impl<H: Host> Vm<H> {
                     return self.iterator_result(value, false);
                 }
             }
-            let Some(value) = self.iterator_helper_step_for(p, iterator, source, args)? else {
+            let Some(value) = self.iterator_helper_step(p, source, args)? else {
                 self.mark_iterator_done(iterator);
                 return self.iterator_result(Value::UNDEFINED, true);
             };
@@ -1267,7 +1260,10 @@ impl<H: Host> Vm<H> {
                 &[value, Value::number(index as f64)],
             )?;
             index += 1;
-            inner = Some(self.get_iterator(p, mapped)?);
+            if !self.is_object_like(mapped) {
+                return Err(self.type_error(p, "flatMap result is not an object".into()));
+            }
+            inner = Some(self.iterator_from(p, &[mapped])?);
         }
     }
 

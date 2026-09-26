@@ -63,6 +63,7 @@ impl<H: Host> Vm<H> {
                     self.finalization_registry_proto,
                     self.promise.proto,
                     self.iterator_proto,
+                    self.string_iterator_proto,
                     self.generator_proto,
                     self.iterator_helper_proto,
                     self.wrap_for_valid_iterator_proto,
