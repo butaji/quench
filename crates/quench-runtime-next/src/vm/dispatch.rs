@@ -363,16 +363,19 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), v);
             }
             Op::GetField => {
-                let v = if i.b() == FieldBase::NESTED {
-                    self.resolve_field(p, f, i.imm())?
-                } else {
-                    let base = self.resolve_field_base(p, f, FieldBase(i.b()))?;
-                    self.get_field_cached(p, base, i.imm(), i.c())?
+                let lookup = i.field_lookup();
+                let v = match lookup {
+                    crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
+                    crate::bytecode::FieldLookup::Atom(atom) => {
+                        let base = self.resolve_field_base(p, f, FieldBase(i.b()))?;
+                        self.get_field_cached(p, base, atom, i.c())?
+                    }
                 };
                 if i.writes_current_this() {
-                    let sink = p.field_sites[i.imm() as usize]
-                        .sink
-                        .expect("fused field sink");
+                    let crate::bytecode::FieldLookup::Site(site) = lookup else {
+                        unreachable!("field sink is only attached to nested field lookup")
+                    };
+                    let sink = p.field_sites[site].sink.expect("fused field sink");
                     self.set_field_cached(
                         p,
                         self.frames[f].this,
@@ -992,7 +995,7 @@ impl<H: Host> Vm<H> {
                 .constant(self.frames[frame].program, operand.payload() as usize)
                 .ok_or_else(|| JsError::validation("constant operand is outside program".into())),
             Some(crate::bytecode::OperandKind::Field) => {
-                self.resolve_field(p, frame, u32::from(operand.payload()))
+                self.resolve_field(p, frame, usize::from(operand.payload()))
             }
             Some(crate::bytecode::OperandKind::Local) => {
                 let slot = operand.payload() as usize;
@@ -1015,9 +1018,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-        site: u32,
+        site: usize,
     ) -> Result<Value, JsError> {
-        let site = p.field_sites[site as usize];
+        let site = p.field_sites[site];
         let base = self.resolve_field_base(p, frame, site.base)?;
         let value = self.get_field_cached(p, base, site.first.0, site.first.1)?;
         match site.second {
