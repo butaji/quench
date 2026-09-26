@@ -327,8 +327,8 @@ impl ResidualProgram {
                         return Err(format!("function {index} binary operand is invalid"));
                     }
                     Op::Unary | Op::IncDec
-                        if !register(instruction.a())
-                            || !register(instruction.b())
+                        if !register(instruction.result_register())
+                            || !register(instruction.register_b())
                             || (instruction.op() == Op::Unary
                                 && instruction.unary_operator()
                                     > oxc_ast::ast::UnaryOperator::Void as u32)
@@ -345,7 +345,10 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} delete operand is invalid"));
                     }
-                    Op::Move if !register(instruction.a()) || !register(instruction.b()) => {
+                    Op::Move
+                        if !register(instruction.result_register())
+                            || !register(instruction.register_b()) =>
+                    {
                         return Err(format!("function {index} move operand is invalid"));
                     }
                     Op::LoadImportMeta if !destination(instruction.a()) => {
