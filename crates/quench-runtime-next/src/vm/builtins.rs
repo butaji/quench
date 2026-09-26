@@ -24,6 +24,8 @@ const NATIVES: &[Native] = &[
     Native::ProxyRevoke,
     Native::JsonParse,
     Native::JsonStringify,
+    Native::JsonRawJson,
+    Native::JsonIsRawJson,
     Native::Array, Native::TypedArray,
     Native::ArrayIsArray,
     Native::ArrayPush,
@@ -539,6 +541,12 @@ impl<H: Host> Vm<H> {
         let stringify = self.native_value(Native::JsonStringify);
         self.set_builtin_value_named(json, "stringify", stringify)?;
         self.set_builtin_function_name(stringify, "stringify")?;
+        let raw_json = self.native_value(Native::JsonRawJson);
+        self.set_builtin_value_named(json, "rawJSON", raw_json)?;
+        self.set_builtin_function_name(raw_json, "rawJSON")?;
+        let is_raw_json = self.native_value(Native::JsonIsRawJson);
+        self.set_builtin_value_named(json, "isRawJSON", is_raw_json)?;
+        self.set_builtin_function_name(is_raw_json, "isRawJSON")?;
         self.global(program, "JSON", json)
     }
 

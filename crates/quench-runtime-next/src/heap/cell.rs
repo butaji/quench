@@ -24,6 +24,8 @@ pub(crate) enum Native {
     Proxy, ProxyRevocable, ProxyRevoke,
     JsonParse,
     JsonStringify,
+    JsonRawJson,
+    JsonIsRawJson,
     Array, TypedArray, ArrayToLocaleString, ArraySpecies, ArrayFromAsync,
     ArrayFromAsyncFulfilled, ArrayFromAsyncRejected,
     ArrayIsArray,
