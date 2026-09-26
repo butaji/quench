@@ -18,7 +18,76 @@ const DISPOSAL_DEFER_MODE: i32 = 2;
 const DISPOSAL_AWAIT_MODE: i32 = 3;
 const DISPOSAL_INVALID_MODE: i32 = -1;
 
+pub(super) fn disposal_native_length(native: Native) -> Option<f64> {
+    Some(match native {
+        Native::DisposableStack | Native::AsyncDisposableStack => 0.0,
+        Native::DisposableStackUse | Native::DisposableStackDefer => 1.0,
+        Native::DisposableStackAdopt => 2.0,
+        Native::DisposableStackMove
+        | Native::DisposableStackDispose
+        | Native::DisposableStackDisposed
+        | Native::AsyncDisposableStackMove
+        | Native::AsyncDisposableStackDisposeAsync
+        | Native::AsyncDisposableStackDisposed => 0.0,
+        Native::AsyncDisposableStackUse
+        | Native::AsyncDisposableStackDefer
+        | Native::DisposableStackUseAsync => 1.0,
+        Native::AsyncDisposableStackAdopt => 2.0,
+        Native::DisposableStackDisposeAsync => 0.0,
+        _ => return None,
+    })
+}
+
 impl<H: Host> Vm<H> {
+    pub(super) fn install_disposal_for_realm(
+        &mut self,
+        _p: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<(), JsError> {
+        for (name, constructor_native) in [
+            ("DisposableStack", Native::DisposableStack),
+            ("AsyncDisposableStack", Native::AsyncDisposableStack),
+        ] {
+            let constructor = self.native_with_realm(constructor_native, global, global);
+            let prototype = self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            self.set_builtin_function_name(constructor, name)?;
+            self.set_builtin_value_named(constructor, "prototype", prototype)?;
+            self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            let prototype_atom = self.intern_atom("prototype");
+            self.set_property_attributes(
+                constructor,
+                PropertyKey::string(prototype_atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            self.install_builtin_to_string_tag(prototype, name)?;
+            let property = self.intern_atom(name);
+            self.set_property(global, property, constructor)?;
+            self.set_property_attributes(
+                global,
+                PropertyKey::string(property),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        Ok(())
+    }
+
     pub(super) fn is_disposal_native(native: Native) -> bool {
         matches!(
             native,
@@ -30,6 +99,8 @@ impl<H: Host> Vm<H> {
                 | Native::AsyncDisposableStackMove
                 | Native::AsyncDisposableStackDisposeAsync
                 | Native::AsyncDisposableStackDisposed
+                | Native::DisposableStackMove
+                | Native::DisposableStackDisposed
                 | Native::DisposableStackUse
                 | Native::DisposableStackAdopt
                 | Native::DisposableStackDefer
@@ -48,10 +119,12 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_disposal(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let constructor = self.native_value(Native::DisposableStack);
         let prototype = self.object();
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
         for (name, native) in [
             ("use", Native::DisposableStackUse),
             ("adopt", Native::DisposableStackAdopt),
             ("defer", Native::DisposableStackDefer),
+            ("move", Native::DisposableStackMove),
             ("dispose", Native::DisposableStackDispose),
             ("useAsync", Native::DisposableStackUseAsync),
             ("disposeAsync", Native::DisposableStackDisposeAsync),
@@ -59,12 +132,25 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(p, prototype, name, native)?;
         }
         if let Some(symbol) = self.well_known_symbols.get("dispose").copied() {
+            let method = self.native_value(Native::DisposableStackDispose);
             self.set_index(
                 p,
                 prototype,
                 symbol,
-                self.native_value(Native::DisposableStackDispose),
+                method,
             )?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
         }
         if let Some(symbol) = self.well_known_symbols.get("asyncDispose").copied() {
             self.set_index(
@@ -84,7 +170,37 @@ impl<H: Host> Vm<H> {
             "\0rqj:disposeAsyncWithCompletion",
             self.native_value(Native::DisposableStackDisposeAsyncWithCompletion),
         )?;
+        self.install_builtin_to_string_tag(prototype, "DisposableStack")?;
+        let disposed = self.native_value(Native::DisposableStackDisposed);
+        let disposed_atom = self.intern_atom("disposed");
+        self.set_builtin_function_name(disposed, "get disposed")?;
+        self.set_builtin_value_named(prototype, "disposed", disposed)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(disposed_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(disposed),
+                setter: None,
+            },
+        );
         self.set_named(p, constructor, "prototype", prototype)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_function_name(constructor, "DisposableStack")?;
         self.global(p, "DisposableStack", constructor)?;
 
@@ -228,6 +344,11 @@ impl<H: Host> Vm<H> {
             self.require_async_stack(p, this)?;
             return self.stack_disposed(this);
         }
+        if native == Native::DisposableStackDisposed {
+            self.require_stack(p, this)?;
+            self.require_sync_stack(p, this)?;
+            return self.stack_disposed(this);
+        }
         if native == Native::AsyncIteratorDispose {
             return self.async_iterator_dispose(p, this);
         }
@@ -249,6 +370,10 @@ impl<H: Host> Vm<H> {
         if native == Native::AsyncDisposableStackMove {
             return self.stack_move(p, this, true);
         }
+        if native == Native::DisposableStackMove {
+            self.require_sync_stack(p, this)?;
+            return self.stack_move(p, this, false);
+        }
         if native == Native::AsyncDisposableStackUse {
             self.require_open_stack(p, this)?;
             return self.stack_use_async(p, this, args);
@@ -262,7 +387,7 @@ impl<H: Host> Vm<H> {
             return self.stack_defer(p, this, args, true);
         }
         if native == Native::DisposableStackDispose {
-            self.require_stack(p, this)?;
+            self.require_sync_stack(p, this)?;
             return self.stack_dispose(p, this);
         }
         if native == Native::DisposableStackDisposeAsync {
@@ -290,6 +415,12 @@ impl<H: Host> Vm<H> {
                 self.add_async_disposal_error(p, state, reason)?;
             }
             return self.continue_async_disposal(p, state);
+        }
+        if matches!(
+            native,
+            Native::DisposableStackUse | Native::DisposableStackAdopt | Native::DisposableStackDefer
+        ) {
+            self.require_sync_stack(p, this)?;
         }
         self.require_open_stack(p, this)?;
         match native {
@@ -381,6 +512,19 @@ impl<H: Host> Vm<H> {
             Ok(())
         } else {
             Err(self.type_error(p, "AsyncDisposableStack receiver is invalid".into()))
+        }
+    }
+
+    fn require_sync_stack(&mut self, p: &ResidualProgram, stack: Value) -> Result<(), JsError> {
+        self.require_stack(p, stack)?;
+        let async_stack = self
+            .lookup_atom(ASYNC_STACK)
+            .and_then(|atom| self.own_property(stack, atom))
+            .is_some_and(|value| self.truthy(value));
+        if async_stack {
+            Err(self.type_error(p, "DisposableStack receiver is invalid".into()))
+        } else {
+            Ok(())
         }
     }
 
