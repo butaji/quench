@@ -65,6 +65,7 @@ impl<H: Host> Vm<H> {
                 | Native::SetIsSupersetOf
                 | Native::SetSpeciesGetter
                 | Native::IteratorNext
+                | Native::StringIteratorNext
                 | Native::RegExpStringIteratorNext
                 | Native::ArrayIteratorNext
                 | Native::IteratorClose
@@ -869,6 +870,7 @@ impl<H: Host> Vm<H> {
             | Native::SetIsSupersetOf => self.set_relation(p, native, this, args),
             Native::SetSpeciesGetter => Ok(this),
             Native::IteratorNext => self.iterator_next_with_args(p, this, args),
+            Native::StringIteratorNext => self.string_iterator_next(p, this, args),
             Native::RegExpStringIteratorNext => self.regexp_string_iterator_next(p, this, args),
             Native::IteratorProtocolNext => self.iterator_next_with_args(p, this, args),
             Native::IteratorProtocolReturn => self.iterator_protocol_return(p, this),

@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
             program,
             self.string_iterator_proto,
             "next",
-            Native::IteratorNext,
+            Native::StringIteratorNext,
         )?;
         self.regexp_string_iterator_proto = self
             .heap
@@ -2587,6 +2587,27 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(
                 p,
                 "RegExp string iterator next called on incompatible receiver".into(),
+            ));
+        }
+        self.iterator_next_with_args(p, this, args)
+    }
+
+    pub(super) fn string_iterator_next(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !matches!(
+            self.heap.get(this),
+            Some(Cell::Iterator {
+                kind: IteratorKind::String,
+                ..
+            })
+        ) {
+            return Err(self.type_error(
+                p,
+                "String iterator next called on incompatible receiver".into(),
             ));
         }
         self.iterator_next_with_args(p, this, args)
