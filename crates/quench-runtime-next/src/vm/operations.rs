@@ -406,7 +406,8 @@ impl<H: Host> Vm<H> {
                 self.array_iterator_native(p, native, this)
             }
             Native::StringValues => self.string_iterator_native(p, this),
-            Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args),
+            Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args, false),
+            Native::SharedArrayBufferSlice => self.array_buffer_slice_native(p, this, args, true),
             Native::ArrayBufferTransfer => {
                 self.array_buffer_transfer_native(p, this, args, true, false)
             }
