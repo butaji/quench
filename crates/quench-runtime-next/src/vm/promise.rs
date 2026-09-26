@@ -291,6 +291,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TypeError
         | Native::URIError => 1.0,
         Native::Promise => 1.0,
+        Native::PromiseSpeciesGetter => 0.0,
         Native::PromiseResolve
         | Native::PromiseReject
         | Native::PromiseCatch
@@ -302,6 +303,8 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::PromiseAllSettled
         | Native::PromiseAllSettledKeyed
         | Native::PromiseAny => 1.0,
+        Native::PromiseFinallyHandler => 1.0,
+        Native::PromiseFinallyContinuationHandler => 0.0,
         Native::PromiseAggregateJob => 1.0,
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
@@ -569,6 +572,19 @@ pub(super) struct FinallyContinuationJob {
     pub(super) value: Value,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FinallyHandlerCallback {
+    pub(super) handler: Value,
+    pub(super) constructor: Value,
+    pub(super) original_rejected: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FinallyContinuationCallback {
+    pub(super) original_rejected: bool,
+    pub(super) original: Value,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AggregateMode {
     All,
@@ -635,8 +651,11 @@ pub(super) struct PromiseRuntime {
     pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
     pub(super) finally_jobs: FxHashMap<Value, FinallyJob>,
     pub(super) finally_continuation_jobs: FxHashMap<Value, FinallyContinuationJob>,
+    pub(super) finally_handler_callbacks: FxHashMap<Value, FinallyHandlerCallback>,
+    pub(super) finally_continuation_callbacks: FxHashMap<Value, FinallyContinuationCallback>,
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
+    pub(super) reaction_capabilities: FxHashMap<Value, (Value, Value)>,
     pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
@@ -655,8 +674,11 @@ impl Default for PromiseRuntime {
             thenable_jobs: FxHashMap::default(),
             finally_jobs: FxHashMap::default(),
             finally_continuation_jobs: FxHashMap::default(),
+            finally_handler_callbacks: FxHashMap::default(),
+            finally_continuation_callbacks: FxHashMap::default(),
             aggregates: FxHashMap::default(),
             aggregate_jobs: FxHashMap::default(),
+            reaction_capabilities: FxHashMap::default(),
             async_resume_jobs: FxHashMap::default(),
             modules: FxHashMap::default(),
             dynamic_import_jobs: Vec::new(),
@@ -716,7 +738,10 @@ impl<H: Host> Vm<H> {
         let promise_resolver = !env.is_null()
             && matches!(
                 kind,
-                Native::PromiseResolve | Native::PromiseReject | Native::PromiseAggregateJob
+                Native::PromiseResolve
+                    | Native::PromiseReject
+                    | Native::PromiseAggregateJob
+                    | Native::PromiseFinallyJob
             );
         let length = promise_resolver
             .then_some(1.0)
@@ -760,7 +785,21 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_promise(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.promise.proto = self.object();
         let promise = self.native_value(Native::Promise);
+        self.set_builtin_function_name(promise, "Promise")?;
         self.set_named(program, promise, "prototype", self.promise.proto)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            promise,
+            property_key::PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_named(program, self.promise.proto, "constructor", promise)?;
         let constructor = self.intern_atom("constructor");
         self.set_property_attributes(
@@ -814,6 +853,23 @@ impl<H: Host> Vm<H> {
             Native::PromiseAllSettledKeyed,
         )?;
         self.set_builtin_named(program, promise, "any", Native::PromiseAny)?;
+        if let Some(species) = self.well_known_symbols.get("species").copied() {
+            let getter = self.native_value(Native::PromiseSpeciesGetter);
+            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+            self.set_symbol_property(promise, species, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                promise,
+                property_key::PropertyKey::symbol(species),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
         self.global(program, "Promise", promise)
     }
 
@@ -945,6 +1001,7 @@ impl<H: Host> Vm<H> {
             )),
             Native::PromiseWithResolvers => self.promise_with_resolvers(p, this),
             Native::PromiseCapabilityExecutor => self.promise_capability_executor(p, args),
+            Native::PromiseSpeciesGetter => Ok(this),
             Native::PromiseResolve => {
                 if let Some(promise) = self.active_native_env() {
                     self.promise_resolve_value(
@@ -954,16 +1011,26 @@ impl<H: Host> Vm<H> {
                     )?;
                     Ok(Value::UNDEFINED)
                 } else {
+                    if !self.is_constructable(p, this) {
+                        return Err(self.type_error(
+                            p,
+                            "Promise.resolve receiver is not a constructor".into(),
+                        ));
+                    }
                     if let Some(value) = args.first().copied()
                         && self.promise.records.contains_key(&value)
                     {
-                        return Ok(value);
+                        let constructor_atom = self.intern_atom("constructor");
+                        if self.get_property(p, value, constructor_atom)? == this {
+                            return Ok(value);
+                        }
                     }
-                    let promise = self.promise_object();
-                    self.promise_resolve_value(
+                    let (promise, resolve, _) = self.new_promise_capability(p, this)?;
+                    self.call_value(
                         p,
-                        promise,
-                        args.first().copied().unwrap_or(Value::UNDEFINED),
+                        resolve,
+                        Value::UNDEFINED,
+                        &[args.first().copied().unwrap_or(Value::UNDEFINED)],
                     )?;
                     Ok(promise)
                 }
@@ -978,12 +1045,12 @@ impl<H: Host> Vm<H> {
                     )?;
                     Ok(Value::UNDEFINED)
                 } else {
-                    let promise = self.promise_object();
-                    self.promise_settle(
+                    let (promise, _, reject) = self.new_promise_capability(p, this)?;
+                    self.call_value(
                         p,
-                        promise,
-                        PromiseState::Rejected,
-                        args.first().copied().unwrap_or(Value::UNDEFINED),
+                        reject,
+                        Value::UNDEFINED,
+                        &[args.first().copied().unwrap_or(Value::UNDEFINED)],
                     )?;
                     Ok(promise)
                 }
@@ -994,14 +1061,11 @@ impl<H: Host> Vm<H> {
                 args.first().copied().unwrap_or(Value::UNDEFINED),
                 args.get(1).copied().unwrap_or(Value::UNDEFINED),
             ),
-            Native::PromiseCatch => self.promise_then(
-                p,
-                this,
-                Value::UNDEFINED,
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-            ),
-            Native::PromiseFinally => {
-                self.promise_finally(p, this, args.first().copied().unwrap_or(Value::UNDEFINED))
+            Native::PromiseCatch => self.promise_catch(p, this, args),
+            Native::PromiseFinally => self.promise_finally(p, this, args),
+            Native::PromiseFinallyHandler => self.promise_finally_handler(p, args),
+            Native::PromiseFinallyContinuationHandler => {
+                self.promise_finally_continuation_handler(p, args)
             }
             Native::PromiseAll => self.promise_aggregate(p, this, args, AggregateMode::All),
             Native::PromiseAllKeyed => {
@@ -1019,7 +1083,7 @@ impl<H: Host> Vm<H> {
                 self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::PromiseThenableJob => self.promise_thenable_job(p),
-            Native::PromiseFinallyJob => self.promise_finally_job(p),
+            Native::PromiseFinallyJob => self.promise_finally_job(p, args),
             Native::PromiseFinallyContinuationJob => self.promise_finally_continuation_job(
                 p,
                 args.first().copied().unwrap_or(Value::UNDEFINED),
@@ -3742,28 +3806,13 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         if promise == value {
-            let error = self
-                .heap
-                .alloc(Cell::Error("Promise cannot resolve to itself".into()));
-            return self.promise_settle(p, promise, PromiseState::Rejected, error);
-        }
-        if let Some(record) = self.promise.records.get(&value).cloned() {
-            let reaction = PromiseReaction {
-                on_fulfilled: Value::UNDEFINED,
-                on_rejected: Value::UNDEFINED,
-                next: promise,
-            };
-            if record.state == PromiseState::Pending {
-                self.promise
-                    .records
-                    .get_mut(&value)
-                    .unwrap()
-                    .reactions
-                    .push(reaction);
-            } else {
-                self.enqueue_promise_reaction(p, reaction, record.state, record.result);
-            }
-            return Ok(());
+            let error = self.type_error(p, "Promise cannot resolve to itself".into());
+            return self.promise_settle(
+                p,
+                promise,
+                PromiseState::Rejected,
+                error.thrown_value().unwrap_or(Value::UNDEFINED),
+            );
         }
         if self.object_data(value).is_none() {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
@@ -3819,11 +3868,13 @@ impl<H: Host> Vm<H> {
         on_rejected: Value,
     ) -> Result<Value, JsError> {
         let Some(record) = self.promise.records.get(&promise).cloned() else {
-            return Err(JsError(
-                "Promise.prototype method called on non-Promise".into(),
-            ));
+            return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
         };
-        let next = self.promise_object();
+        let constructor = self.promise_species_constructor(p, promise)?;
+        let (next, resolve, reject) = self.new_promise_capability(p, constructor)?;
+        self.promise
+            .reaction_capabilities
+            .insert(next, (resolve, reject));
         let reaction = PromiseReaction {
             on_fulfilled: if self.is_function(on_fulfilled) {
                 on_fulfilled
@@ -3850,32 +3901,180 @@ impl<H: Host> Vm<H> {
         Ok(next)
     }
 
-    fn promise_finally(
+    fn promise_species_constructor(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
-        handler: Value,
     ) -> Result<Value, JsError> {
-        if !self.is_function(handler) {
-            return self.promise_then(p, promise, Value::UNDEFINED, Value::UNDEFINED);
+        let constructor_atom = self.intern_atom("constructor");
+        let constructor = self.get_property(p, promise, constructor_atom)?;
+        if constructor.is_undefined() {
+            return Ok(self.native_value(Native::Promise));
         }
-        let Some(record) = self.promise.records.get(&promise).cloned() else {
-            return Err(JsError(
-                "Promise.prototype method called on non-Promise".into(),
-            ));
+        if !self.is_object_like(constructor) {
+            return Err(self.type_error(p, "Promise constructor is not an object".into()));
+        }
+        let Some(species) = self.well_known_symbols.get("species").copied() else {
+            return Ok(self.native_value(Native::Promise));
         };
-        let next = self.promise_object();
-        let reaction = FinallyReaction { handler, next };
-        if record.state == PromiseState::Pending {
-            self.promise
-                .records
-                .get_mut(&promise)
-                .unwrap()
-                .finally_reactions
-                .push(reaction);
+        let species = self.get_index(p, constructor, species)?;
+        if species.is_undefined() || species.is_null() {
+            Ok(self.native_value(Native::Promise))
         } else {
-            self.enqueue_promise_finally(reaction, record.state, record.result);
+            Ok(species)
         }
-        Ok(next)
+    }
+
+    pub(super) fn promise_resolve_for_constructor(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        if self.promise.records.contains_key(&value) {
+            let constructor_atom = self.intern_atom("constructor");
+            if self.get_property(p, value, constructor_atom)? == constructor {
+                return Ok(value);
+            }
+        }
+        let (promise, resolve, _) = self.new_promise_capability(p, constructor)?;
+        self.call_value(p, resolve, Value::UNDEFINED, &[value])?;
+        Ok(promise)
+    }
+
+    fn finally_handler_function(
+        &mut self,
+        handler: Value,
+        constructor: Value,
+        original_rejected: bool,
+    ) -> Value {
+        let function = self.native_with_env(Native::PromiseFinallyHandler, Value::UNDEFINED);
+        self.promise.finally_handler_callbacks.insert(
+            function,
+            FinallyHandlerCallback {
+                handler,
+                constructor,
+                original_rejected,
+            },
+        );
+        function
+    }
+
+    fn finally_continuation_function(&mut self, original_rejected: bool, original: Value) -> Value {
+        let function =
+            self.native_with_env(Native::PromiseFinallyContinuationHandler, Value::UNDEFINED);
+        self.promise.finally_continuation_callbacks.insert(
+            function,
+            FinallyContinuationCallback {
+                original_rejected,
+                original,
+            },
+        );
+        function
+    }
+
+    pub(super) fn promise_finally_handler(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let function = *self
+            .promise
+            .active_native
+            .last()
+            .ok_or_else(|| JsError("Promise finally handler without callback".into()))?;
+        let callback = *self
+            .promise
+            .finally_handler_callbacks
+            .get(&function)
+            .ok_or_else(|| JsError("stale Promise finally handler".into()))?;
+        let original = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let cleanup = self.call_value(p, callback.handler, Value::UNDEFINED, &[])?;
+        let promise = self.promise_resolve_for_constructor(p, callback.constructor, cleanup)?;
+        let then_atom = self.intern_atom("then");
+        let then = self.get_property(p, promise, then_atom)?;
+        if !self.is_function(then) {
+            return Err(self.type_error(p, "Promise cleanup then is not callable".into()));
+        }
+        let continuation = self.finally_continuation_function(callback.original_rejected, original);
+        self.call_value(p, then, promise, &[continuation])
+    }
+
+    pub(super) fn promise_finally_continuation_handler(
+        &mut self,
+        _p: &ResidualProgram,
+        _args: &[Value],
+    ) -> Result<Value, JsError> {
+        let function = *self
+            .promise
+            .active_native
+            .last()
+            .ok_or_else(|| JsError("Promise finally continuation without callback".into()))?;
+        let callback = *self
+            .promise
+            .finally_continuation_callbacks
+            .get(&function)
+            .ok_or_else(|| JsError("stale Promise finally continuation".into()))?;
+        if callback.original_rejected {
+            return Err(JsError::thrown(
+                callback.original,
+                "Promise was rejected before finally".into(),
+            ));
+        }
+        Ok(callback.original)
+    }
+
+    fn promise_catch(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if receiver.is_null() || receiver.is_undefined() {
+            return Err(
+                self.type_error(p, "Promise.prototype.catch called on nullish value".into())
+            );
+        }
+        let then_atom = self.intern_atom("then");
+        let then = self.get_property(p, receiver, then_atom)?;
+        if !self.is_function(then) {
+            return Err(self.type_error(p, "Promise.prototype.catch then is not callable".into()));
+        }
+        self.call_value(
+            p,
+            then,
+            receiver,
+            &[
+                Value::UNDEFINED,
+                args.first().copied().unwrap_or(Value::UNDEFINED),
+            ],
+        )
+    }
+
+    fn promise_finally(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if receiver.is_null() || receiver.is_undefined() {
+            return Err(self.type_error(
+                p,
+                "Promise.prototype.finally called on nullish value".into(),
+            ));
+        }
+        let then_atom = self.intern_atom("then");
+        let then = self.get_property(p, receiver, then_atom)?;
+        if !self.is_function(then) {
+            return Err(self.type_error(p, "Promise.prototype.finally then is not callable".into()));
+        }
+        let handler = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_function(handler) {
+            return self.call_value(p, then, receiver, &[handler, handler]);
+        }
+        let constructor = self.promise_species_constructor(p, receiver)?;
+        let fulfilled = self.finally_handler_function(handler, constructor, false);
+        let rejected = self.finally_handler_function(handler, constructor, true);
+        self.call_value(p, then, receiver, &[fulfilled, rejected])
     }
 }

@@ -134,6 +134,15 @@ impl<H: Host> Vm<H> {
                         |(job, continuation)| [*job, continuation.next, continuation.value],
                     ),
                 )
+                .chain(self.promise.finally_handler_callbacks.iter().flat_map(
+                    |(function, callback)| [*function, callback.handler, callback.constructor],
+                ))
+                .chain(
+                    self.promise
+                        .finally_continuation_callbacks
+                        .iter()
+                        .flat_map(|(function, callback)| [*function, callback.original]),
+                )
                 .chain(
                     self.promise
                         .aggregates
@@ -152,6 +161,12 @@ impl<H: Host> Vm<H> {
                         .aggregate_jobs
                         .iter()
                         .flat_map(|(job, aggregate_job)| [*job, aggregate_job.aggregate]),
+                )
+                .chain(
+                    self.promise
+                        .reaction_capabilities
+                        .iter()
+                        .flat_map(|(promise, (resolve, reject))| [*promise, *resolve, *reject]),
                 )
                 .chain(
                     self.promise
@@ -237,11 +252,20 @@ impl<H: Host> Vm<H> {
             .finally_continuation_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
         self.promise
+            .finally_handler_callbacks
+            .retain(|function, _| self.heap.get(*function).is_some());
+        self.promise
+            .finally_continuation_callbacks
+            .retain(|function, _| self.heap.get(*function).is_some());
+        self.promise
             .aggregates
             .retain(|aggregate, _| self.heap.get(*aggregate).is_some());
         self.promise
             .aggregate_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
+        self.promise
+            .reaction_capabilities
+            .retain(|promise, _| self.heap.get(*promise).is_some());
         self.promise
             .async_resume_jobs
             .retain(|job, _| self.heap.get(*job).is_some());

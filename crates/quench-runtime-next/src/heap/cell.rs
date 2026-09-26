@@ -301,6 +301,7 @@ pub(crate) enum Native {
     NumberExponential,
     NumberPrecision,
     Promise,
+    PromiseSpeciesGetter,
     PromiseResolve,
     PromiseReject,
     PromiseWithResolvers,
@@ -308,6 +309,8 @@ pub(crate) enum Native {
     PromiseThen,
     PromiseCatch,
     PromiseFinally,
+    PromiseFinallyHandler,
+    PromiseFinallyContinuationHandler,
     PromiseAll,
     PromiseAllKeyed,
     PromiseRace,
@@ -495,6 +498,7 @@ impl Native {
         matches!(
             self,
             Self::Promise
+                | Self::PromiseSpeciesGetter
                 | Self::PromiseResolve
                 | Self::PromiseReject
                 | Self::PromiseWithResolvers
@@ -502,6 +506,8 @@ impl Native {
                 | Self::PromiseThen
                 | Self::PromiseCatch
                 | Self::PromiseFinally
+                | Self::PromiseFinallyHandler
+                | Self::PromiseFinallyContinuationHandler
                 | Self::PromiseAll
                 | Self::PromiseAllKeyed
                 | Self::PromiseRace
