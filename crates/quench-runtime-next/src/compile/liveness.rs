@@ -151,6 +151,7 @@ fn uses(
         }
         Op::SetThisField => bit(instruction.register_a()),
         Op::InitializeThis => bit(instruction.register_a()),
+        Op::ValidateClassHeritage => bit(instruction.register_a()),
         Op::CacheTemplateObject => bit(instruction.register_a()),
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();

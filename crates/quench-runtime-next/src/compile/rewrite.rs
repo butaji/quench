@@ -374,6 +374,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         }
         Op::SetThisField => instruction.register_a() == register,
         Op::InitializeThis => instruction.register_a() == register,
+        Op::ValidateClassHeritage => instruction.register_a() == register,
         Op::CacheTemplateObject => instruction.register_a() == register,
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
