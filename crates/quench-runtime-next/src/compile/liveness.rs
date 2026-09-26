@@ -122,6 +122,7 @@ fn uses(
         Op::IteratorCleanupPush => bit(instruction.register_a()) | bit(instruction.register_b()),
         Op::SetFunctionName => bit(instruction.register_a()),
         Op::SetFunctionNameKey => bit(instruction.register_a()) | bit(instruction.register_b()),
+        Op::MarkPrivateName => bit(instruction.register_b()) | bit(instruction.register_c()),
         Op::GetField => field_base(instruction, fields),
         Op::CheckPrivate => bit(instruction.register_a()),
         Op::PrivateIn => bit(instruction.register_b()),

@@ -433,8 +433,8 @@ impl<H: Host> Vm<H> {
                 );
             }
             Op::MarkPrivateName => {
-                let object = self.read(f, i.b());
-                let home = self.read(f, i.c());
+                let object = self.read(f, i.register_b());
+                let home = self.read(f, i.register_c());
                 let atom = i.atom_index();
                 let brand = PrivateBrand { home, name: atom };
                 if object != home {
