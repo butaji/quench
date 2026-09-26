@@ -274,6 +274,13 @@ impl<H: Host> Vm<H> {
                 Err(error) => Err(error),
             };
         }
+        if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && self.prototype_chain_contains_proxy(object)
+        {
+            let key = self.coerce_js_string(p, key)?;
+            let atom = self.intern_js_atom(&key);
+            return self.set_property_with_program(p, object, atom, value);
+        }
         if let Some(index) = key.as_number().filter(|x| {
             *x >= 0.0
                 && x.fract() == 0.0
