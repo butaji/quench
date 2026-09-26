@@ -847,6 +847,14 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
+        if self.prototype_chain_contains_proxy(object) {
+            let written = self.set_property_with_receiver(p, object, atom, value, object)?;
+            return if written || !strict {
+                Ok(())
+            } else {
+                Err(self.type_error(p, "cannot assign property through proxy".into()))
+            };
+        }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
                 self.call_value(p, setter, object, &[value])?;
@@ -874,6 +882,18 @@ impl<H: Host> Vm<H> {
         self.mirror_global_var_property_write(p, object, atom, value);
         Ok(())
     }
+
+    pub(super) fn prototype_chain_contains_proxy(&self, object: Value) -> bool {
+        let mut current = self.object_data(object).map(|data| data.proto);
+        while let Some(value) = current.filter(|value| !value.is_null()) {
+            if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
+                return true;
+            }
+            current = self.object_data(value).map(|data| data.proto);
+        }
+        false
+    }
+
     pub(super) fn property_accessor(
         &self,
         mut object: Value,
