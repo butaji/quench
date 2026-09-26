@@ -363,8 +363,8 @@ opcodes!(
     DeleteName => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Unused, Unused),
     StoreName => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, BooleanFlag),
-    LoadThis => Effect::PURE, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
-    LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP), @ Register, @ fields(Undeclared, Undeclared, Undeclared),
+    LoadThis => Effect::PURE; meaning Unused, @ Register, @ fields(Undeclared, Unused, Unused),
+    LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning Unused, @ Register, @ fields(Undeclared, Unused, Unused),
     MakeClosure => CALL_EFFECT; meaning ClosureFunctionIndex, @ Register, @ fields(Undeclared, Unused, Unused),
     MakeArray => CALL_EFFECT; meaning ArrayLength, @ Register, @ fields(Undeclared, Unused, Unused),
     MakeConstArray => CALL_EFFECT; meaning ConstantIndex, @ Register, @ fields(Undeclared, ElementCount, Unused),
@@ -417,11 +417,11 @@ opcodes!(
     Throw => Effect::THROWS.union(Effect::CONTROL), @ NoResult, @ fields(Register, Undeclared, Undeclared),
     NumericAdd => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     NumericMultiply => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
-    InitializeThis => Effect::CONTROL, @ NoResult, @ fields(Register, Undeclared, Undeclared),
+    InitializeThis => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex, @ Register, @ fields(Register, Undeclared, Undeclared),
     LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
     DefineField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Undeclared),
-    ValidateClassHeritage => READ_THROW, @ NoResult, @ fields(Register, Undeclared, Undeclared),
+    ValidateClassHeritage => READ_THROW; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
 );
 #[derive(Clone, Debug)]
 pub struct Function {
