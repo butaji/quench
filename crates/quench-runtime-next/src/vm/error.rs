@@ -916,6 +916,8 @@ impl<H: Host> Vm<H> {
         let realm_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        let realm_iterator_next = self.native_with_realm(Native::IteratorNext, global, global);
+        self.set_named(program, realm_iterator_proto, "next", realm_iterator_next)?;
         let realm_async_iterator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
@@ -971,6 +973,40 @@ impl<H: Host> Vm<H> {
                 },
             );
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            if native == Native::GeneratorFunction {
+                self.set_builtin_value_named(prototype, "prototype", realm_iterator_proto)?;
+                let prototype_atom = self.intern_atom("prototype");
+                self.set_property_attributes(
+                    prototype,
+                    PropertyKey::string(prototype_atom),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    },
+                );
+            }
+            if matches!(
+                native,
+                Native::GeneratorFunction | Native::AsyncGeneratorFunction
+            ) {
+                let constructor_atom = self.intern_atom("constructor");
+                self.set_property_attributes(
+                    prototype,
+                    PropertyKey::string(constructor_atom),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    },
+                );
+            }
             if native == Native::AsyncGeneratorFunction {
                 self.set_builtin_value_named(prototype, "prototype", realm_async_generator_proto)?;
                 let prototype_atom = self.intern_atom("prototype");
