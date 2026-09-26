@@ -510,10 +510,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn date_to_json_string(&self, milliseconds: f64) -> Option<String> {
-        format_date_iso(milliseconds)
-    }
-
     pub(super) fn date_construct_native(
         &mut self,
         p: &ResidualProgram,
