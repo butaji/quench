@@ -50,22 +50,29 @@ fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
         .is_some_and(|end| end <= u32::from(registers))
 }
 
-fn field_domains_in_bounds(
-    instruction: super::WideInstruction,
+#[derive(Clone, Copy)]
+struct ValidationBounds {
     registers: u16,
     locals: u16,
     functions: usize,
     constants: usize,
+    atoms: usize,
     field_sites: usize,
     cache_sites: u16,
-) -> bool {
+    method_sites: usize,
+    object_sites: usize,
+    superinstructions: usize,
+    code_len: u32,
+}
+
+fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: ValidationBounds) -> bool {
     let fields = [
         (InstructionField::A, instruction.a()),
         (InstructionField::B, instruction.b()),
         (InstructionField::C, instruction.c()),
     ];
     if instruction.op().result_layout() != ResultLayout::NoResult
-        && !register_in_bounds(instruction.result_register(), registers, 0)
+        && !register_in_bounds(instruction.result_register(), bounds.registers, 0)
     {
         return false;
     }
@@ -73,23 +80,27 @@ fn field_domains_in_bounds(
     fields.into_iter().all(
         |(field, value)| match instruction.op().field_layout(field) {
             FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
-                register_in_bounds(value, registers, 0)
+                register_in_bounds(value, bounds.registers, 0)
             }
             FieldLayout::OptionalRegister => instruction
                 .optional_register_b()
-                .is_none_or(|register| register_in_bounds(register, registers, 0)),
+                .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
             FieldLayout::CacheSiteIndex if instruction.op() != Op::GetField => {
-                cache_in_bounds(value, cache_sites)
+                cache_in_bounds(value, bounds.cache_sites)
             }
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
-            FieldLayout::FunctionIndex => usize::from(value) < functions,
+            FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
             FieldLayout::ElementCount => instruction
                 .constant_index()
                 .checked_add(usize::from(value))
-                .is_some_and(|end| end <= constants),
-            FieldLayout::Operand => {
-                operand_in_bounds(value, registers, locals, constants, field_sites)
-            }
+                .is_some_and(|end| end <= bounds.constants),
+            FieldLayout::Operand => operand_in_bounds(
+                value,
+                bounds.registers,
+                bounds.locals,
+                bounds.constants,
+                bounds.field_sites,
+            ),
             FieldLayout::BinaryOperator => {
                 u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
             }
@@ -100,18 +111,39 @@ fn field_domains_in_bounds(
 
 fn immediate_domains_in_bounds(
     instruction: super::WideInstruction,
-    functions: usize,
-    locals: u16,
-    constants: usize,
-    atoms: usize,
+    bounds: ValidationBounds,
 ) -> bool {
     match instruction.op().immediate_role() {
-        super::ImmediateRole::ConstantIndex => instruction.constant_index() < constants,
+        super::ImmediateRole::ConstantIndex => instruction.constant_index() < bounds.constants,
         super::ImmediateRole::ClosureFunctionIndex => {
-            (instruction.closure_function_index() as usize) < functions
+            (instruction.closure_function_index() as usize) < bounds.functions
         }
-        super::ImmediateRole::LocalSlot => instruction.local_slot() < usize::from(locals),
-        super::ImmediateRole::AtomIndex => atom_in_bounds(instruction.atom_index(), atoms),
+        super::ImmediateRole::LocalSlot => instruction.local_slot() < usize::from(bounds.locals),
+        super::ImmediateRole::AtomIndex => atom_in_bounds(instruction.atom_index(), bounds.atoms),
+        super::ImmediateRole::BooleanFlag => instruction.boolean_flag().is_some(),
+        super::ImmediateRole::ArrayIndex => {
+            instruction.array_index() != super::ARRAY_INDEX_SENTINEL
+        }
+        super::ImmediateRole::BinaryOperator => {
+            instruction.binary_operator() <= oxc_ast::ast::BinaryOperator::Instanceof as u32
+        }
+        super::ImmediateRole::UnaryOperator => {
+            instruction.unary_operator() <= oxc_ast::ast::UnaryOperator::Void as u32
+        }
+        super::ImmediateRole::FunctionNamePrefix => {
+            instruction.function_name_prefix() <= super::FUNCTION_NAME_PREFIX_SETTER
+        }
+        super::ImmediateRole::ArrayLength => instruction.array_length() <= usize::from(u16::MAX),
+        super::ImmediateRole::MethodSiteIndex => {
+            (instruction.method_site_index() as usize) < bounds.method_sites
+        }
+        super::ImmediateRole::ObjectSiteIndex => {
+            (instruction.object_site_index() as usize) < bounds.object_sites
+        }
+        super::ImmediateRole::SuperinstructionIndex => {
+            (instruction.superinstruction_index() as usize) < bounds.superinstructions
+        }
+        super::ImmediateRole::JumpTarget => instruction.jump_target() < bounds.code_len,
         _ => true,
     }
 }
@@ -146,6 +178,19 @@ impl ResidualProgram {
                 return Err(format!("function {index} has an invalid parent"));
             }
             let code_len = function.code.len() as u32;
+            let bounds = ValidationBounds {
+                registers: function.registers,
+                locals: function.locals,
+                functions: self.functions.len(),
+                constants: self.constants.len(),
+                atoms: self.atoms.len(),
+                field_sites: self.field_sites.len(),
+                cache_sites: self.cache_sites,
+                method_sites: self.method_sites.len(),
+                object_sites: self.object_sites.len(),
+                superinstructions: self.superinstructions.len(),
+                code_len,
+            };
             if function.parameter_end_pc > code_len
                 || function.parameter_end_pc != 0 && !function.is_generator
             {
@@ -177,7 +222,7 @@ impl ResidualProgram {
                     }
                 }
             }
-            for (pc, packed) in function.code.iter().enumerate() {
+            for packed in &function.code {
                 let Some(instruction) = instruction_at(function, *packed) else {
                     return Err(format!("function {index} wide instruction is invalid"));
                 };
@@ -193,23 +238,11 @@ impl ResidualProgram {
                         instruction.op()
                     ));
                 }
-                if !field_domains_in_bounds(
-                    instruction,
-                    function.registers,
-                    function.locals,
-                    self.functions.len(),
-                    self.constants.len(),
-                    self.field_sites.len(),
-                    self.cache_sites,
-                ) || !immediate_domains_in_bounds(
-                    instruction,
-                    self.functions.len(),
-                    function.locals,
-                    self.constants.len(),
-                    self.atoms.len(),
-                ) {
+                if !field_domains_in_bounds(instruction, bounds)
+                    || !immediate_domains_in_bounds(instruction, bounds)
+                {
                     return Err(format!(
-                        "function {index} {:?} has an invalid field value",
+                        "function {index} {:?} has an out-of-domain operand",
                         instruction.op()
                     ));
                 }
@@ -287,9 +320,7 @@ impl ResidualProgram {
                     }
                     Op::SetFunctionNameKey
                         if !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || instruction.function_name_prefix()
-                                > crate::bytecode::FUNCTION_NAME_PREFIX_SETTER =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!(
                             "function {index} computed function name is invalid"
@@ -301,10 +332,7 @@ impl ResidualProgram {
                     Op::MakeConstArray if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} constant array is invalid"));
                     }
-                    Op::MakeArray
-                        if !destination(instruction.result_register())
-                            || instruction.array_length() > usize::from(u16::MAX) =>
-                    {
+                    Op::MakeArray if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} array allocation is invalid"));
                     }
                     Op::MakeObject if !destination(instruction.result_register()) => {
@@ -377,54 +405,40 @@ impl ResidualProgram {
                     Op::SetIndex
                         if !register(instruction.register_a())
                             || !register(instruction.register_b())
-                            || !register(instruction.register_c())
-                            || instruction.boolean_flag().is_none() =>
+                            || !register(instruction.register_c()) =>
                     {
                         return Err(format!("function {index} indexed store is invalid"));
                     }
                     Op::DefineArrayElement
                         if !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || instruction.array_index() == super::ARRAY_INDEX_SENTINEL =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} array literal element is invalid"));
                     }
-                    Op::Binary | Op::NumericAdd | Op::NumericMultiply
+                    Op::Binary if !destination(instruction.result_register()) => {
+                        return Err(format!("function {index} binary operand is invalid"));
+                    }
+                    Op::NumericAdd | Op::NumericMultiply
                         if !destination(instruction.result_register())
-                            || match instruction.op() {
-                                Op::Binary => {
-                                    instruction.binary_operator()
-                                        > oxc_ast::ast::BinaryOperator::Instanceof as u32
-                                }
-                                Op::NumericAdd => {
-                                    instruction.binary_operator()
-                                        != oxc_ast::ast::BinaryOperator::Addition as u32
-                                }
-                                Op::NumericMultiply => {
-                                    instruction.binary_operator()
-                                        != oxc_ast::ast::BinaryOperator::Multiplication as u32
-                                }
-                                _ => unreachable!("matched binary opcode family"),
-                            } =>
+                            || (instruction.op() == Op::NumericAdd
+                                && instruction.binary_operator()
+                                    != oxc_ast::ast::BinaryOperator::Addition as u32)
+                            || (instruction.op() == Op::NumericMultiply
+                                && instruction.binary_operator()
+                                    != oxc_ast::ast::BinaryOperator::Multiplication as u32) =>
                     {
                         return Err(format!("function {index} binary operand is invalid"));
                     }
                     Op::Unary | Op::IncDec
                         if !register(instruction.result_register())
-                            || !register(instruction.register_b())
-                            || (instruction.op() == Op::Unary
-                                && instruction.unary_operator()
-                                    > oxc_ast::ast::UnaryOperator::Void as u32)
-                            || (instruction.op() == Op::IncDec
-                                && instruction.boolean_flag().is_none()) =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} unary operand is invalid"));
                     }
                     Op::Delete
                         if !register(instruction.result_register())
                             || !register(instruction.register_b())
-                            || !register(instruction.register_c())
-                            || instruction.boolean_flag().is_none() =>
+                            || !register(instruction.register_c()) =>
                     {
                         return Err(format!("function {index} delete operand is invalid"));
                     }
@@ -491,26 +505,6 @@ impl ResidualProgram {
                     Op::JumpFalse if !register(instruction.register_a()) => {
                         return Err(format!("function {index} branch register is invalid"));
                     }
-                    Op::JumpBinaryFalse
-                        if instruction.binary_operator_field()
-                            > oxc_ast::ast::BinaryOperator::Instanceof as u32
-                            || !operand_in_bounds(
-                                instruction.operand_b().0,
-                                function.registers,
-                                function.locals,
-                                self.constants.len(),
-                                self.field_sites.len(),
-                            )
-                            || !operand_in_bounds(
-                                instruction.operand_c().0,
-                                function.registers,
-                                function.locals,
-                                self.constants.len(),
-                                self.field_sites.len(),
-                            ) =>
-                    {
-                        return Err(format!("function {index} branch operand is invalid"));
-                    }
                     Op::Call | Op::CallDirectEvalArray
                         if !destination(instruction.result_register())
                             || !register(instruction.register_b())
@@ -555,12 +549,6 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} known call is invalid"));
                     }
-                    Op::CallMethod | Op::CallThisMethod
-                        if !destination(instruction.result_register())
-                            || instruction.method_site_index() >= self.method_sites.len() =>
-                    {
-                        return Err(format!("function {index} method call is invalid"));
-                    }
                     Op::Construct
                         if !destination(instruction.result_register())
                             || !register(instruction.register_b())
@@ -578,26 +566,6 @@ impl ResidualProgram {
                             } =>
                     {
                         return Err(format!("function {index} construct is invalid"));
-                    }
-                    Op::MakeObject2
-                        if !destination(instruction.result_register())
-                            || !register(instruction.register_b())
-                            || !register(instruction.register_c())
-                            || instruction.object_site_index() >= self.object_sites.len() =>
-                    {
-                        return Err(format!("function {index} object site is invalid"));
-                    }
-                    Op::SuperConstArrayObject2
-                        if !destination(instruction.result_register())
-                            || instruction.superinstruction_index()
-                                >= self.superinstructions.len() =>
-                    {
-                        return Err(format!("function {index} superinstruction is invalid"));
-                    }
-                    Op::Jump | Op::JumpFalse | Op::JumpBinaryFalse
-                        if instruction.jump_target() >= code_len =>
-                    {
-                        return Err(format!("function {index} branch at {pc} is out of bounds"));
                     }
                     _ => {}
                 }
