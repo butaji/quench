@@ -420,7 +420,7 @@ opcodes!(
     InitializeThis => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex, @ Register, @ fields(Register, Undeclared, Undeclared),
     LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex, @ Register, @ fields(Undeclared, Undeclared, Undeclared),
-    DefineField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Undeclared),
+    DefineField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Unused),
     ValidateClassHeritage => READ_THROW; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
 );
 #[derive(Clone, Debug)]
