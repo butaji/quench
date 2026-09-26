@@ -3,7 +3,7 @@ use super::wtf16::JsString;
 use super::*;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
     Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectFromEntries, Native::ObjectIs,
     Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
@@ -385,6 +385,22 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }
+        let has_instance_symbol = self.well_known_symbols["hasInstance"];
+        let has_instance = self.native_value(Native::FunctionPrototypeHasInstance);
+        self.set_builtin_function_name(has_instance, "[Symbol.hasInstance]")?;
+        self.set_symbol_property(self.function_proto, has_instance_symbol, has_instance)?;
+        self.set_property_attributes(
+            self.function_proto,
+            property_key::PropertyKey::symbol(has_instance_symbol),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.install_finalization_registry(program)?;
         let atomics_name = self.intern_atom("Atomics");
         if let Some(atomics) = self.own_property(self.realm.globals, atomics_name) {
@@ -484,9 +500,12 @@ impl<H: Host> Vm<H> {
         self.object_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        self.function_proto = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        self.function_proto = self.heap.alloc(Cell::Function {
+            object: Box::new(Self::empty_object(self.object_proto)),
+            kind: FunctionKind::Native(Native::FunctionPrototype),
+            env: Value::NULL,
+            realm: self.realm.globals,
+        });
         self.object_data_mut(self.realm.globals).unwrap().proto = self.object_proto;
     }
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {

@@ -387,6 +387,15 @@ impl<H: Host> Vm<H> {
             Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayOf => {
                 self.array_modern_native(p, native, this, args)
             }
+            Native::FunctionPrototype => Ok(Value::UNDEFINED),
+            Native::FunctionPrototypeHasInstance => {
+                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                Ok(if self.ordinary_has_instance(p, this, value)? {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
             Native::FunctionCall => {
                 let receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                 self.call_value(p, this, receiver, args.get(1..).unwrap_or_default())
@@ -397,7 +406,7 @@ impl<H: Host> Vm<H> {
                 let arguments = self.call_argument_list(p, argument_array, true)?;
                 self.call_value(p, this, receiver, &arguments)
             }
-            Native::FunctionBind => self.bind_function(this, args),
+            Native::FunctionBind => self.bind_function(p, this, args),
             Native::FunctionBoundCall => self.call_bound_function(p, args),
             Native::FunctionToString => {
                 if !self.is_function(this) {

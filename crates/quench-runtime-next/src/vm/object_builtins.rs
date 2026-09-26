@@ -47,7 +47,7 @@ impl<H: Host> Vm<H> {
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
-                    configurable: false,
+                    configurable: true,
                     accessor: true,
                     getter: Some(getter),
                     setter: Some(throw_type_error),
