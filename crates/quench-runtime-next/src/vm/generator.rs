@@ -203,6 +203,7 @@ impl<H: Host> Vm<H> {
             next_method: None,
             helper: None,
             helper_running: false,
+            helper_started: false,
             kind: if function.is_async {
                 IteratorKind::AsyncGenerator
             } else {

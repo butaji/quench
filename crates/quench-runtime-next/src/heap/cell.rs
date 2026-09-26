@@ -723,6 +723,7 @@ pub(crate) enum Cell {
         next_method: Option<Value>,
         helper: Option<Box<IteratorHelper>>,
         helper_running: bool,
+        helper_started: bool,
         kind: IteratorKind,
         index: usize,
         done: bool,

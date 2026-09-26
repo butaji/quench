@@ -173,6 +173,7 @@ impl<H: Host> Vm<H> {
             next_method: None,
             helper: None,
             helper_running: false,
+            helper_started: false,
             kind: IteratorKind::String,
             index: 0,
             done: false,
