@@ -141,7 +141,10 @@ impl<H: Host> Vm<H> {
                         .flat_map(|(aggregate, record)| {
                             std::iter::once(*aggregate)
                                 .chain(std::iter::once(record.output))
+                                .chain(std::iter::once(record.resolve))
+                                .chain(std::iter::once(record.reject))
                                 .chain(record.values.iter().copied())
+                                .chain(record.keys.iter().flatten().copied())
                         }),
                 )
                 .chain(

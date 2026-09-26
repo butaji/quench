@@ -309,8 +309,10 @@ pub(crate) enum Native {
     PromiseCatch,
     PromiseFinally,
     PromiseAll,
+    PromiseAllKeyed,
     PromiseRace,
     PromiseAllSettled,
+    PromiseAllSettledKeyed,
     PromiseAny,
     PromiseReactionJob,
     PromiseThenableJob,
@@ -501,8 +503,10 @@ impl Native {
                 | Self::PromiseCatch
                 | Self::PromiseFinally
                 | Self::PromiseAll
+                | Self::PromiseAllKeyed
                 | Self::PromiseRace
                 | Self::PromiseAllSettled
+                | Self::PromiseAllSettledKeyed
                 | Self::PromiseAny
                 | Self::PromiseReactionJob
                 | Self::PromiseThenableJob
