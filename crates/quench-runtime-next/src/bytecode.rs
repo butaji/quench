@@ -74,6 +74,7 @@ pub(crate) enum FieldLayout {
     FunctionIndex,
     ConstructArguments,
     ElementCount,
+    CacheSiteIndex,
     Operand,
     BinaryOperator,
 }
@@ -388,9 +389,9 @@ opcodes!(
     ToNumeric => READ_THROW,
     CopyDataProperties => CALL_EFFECT,
     MarkPrivateName => Effect::WRITES_HEAP; meaning AtomIndex,
-    SetField => WRITE_THROW; meaning AtomIndex,
-    DefineComputedField => WRITE_THROW,
-    SetThisField => WRITE_THROW; meaning AtomIndex,
+    SetField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, CacheSiteIndex),
+    DefineComputedField => WRITE_THROW, @ NoResult, @ fields(Register, Register, Register),
+    SetThisField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Undeclared, CacheSiteIndex),
     SetIndex => WRITE_THROW; meaning BooleanFlag, @ NoResult, @ fields(Register, Register, Register),
     DefineArrayElement => WRITE_THROW; meaning ArrayIndex, @ NoResult, @ fields(Register, Register, Undeclared),
     Binary => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
@@ -416,7 +417,7 @@ opcodes!(
     InitializeThis => Effect::CONTROL,
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex,
     LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex,
-    DefineField => WRITE_THROW; meaning AtomIndex,
+    DefineField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Undeclared),
     ValidateClassHeritage => READ_THROW,
 );
 #[derive(Clone, Debug)]

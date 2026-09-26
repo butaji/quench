@@ -237,33 +237,33 @@ impl ResidualProgram {
                         return Err(format!("function {index} field load is invalid"));
                     }
                     Op::SetField
-                        if !register(instruction.a())
-                            || !register(instruction.b())
+                        if !register(instruction.register_a())
+                            || !register(instruction.register_b())
                             || !atom(instruction.atom_index())
-                            || !cache(instruction.c()) =>
+                            || !cache(instruction.cache_site_index()) =>
                     {
                         return Err(format!("function {index} field store is invalid"));
                     }
                     Op::DefineField
-                        if !register(instruction.a())
-                            || !register(instruction.b())
+                        if !register(instruction.register_a())
+                            || !register(instruction.register_b())
                             || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} field definition is invalid"));
                     }
                     Op::DefineComputedField
-                        if !register(instruction.a())
-                            || !register(instruction.b())
-                            || !register(instruction.c()) =>
+                        if !register(instruction.register_a())
+                            || !register(instruction.register_b())
+                            || !register(instruction.register_c()) =>
                     {
                         return Err(format!(
                             "function {index} computed field definition is invalid"
                         ));
                     }
                     Op::SetThisField
-                        if !register(instruction.a())
+                        if !register(instruction.register_a())
                             || !atom(instruction.atom_index())
-                            || !cache(instruction.c()) =>
+                            || !cache(instruction.cache_site_index()) =>
                     {
                         return Err(format!("function {index} this-field store is invalid"));
                     }

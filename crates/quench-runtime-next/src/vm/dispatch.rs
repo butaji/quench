@@ -649,32 +649,32 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::SetField => {
-                let object = self.read(f, i.b());
-                let value = self.read(f, i.a());
+                let object = self.read(f, i.register_b());
+                let value = self.read(f, i.register_a());
                 self.set_field_cached(
                     p,
                     object,
                     i.atom_index(),
                     value,
-                    i.c(),
+                    i.cache_site_index(),
                     p.functions[self.frames[f].function as usize].strict,
                 )?;
             }
             Op::DefineField => {
-                let object = self.read(f, i.b());
-                let value = self.read(f, i.a());
+                let object = self.read(f, i.register_b());
+                let value = self.read(f, i.register_a());
                 self.define_class_field(p, object, PropertyKey::string(i.atom_index()), value)?;
             }
             Op::DefineComputedField => {
-                let object = self.read(f, i.b());
-                let key = self.read(f, i.c());
+                let object = self.read(f, i.register_b());
+                let key = self.read(f, i.register_c());
                 let key = self.to_property_key(p, key)?;
                 let key = match self.heap.get(key).cloned() {
                     Some(Cell::String(text)) => PropertyKey::string(self.intern_js_atom(&text)),
                     Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
                     _ => return Err(JsError::validation("invalid class field key".into())),
                 };
-                self.define_class_field(p, object, key, self.read(f, i.a()))?;
+                self.define_class_field(p, object, key, self.read(f, i.register_a()))?;
             }
             Op::SetThisField => {
                 let this = self.checked_this_binding(p, f)?;
@@ -682,8 +682,8 @@ impl<H: Host> Vm<H> {
                     p,
                     this,
                     i.atom_index(),
-                    self.read(f, i.a()),
-                    i.c(),
+                    self.read(f, i.register_a()),
+                    i.cache_site_index(),
                     p.functions[self.frames[f].function as usize].strict,
                 )?;
             }

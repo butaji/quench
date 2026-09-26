@@ -152,6 +152,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn cache_site_index(self) -> u16 {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::CacheSiteIndex
+                );
+                self.c()
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn operand_b(self) -> Operand {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
