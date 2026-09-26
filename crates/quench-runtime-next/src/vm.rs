@@ -142,6 +142,12 @@ struct Realm {
     jobs: Vec<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
 }
+#[derive(Default)]
+struct GlobalLexicalState {
+    declarations: FxHashSet<Atom>,
+    bindings: FxHashMap<Atom, Value>,
+    immutable_bindings: FxHashSet<Atom>,
+}
 enum NumericArguments<'a> {
     Values(&'a [Value]),
     Registers {
@@ -285,6 +291,7 @@ pub struct Vm<H> {
     specialized: bool,
     heap: Heap,
     realm: Realm,
+    global_lexical_states: FxHashMap<Value, GlobalLexicalState>,
     object_proto: Value,
     function_proto: Value,
     array_proto: Value,
@@ -382,6 +389,32 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    pub(super) fn switch_realm_global(&mut self, global: Value) -> Value {
+        let previous = self.realm.globals;
+        if previous == global {
+            return previous;
+        }
+        self.global_lexical_states.insert(
+            previous,
+            GlobalLexicalState {
+                declarations: std::mem::take(&mut self.realm.global_lexical_declarations),
+                bindings: std::mem::take(&mut self.realm.global_lexical_bindings),
+                immutable_bindings: std::mem::take(
+                    &mut self.realm.immutable_global_lexical_bindings,
+                ),
+            },
+        );
+        let state = self
+            .global_lexical_states
+            .remove(&global)
+            .unwrap_or_default();
+        self.realm.globals = global;
+        self.realm.global_lexical_declarations = state.declarations;
+        self.realm.global_lexical_bindings = state.bindings;
+        self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
+        previous
+    }
+
     pub fn root(&mut self, value: Value) -> RootId {
         self.heap.root(value)
     }

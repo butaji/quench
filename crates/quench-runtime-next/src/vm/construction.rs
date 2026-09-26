@@ -502,9 +502,9 @@ impl<H: Host> Vm<H> {
         }
         if let FunctionKind::Native(native) = kind {
             let realm = self.function_realm(p, callee)?;
-            let previous_global = std::mem::replace(&mut self.realm.globals, realm);
+            let previous_global = self.switch_realm_global(realm);
             let result = self.construct_native_with_new_target(p, native, args, new_target);
-            self.realm.globals = previous_global;
+            self.switch_realm_global(previous_global);
             let result = result?;
             if matches!(
                 native,

@@ -756,11 +756,11 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function { realm, .. }) => *realm,
             _ => self.realm.globals,
         };
-        let previous_global = std::mem::replace(&mut self.realm.globals, realm);
+        let previous_global = self.switch_realm_global(realm);
         self.promise.active_native.push(callee);
         let result = self.call_native(p, native, this, args);
         self.promise.active_native.pop();
-        self.realm.globals = previous_global;
+        self.switch_realm_global(previous_global);
         result
     }
 
