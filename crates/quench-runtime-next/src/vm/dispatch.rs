@@ -694,7 +694,7 @@ impl<H: Host> Vm<H> {
             Op::DefineArrayElement => self.define_array_literal_element(
                 p,
                 self.read(f, i.b()),
-                i.imm() as usize,
+                i.array_index() as usize,
                 self.read(f, i.a()),
             )?,
             Op::Move => self.write(f, i.a(), self.read(f, i.b())),

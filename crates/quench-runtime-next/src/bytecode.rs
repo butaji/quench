@@ -17,6 +17,7 @@ pub(crate) const NUMERIC_LOCAL_TARGET: u16 = SET_THIS_REGISTER;
 pub(crate) const FUNCTION_NAME_PREFIX_NONE: u32 = 0;
 pub(crate) const FUNCTION_NAME_PREFIX_GETTER: u32 = 1;
 pub(crate) const FUNCTION_NAME_PREFIX_SETTER: u32 = 2;
+pub(crate) const ARRAY_INDEX_SENTINEL: u32 = u32::MAX;
 const NO_RESULT_FLAGS: Register = 0;
 #[derive(Clone, Debug)]
 pub enum Constant {
@@ -92,6 +93,7 @@ pub(crate) enum ImmediateRole {
     LocalSlot,
     FunctionNamePrefix,
     BooleanFlag,
+    ArrayIndex,
     JumpTarget,
     MethodSiteIndex,
     ObjectSiteIndex,
@@ -383,7 +385,7 @@ opcodes!(
     DefineComputedField => WRITE_THROW,
     SetThisField => WRITE_THROW; meaning AtomIndex,
     SetIndex => WRITE_THROW; meaning BooleanFlag,
-    DefineArrayElement => WRITE_THROW,
+    DefineArrayElement => WRITE_THROW; meaning ArrayIndex,
     Binary => READ_THROW, @ NumericReturnable,
     IncDec => READ_THROW; meaning BooleanFlag,
     Unary => READ_THROW,
