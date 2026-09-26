@@ -294,6 +294,21 @@ impl ResidualProgram {
                     }
                     Op::Binary | Op::NumericAdd | Op::NumericMultiply
                         if !destination(instruction.a())
+                            || match instruction.op() {
+                                Op::Binary => {
+                                    instruction.binary_operator()
+                                        > oxc_ast::ast::BinaryOperator::Instanceof as u32
+                                }
+                                Op::NumericAdd => {
+                                    instruction.binary_operator()
+                                        != oxc_ast::ast::BinaryOperator::Addition as u32
+                                }
+                                Op::NumericMultiply => {
+                                    instruction.binary_operator()
+                                        != oxc_ast::ast::BinaryOperator::Multiplication as u32
+                                }
+                                _ => unreachable!("matched binary opcode family"),
+                            }
                             || !operand_in_bounds(
                                 instruction.b(),
                                 function.registers,

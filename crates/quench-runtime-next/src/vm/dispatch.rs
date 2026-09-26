@@ -699,21 +699,22 @@ impl<H: Host> Vm<H> {
             )?,
             Op::Move => self.write(f, i.a(), self.read(f, i.b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                self.profile.binary(i.imm() as usize, i.b(), i.c());
+                let operator = i.binary_operator();
+                self.profile.binary(operator as usize, i.b(), i.c());
                 let left = self.resolve_operand(p, f, Operand(i.b()))?;
                 let right = self.resolve_operand(p, f, Operand(i.c()))?;
                 let site_pc = *pc - 1;
-                let armed = self.profile_regional_binary(f, site_pc, i.imm(), left, right);
+                let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
                 let v = if armed {
-                    match self.numeric_binary(i.imm(), left, right) {
+                    match self.numeric_binary(operator, left, right) {
                         Some(value) => value,
                         None => {
                             self.deopt_numeric_site(f, site_pc);
-                            self.binary(p, i.imm(), left, right)?
+                            self.binary(p, operator, left, right)?
                         }
                     }
                 } else {
-                    self.binary(p, i.imm(), left, right)?
+                    self.binary(p, operator, left, right)?
                 };
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));

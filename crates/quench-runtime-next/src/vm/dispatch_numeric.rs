@@ -50,7 +50,7 @@ macro_rules! specialized_numeric_value {
             .map(|(left, right)| numeric_integer_semantic!($semantic, left, right));
         #[cfg(feature = "profile-aggregate")]
         $vm.profile.numeric_binary_path(
-            $operator,
+            $operator as usize,
             fast.is_some(),
             $left.as_int().is_some() && $right.as_int().is_some(),
         );
@@ -62,11 +62,12 @@ macro_rules! specialized_numeric_value {
 }
 
 macro_rules! execute_specialized_numeric {
-    ($vm:ident, $program:ident, $frame:ident, $ins:ident, $operator:literal, $semantic:ident) => {{
-        $vm.profile.binary($operator, $ins.b(), $ins.c());
+    ($vm:ident, $program:ident, $frame:ident, $ins:ident, $semantic:ident) => {{
+        let operator = $ins.binary_operator();
+        $vm.profile.binary(operator as usize, $ins.b(), $ins.c());
         let left = $vm.resolve_operand($program, $frame, Operand($ins.b()))?;
         let right = $vm.resolve_operand($program, $frame, Operand($ins.c()))?;
-        let value = specialized_numeric_value!($vm, $program, $operator, $semantic, left, right);
+        let value = specialized_numeric_value!($vm, $program, operator, $semantic, left, right);
         if $ins.returns_from_frame() {
             return Ok(StepResult::Return(value));
         }
@@ -236,19 +237,20 @@ impl<H: Host> Vm<H> {
                         self.read(frame, ins.a()),
                     )?,
                     Op::Binary => {
-                        self.profile.binary(ins.imm() as usize, ins.b(), ins.c());
+                        let operator = ins.binary_operator();
+                        self.profile.binary(operator as usize, ins.b(), ins.c());
                         let left = self.resolve_operand(p, frame, Operand(ins.b()))?;
                         let right = self.resolve_operand(p, frame, Operand(ins.c()))?;
-                        let fast = self.numeric_binary(ins.imm(), left, right);
+                        let fast = self.numeric_binary(operator, left, right);
                         #[cfg(feature = "profile-aggregate")]
                         self.profile.numeric_binary_path(
-                            ins.imm() as usize,
+                            operator as usize,
                             fast.is_some(),
                             left.as_int().is_some() && right.as_int().is_some(),
                         );
                         let value = match fast {
                             Some(value) => value,
-                            None => self.binary(p, ins.imm(), left, right)?,
+                            None => self.binary(p, operator, left, right)?,
                         };
                         if ins.returns_from_frame() {
                             return Ok(StepResult::Return(value));
@@ -261,10 +263,10 @@ impl<H: Host> Vm<H> {
                         }
                     }
                     Op::NumericAdd => {
-                        execute_specialized_numeric!(self, p, frame, ins, 8, add)
+                        execute_specialized_numeric!(self, p, frame, ins, add)
                     }
                     Op::NumericMultiply => {
-                        execute_specialized_numeric!(self, p, frame, ins, 10, multiply)
+                        execute_specialized_numeric!(self, p, frame, ins, multiply)
                     }
                     Op::IncDec => {
                         let input = self.read(frame, ins.b());
