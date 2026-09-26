@@ -130,7 +130,9 @@ fn uses(
         }
         Op::ToPropertyKey | Op::ToNumeric => bit(instruction.b()),
         Op::CopyDataProperties => {
-            bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c())
+            bit(instruction.register_a())
+                | bit(instruction.register_b())
+                | bit(instruction.register_c())
         }
         Op::MakeObject2 => bit(instruction.b()) | bit(instruction.c()),
         Op::SuperConstArrayObject2 => superinstructions[instruction.superinstruction_index()]

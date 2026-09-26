@@ -387,9 +387,9 @@ impl ResidualProgram {
                         ));
                     }
                     Op::CopyDataProperties
-                        if !register(instruction.a())
-                            || !register(instruction.b())
-                            || !register(instruction.c()) =>
+                        if !register(instruction.register_a())
+                            || !register(instruction.register_b())
+                            || !register(instruction.register_c()) =>
                     {
                         return Err(format!(
                             "function {index} copy-data-properties operand is invalid"
