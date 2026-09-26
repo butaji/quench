@@ -75,6 +75,14 @@ pub(crate) enum ResultLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ControlFlowLayout {
+    Fallthrough,
+    Jump,
+    ConditionalJump,
+    Terminal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FieldLayout {
     Undeclared,
     Unused,
@@ -306,7 +314,7 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr $(; layout $layout:ident)? $(; meaning $immediate_role:ident)? $(, @ $result:ident)? $(, @ fields($a:ident, $b:ident, $c:ident))?),+ $(,)?) => {
+    ($($name:ident => $effect:expr $(; layout $layout:ident)? $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(, @ $result:ident)? $(, @ fields($a:ident, $b:ident, $c:ident))?),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -318,6 +326,9 @@ macro_rules! opcodes {
             const EFFECTS: [Effect; Self::COUNT] = [$($effect),+];
             const RESULT_LAYOUTS: [ResultLayout; Self::COUNT] = [$(
                 opcodes!(@result $($result)?)),+
+            ];
+            const CONTROL_FLOW_LAYOUTS: [ControlFlowLayout; Self::COUNT] = [$(
+                opcodes!(@flow $($flow)?)),+
             ];
             const IMMEDIATE_LAYOUTS: [ImmediateLayout; Self::COUNT] = [$(
                 opcodes!(@layout $($layout)?)),+
@@ -342,6 +353,10 @@ macro_rules! opcodes {
                 Self::RESULT_LAYOUTS[self as usize]
             }
 
+            pub(crate) const fn control_flow_layout(self) -> ControlFlowLayout {
+                Self::CONTROL_FLOW_LAYOUTS[self as usize]
+            }
+
             pub(crate) const fn field_layout(self, field: InstructionField) -> FieldLayout {
                 Self::OPERAND_LAYOUTS[self as usize].field(field)
             }
@@ -364,6 +379,8 @@ macro_rules! opcodes {
     (@layout) => { ImmediateLayout::Scalar };
     (@result $result:ident) => { ResultLayout::$result };
     (@result) => { ResultLayout::Register };
+    (@flow $flow:ident) => { ControlFlowLayout::$flow };
+    (@flow) => { ControlFlowLayout::Fallthrough };
     (@fields $a:ident, $b:ident, $c:ident) => {
         OperandLayout { a: FieldLayout::$a, b: FieldLayout::$b, c: FieldLayout::$c }
     };
@@ -440,11 +457,11 @@ opcodes!(
     CallMethod => CALL_EFFECT; meaning MethodSiteIndex, @ Returnable, @ fields(Undeclared, Register, Unused),
     CallThisMethod => CALL_EFFECT; meaning MethodSiteIndex, @ Returnable, @ fields(Undeclared, Unused, Unused),
     Construct => CALL_EFFECT; layout ConstructCountAndFlags, @ Returnable, @ fields(Undeclared, Register, ConstructArguments),
-    Jump => Effect::CONTROL; meaning JumpTarget, @ NoResult, @ fields(Unused, Unused, Unused),
-    JumpFalse => Effect::CONTROL; meaning JumpTarget, @ NoResult, @ fields(Register, Unused, Unused),
-    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); meaning JumpTarget, @ NoResult, @ fields(BinaryOperator, Operand, Operand),
-    Return => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
-    Throw => Effect::THROWS.union(Effect::CONTROL); meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
+    Jump => Effect::CONTROL; meaning JumpTarget; flow Jump, @ NoResult, @ fields(Unused, Unused, Unused),
+    JumpFalse => Effect::CONTROL; meaning JumpTarget; flow ConditionalJump, @ NoResult, @ fields(Register, Unused, Unused),
+    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); meaning JumpTarget; flow ConditionalJump, @ NoResult, @ fields(BinaryOperator, Operand, Operand),
+    Return => Effect::CONTROL; meaning Unused; flow Terminal, @ NoResult, @ fields(Register, Unused, Unused),
+    Throw => Effect::THROWS.union(Effect::CONTROL); meaning Unused; flow Terminal, @ NoResult, @ fields(Register, Unused, Unused),
     NumericAdd => READ_THROW; meaning AdditionOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     NumericMultiply => READ_THROW; meaning MultiplicationOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     InitializeThis => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
