@@ -3,7 +3,6 @@ use super::module::{ModuleEvaluationStack, ModuleOutcome, ModulePhase, ModuleRec
 use super::*;
 use std::collections::VecDeque;
 
-const PROMISE_CAPABILITY_CALLED: &str = "\0rqj:promise-capability-called";
 const PROMISE_CAPABILITY_RESOLVE: &str = "\0rqj:promise-capability-resolve";
 const PROMISE_CAPABILITY_REJECT: &str = "\0rqj:promise-capability-reject";
 use crate::ModuleSource;
@@ -291,6 +290,17 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::SyntaxError
         | Native::TypeError
         | Native::URIError => 1.0,
+        Native::Promise => 1.0,
+        Native::PromiseResolve
+        | Native::PromiseReject
+        | Native::PromiseCatch
+        | Native::PromiseFinally => 1.0,
+        Native::PromiseThen => 2.0,
+        Native::PromiseAll
+        | Native::PromiseRace
+        | Native::PromiseAllSettled
+        | Native::PromiseAny => 1.0,
+        Native::PromiseAggregateJob => 1.0,
         Native::PromiseWithResolvers => 0.0,
         Native::PromiseCapabilityExecutor => 2.0,
         Native::Object => 1.0,
@@ -569,8 +579,11 @@ pub(super) enum AggregateMode {
 pub(super) struct AggregateRecord {
     pub(super) mode: AggregateMode,
     pub(super) output: Value,
+    pub(super) resolve: Value,
+    pub(super) reject: Value,
     pub(super) remaining: usize,
     pub(super) values: Vec<Value>,
+    pub(super) called: Vec<bool>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -681,8 +694,11 @@ impl<H: Host> Vm<H> {
             env,
             realm,
         });
-        let promise_resolver =
-            !env.is_null() && matches!(kind, Native::PromiseResolve | Native::PromiseReject);
+        let promise_resolver = !env.is_null()
+            && matches!(
+                kind,
+                Native::PromiseResolve | Native::PromiseReject | Native::PromiseAggregateJob
+            );
         let length = promise_resolver
             .then_some(1.0)
             .or_else(|| native_length(kind));
@@ -740,37 +756,17 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_named(
-            program,
-            self.promise.proto,
-            "then",
-            self.native_value(Native::PromiseThen),
-        )?;
-        self.set_named(
-            program,
-            self.promise.proto,
-            "catch",
-            self.native_value(Native::PromiseCatch),
-        )?;
-        self.set_named(
+        self.set_builtin_named(program, self.promise.proto, "then", Native::PromiseThen)?;
+        self.set_builtin_named(program, self.promise.proto, "catch", Native::PromiseCatch)?;
+        self.set_builtin_named(
             program,
             self.promise.proto,
             "finally",
-            self.native_value(Native::PromiseFinally),
+            Native::PromiseFinally,
         )?;
         self.install_builtin_to_string_tag(self.promise.proto, "Promise")?;
-        self.set_named(
-            program,
-            promise,
-            "resolve",
-            self.native_value(Native::PromiseResolve),
-        )?;
-        self.set_named(
-            program,
-            promise,
-            "reject",
-            self.native_value(Native::PromiseReject),
-        )?;
+        self.set_builtin_named(program, promise, "resolve", Native::PromiseResolve)?;
+        self.set_builtin_named(program, promise, "reject", Native::PromiseReject)?;
         let with_resolvers = self.native_value(Native::PromiseWithResolvers);
         self.set_named(program, promise, "withResolvers", with_resolvers)?;
         let name_atom = self.intern_atom("name");
@@ -788,30 +784,10 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_named(
-            program,
-            promise,
-            "all",
-            self.native_value(Native::PromiseAll),
-        )?;
-        self.set_named(
-            program,
-            promise,
-            "race",
-            self.native_value(Native::PromiseRace),
-        )?;
-        self.set_named(
-            program,
-            promise,
-            "allSettled",
-            self.native_value(Native::PromiseAllSettled),
-        )?;
-        self.set_named(
-            program,
-            promise,
-            "any",
-            self.native_value(Native::PromiseAny),
-        )?;
+        self.set_builtin_named(program, promise, "all", Native::PromiseAll)?;
+        self.set_builtin_named(program, promise, "race", Native::PromiseRace)?;
+        self.set_builtin_named(program, promise, "allSettled", Native::PromiseAllSettled)?;
+        self.set_builtin_named(program, promise, "any", Native::PromiseAny)?;
         self.global(program, "Promise", promise)
     }
 
@@ -859,6 +835,19 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<Value, JsError> {
+        let (promise, resolve, reject) = self.new_promise_capability(p, constructor)?;
+        let result = self.object();
+        self.set_named(p, result, "promise", promise)?;
+        self.set_named(p, result, "resolve", resolve)?;
+        self.set_named(p, result, "reject", reject)?;
+        Ok(result)
+    }
+
+    pub(super) fn new_promise_capability(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+    ) -> Result<(Value, Value, Value), JsError> {
         if !self.is_constructable(p, constructor) {
             return Err(self.type_error(
                 p,
@@ -866,10 +855,10 @@ impl<H: Host> Vm<H> {
             ));
         }
         let state = self.object();
-        let called_atom = self.intern_atom(PROMISE_CAPABILITY_CALLED);
         let resolve_atom = self.intern_atom(PROMISE_CAPABILITY_RESOLVE);
         let reject_atom = self.intern_atom(PROMISE_CAPABILITY_REJECT);
-        self.set_property(state, called_atom, Value::FALSE)?;
+        self.set_property(state, resolve_atom, Value::UNDEFINED)?;
+        self.set_property(state, reject_atom, Value::UNDEFINED)?;
         let executor = self.native_with_env(Native::PromiseCapabilityExecutor, state);
         let promise = self.construct_value(p, constructor, &[executor])?;
         let resolve = self
@@ -884,11 +873,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| {
                 self.type_error(p, "Promise capability reject is not callable".into())
             })?;
-        let result = self.object();
-        self.set_named(p, result, "promise", promise)?;
-        self.set_named(p, result, "resolve", resolve)?;
-        self.set_named(p, result, "reject", reject)?;
-        Ok(result)
+        Ok((promise, resolve, reject))
     }
 
     fn promise_capability_executor(
@@ -899,21 +884,19 @@ impl<H: Host> Vm<H> {
         let state = self
             .active_native_env()
             .ok_or_else(|| self.type_error(p, "invalid Promise capability executor".into()))?;
-        let called_atom = self.intern_atom(PROMISE_CAPABILITY_CALLED);
         let resolve_atom = self.intern_atom(PROMISE_CAPABILITY_RESOLVE);
         let reject_atom = self.intern_atom(PROMISE_CAPABILITY_REJECT);
         if self
-            .own_property(state, called_atom)
-            .is_some_and(|called| self.truthy(called))
+            .own_property(state, resolve_atom)
+            .is_some_and(|value| !value.is_undefined())
+            || self
+                .own_property(state, reject_atom)
+                .is_some_and(|value| !value.is_undefined())
         {
             return Err(self.type_error(p, "Promise capability executor was already called".into()));
         }
         let resolve = args.first().copied().unwrap_or(Value::UNDEFINED);
         let reject = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        if !self.is_function(resolve) || !self.is_function(reject) {
-            return Err(self.type_error(p, "Promise capability functions are not callable".into()));
-        }
-        self.set_property(state, called_atom, Value::TRUE)?;
         self.set_property(state, resolve_atom, resolve)?;
         self.set_property(state, reject_atom, reject)?;
         Ok(Value::UNDEFINED)
@@ -994,10 +977,12 @@ impl<H: Host> Vm<H> {
             Native::PromiseFinally => {
                 self.promise_finally(p, this, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
-            Native::PromiseAll => self.promise_aggregate(p, args, AggregateMode::All),
-            Native::PromiseRace => self.promise_aggregate(p, args, AggregateMode::Race),
-            Native::PromiseAllSettled => self.promise_aggregate(p, args, AggregateMode::AllSettled),
-            Native::PromiseAny => self.promise_aggregate(p, args, AggregateMode::Any),
+            Native::PromiseAll => self.promise_aggregate(p, this, args, AggregateMode::All),
+            Native::PromiseRace => self.promise_aggregate(p, this, args, AggregateMode::Race),
+            Native::PromiseAllSettled => {
+                self.promise_aggregate(p, this, args, AggregateMode::AllSettled)
+            }
+            Native::PromiseAny => self.promise_aggregate(p, this, args, AggregateMode::Any),
             Native::PromiseReactionJob => {
                 self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
