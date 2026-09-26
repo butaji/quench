@@ -6,6 +6,12 @@ const HIGH_SURROGATE_START: u16 = 0xD800;
 const HIGH_SURROGATE_END: u16 = 0xDBFF;
 const LOW_SURROGATE_START: u16 = 0xDC00;
 const LOW_SURROGATE_END: u16 = 0xDFFF;
+const REGEXP_ESCAPE: u16 = b'\\' as u16;
+const REGEXP_DELIMITER: u16 = b'/' as u16;
+const REGEXP_NEWLINE: u16 = b'\n' as u16;
+const REGEXP_CARRIAGE_RETURN: u16 = b'\r' as u16;
+const REGEXP_LINE_SEPARATOR: u16 = 0x2028;
+const REGEXP_PARAGRAPH_SEPARATOR: u16 = 0x2029;
 
 pub(super) struct CompiledRegexp(quench_regexp::Regex);
 
@@ -997,7 +1003,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match (native, self.heap.get(this)) {
             (Native::RegExpSource, Some(Cell::RegExp { source, .. })) => {
-                Ok(self.heap.alloc(Cell::String(source.clone())))
+                Ok(self.heap.alloc(Cell::String(escape_regexp_source(source))))
             }
             (Native::RegExpSource, _)
                 if self.regexp_prototypes.get(&self.realm.globals) == Some(&this) =>
@@ -1376,6 +1382,43 @@ impl<H: Host> Vm<H> {
             _ => None,
         }
     }
+}
+
+fn escape_regexp_source(source: &JsString) -> JsString {
+    if source.units().is_empty() {
+        return "(?:)".into();
+    }
+    let mut escaped = Vec::new();
+    let mut after_odd_backslashes = false;
+    for &unit in source.units() {
+        match unit {
+            REGEXP_DELIMITER if !after_odd_backslashes => {
+                escaped.extend([REGEXP_ESCAPE, REGEXP_DELIMITER]);
+            }
+            REGEXP_NEWLINE if !after_odd_backslashes => {
+                escaped.extend([REGEXP_ESCAPE, b'n' as u16]);
+            }
+            REGEXP_CARRIAGE_RETURN if !after_odd_backslashes => {
+                escaped.extend([REGEXP_ESCAPE, b'r' as u16]);
+            }
+            REGEXP_LINE_SEPARATOR | REGEXP_PARAGRAPH_SEPARATOR if !after_odd_backslashes => {
+                let escape = if unit == REGEXP_LINE_SEPARATOR {
+                    [b'2' as u16, b'0' as u16, b'2' as u16, b'8' as u16]
+                } else {
+                    [b'2' as u16, b'0' as u16, b'2' as u16, b'9' as u16]
+                };
+                escaped.extend([REGEXP_ESCAPE, b'u' as u16]);
+                escaped.extend(escape);
+            }
+            _ => escaped.push(unit),
+        }
+        after_odd_backslashes = if unit == REGEXP_ESCAPE {
+            !after_odd_backslashes
+        } else {
+            false
+        };
+    }
+    JsString::from_units(&escaped)
 }
 
 fn advance_string_index(input: &str, index: usize, unicode: bool) -> usize {
