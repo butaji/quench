@@ -378,11 +378,12 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::InitializeThis => instruction.register_a() == register,
         Op::ValidateClassHeritage => instruction.register_a() == register,
         Op::CacheTemplateObject => instruction.register_a() == register,
+        Op::Await | Op::Yield => instruction.register_b() == register,
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
-            instruction.a() == register
-                || instruction.b() == register
-                || instruction.c() == register
+            instruction.result_register() == register
+                || instruction.register_b() == register
+                || instruction.register_c() == register
                 || state == register
                 || next_method == register
         }

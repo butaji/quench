@@ -539,6 +539,23 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} call is invalid"));
                     }
+                    Op::Await | Op::Yield
+                        if !destination(instruction.result_register())
+                            || !register(instruction.register_b()) =>
+                    {
+                        return Err(format!("function {index} suspension is invalid"));
+                    }
+                    Op::YieldStar
+                        if !destination(instruction.result_register())
+                            || !register(instruction.register_b())
+                            || !register(instruction.register_c())
+                            || {
+                                let (state, next_method) = instruction.register_pair();
+                                !register(state) || !register(next_method)
+                            } =>
+                    {
+                        return Err(format!("function {index} delegated yield is invalid"));
+                    }
                     Op::CallDirectEvalArray if instruction.call_window().count != 1 => {
                         return Err(format!(
                             "function {index} direct eval arguments are invalid"

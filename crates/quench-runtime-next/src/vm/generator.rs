@@ -540,8 +540,10 @@ impl<H: Host> Vm<H> {
         if instruction.op() != Op::YieldStar {
             return None;
         }
-        let iterator = *continuation.registers.get(usize::from(instruction.c()))?;
-        (!iterator.is_undefined()).then_some((iterator, instruction.a()))
+        let iterator = *continuation
+            .registers
+            .get(usize::from(instruction.register_c()))?;
+        (!iterator.is_undefined()).then_some((iterator, instruction.result_register()))
     }
 
     fn return_from_yield_star(
