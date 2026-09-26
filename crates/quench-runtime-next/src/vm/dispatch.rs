@@ -836,6 +836,7 @@ impl<H: Host> Vm<H> {
             Op::CallKnown => {
                 self.profile.call_source(1);
                 let window = i.call_window();
+                let function_index = i.known_function_index();
                 let n = window.count;
                 let arguments =
                     CallArguments::from_values((0..n).map(|x| self.read(f, window.base + x)));
@@ -858,16 +859,23 @@ impl<H: Host> Vm<H> {
                             }
                         });
                 if terminal
-                    && !p.functions[i.b() as usize].is_async
-                    && !p.functions[i.b() as usize].is_generator
+                    && !p.functions[function_index as usize].is_async
+                    && !p.functions[function_index as usize].is_generator
                 {
-                    self.prepare_user_tail(p, f, u32::from(i.b()), parent, Value::UNDEFINED, args)?;
+                    self.prepare_user_tail(
+                        p,
+                        f,
+                        u32::from(function_index),
+                        parent,
+                        Value::UNDEFINED,
+                        args,
+                    )?;
                     self.profile.terminal_call(0);
                     return Ok(StepResult::TailCall);
                 }
                 let value = self.call_user_maybe_async(
                     p,
-                    u32::from(i.b()),
+                    u32::from(function_index),
                     parent,
                     Value::UNDEFINED,
                     args,

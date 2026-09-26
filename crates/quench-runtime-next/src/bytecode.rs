@@ -65,6 +65,45 @@ pub(crate) enum ResultLayout {
     NumericReturnable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FieldLayout {
+    Undeclared,
+    Register,
+    FunctionIndex,
+    ConstructArguments,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InstructionField {
+    #[allow(dead_code)]
+    A,
+    B,
+    C,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OperandLayout {
+    a: FieldLayout,
+    b: FieldLayout,
+    c: FieldLayout,
+}
+
+impl OperandLayout {
+    const UNDECLARED: Self = Self {
+        a: FieldLayout::Undeclared,
+        b: FieldLayout::Undeclared,
+        c: FieldLayout::Undeclared,
+    };
+
+    const fn field(self, field: InstructionField) -> FieldLayout {
+        match field {
+            InstructionField::A => self.a,
+            InstructionField::B => self.b,
+            InstructionField::C => self.c,
+        }
+    }
+}
+
 impl ResultLayout {
     const fn allowed_flags(self) -> Register {
         match self {
@@ -199,7 +238,7 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr $(; $layout:ident)? $(, @ $result:ident)?),+ $(,)?) => {
+    ($($name:ident => $effect:expr $(; $layout:ident)? $(, @ $result:ident)? $(, @ fields($a:ident, $b:ident, $c:ident))?),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -216,6 +255,10 @@ macro_rules! opcodes {
                 opcodes!(@layout $($layout)?)),+
             ];
 
+            const OPERAND_LAYOUTS: [OperandLayout; Self::COUNT] = [$(
+                opcodes!(@fields $($a, $b, $c)?)),+
+            ];
+
             pub(crate) const fn effect(self) -> Effect {
                 Self::EFFECTS[self as usize]
             }
@@ -226,6 +269,10 @@ macro_rules! opcodes {
 
             pub(crate) const fn result_layout(self) -> ResultLayout {
                 Self::RESULT_LAYOUTS[self as usize]
+            }
+
+            pub(crate) const fn field_layout(self, field: InstructionField) -> FieldLayout {
+                Self::OPERAND_LAYOUTS[self as usize].field(field)
             }
 
             pub(crate) const fn from_index(index: usize) -> Option<Self> {
@@ -242,6 +289,10 @@ macro_rules! opcodes {
     (@layout) => { ImmediateLayout::Scalar };
     (@result $result:ident) => { ResultLayout::$result };
     (@result) => { ResultLayout::Register };
+    (@fields $a:ident, $b:ident, $c:ident) => {
+        OperandLayout { a: FieldLayout::$a, b: FieldLayout::$b, c: FieldLayout::$c }
+    };
+    (@fields) => { OperandLayout::UNDECLARED };
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
@@ -309,10 +360,10 @@ opcodes!(
     Move => Effect::PURE,
     Call => CALL_EFFECT; CallWindowWithEvalFlags, @ Returnable,
     CallDirectEvalArray => CALL_EFFECT; CallWindowWithEvalFlags, @ Returnable,
-    CallKnown => CALL_EFFECT; CallWindow, @ Returnable,
+    CallKnown => CALL_EFFECT; CallWindow, @ Returnable, @ fields(Undeclared, FunctionIndex, Undeclared),
     CallMethod => CALL_EFFECT, @ Returnable,
     CallThisMethod => CALL_EFFECT, @ Returnable,
-    Construct => CALL_EFFECT; ConstructCountAndFlags, @ Returnable,
+    Construct => CALL_EFFECT; ConstructCountAndFlags, @ Returnable, @ fields(Undeclared, Register, ConstructArguments),
     Jump => Effect::CONTROL,
     JumpFalse => Effect::CONTROL,
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL),
