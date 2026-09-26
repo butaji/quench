@@ -289,9 +289,12 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::IteratorSelf
         | Native::AsyncIteratorSelf
         | Native::AsyncIteratorDispose => 0.0,
-        Native::AsyncGeneratorNext | Native::AsyncGeneratorReturn | Native::AsyncGeneratorThrow => {
-            1.0
-        }
+        Native::GeneratorNext
+        | Native::GeneratorReturn
+        | Native::GeneratorThrow
+        | Native::AsyncGeneratorNext
+        | Native::AsyncGeneratorReturn
+        | Native::AsyncGeneratorThrow => 1.0,
         Native::AtomicsAdd
         | Native::AtomicsAnd
         | Native::AtomicsOr

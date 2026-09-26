@@ -173,6 +173,7 @@ pub(crate) enum Native {
     SetEntries,
     SetForEach,
     IteratorNext, IteratorClose, IteratorSelf, AsyncIteratorSelf, IteratorReturn, IteratorThrow,
+    GeneratorNext, GeneratorReturn, GeneratorThrow,
     AsyncGeneratorNext, AsyncGeneratorReturn, AsyncGeneratorThrow,
     AsyncGeneratorReturnFulfilled, AsyncGeneratorReturnRejected,
     AsyncIteratorDispose, AsyncIteratorDisposeFulfilled,

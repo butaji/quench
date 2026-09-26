@@ -62,6 +62,9 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn install_iterators(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.iterator_proto = self.object();
+        self.generator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
         self.async_iterator_proto = self.object();
         self.async_generator_proto = self
             .heap
@@ -82,13 +85,14 @@ impl<H: Host> Vm<H> {
             program,
             generator_function_proto,
             "prototype",
-            self.iterator_proto,
+            self.generator_proto,
         )?;
         self.set_builtin_value_named(
             generator_function_proto,
             "constructor",
             self.native_value(Native::GeneratorFunction),
         )?;
+        let constructor_atom = self.intern_atom("constructor");
         self.set_named(
             program,
             async_generator_function_proto,
@@ -120,29 +124,6 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_builtin_value_named(
-            async_function_proto,
-            "constructor",
-            self.native_value(Native::AsyncFunction),
-        )?;
-        self.set_builtin_value_named(
-            async_generator_function_proto,
-            "constructor",
-            self.native_value(Native::AsyncGeneratorFunction),
-        )?;
-        let constructor_atom = self.intern_atom("constructor");
-        self.set_property_attributes(
-            async_generator_function_proto,
-            PropertyKey::string(constructor_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
         self.set_property_attributes(
             generator_function_proto,
             PropertyKey::string(constructor_atom),
@@ -155,6 +136,29 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        self.set_builtin_value_named(
+            async_function_proto,
+            "constructor",
+            self.native_value(Native::AsyncFunction),
+        )?;
+        self.set_builtin_value_named(
+            async_generator_function_proto,
+            "constructor",
+            self.native_value(Native::AsyncGeneratorFunction),
+        )?;
+        self.set_property_attributes(
+            async_generator_function_proto,
+            PropertyKey::string(constructor_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.install_generator_prototype(self.generator_proto, generator_function_proto, None)?;
         for (native, prototype, name) in [
             (Native::AsyncFunction, async_function_proto, "AsyncFunction"),
             (
@@ -190,12 +194,6 @@ impl<H: Host> Vm<H> {
         }
         self.set_named(
             program,
-            self.iterator_proto,
-            "next",
-            self.native_value(Native::IteratorNext),
-        )?;
-        self.set_named(
-            program,
             self.async_from_sync_iterator_proto,
             "next",
             self.native_value(Native::IteratorNext),
@@ -204,6 +202,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn install_iterator_self(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let prototype_atom = self.intern_atom("prototype");
+        self.install_builtin_to_string_tag(self.generator_proto, "Generator")?;
         for (native, tag) in [
             (Native::AsyncFunction, "AsyncFunction"),
             (Native::GeneratorFunction, "GeneratorFunction"),
@@ -307,6 +306,94 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        Ok(())
+    }
+
+    pub(super) fn install_generator_prototype(
+        &mut self,
+        prototype: Value,
+        constructor: Value,
+        realm: Option<Value>,
+    ) -> Result<(), JsError> {
+        self.install_generator_methods(prototype, realm)?;
+        self.install_generator_constructor(prototype, constructor)?;
+        self.install_generator_to_string_tag(prototype)?;
+        Ok(())
+    }
+
+    fn install_generator_methods(
+        &mut self,
+        prototype: Value,
+        realm: Option<Value>,
+    ) -> Result<(), JsError> {
+        for (name, native) in [
+            ("next", Native::GeneratorNext),
+            ("return", Native::GeneratorReturn),
+            ("throw", Native::GeneratorThrow),
+        ] {
+            let method = realm
+                .map(|realm| self.native_with_realm(native, realm, realm))
+                .unwrap_or_else(|| self.native_value(native));
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(prototype, name, method)?;
+            let atom = self.intern_atom(name);
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn install_generator_constructor(
+        &mut self,
+        prototype: Value,
+        constructor: Value,
+    ) -> Result<(), JsError> {
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        let constructor_atom = self.intern_atom("constructor");
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(constructor_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+
+    fn install_generator_to_string_tag(&mut self, prototype: Value) -> Result<(), JsError> {
+        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+            let tag = self
+                .heap
+                .alloc(Cell::String(JsString::from_str("Generator")));
+            self.set_symbol_property(prototype, symbol, tag)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         Ok(())
     }
 
