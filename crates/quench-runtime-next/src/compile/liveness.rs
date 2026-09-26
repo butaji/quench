@@ -134,7 +134,7 @@ fn uses(
                 | bit(instruction.register_b())
                 | bit(instruction.register_c())
         }
-        Op::MakeObject2 => bit(instruction.b()) | bit(instruction.c()),
+        Op::MakeObject2 => bit(instruction.register_b()) | bit(instruction.register_c()),
         Op::SuperConstArrayObject2 => superinstructions[instruction.superinstruction_index()]
             .code
             .iter()
