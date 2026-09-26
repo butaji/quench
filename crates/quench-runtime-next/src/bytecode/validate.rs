@@ -247,7 +247,8 @@ impl ResidualProgram {
                     Op::MakeClosure
                         if instruction.closure_function_index() as usize
                             >= self.functions.len()
-                            || !destination(instruction.result_register()) =>
+                            || !destination(instruction.result_register())
+                            || !instruction.unused_fields_are_zero() =>
                     {
                         return Err(format!("function {index} closure site is invalid"));
                     }
@@ -263,9 +264,17 @@ impl ResidualProgram {
                     }
                     Op::MakeArray
                         if !destination(instruction.result_register())
+                            || !instruction.unused_fields_are_zero()
                             || instruction.array_length() > usize::from(u16::MAX) =>
                     {
                         return Err(format!("function {index} array allocation is invalid"));
+                    }
+                    Op::MakeObject
+                        if !destination(instruction.result_register())
+                            || !instruction.unused_fields_are_zero()
+                            || !instruction.unused_immediate_is_zero() =>
+                    {
+                        return Err(format!("function {index} object allocation is invalid"));
                     }
                     Op::GetField
                         if !destination(instruction.a())
