@@ -14,6 +14,7 @@ pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
+pub(crate) const SINGLE_ARGUMENT_CALL_ARGUMENT_COUNT: u16 = 1;
 pub(crate) const NUMERIC_LOCAL_DECREMENT_FLAG: Register = RETURN_REGISTER;
 pub(crate) const NUMERIC_LOCAL_INC_STORE: u16 = 1;
 pub(crate) const NO_NUMERIC_LOCAL_STORE_MARKER: u16 = 0;
@@ -58,6 +59,7 @@ pub(crate) enum ImmediateLayout {
     CaptureDepthAndSlot,
     CallWindow,
     CallWindowWithEvalFlags,
+    SingleArgumentCallWindowWithEvalFlags,
     ConstructCountAndFlags,
     RegisterPair,
 }
@@ -113,6 +115,8 @@ pub(crate) enum ImmediateRole {
     BooleanFlag,
     ArrayIndex,
     BinaryOperator,
+    AdditionOperator,
+    MultiplicationOperator,
     UnaryOperator,
     TemplateSiteIndex,
     JumpTarget,
@@ -210,7 +214,10 @@ impl ImmediateLayout {
     pub(crate) const fn uses_packed_pair(self) -> bool {
         matches!(
             self,
-            Self::CaptureDepthAndSlot | Self::CallWindow | Self::CallWindowWithEvalFlags
+            Self::CaptureDepthAndSlot
+                | Self::CallWindow
+                | Self::CallWindowWithEvalFlags
+                | Self::SingleArgumentCallWindowWithEvalFlags
         )
     }
 
@@ -431,7 +438,7 @@ opcodes!(
     PrivateIn => READ_THROW; meaning AtomIndex, @ Register, @ fields(Undeclared, Register, Unused),
     Move => Effect::PURE; meaning Unused, @ Register, @ fields(Undeclared, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags, @ Returnable, @ fields(Undeclared, Register, Register),
-    CallDirectEvalArray => CALL_EFFECT; layout CallWindowWithEvalFlags, @ Returnable, @ fields(Undeclared, Register, Register),
+    CallDirectEvalArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags, @ Returnable, @ fields(Undeclared, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow, @ Returnable, @ fields(Undeclared, FunctionIndex, Unused),
     CallMethod => CALL_EFFECT; meaning MethodSiteIndex, @ Returnable, @ fields(Undeclared, Register, Unused),
     CallThisMethod => CALL_EFFECT; meaning MethodSiteIndex, @ Returnable, @ fields(Undeclared, Unused, Unused),
@@ -441,8 +448,8 @@ opcodes!(
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); meaning JumpTarget, @ NoResult, @ fields(BinaryOperator, Operand, Operand),
     Return => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
     Throw => Effect::THROWS.union(Effect::CONTROL); meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
-    NumericAdd => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
-    NumericMultiply => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
+    NumericAdd => READ_THROW; meaning AdditionOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
+    NumericMultiply => READ_THROW; meaning MultiplicationOperator, @ NumericReturnable, @ fields(Undeclared, Operand, Operand),
     InitializeThis => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex, @ Register, @ fields(Register, Unused, Unused),
     LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex, @ Register, @ fields(Undeclared, Unused, Unused),

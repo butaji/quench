@@ -121,7 +121,9 @@ macro_rules! layout_accessors {
             pub(crate) fn call_window(self) -> RegisterWindow {
                 debug_assert!(matches!(
                     self.op().immediate_layout(),
-                    ImmediateLayout::CallWindow | ImmediateLayout::CallWindowWithEvalFlags
+                    ImmediateLayout::CallWindow
+                        | ImmediateLayout::CallWindowWithEvalFlags
+                        | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
                 ));
                 let immediate = self.imm();
                 RegisterWindow {
@@ -131,19 +133,21 @@ macro_rules! layout_accessors {
             }
 
             pub(crate) fn direct_eval(self) -> bool {
-                debug_assert_eq!(
+                debug_assert!(matches!(
                     self.op().immediate_layout(),
                     ImmediateLayout::CallWindowWithEvalFlags
-                );
+                        | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
+                ));
                 ImmediateLayout::direct_eval(self.imm())
             }
 
             #[allow(dead_code)]
             pub(crate) fn parameter_eval(self) -> bool {
-                debug_assert_eq!(
+                debug_assert!(matches!(
                     self.op().immediate_layout(),
                     ImmediateLayout::CallWindowWithEvalFlags
-                );
+                        | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
+                ));
                 ImmediateLayout::parameter_eval(self.imm())
             }
 
@@ -409,7 +413,12 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn binary_operator(self) -> u32 {
-                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::BinaryOperator);
+                debug_assert!(matches!(
+                    self.op().immediate_role(),
+                    ImmediateRole::BinaryOperator
+                        | ImmediateRole::AdditionOperator
+                        | ImmediateRole::MultiplicationOperator
+                ));
                 self.imm()
             }
 
