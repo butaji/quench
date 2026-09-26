@@ -183,7 +183,8 @@ impl<H: Host> Vm<H> {
             let outcome = (|| -> Result<StepResult, JsError> {
                 match ins.op() {
                     Op::LoadLocal => {
-                        let value = self.frames[frame].locals[ins.imm() as usize];
+                        let local = ins.local_slot();
+                        let value = self.frames[frame].locals[local];
                         self.write(frame, ins.a(), value);
                         if ins.c() == crate::bytecode::NUMERIC_LOCAL_INC_STORE
                             && let Some(integer) = value.as_int()
@@ -193,14 +194,15 @@ impl<H: Host> Vm<H> {
                                 &mut pc,
                                 integer,
                                 ins.b(),
-                                ins.imm(),
+                                local as u32,
                             );
                         }
                     }
                     Op::StoreLocal => {
                         let value = self.read(frame, ins.a());
-                        self.frames[frame].locals[ins.imm() as usize] = value;
-                        self.mirror_global_lexical_binding(p, frame, ins.imm() as usize, value);
+                        let local = ins.local_slot();
+                        self.frames[frame].locals[local] = value;
+                        self.mirror_global_lexical_binding(p, frame, local, value);
                         if ins.b() != 0 {
                             self.write(frame, ins.b() - 1, value);
                         }
@@ -227,7 +229,8 @@ impl<H: Host> Vm<H> {
                             self.read(frame, ins.b()),
                             self.read(frame, ins.c()),
                             self.read(frame, ins.a()),
-                            p.functions[self.frames[frame].function as usize].strict,
+                            p.functions[self.frames[frame].function as usize].strict
+                                || ins.boolean_flag().expect("validated boolean immediate"),
                         )?
                     }
                     Op::DefineArrayElement => self.define_array_literal_element(
@@ -270,12 +273,13 @@ impl<H: Host> Vm<H> {
                     }
                     Op::IncDec => {
                         let input = self.read(frame, ins.b());
-                        let delta = if ins.imm() == 0 { 1.0 } else { -1.0 };
+                        let is_decrement = ins.boolean_flag().expect("validated boolean immediate");
+                        let delta = if is_decrement { -1.0 } else { 1.0 };
                         let value = if let Some(integer) = input.as_int() {
-                            let next = if ins.imm() == 0 {
-                                integer.checked_add(1)
-                            } else {
+                            let next = if is_decrement {
                                 integer.checked_sub(1)
+                            } else {
+                                integer.checked_add(1)
                             };
                             next.map(Value::integer)
                                 .unwrap_or_else(|| Value::number(f64::from(integer) + delta))
@@ -285,7 +289,7 @@ impl<H: Host> Vm<H> {
                         self.write(frame, ins.a(), value);
                     }
                     Op::Jump => {
-                        pc = ins.imm() as usize;
+                        pc = ins.jump_target() as usize;
                         self.frames[frame].pc = pc;
                         self.maybe_collect(p);
                     }
@@ -295,7 +299,7 @@ impl<H: Host> Vm<H> {
                         #[cfg(feature = "profile-aggregate")]
                         self.profile.branch_value(value.profile_kind(), truthy);
                         if !truthy {
-                            pc = ins.imm() as usize;
+                            pc = ins.jump_target() as usize;
                         }
                     }
                     Op::JumpBinaryFalse => {
@@ -303,7 +307,7 @@ impl<H: Host> Vm<H> {
                         let left = self.resolve_operand(p, frame, Operand(ins.b()))?;
                         let right = self.resolve_operand(p, frame, Operand(ins.c()))?;
                         if !self.binary_truthy(p, u32::from(ins.a()), left, right)? {
-                            pc = ins.imm() as usize;
+                            pc = ins.jump_target() as usize;
                         }
                     }
                     Op::Return => {
