@@ -398,18 +398,27 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("Object.fromEntries input is not iterable".into()));
                 };
                 let object = self.object();
-                for entry in elements.iter().copied() {
-                    let Some(Cell::Array { elements: pair, .. }) = self.heap.get(entry).cloned()
-                    else {
-                        return Err(JsError("Object.fromEntries entry is not an array".into()));
-                    };
-                    let key = self
-                        .coerce_js_string(p, pair.first().copied().unwrap_or(Value::UNDEFINED))?;
-                    let value = pair.get(1).copied().unwrap_or(Value::UNDEFINED);
-                    let atom = self.intern_js_atom(&key);
-                    self.set_property(object, atom, value)?;
-                }
-                Ok(object)
+                let object_root = self.heap.root(object);
+                let outcome = (|| {
+                    for entry in elements.iter().copied() {
+                        let Some(Cell::Array { elements: pair, .. }) =
+                            self.heap.get(entry).cloned()
+                        else {
+                            return Err(JsError("Object.fromEntries entry is not an array".into()));
+                        };
+                        let key = self.coerce_js_string(
+                            p,
+                            pair.first().copied().unwrap_or(Value::UNDEFINED),
+                        )?;
+                        let value = pair.get(1).copied().unwrap_or(Value::UNDEFINED);
+                        let atom = self.intern_js_atom(&key);
+                        let object = self.heap.root_value(object_root).unwrap_or(object);
+                        self.set_property(object, atom, value)?;
+                    }
+                    Ok(self.heap.root_value(object_root).unwrap_or(object))
+                })();
+                self.heap.release_root(object_root);
+                outcome
             }
             Native::ObjectIs => {
                 let left = args.first().copied().unwrap_or(Value::UNDEFINED);
