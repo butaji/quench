@@ -3,7 +3,7 @@ use crate::bytecode::{
     ImmediateRole, Instr, InstructionField, Op, Operand, Register, ResultLayout, Superinstruction,
 };
 
-type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
+pub(super) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
 
 pub(super) fn derive(
     functions: &mut [Function],
@@ -101,7 +101,7 @@ fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
     }
 }
 
-fn uses(
+pub(super) fn uses(
     instruction: Instr,
     methods: &[MethodSite],
     fields: &[FieldSite],
@@ -269,7 +269,11 @@ fn range(base: u16, count: u16) -> u64 {
 }
 
 fn bit(register: u16) -> u64 {
-    1 << register
+    if u32::from(register) < u64::BITS {
+        1 << register
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
