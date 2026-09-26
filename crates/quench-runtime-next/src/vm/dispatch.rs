@@ -278,7 +278,11 @@ impl<H: Host> Vm<H> {
                 self.initialize_this_binding(f, value);
             }
             Op::CacheTemplateObject => {
-                let key = (self.frames[f].program, self.frames[f].function, i.imm());
+                let key = (
+                    self.frames[f].program,
+                    self.frames[f].function,
+                    i.template_site_index(),
+                );
                 let value = if let Some(value) = self.realm.template_objects.get(&key).copied() {
                     value
                 } else {
@@ -289,7 +293,11 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), value);
             }
             Op::LoadCachedTemplateObject => {
-                let key = (self.frames[f].program, self.frames[f].function, i.imm());
+                let key = (
+                    self.frames[f].program,
+                    self.frames[f].function,
+                    i.template_site_index(),
+                );
                 let value = self
                     .realm
                     .template_objects
