@@ -663,7 +663,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn regexp_slot_native(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         native: Native,
         this: Value,
     ) -> Result<Value, JsError> {
@@ -680,9 +680,7 @@ impl<H: Host> Vm<H> {
             (Native::RegExpFlags, _) if this == self.regexp_proto => {
                 Ok(self.heap.alloc(Cell::String(String::new().into())))
             }
-            _ => Err(JsError(
-                "RegExp accessor called on incompatible receiver".into(),
-            )),
+            _ => Err(self.type_error(p, "RegExp accessor called on incompatible receiver".into())),
         }
     }
 
@@ -704,16 +702,16 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn regexp_flag_native(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         native: Native,
         this: Value,
     ) -> Result<Value, JsError> {
         let flags = match self.heap.get(this) {
             Some(Cell::RegExp { flags, .. }) => flags.clone(),
             _ => {
-                return Err(JsError(
-                    "RegExp accessor called on incompatible receiver".into(),
-                ));
+                return Err(
+                    self.type_error(p, "RegExp accessor called on incompatible receiver".into())
+                );
             }
         };
         let contains = match native {
@@ -816,9 +814,9 @@ impl<H: Host> Vm<H> {
                 (source.host_string().to_owned(), flags.clone())
             }
             _ => {
-                return Err(JsError(
-                    "RegExp method called on incompatible receiver".into(),
-                ));
+                return Err(
+                    self.type_error(p, "RegExp method called on incompatible receiver".into())
+                );
             }
         };
         let regex = Self::compile_regexp(&source, &flags)?;
@@ -827,22 +825,20 @@ impl<H: Host> Vm<H> {
         let stateful = flags.contains('g') || flags.contains('y');
         let sticky = flags.contains('y');
         let last_index_atom = self.intern_atom("lastIndex");
-        let start = if stateful {
-            let value = self.get_property(p, this, last_index_atom)?;
-            let number = self.to_number(p, value)?;
-            if number.is_finite() && number > 0.0 {
-                number.floor() as usize
-            } else {
-                0
-            }
-        } else {
-            0
-        };
+        let last_index = self.get_property(p, this, last_index_atom)?;
+        let last_index = regexp_to_length(self.to_number(p, last_index)?);
+        let start = if stateful { last_index } else { 0 };
         let matched = regex.find_from_utf16(input.units(), start);
         let matched = matched.filter(|matched| !sticky || matched.range.start == start);
         let Some(matched) = matched else {
             if stateful {
-                self.set_property(this, last_index_atom, Value::number(0.0))?;
+                self.set_property_with_program_mode(
+                    p,
+                    this,
+                    last_index_atom,
+                    Value::number(0.0),
+                    true,
+                )?;
             }
             return Ok(if native == Native::RegExpTest {
                 Value::FALSE
@@ -873,7 +869,13 @@ impl<H: Host> Vm<H> {
         let index = matched.range.start;
         if stateful {
             let end = matched.range.end;
-            self.set_property(this, last_index_atom, Value::number(end as f64))?;
+            self.set_property_with_program_mode(
+                p,
+                this,
+                last_index_atom,
+                Value::number(end as f64),
+                true,
+            )?;
         }
         let index_atom = self.intern_atom("index");
         self.set_property(result, index_atom, Value::number(index as f64))?;

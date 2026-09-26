@@ -518,6 +518,8 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::RegExpSymbolReplace => 2.0,
         Native::RegExpSymbolMatchAll | Native::StringMatchAll => 1.0,
         Native::RegExpSymbolSplit => 2.0,
+        Native::RegExpExec | Native::RegExpTest => 1.0,
+        Native::RegExpToString => 0.0,
         Native::RegExpSpecies => 0.0,
         Native::ReflectHas | Native::ReflectDeleteProperty | Native::ReflectSetPrototypeOf => 2.0,
         Native::ReflectApply => 3.0,
