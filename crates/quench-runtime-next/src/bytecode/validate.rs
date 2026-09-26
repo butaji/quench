@@ -1,5 +1,7 @@
 use super::control_flow::instruction_at;
-use super::{FieldBase, Op, Operand, OperandKind, REGISTER_MASK, Register, ResidualProgram};
+use super::{
+    DispatchClass, FieldBase, Op, Operand, OperandKind, REGISTER_MASK, Register, ResidualProgram,
+};
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
     register & !(REGISTER_MASK | flags) == 0 && register & REGISTER_MASK < limit
@@ -24,6 +26,13 @@ fn operand_in_bounds(
         Some(OperandKind::Local) => operand.payload() < locals,
         None => false,
     }
+}
+
+fn is_numeric_index_operand(operand: Operand) -> bool {
+    matches!(
+        operand.kind(),
+        Some(OperandKind::Register | OperandKind::Local)
+    )
 }
 
 fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
@@ -271,9 +280,24 @@ impl ResidualProgram {
                         return Err(format!("function {index} private-in operation is invalid"));
                     }
                     Op::GetIndex
-                        if !register(instruction.a())
-                            || !register(instruction.b())
-                            || !register(instruction.c()) =>
+                        if !register(instruction.result_register())
+                            || !operand_in_bounds(
+                                instruction.operand_b().0,
+                                function.registers,
+                                function.locals,
+                                self.constants.len(),
+                                self.field_sites.len(),
+                            )
+                            || (function.dispatch == DispatchClass::Numeric
+                                && (!is_numeric_index_operand(instruction.operand_b())
+                                    || !is_numeric_index_operand(instruction.operand_c())))
+                            || !operand_in_bounds(
+                                instruction.operand_c().0,
+                                function.registers,
+                                function.locals,
+                                self.constants.len(),
+                                self.field_sites.len(),
+                            ) =>
                     {
                         return Err(format!("function {index} indexed load is invalid"));
                     }

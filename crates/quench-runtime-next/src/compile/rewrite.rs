@@ -304,7 +304,18 @@ fn register_dead_in_suffix(register: Register, suffix: &[Instr], fields: &[Field
 }
 
 fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) -> bool {
-    let operand = |raw| Operand(raw).register_index() == Some(register);
+    let operand = |raw| match Operand(raw).kind() {
+        Some(crate::bytecode::OperandKind::Register) => {
+            Operand(raw).register_index() == Some(register)
+        }
+        Some(crate::bytecode::OperandKind::Field) => {
+            fields
+                .get(usize::from(Operand(raw).payload()))
+                .and_then(|site| site.base.register_index())
+                == Some(register)
+        }
+        _ => false,
+    };
     let range = |base: Register, count: u16| register >= base && register < base + count;
     match instruction.op() {
         Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
@@ -328,9 +339,8 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         },
         Op::CheckPrivate => instruction.a() == register,
         Op::PrivateIn => instruction.b() == register,
-        Op::GetIndex | Op::MakeObject2 => {
-            instruction.b() == register || instruction.c() == register
-        }
+        Op::GetIndex => operand(instruction.operand_b().0) || operand(instruction.operand_c().0),
+        Op::MakeObject2 => instruction.b() == register || instruction.c() == register,
         Op::CopyDataProperties => {
             instruction.a() == register
                 || instruction.b() == register

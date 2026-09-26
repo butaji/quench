@@ -1,5 +1,5 @@
 use crate::bytecode::{
-    Function, Instr, NUMERIC_LOCAL_INC_STORE, NUMERIC_LOCAL_TARGET, Op, REGISTER_MASK,
+    Function, Instr, NUMERIC_LOCAL_INC_STORE, NUMERIC_LOCAL_TARGET, Op, Operand, REGISTER_MASK,
     RETURN_REGISTER, specialized_numeric_op,
 };
 
@@ -111,14 +111,14 @@ fn local_index_sources(
 ) -> Option<Instr> {
     (first.a() <= REGISTER_MASK
         && second.a() <= REGISTER_MASK
-        && index.b() == first.a()
-        && index.c() == second.a()
+        && index.operand_b().register_index() == Some(first.a())
+        && index.operand_c().register_index() == Some(second.a())
         && first.imm() <= u32::from(REGISTER_MASK)
         && second.imm() <= u32::from(REGISTER_MASK)
         && live_after & ((1 << first.a()) | (1 << second.a())) == 0)
         .then(|| {
-            index.set_b(crate::bytecode::Operand::local(first.imm() as u16).0);
-            index.set_c(crate::bytecode::Operand::local(second.imm() as u16).0);
+            index.set_operand_b(Operand::local(first.imm() as u16));
+            index.set_operand_c(Operand::local(second.imm() as u16));
             index
         })
 }

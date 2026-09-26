@@ -125,7 +125,9 @@ fn uses(
         Op::GetField => field_base(instruction, fields),
         Op::CheckPrivate => bit(instruction.a()),
         Op::PrivateIn => bit(instruction.b()),
-        Op::GetIndex => operand(instruction.b(), fields) | operand(instruction.c(), fields),
+        Op::GetIndex => {
+            operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
+        }
         Op::ToPropertyKey | Op::ToNumeric => bit(instruction.b()),
         Op::CopyDataProperties => {
             bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c())

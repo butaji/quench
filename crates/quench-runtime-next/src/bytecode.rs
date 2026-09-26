@@ -383,7 +383,7 @@ opcodes!(
     Yield => READ_THROW.union(Effect::CONTROL),
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair,
     GetField => READ_THROW; meaning FieldLookup, @ ReturnableAndThis,
-    GetIndex => READ_THROW,
+    GetIndex => READ_THROW, @ Register, @ fields(Undeclared, Operand, Operand),
     ToPropertyKey => READ_THROW,
     ToNumeric => READ_THROW,
     CopyDataProperties => CALL_EFFECT,

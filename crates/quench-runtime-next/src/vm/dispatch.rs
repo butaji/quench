@@ -401,10 +401,10 @@ impl<H: Host> Vm<H> {
             Op::GetIndex => {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.index_dispatch(false, false);
-                let base = self.read(f, i.b());
-                let key = self.read(f, i.c());
+                let base = self.resolve_operand(p, f, i.operand_b())?;
+                let key = self.resolve_operand(p, f, i.operand_c())?;
                 let v = self.get_index(p, base, key)?;
-                self.write(f, i.a(), v);
+                self.write(f, i.result_register(), v);
             }
             Op::CheckPrivate => {
                 let object = self.read(f, i.a());
