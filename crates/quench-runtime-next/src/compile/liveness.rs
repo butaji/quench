@@ -1,5 +1,5 @@
 use crate::bytecode::{
-    FieldLookup, FieldSite, Function, Instr, Op, Operand, Register, Superinstruction,
+    FieldLookup, FieldSite, Function, Instr, Op, Operand, Register, ResultLayout, Superinstruction,
 };
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -200,74 +200,39 @@ fn uses(
 }
 
 fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
+    let result = if instruction.op().result_layout() != ResultLayout::NoResult
+        && !instruction.returns_from_frame()
+        && !instruction.writes_numeric_local()
+    {
+        bit(instruction.result_register())
+    } else {
+        0
+    };
     match instruction.op() {
-        Op::LoadNameCall => bit(instruction.result_register()) | bit(instruction.register_b()),
+        Op::LoadNameCall => result | bit(instruction.register_b()),
         Op::LoadLocal => {
-            bit(instruction.result_register())
+            result
                 | instruction
                     .numeric_local_store_target()
                     .map_or(0, |target| bit(target.register))
         }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply if instruction.writes_numeric_local() => {
-            0
-        }
-        Op::LoadConst
-        | Op::LoadEnvLocal
-        | Op::LoadCapture
-        | Op::LoadName
-        | Op::LoadNameTypeof
-        | Op::DeleteName
-        | Op::ResolveName
-        | Op::LoadResolvedName
-        | Op::ToPropertyKey
-        | Op::ToNumeric
-        | Op::LoadThis
-        | Op::LoadImportMeta
-        | Op::MakeClosure
-        | Op::MakeArray
-        | Op::MakeConstArray
-        | Op::MakeObject
-        | Op::MakeObject2
-        | Op::GetIterator
-        | Op::GetAsyncIterator
-        | Op::SpreadToArray
-        | Op::GetField
-        | Op::GetIndex
-        | Op::PrivateIn
-        | Op::Binary
-        | Op::NumericAdd
-        | Op::NumericMultiply
-        | Op::IncDec
-        | Op::Unary
-        | Op::Delete
-        | Op::Move
-        | Op::Call
-        | Op::CallDirectEvalArray
-        | Op::CallKnown
-        | Op::CallMethod
-        | Op::CallThisMethod
-        | Op::Construct
-        | Op::Await
-        | Op::Yield
-            if !instruction.returns_from_frame() =>
-        {
-            bit(instruction.result_register())
-        }
         Op::YieldStar => {
             let (state, next_method) = instruction.register_pair();
-            bit(instruction.result_register())
-                | bit(instruction.register_c())
-                | bit(state)
-                | bit(next_method)
+            result | bit(instruction.register_c()) | bit(state) | bit(next_method)
         }
-        Op::SuperConstArrayObject2 => superinstructions[instruction.superinstruction_index()]
-            .code
-            .iter()
-            .fold(0, |mask, nested| {
-                mask | definitions(*nested, superinstructions)
-            }),
-        Op::StoreLocal | Op::StoreEnvLocal => instruction.optional_register_b().map_or(0, bit),
-        _ => 0,
+        Op::SuperConstArrayObject2 => {
+            result
+                | superinstructions[instruction.superinstruction_index()]
+                    .code
+                    .iter()
+                    .fold(0, |mask, nested| {
+                        mask | definitions(*nested, superinstructions)
+                    })
+        }
+        Op::StoreLocal | Op::StoreEnvLocal => {
+            result | instruction.optional_register_b().map_or(0, bit)
+        }
+        _ => result,
     }
 }
 
