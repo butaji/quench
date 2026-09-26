@@ -161,6 +161,21 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn boolean_field(self, field: InstructionField) -> Option<bool> {
+                debug_assert_eq!(self.op().field_layout(field), FieldLayout::BooleanFlag);
+                let value = match field {
+                    InstructionField::A => self.a(),
+                    InstructionField::B => self.b(),
+                    InstructionField::C => self.c(),
+                };
+                match value {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                }
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn operand_b(self) -> Operand {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),

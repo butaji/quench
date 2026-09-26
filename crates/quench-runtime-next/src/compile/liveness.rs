@@ -110,8 +110,8 @@ fn uses(
         Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
             bit(instruction.a())
         }
-        Op::StoreResolvedName => bit(instruction.a()) | bit(instruction.b()),
-        Op::LoadResolvedName => bit(instruction.b()),
+        Op::StoreResolvedName => bit(instruction.register_a()) | bit(instruction.register_b()),
+        Op::LoadResolvedName => bit(instruction.register_b()),
         Op::ResolveName | Op::DeleteName | Op::LoadNameCall => 0,
         Op::GetIterator
         | Op::GetAsyncIterator

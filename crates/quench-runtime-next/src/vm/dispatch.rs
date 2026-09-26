@@ -463,13 +463,19 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::ResolveName => {
-                let value = self.resolve_name(p, i.atom_index(), i.b() != 0)?;
-                self.write(f, i.a(), value);
+                let strict = i
+                    .boolean_field(crate::bytecode::InstructionField::B)
+                    .ok_or_else(|| JsError::validation("invalid resolve-name flag".into()))?;
+                let value = self.resolve_name(p, i.atom_index(), strict)?;
+                self.write(f, i.result_register(), value);
             }
             Op::LoadResolvedName => {
-                let object = self.read(f, i.b());
-                let value = self.load_resolved_name(p, object, i.atom_index(), i.c() != 0)?;
-                self.write(f, i.a(), value);
+                let strict = i
+                    .boolean_field(crate::bytecode::InstructionField::C)
+                    .ok_or_else(|| JsError::validation("invalid resolved-name flag".into()))?;
+                let object = self.read(f, i.register_b());
+                let value = self.load_resolved_name(p, object, i.atom_index(), strict)?;
+                self.write(f, i.result_register(), value);
             }
             Op::ValidateClassHeritage => {
                 let heritage = self.read(f, i.a());
@@ -483,9 +489,12 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.a(), value);
             }
             Op::StoreResolvedName => {
-                let object = self.read(f, i.b());
+                let strict = i
+                    .boolean_field(crate::bytecode::InstructionField::C)
+                    .ok_or_else(|| JsError::validation("invalid resolved-name flag".into()))?;
+                let object = self.read(f, i.register_b());
                 let atom = i.atom_index();
-                self.store_resolved_name(p, object, atom, self.read(f, i.a()), i.c() != 0)?;
+                self.store_resolved_name(p, object, atom, self.read(f, i.register_a()), strict)?;
             }
             Op::ToPropertyKey => {
                 let value = self.to_property_key(p, self.read(f, i.register_b()))?;

@@ -321,7 +321,9 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
         Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
             instruction.a() == register
         }
-        Op::StoreResolvedName => instruction.a() == register || instruction.b() == register,
+        Op::StoreResolvedName => {
+            instruction.register_a() == register || instruction.register_b() == register
+        }
         Op::SetFunctionNameKey => {
             instruction.register_a() == register || instruction.register_b() == register
         }
@@ -330,7 +332,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
             instruction.register_b() == register || instruction.register_c() == register
         }
         Op::ResolveName | Op::DeleteName => false,
-        Op::LoadResolvedName => instruction.b() == register,
+        Op::LoadResolvedName => instruction.register_b() == register,
         Op::LoadImportMeta => false,
         Op::GetIterator
         | Op::GetAsyncIterator
