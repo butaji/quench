@@ -79,7 +79,13 @@ impl<H: Host> Vm<H> {
                     self.iterator_realm_prototypes
                         .iter()
                         .flat_map(|(realm, prototypes)| {
-                            [*realm, prototypes.helper, prototypes.wrapper]
+                            [
+                                *realm,
+                                prototypes.helper,
+                                prototypes.wrapper,
+                                prototypes.generator,
+                                prototypes.async_generator,
+                            ]
                         }),
                 )
                 .chain(self.test262_agent.roots())

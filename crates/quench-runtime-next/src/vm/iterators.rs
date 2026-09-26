@@ -259,6 +259,8 @@ impl<H: Host> Vm<H> {
             IteratorRealmPrototypes {
                 helper: self.iterator_helper_proto,
                 wrapper: self.wrap_for_valid_iterator_proto,
+                generator: self.generator_proto,
+                async_generator: self.async_generator_proto,
             },
         );
         self.install_builtin_to_string_tag(self.generator_proto, "Generator")?;

@@ -929,13 +929,6 @@ impl<H: Host> Vm<H> {
             realm_wrap_for_valid_iterator_proto,
             Some(global),
         )?;
-        self.iterator_realm_prototypes.insert(
-            global,
-            IteratorRealmPrototypes {
-                helper: realm_iterator_helper_proto,
-                wrapper: realm_wrap_for_valid_iterator_proto,
-            },
-        );
         let realm_generator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
@@ -955,6 +948,15 @@ impl<H: Host> Vm<H> {
             "next",
             self.native_value(Native::IteratorNext),
         )?;
+        self.iterator_realm_prototypes.insert(
+            global,
+            IteratorRealmPrototypes {
+                helper: realm_iterator_helper_proto,
+                wrapper: realm_wrap_for_valid_iterator_proto,
+                generator: realm_generator_proto,
+                async_generator: realm_async_generator_proto,
+            },
+        );
         for (name, native, prototype) in [
             (
                 "AsyncFunction",
