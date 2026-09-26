@@ -103,6 +103,15 @@ impl<H: Host> Vm<H> {
             "next",
             Native::IteratorNext,
         )?;
+        self.regexp_string_iterator_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+        self.set_builtin_named(
+            program,
+            self.regexp_string_iterator_proto,
+            "next",
+            Native::IteratorNext,
+        )?;
         self.generator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
@@ -246,6 +255,10 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.intern_atom("prototype");
         self.install_iterator_prototype(self.iterator_proto, None)?;
         self.install_builtin_to_string_tag(self.string_iterator_proto, "String Iterator")?;
+        self.install_builtin_to_string_tag(
+            self.regexp_string_iterator_proto,
+            "RegExp String Iterator",
+        )?;
         self.iterator_helper_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
@@ -1020,6 +1033,9 @@ impl<H: Host> Vm<H> {
             *helper_started = true;
         }
         let result = match state {
+            IteratorHelper::RegExpStringMatchAll { .. } => {
+                Err(self.type_error(p, "RegExp string iterator is not a helper".into()))
+            }
             IteratorHelper::Map { callback, index } => {
                 self.iterator_helper_map(p, iterator, source, callback, index, args)
             }
@@ -2773,6 +2789,45 @@ impl<H: Host> Vm<H> {
                 *done = true;
             }
             return Ok(result);
+        }
+        if kind == IteratorKind::RegExpStringMatchAll {
+            let (input, global, unicode) = match self.heap.get(this) {
+                Some(Cell::Iterator {
+                    helper: Some(helper),
+                    ..
+                }) => match helper.as_ref() {
+                    IteratorHelper::RegExpStringMatchAll {
+                        input,
+                        global,
+                        unicode,
+                    } => (input.clone(), *global, *unicode),
+                    _ => return Err(self.type_error(p, "invalid RegExp string iterator".into())),
+                },
+                _ => return Err(self.type_error(p, "invalid RegExp string iterator".into())),
+            };
+            let result = self.regexp_exec(p, source, input.host_string())?;
+            if result.is_null() {
+                if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(this) {
+                    *done = true;
+                }
+                return self.iterator_result(Value::UNDEFINED, true);
+            }
+            if global {
+                let matched_atom = self.intern_atom("0");
+                let matched = self.get_property(p, result, matched_atom)?;
+                if self.to_string(p, matched)?.is_empty() {
+                    let last_index_atom = self.intern_atom("lastIndex");
+                    let last_index = self.get_property(p, source, last_index_atom)?;
+                    let index = self.to_number(p, last_index)?;
+                    let index = super::regexp::regexp_to_length(index).min(input.units().len());
+                    let next =
+                        super::regexp::advance_string_index_units(input.units(), index, unicode);
+                    self.set_property(source, last_index_atom, Value::number(next as f64))?;
+                }
+            } else if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(this) {
+                *done = true;
+            }
+            return self.iterator_result(result, false);
         }
         if matches!(
             kind,
