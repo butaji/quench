@@ -297,8 +297,10 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::PromiseFinally => 1.0,
         Native::PromiseThen => 2.0,
         Native::PromiseAll
+        | Native::PromiseAllKeyed
         | Native::PromiseRace
         | Native::PromiseAllSettled
+        | Native::PromiseAllSettledKeyed
         | Native::PromiseAny => 1.0,
         Native::PromiseAggregateJob => 1.0,
         Native::PromiseWithResolvers => 0.0,
@@ -570,9 +572,25 @@ pub(super) struct FinallyContinuationJob {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AggregateMode {
     All,
+    AllKeyed,
     Race,
     AllSettled,
+    AllSettledKeyed,
     Any,
+}
+
+impl AggregateMode {
+    pub(super) const fn is_all(self) -> bool {
+        matches!(self, Self::All | Self::AllKeyed)
+    }
+
+    pub(super) const fn is_all_settled(self) -> bool {
+        matches!(self, Self::AllSettled | Self::AllSettledKeyed)
+    }
+
+    pub(super) const fn is_keyed(self) -> bool {
+        matches!(self, Self::AllKeyed | Self::AllSettledKeyed)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -584,6 +602,7 @@ pub(super) struct AggregateRecord {
     pub(super) remaining: usize,
     pub(super) values: Vec<Value>,
     pub(super) called: Vec<bool>,
+    pub(super) keys: Option<Vec<Value>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -785,8 +804,15 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_named(program, promise, "all", Native::PromiseAll)?;
+        self.set_builtin_named(program, promise, "allKeyed", Native::PromiseAllKeyed)?;
         self.set_builtin_named(program, promise, "race", Native::PromiseRace)?;
         self.set_builtin_named(program, promise, "allSettled", Native::PromiseAllSettled)?;
+        self.set_builtin_named(
+            program,
+            promise,
+            "allSettledKeyed",
+            Native::PromiseAllSettledKeyed,
+        )?;
         self.set_builtin_named(program, promise, "any", Native::PromiseAny)?;
         self.global(program, "Promise", promise)
     }
@@ -978,9 +1004,15 @@ impl<H: Host> Vm<H> {
                 self.promise_finally(p, this, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::PromiseAll => self.promise_aggregate(p, this, args, AggregateMode::All),
+            Native::PromiseAllKeyed => {
+                self.promise_aggregate(p, this, args, AggregateMode::AllKeyed)
+            }
             Native::PromiseRace => self.promise_aggregate(p, this, args, AggregateMode::Race),
             Native::PromiseAllSettled => {
                 self.promise_aggregate(p, this, args, AggregateMode::AllSettled)
+            }
+            Native::PromiseAllSettledKeyed => {
+                self.promise_aggregate(p, this, args, AggregateMode::AllSettledKeyed)
             }
             Native::PromiseAny => self.promise_aggregate(p, this, args, AggregateMode::Any),
             Native::PromiseReactionJob => {

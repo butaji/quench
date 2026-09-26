@@ -353,7 +353,7 @@ const NATIVES: &[Native] = &[
     Native::PromiseCapabilityExecutor,
     Native::PromiseThen,
     Native::PromiseCatch,
-    Native::PromiseFinally, Native::PromiseAll, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAny,
+    Native::PromiseFinally, Native::PromiseAll, Native::PromiseAllKeyed, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAllSettledKeyed, Native::PromiseAny,
     Native::PromiseReactionJob, Native::PromiseThenableJob,
     Native::PromiseFinallyJob, Native::PromiseFinallyContinuationJob, Native::PromiseAggregateJob,
     Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncFromSyncValue,
