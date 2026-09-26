@@ -206,12 +206,12 @@ impl ResidualProgram {
                     Op::MakeClosure
                         if instruction.closure_function_index() as usize
                             >= self.functions.len()
-                            || !destination(instruction.a()) =>
+                            || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} closure site is invalid"));
                     }
                     Op::MakeConstArray
-                        if !destination(instruction.a())
+                        if !destination(instruction.result_register())
                             || instruction
                                 .constant_index()
                                 .checked_add(instruction.element_count() as usize)
@@ -220,7 +220,7 @@ impl ResidualProgram {
                         return Err(format!("function {index} constant array is invalid"));
                     }
                     Op::MakeArray
-                        if !destination(instruction.a())
+                        if !destination(instruction.result_register())
                             || instruction.array_length() > usize::from(u16::MAX) =>
                     {
                         return Err(format!("function {index} array allocation is invalid"));
