@@ -922,6 +922,7 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(global)
             .expect("realm global is an object")
             .proto = object_prototype;
+        self.install_string_for_realm(program, global, object_prototype)?;
         self.install_number_for_realm(program, global, object_prototype)?;
         self.install_function_prototype_for_realm(global, object_prototype, function)?;
         let set = self.native_with_realm(Native::Set, global, global);

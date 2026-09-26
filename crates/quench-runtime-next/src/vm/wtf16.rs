@@ -35,13 +35,6 @@ impl JsString {
         self.units.len() * std::mem::size_of::<u16>() + self.host.capacity()
     }
 
-    pub(crate) fn push_str(&mut self, text: &str) {
-        let mut units = self.units.to_vec();
-        units.extend(text.encode_utf16());
-        self.units = Rc::from(units);
-        self.host.push_str(text);
-    }
-
     pub(crate) fn push_js_string(&mut self, text: &Self) {
         let mut units = self.units.to_vec();
         units.extend(text.units.iter().copied());
