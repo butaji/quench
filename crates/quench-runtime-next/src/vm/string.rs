@@ -424,7 +424,36 @@ impl<H: Host> Vm<H> {
             return Err(JsError("string method receiver is not a string".into()));
         };
         let receiver_host = receiver.host_string();
+        let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let replacement_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if replace_all && !search_value.is_null() && !search_value.is_undefined() {
+            let is_regexp = self.regexp_is_regexp(p, search_value)?;
+            if is_regexp {
+                let global_atom = self.intern_atom("global");
+                let global = self.get_property(p, search_value, global_atom)?;
+                if !self.truthy(global) {
+                    return Err(self.type_error(
+                        p,
+                        "String.prototype.replaceAll requires a global RegExp".into(),
+                    ));
+                }
+            }
+        }
+        if !search_value.is_null() && !search_value.is_undefined() {
+            let symbol = self
+                .well_known_symbols
+                .get("replace")
+                .copied()
+                .ok_or_else(|| self.type_error(p, "RegExp replace symbol is unavailable".into()))?;
+            let method = self.get_index(p, search_value, symbol)?;
+            if !method.is_undefined() && !method.is_null() {
+                if !self.is_function(method) {
+                    return Err(self.type_error(p, "String replace method is not callable".into()));
+                }
+                let input = self.heap.alloc(Cell::String(receiver));
+                return self.call_value(p, method, search_value, &[input, replacement_value]);
+            }
+        }
         let replacement_function = matches!(
             self.heap.get(replacement_value),
             Some(Cell::Function { .. })
@@ -434,7 +463,6 @@ impl<H: Host> Vm<H> {
         } else {
             self.to_string(p, replacement_value)?
         };
-        let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
         if self.is_regexp(search_value) {
             let (source, flags) = self
                 .regexp_source_and_flags(search_value)
