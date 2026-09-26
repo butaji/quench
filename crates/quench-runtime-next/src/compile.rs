@@ -1941,9 +1941,9 @@ impl<'a> Compiler<'a> {
         function.emit(Op::Return, result, 0, 0, 0);
         let arguments_slot = arguments_slot.filter(|slot| {
             function.code.iter().any(|instruction| {
-                instruction.op() == Op::LoadLocal && instruction.imm() == u32::from(*slot)
+                instruction.op() == Op::LoadLocal && instruction.local_slot() == usize::from(*slot)
             }) || function.wide.iter().any(|instruction| {
-                instruction.op() == Op::LoadLocal && instruction.imm() == u32::from(*slot)
+                instruction.op() == Op::LoadLocal && instruction.local_slot() == usize::from(*slot)
             })
         });
         let captures_locals = function

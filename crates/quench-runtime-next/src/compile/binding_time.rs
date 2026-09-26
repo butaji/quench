@@ -68,15 +68,16 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
         match instruction.op() {
             Op::LoadConst => {
                 registers[instruction.a() as usize] =
-                    BindingTime::Static(StaticValue::Constant(instruction.imm()));
+                    BindingTime::Static(StaticValue::Constant(instruction.constant_index() as u32));
             }
             Op::MakeClosure => {
-                registers[instruction.a() as usize] =
-                    BindingTime::Static(StaticValue::Function(instruction.imm()));
+                registers[instruction.a() as usize] = BindingTime::Static(StaticValue::Function(
+                    instruction.closure_function_index(),
+                ));
             }
             Op::Move => registers[instruction.a() as usize] = registers[instruction.b() as usize],
             Op::StoreLocal | Op::StoreEnvLocal => {
-                let slot = instruction.imm() as usize;
+                let slot = instruction.local_slot();
                 stores[slot] += 1;
                 bindings[slot] = bindings[slot].join(registers[instruction.a() as usize]);
             }
