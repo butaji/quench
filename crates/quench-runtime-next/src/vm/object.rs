@@ -823,6 +823,28 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
+        if object.is_null() || object.is_undefined() {
+            return Err(self.type_error(
+                p,
+                if object.is_null() {
+                    "cannot set properties of null".into()
+                } else {
+                    "cannot set properties of undefined".into()
+                },
+            ));
+        }
+        if !self.is_object_like(object) {
+            if self.atom_name(atom).starts_with("\0rqj:private:") {
+                self.check_private_brand(p, object, atom)?;
+            }
+            let boxed = self.box_primitive_object(object)?;
+            let written = self.set_property_with_receiver(p, boxed, atom, value, object)?;
+            return if written || !strict {
+                Ok(())
+            } else {
+                Err(self.type_error(p, "cannot assign property on primitive value".into()))
+            };
+        }
         self.evaluate_deferred_namespace_for_key(p, object, Some(PropertyKey::string(atom)))?;
         if atom == self.length_atom
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
