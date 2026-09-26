@@ -310,14 +310,14 @@ impl ResidualProgram {
                                 _ => unreachable!("matched binary opcode family"),
                             }
                             || !operand_in_bounds(
-                                instruction.b(),
+                                instruction.operand_b().0,
                                 function.registers,
                                 function.locals,
                                 self.constants.len(),
                                 self.field_sites.len(),
                             )
                             || !operand_in_bounds(
-                                instruction.c(),
+                                instruction.operand_c().0,
                                 function.registers,
                                 function.locals,
                                 self.constants.len(),
@@ -398,19 +398,22 @@ impl ResidualProgram {
                         return Err(format!("function {index} branch register is invalid"));
                     }
                     Op::JumpBinaryFalse
-                        if !operand_in_bounds(
-                            instruction.b(),
-                            function.registers,
-                            function.locals,
-                            self.constants.len(),
-                            self.field_sites.len(),
-                        ) || !operand_in_bounds(
-                            instruction.c(),
-                            function.registers,
-                            function.locals,
-                            self.constants.len(),
-                            self.field_sites.len(),
-                        ) =>
+                        if instruction.binary_operator_field()
+                            > oxc_ast::ast::BinaryOperator::Instanceof as u32
+                            || !operand_in_bounds(
+                                instruction.operand_b().0,
+                                function.registers,
+                                function.locals,
+                                self.constants.len(),
+                                self.field_sites.len(),
+                            )
+                            || !operand_in_bounds(
+                                instruction.operand_c().0,
+                                function.registers,
+                                function.locals,
+                                self.constants.len(),
+                                self.field_sites.len(),
+                            ) =>
                     {
                         return Err(format!("function {index} branch operand is invalid"));
                     }

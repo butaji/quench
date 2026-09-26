@@ -362,7 +362,9 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
                 || instruction.c() == register
         }
         Op::DefineArrayElement => instruction.a() == register || instruction.b() == register,
-        Op::Binary | Op::JumpBinaryFalse => operand(instruction.b()) || operand(instruction.c()),
+        Op::Binary | Op::JumpBinaryFalse => {
+            operand(instruction.operand_b().0) || operand(instruction.operand_c().0)
+        }
         Op::IncDec | Op::Unary | Op::Move => instruction.b() == register,
         Op::JumpFalse | Op::Return | Op::Throw => instruction.a() == register,
         Op::Call | Op::CallDirectEvalArray => {

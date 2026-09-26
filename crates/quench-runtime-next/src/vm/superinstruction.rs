@@ -51,10 +51,12 @@ impl<H: Host> Vm<H> {
         instruction: Instr,
     ) -> Result<(), JsError> {
         let operator = instruction.binary_operator();
+        let left_operand = instruction.operand_b();
+        let right_operand = instruction.operand_c();
         self.profile
-            .binary(operator as usize, instruction.b(), instruction.c());
-        let left = self.resolve_operand(program, frame, Operand(instruction.b()))?;
-        let right = self.resolve_operand(program, frame, Operand(instruction.c()))?;
+            .binary(operator as usize, left_operand.0, right_operand.0);
+        let left = self.resolve_operand(program, frame, left_operand)?;
+        let right = self.resolve_operand(program, frame, right_operand)?;
         let value = self.binary(program, operator, left, right)?;
         self.write(frame, instruction.a(), value);
         Ok(())

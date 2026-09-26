@@ -155,7 +155,7 @@ fn uses(
         Op::SetIndex => bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c()),
         Op::DefineArrayElement => bit(instruction.a()) | bit(instruction.b()),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
-            operand(instruction.b(), fields) | operand(instruction.c(), fields)
+            operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
         }
         Op::IncDec | Op::Unary | Op::Move => bit(instruction.b()),
         Op::Delete => bit(instruction.b()) | bit(instruction.c()),
