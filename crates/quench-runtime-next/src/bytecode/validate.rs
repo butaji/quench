@@ -50,7 +50,11 @@ fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
         .is_some_and(|end| end <= u32::from(registers))
 }
 
-fn register_fields_in_bounds(instruction: super::WideInstruction, registers: u16) -> bool {
+fn field_domains_in_bounds(
+    instruction: super::WideInstruction,
+    registers: u16,
+    cache_sites: u16,
+) -> bool {
     let fields = [
         (InstructionField::A, instruction.a()),
         (InstructionField::B, instruction.b()),
@@ -70,6 +74,10 @@ fn register_fields_in_bounds(instruction: super::WideInstruction, registers: u16
             FieldLayout::OptionalRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, registers, 0)),
+            FieldLayout::CacheSiteIndex if instruction.op() != Op::GetField => {
+                cache_in_bounds(value, cache_sites)
+            }
+            FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
             _ => true,
         },
     )
@@ -152,9 +160,9 @@ impl ResidualProgram {
                         instruction.op()
                     ));
                 }
-                if !register_fields_in_bounds(instruction, function.registers) {
+                if !field_domains_in_bounds(instruction, function.registers, self.cache_sites) {
                     return Err(format!(
-                        "function {index} {:?} has an out-of-bounds register",
+                        "function {index} {:?} has an invalid field value",
                         instruction.op()
                     ));
                 }
@@ -191,13 +199,7 @@ impl ResidualProgram {
                         return Err(format!("function {index} local access is invalid"));
                     }
                     Op::StoreLocal | Op::StoreEnvLocal
-                        if instruction.local_slot() >= usize::from(function.locals)
-                            || instruction
-                                .boolean_field(super::InstructionField::C)
-                                .is_none()
-                            || instruction.optional_register_b().is_some_and(|register| {
-                                !register_in_bounds(register, function.registers, 0)
-                            }) =>
+                        if instruction.local_slot() >= usize::from(function.locals) =>
                     {
                         return Err(format!("function {index} local store is invalid"));
                     }
@@ -216,15 +218,13 @@ impl ResidualProgram {
                     }
                     Op::LoadName | Op::LoadNameTypeof
                         if !atom(instruction.atom_index())
-                            || !cache(instruction.cache_site_index())
                             || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} name load is invalid"));
                     }
                     Op::StoreName
                         if !atom(instruction.atom_index())
-                            || !register(instruction.register_a())
-                            || !cache(instruction.cache_site_index()) =>
+                            || !register(instruction.register_a()) =>
                     {
                         return Err(format!("function {index} name store is invalid"));
                     }
@@ -241,16 +241,12 @@ impl ResidualProgram {
                     Op::LoadResolvedName
                         if !atom(instruction.atom_index())
                             || !register(instruction.register_b())
-                            || instruction
-                                .boolean_field(crate::bytecode::InstructionField::C)
-                                .is_none()
                             || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} resolved name site is invalid"));
                     }
                     Op::LoadNameCall
                         if !atom(instruction.atom_index())
-                            || !cache(instruction.cache_site_index())
                             || !destination(instruction.result_register())
                             || !register(instruction.register_b()) =>
                     {
@@ -258,21 +254,14 @@ impl ResidualProgram {
                     }
                     Op::ResolveName
                         if !atom(instruction.atom_index())
-                            || !destination(instruction.result_register())
-                            || instruction
-                                .boolean_field(crate::bytecode::InstructionField::B)
-                                .is_none()
-                            || !cache(instruction.cache_site_index()) =>
+                            || !destination(instruction.result_register()) =>
                     {
                         return Err(format!("function {index} name resolution is invalid"));
                     }
                     Op::StoreResolvedName
                         if !atom(instruction.atom_index())
                             || !register(instruction.register_a())
-                            || !register(instruction.register_b())
-                            || instruction
-                                .boolean_field(crate::bytecode::InstructionField::C)
-                                .is_none() =>
+                            || !register(instruction.register_b()) =>
                     {
                         return Err(format!("function {index} resolved name store is invalid"));
                     }
@@ -344,8 +333,7 @@ impl ResidualProgram {
                     Op::SetField
                         if !register(instruction.register_a())
                             || !register(instruction.register_b())
-                            || !atom(instruction.atom_index())
-                            || !cache(instruction.cache_site_index()) =>
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} field store is invalid"));
                     }
@@ -367,8 +355,7 @@ impl ResidualProgram {
                     }
                     Op::SetThisField
                         if !register(instruction.register_a())
-                            || !atom(instruction.atom_index())
-                            || !cache(instruction.cache_site_index()) =>
+                            || !atom(instruction.atom_index()) =>
                     {
                         return Err(format!("function {index} this-field store is invalid"));
                     }
