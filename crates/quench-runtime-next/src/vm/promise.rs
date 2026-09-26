@@ -513,6 +513,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::JsonStringify => 3.0,
         Native::JsonRawJson | Native::JsonIsRawJson => 1.0,
         Native::RegExpSymbolMatch => 1.0,
+        Native::RegExpSymbolReplace => 2.0,
         Native::RegExpSpecies => 0.0,
         Native::ReflectHas | Native::ReflectApply => 2.0,
         _ => return None,

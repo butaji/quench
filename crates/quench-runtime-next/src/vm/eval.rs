@@ -8,9 +8,28 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let previous_global = self.realm.globals;
+        if let Some(global) = self.active_native_env()
+            && self.object_data(global).is_some()
+        {
+            self.realm.globals = global;
+        }
+        let result = self.eval_script_native_in_realm(p, args);
+        self.realm.globals = previous_global;
+        result
+    }
+
+    fn eval_script_native_in_realm(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         let source = self.to_string(p, source)?;
         let source_name = format!("<evalScript:{}>", self.programs.len());
+        if let Some(expression) = crate::Engine::eval_single_expression(&source) {
+            return self.eval_compiled_expression_named(p, expression, false, &source_name);
+        }
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();

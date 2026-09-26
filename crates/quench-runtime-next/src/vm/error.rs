@@ -1266,6 +1266,9 @@ impl<H: Host> Vm<H> {
         }
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
+        let eval_script = self.native_with_realm(Native::EvalScript, global, global);
+        self.set_builtin_function_name(eval_script, "evalScript")?;
+        self.set_builtin_value_named(realm, "evalScript", eval_script)?;
         Ok(realm)
     }
 
