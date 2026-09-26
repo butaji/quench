@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
         self.iterator_proto = self.object();
         self.string_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
         self.set_builtin_named(
             program,
             self.string_iterator_proto,

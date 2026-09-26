@@ -88,9 +88,46 @@ impl<H: Host> Vm<H> {
         if self.is_function(trap) {
             return self.call_value(p, trap, handler, &[target, key, receiver]);
         }
-        Ok(self
-            .symbol_property(target, key)
-            .unwrap_or(Value::UNDEFINED))
+        self.get_symbol_property_with_receiver(p, target, key, receiver)
+    }
+
+    pub(super) fn get_symbol_property_with_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        key: Value,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        let mut owner = self.primitive_prototype(object).unwrap_or(object);
+        loop {
+            if let Some(Cell::Proxy {
+                target, handler, ..
+            }) = self.heap.get(owner).cloned()
+            {
+                return self.proxy_get_symbol(p, target, handler, receiver, key);
+            }
+            if let Some(value) = self.symbol_property(owner, key) {
+                let attributes = self
+                    .property_attributes(owner, PropertyKey::symbol(key))
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                if attributes.accessor {
+                    return attributes
+                        .getter
+                        .filter(|getter| !getter.is_undefined())
+                        .map_or(Ok(Value::UNDEFINED), |getter| {
+                            self.call_value(p, getter, receiver, &[])
+                        });
+                }
+                return Ok(value);
+            }
+            let Some(data) = self.object_data(owner) else {
+                return Ok(Value::UNDEFINED);
+            };
+            owner = data.proto;
+            if owner.is_null() {
+                return Ok(Value::UNDEFINED);
+            }
+        }
     }
 
     pub(super) fn proxy_set_symbol(

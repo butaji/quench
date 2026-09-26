@@ -96,36 +96,7 @@ impl<H: Host> Vm<H> {
             return self.get_property(p, object, atom);
         }
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
-            if let Some(Cell::Proxy {
-                target, handler, ..
-            }) = self.heap.get(object).cloned()
-            {
-                return self.proxy_get_symbol(p, target, handler, object, key);
-            }
-            let mut owner = self.primitive_prototype(object).unwrap_or(object);
-            loop {
-                if let Some(value) = self.symbol_property(owner, key) {
-                    let attributes = self
-                        .property_attributes(owner, PropertyKey::symbol(key))
-                        .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-                    if attributes.accessor {
-                        return attributes
-                            .getter
-                            .filter(|getter| !getter.is_undefined())
-                            .map_or(Ok(Value::UNDEFINED), |getter| {
-                                self.call_value(p, getter, object, &[])
-                            });
-                    }
-                    return Ok(value);
-                }
-                let Some(data) = self.object_data(owner) else {
-                    return Ok(Value::UNDEFINED);
-                };
-                owner = data.proto;
-                if owner.is_null() {
-                    return Ok(Value::UNDEFINED);
-                }
-            }
+            return self.get_symbol_property_with_receiver(p, object, key, object);
         }
         if let Some(index) = key.as_number().filter(|x| {
             *x >= 0.0
