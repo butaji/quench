@@ -107,9 +107,8 @@ fn uses(
     superinstructions: &[Superinstruction],
 ) -> u64 {
     match instruction.op() {
-        Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture | Op::StoreName => {
-            bit(instruction.a())
-        }
+        Op::StoreLocal | Op::StoreEnvLocal | Op::StoreCapture => bit(instruction.a()),
+        Op::StoreName => bit(instruction.register_a()),
         Op::StoreResolvedName => bit(instruction.register_a()) | bit(instruction.register_b()),
         Op::LoadResolvedName => bit(instruction.register_b()),
         Op::ResolveName | Op::DeleteName | Op::LoadNameCall => 0,
@@ -208,6 +207,7 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
         | Op::LoadCapture
         | Op::LoadName
         | Op::LoadNameTypeof
+        | Op::DeleteName
         | Op::ResolveName
         | Op::LoadResolvedName
         | Op::ToPropertyKey

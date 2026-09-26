@@ -176,6 +176,16 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn unused_field_is_zero(self, field: InstructionField) -> bool {
+                debug_assert_eq!(self.op().field_layout(field), FieldLayout::Unused);
+                match field {
+                    InstructionField::A => self.a() == 0,
+                    InstructionField::B => self.b() == 0,
+                    InstructionField::C => self.c() == 0,
+                }
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn operand_b(self) -> Operand {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
