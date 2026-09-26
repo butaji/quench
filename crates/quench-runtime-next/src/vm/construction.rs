@@ -650,6 +650,7 @@ impl<H: Host> Vm<H> {
                 Native::Object => Some("Object"),
                 Native::RegExp => Some("RegExp"),
                 Native::Number => Some("Number"),
+                Native::String => Some("String"),
                 Native::Iterator => Some("Iterator"),
                 Native::Boolean => Some("Boolean"),
                 Native::DataView => Some("DataView"),
