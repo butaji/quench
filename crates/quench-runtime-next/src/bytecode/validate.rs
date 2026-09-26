@@ -302,16 +302,16 @@ impl ResidualProgram {
                         return Err(format!("function {index} indexed load is invalid"));
                     }
                     Op::SetIndex
-                        if !register(instruction.a())
-                            || !register(instruction.b())
-                            || !register(instruction.c())
+                        if !register(instruction.register_a())
+                            || !register(instruction.register_b())
+                            || !register(instruction.register_c())
                             || instruction.boolean_flag().is_none() =>
                     {
                         return Err(format!("function {index} indexed store is invalid"));
                     }
                     Op::DefineArrayElement
-                        if !register(instruction.a())
-                            || !register(instruction.b())
+                        if !register(instruction.register_a())
+                            || !register(instruction.register_b())
                             || instruction.array_index() == super::ARRAY_INDEX_SENTINEL =>
                     {
                         return Err(format!("function {index} array literal element is invalid"));

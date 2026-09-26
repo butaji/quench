@@ -376,11 +376,13 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
                 || next_method == register
         }
         Op::SetIndex => {
-            instruction.a() == register
-                || instruction.b() == register
-                || instruction.c() == register
+            instruction.register_a() == register
+                || instruction.register_b() == register
+                || instruction.register_c() == register
         }
-        Op::DefineArrayElement => instruction.a() == register || instruction.b() == register,
+        Op::DefineArrayElement => {
+            instruction.register_a() == register || instruction.register_b() == register
+        }
         Op::Binary | Op::JumpBinaryFalse => {
             operand(instruction.operand_b().0) || operand(instruction.operand_c().0)
         }

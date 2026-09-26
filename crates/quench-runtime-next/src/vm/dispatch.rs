@@ -692,18 +692,18 @@ impl<H: Host> Vm<H> {
                 self.profile.index_dispatch(true, false);
                 self.set_index_mode(
                     p,
-                    self.read(f, i.b()),
-                    self.read(f, i.c()),
-                    self.read(f, i.a()),
+                    self.read(f, i.register_b()),
+                    self.read(f, i.register_c()),
+                    self.read(f, i.register_a()),
                     p.functions[self.frames[f].function as usize].strict
                         || i.boolean_flag().expect("validated boolean immediate"),
                 )?
             }
             Op::DefineArrayElement => self.define_array_literal_element(
                 p,
-                self.read(f, i.b()),
+                self.read(f, i.register_b()),
                 i.array_index() as usize,
-                self.read(f, i.a()),
+                self.read(f, i.register_a()),
             )?,
             Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
