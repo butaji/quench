@@ -758,6 +758,7 @@ impl<H: Host> Vm<H> {
             "finally",
             self.native_value(Native::PromiseFinally),
         )?;
+        self.install_builtin_to_string_tag(self.promise.proto, "Promise")?;
         self.set_named(
             program,
             promise,

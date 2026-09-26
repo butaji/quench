@@ -41,9 +41,6 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(prototype, name, method)?;
         }
-        if self.well_known_symbols.contains_key("toStringTag") {
-            self.install_builtin_to_string_tag(prototype, "Boolean")?;
-        }
         if global == self.realm.globals {
             self.global(p, "Boolean", constructor)
         } else {

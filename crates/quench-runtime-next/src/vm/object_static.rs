@@ -182,20 +182,6 @@ impl<H: Host> Vm<H> {
                     TypedArrayKind::Float32 => "Float32Array",
                     TypedArrayKind::Float64 => "Float64Array",
                 },
-                Some(Cell::Iterator { kind, .. }) => match kind {
-                    IteratorKind::Array
-                    | IteratorKind::ArrayKeys
-                    | IteratorKind::ArrayValues
-                    | IteratorKind::ArrayEntries => "Array Iterator",
-                    IteratorKind::String => "String Iterator",
-                    IteratorKind::MapKeys
-                    | IteratorKind::MapValues
-                    | IteratorKind::MapEntries => "Map Iterator",
-                    IteratorKind::SetValues | IteratorKind::SetEntries => "Set Iterator",
-                    IteratorKind::Generator => "Generator",
-                    IteratorKind::AsyncGenerator => "AsyncGenerator",
-                    _ => "Object",
-                },
                 Some(Cell::WeakRef { .. }) => "WeakRef",
                 Some(Cell::FinalizationRegistry { .. }) => "FinalizationRegistry",
                 Some(Cell::Error(_)) => "Error",
@@ -261,12 +247,12 @@ impl<H: Host> Vm<H> {
                 match self.heap.get(key).cloned() {
                     Some(Cell::Symbol(_)) => {
                         let value = self.get_index(p, source, key)?;
-                        self.set_index(p, target, key, value)?;
+                        self.set_index_mode(p, target, key, value, true)?;
                     }
                     Some(Cell::String(name)) => {
                         let atom = self.intern_js_atom(&name);
                         let value = self.get_property(p, source, atom)?;
-                        self.set_property_with_program(p, target, atom, value)?;
+                        self.set_property_with_program_mode(p, target, atom, value, true)?;
                     }
                     _ => unreachable!("validated own property key"),
                 }

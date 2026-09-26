@@ -297,7 +297,11 @@ impl<H: Host> Vm<H> {
                 }
                 return Ok(());
             }
-            return self.set_symbol_property(object, key, value);
+            return match self.set_symbol_property(object, key, value) {
+                Ok(()) => Ok(()),
+                Err(_) if !strict => Ok(()),
+                Err(error) => Err(error),
+            };
         }
         if let Some(index) = key.as_number().filter(|x| {
             *x >= 0.0
