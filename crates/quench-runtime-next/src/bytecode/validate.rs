@@ -383,8 +383,10 @@ impl ResidualProgram {
                     {
                         return Err(format!("function {index} move operand is invalid"));
                     }
-                    Op::LoadImportMeta if !destination(instruction.a()) => {
-                        return Err(format!("function {index} import-meta load is invalid"));
+                    Op::LoadThis | Op::LoadImportMeta
+                        if !destination(instruction.result_register()) =>
+                    {
+                        return Err(format!("function {index} this/import-meta load is invalid"));
                     }
                     Op::CacheTemplateObject if !register(instruction.register_a()) => {
                         return Err(format!("function {index} template-object cache is invalid"));
