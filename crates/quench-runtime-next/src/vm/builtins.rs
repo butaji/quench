@@ -165,6 +165,10 @@ const NATIVES: &[Native] = &[
     Native::MapValues,
     Native::MapEntries,
     Native::MapForEach,
+    Native::MapGetOrInsert,
+    Native::MapGetOrInsertComputed,
+    Native::MapGroupBy,
+    Native::MapSizeGetter,
     Native::Set,
     Native::SetAdd,
     Native::SetHas,
@@ -174,6 +178,7 @@ const NATIVES: &[Native] = &[
     Native::SetValues,
     Native::SetEntries,
     Native::SetForEach,
+    Native::SetSizeGetter,
     Native::Iterator, Native::IteratorFrom, Native::IteratorConcat, Native::IteratorZip,
     Native::IteratorZipKeyed, Native::IteratorMap, Native::IteratorFilter, Native::IteratorTake,
     Native::IteratorDrop, Native::IteratorFlatMap, Native::IteratorReduce, Native::IteratorToArray,
@@ -399,6 +404,7 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named(program, symbol, name, value)?;
         }
+        self.install_map_species()?;
         self.install_regexp_symbol_properties(
             self.native_value(Native::RegExp),
             self.regexp_proto,

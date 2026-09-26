@@ -79,27 +79,20 @@ impl<H: Host> Vm<H> {
             resizable: false,
             immutable: false,
         });
-        if let Some(values) = values {
-            let converted = values
-                .into_iter()
-                .map(|value| self.to_number(p, value))
-                .collect::<Result<Vec<_>, _>>()?;
-            let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
-                return Err(JsError(format!("{name} backing buffer is invalid").into()));
-            };
-            let bytes = Rc::make_mut(bytes);
-            for (index, value) in converted.into_iter().enumerate() {
-                encode_typed_value(kind, value, &mut bytes[index * width..][..width]);
-            }
-        }
-        Ok(self.heap.alloc(Cell::TypedArray {
+        let typed_array = self.heap.alloc(Cell::TypedArray {
             kind,
             object: Self::empty_object(proto),
             buffer,
             offset: 0,
             length,
             length_tracking: false,
-        }))
+        });
+        if let Some(values) = values {
+            for (index, value) in values.into_iter().enumerate() {
+                self.typed_array_set(p, typed_array, index, value)?;
+            }
+        }
+        Ok(typed_array)
     }
 
     pub(super) fn typed_array_proto(&self, kind: TypedArrayKind) -> Value {
@@ -171,40 +164,5 @@ impl<H: Host> Vm<H> {
             .map(|index| self.get_index(p, source, Value::number(index as f64)))
             .collect::<Result<Vec<_>, _>>()
             .map(Some)
-    }
-}
-
-fn encode_typed_value(kind: TypedArrayKind, value: f64, bytes: &mut [u8]) {
-    match kind {
-        TypedArrayKind::Uint8 => bytes[0] = value.trunc().rem_euclid(256.0) as u8,
-        TypedArrayKind::Uint8Clamped => bytes[0] = clamp_u8(value),
-        TypedArrayKind::Uint16 => {
-            bytes.copy_from_slice(&(value.trunc().rem_euclid(65_536.0) as u16).to_ne_bytes())
-        }
-        TypedArrayKind::Uint32 => {
-            bytes.copy_from_slice(&(value.trunc().rem_euclid(4_294_967_296.0) as u32).to_ne_bytes())
-        }
-        TypedArrayKind::Int8 => bytes[0] = value.trunc().rem_euclid(256.0) as u8,
-        TypedArrayKind::Int16 => {
-            bytes.copy_from_slice(&(value.trunc().rem_euclid(65_536.0) as u16).to_ne_bytes())
-        }
-        TypedArrayKind::Int32 => {
-            bytes.copy_from_slice(&(value.trunc().rem_euclid(4_294_967_296.0) as u32).to_ne_bytes())
-        }
-        TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
-            bytes.copy_from_slice(&(value.trunc() as i64).to_ne_bytes())
-        }
-        TypedArrayKind::Float32 => bytes.copy_from_slice(&(value as f32).to_ne_bytes()),
-        TypedArrayKind::Float64 => bytes.copy_from_slice(&value.to_ne_bytes()),
-    }
-}
-
-fn clamp_u8(value: f64) -> u8 {
-    if value.is_nan() || value <= 0.0 {
-        0
-    } else if value >= 255.0 {
-        255
-    } else {
-        value.round_ties_even() as u8
     }
 }

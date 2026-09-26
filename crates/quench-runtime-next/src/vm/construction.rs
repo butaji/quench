@@ -834,7 +834,9 @@ impl<H: Host> Vm<H> {
             Native::Float64Array => self.construct_float64_array_native(p, args),
             Native::DataView => self.construct_data_view_native(p, args),
             Native::BigInt => Err(self.type_error(p, "BigInt cannot be called with new".into())),
-            Native::Map | Native::Set => self.construct_collection_native(p, native, args),
+            Native::Map | Native::Set => {
+                self.construct_collection_native(p, native, args, new_target)
+            }
             Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
             Native::WeakRef => self.construct_weak_ref_native(args),
             Native::FinalizationRegistry => {

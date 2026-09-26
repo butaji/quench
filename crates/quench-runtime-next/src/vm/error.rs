@@ -1115,6 +1115,27 @@ impl<H: Host> Vm<H> {
             );
         }
         self.set_named(program, global, "Array", array)?;
+        let map = self.native_with_realm(Native::Map, global, global);
+        let map_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.set_builtin_function_name(map, "Map")?;
+        self.set_builtin_value_named(map, "prototype", map_prototype)?;
+        self.set_builtin_value_named(map_prototype, "constructor", map)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            map,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_value_named(global, "Map", map)?;
         let regexp = self.native_with_realm(Native::RegExp, global, global);
         let regexp_prototype = self.heap.alloc(Cell::RegExp {
             object: Self::empty_object(object_prototype),
