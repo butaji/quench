@@ -366,7 +366,7 @@ fn reads_register(instruction: Instr, register: Register, fields: &[FieldSite]) 
             operand(instruction.operand_b().0) || operand(instruction.operand_c().0)
         }
         Op::IncDec | Op::Unary | Op::Move => instruction.b() == register,
-        Op::JumpFalse | Op::Return | Op::Throw => instruction.a() == register,
+        Op::JumpFalse | Op::Return | Op::Throw => instruction.register_a() == register,
         Op::Call | Op::CallDirectEvalArray => {
             let window = instruction.call_window();
             instruction.b() == register
