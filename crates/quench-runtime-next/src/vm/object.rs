@@ -854,6 +854,8 @@ impl<H: Host> Vm<H> {
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
                 self.call_value(p, setter, object, &[value])?;
+            } else if strict {
+                return Err(self.type_error(p, "cannot set property without a setter".into()));
             }
             return Ok(());
         }
