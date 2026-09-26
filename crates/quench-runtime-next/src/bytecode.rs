@@ -82,6 +82,12 @@ pub(crate) enum InstructionField {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ImmediateRole {
+    Undeclared,
+    MethodSiteIndex,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OperandLayout {
     a: FieldLayout,
     b: FieldLayout,
@@ -238,7 +244,7 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr $(; $layout:ident)? $(, @ $result:ident)? $(, @ fields($a:ident, $b:ident, $c:ident))?),+ $(,)?) => {
+    ($($name:ident => $effect:expr $(; $layout:ident)? $(, @ $result:ident)? $(, @ fields($a:ident, $b:ident, $c:ident))? $(, @ immediate($immediate_role:ident))?),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -258,6 +264,9 @@ macro_rules! opcodes {
             const OPERAND_LAYOUTS: [OperandLayout; Self::COUNT] = [$(
                 opcodes!(@fields $($a, $b, $c)?)),+
             ];
+            const IMMEDIATE_ROLES: [ImmediateRole; Self::COUNT] = [$(
+                opcodes!(@immediate $($immediate_role)?)),+
+            ];
 
             pub(crate) const fn effect(self) -> Effect {
                 Self::EFFECTS[self as usize]
@@ -273,6 +282,10 @@ macro_rules! opcodes {
 
             pub(crate) const fn field_layout(self, field: InstructionField) -> FieldLayout {
                 Self::OPERAND_LAYOUTS[self as usize].field(field)
+            }
+
+            pub(crate) const fn immediate_role(self) -> ImmediateRole {
+                Self::IMMEDIATE_ROLES[self as usize]
             }
 
             pub(crate) const fn from_index(index: usize) -> Option<Self> {
@@ -293,6 +306,8 @@ macro_rules! opcodes {
         OperandLayout { a: FieldLayout::$a, b: FieldLayout::$b, c: FieldLayout::$c }
     };
     (@fields) => { OperandLayout::UNDECLARED };
+    (@immediate $role:ident) => { ImmediateRole::$role };
+    (@immediate) => { ImmediateRole::Undeclared };
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
@@ -361,8 +376,8 @@ opcodes!(
     Call => CALL_EFFECT; CallWindowWithEvalFlags, @ Returnable,
     CallDirectEvalArray => CALL_EFFECT; CallWindowWithEvalFlags, @ Returnable,
     CallKnown => CALL_EFFECT; CallWindow, @ Returnable, @ fields(Undeclared, FunctionIndex, Undeclared),
-    CallMethod => CALL_EFFECT, @ Returnable,
-    CallThisMethod => CALL_EFFECT, @ Returnable,
+    CallMethod => CALL_EFFECT, @ Returnable, @ fields(Undeclared, Register, Undeclared), @ immediate(MethodSiteIndex),
+    CallThisMethod => CALL_EFFECT, @ Returnable, @ immediate(MethodSiteIndex),
     Construct => CALL_EFFECT; ConstructCountAndFlags, @ Returnable, @ fields(Undeclared, Register, ConstructArguments),
     Jump => Effect::CONTROL,
     JumpFalse => Effect::CONTROL,

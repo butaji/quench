@@ -890,7 +890,7 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(2);
                 let this = self.read(f, i.b());
                 self.frames[f].pc = *pc;
-                let value = self.call_method_site_safe(p, f, i.imm() as usize, this)?;
+                let value = self.call_method_site_safe(p, f, i.method_site_index(), this)?;
                 if i.returns_from_frame() {
                     self.profile.terminal_call(1);
                     return Ok(StepResult::Return(value));
@@ -899,14 +899,15 @@ impl<H: Host> Vm<H> {
             }
             Op::CallThisMethod => {
                 self.profile.call_source(3);
-                let path = p.method_sites[i.imm() as usize].receiver_path;
+                let method_site = i.method_site_index();
+                let path = p.method_sites[method_site].receiver_path;
                 let this = if let Some((atom, cache)) = path {
                     self.get_field_cached(p, self.frames[f].this, atom, cache)?
                 } else {
                     self.frames[f].this
                 };
                 self.frames[f].pc = *pc;
-                let value = self.call_method_site_safe(p, f, i.imm() as usize, this)?;
+                let value = self.call_method_site_safe(p, f, method_site, this)?;
                 if i.returns_from_frame() {
                     self.profile.terminal_call(2);
                     return Ok(StepResult::Return(value));
