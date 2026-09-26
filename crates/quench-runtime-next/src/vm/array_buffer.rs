@@ -114,33 +114,121 @@ impl<H: Host> Vm<H> {
         self.set_native_name(program, Native::ArrayBufferIsView, "isView")?;
         self.install_array_buffer_getters(program, self.array_buffer_proto, false)?;
         self.global(program, "ArrayBuffer", array_buffer)?;
-        let shared_array_buffer = self.native_value(Native::SharedArrayBuffer);
-        self.shared_array_buffer_proto = self.object();
-        self.set_named(
+        let (shared_array_buffer, prototype) = self.install_shared_array_buffer_for_realm(
             program,
-            shared_array_buffer,
-            "prototype",
-            self.shared_array_buffer_proto,
+            self.realm.globals,
+            self.object_proto,
         )?;
-        self.set_non_enumerable_property(shared_array_buffer, "prototype", false);
-        self.set_named(
-            program,
-            self.shared_array_buffer_proto,
-            "grow",
-            self.native_value(Native::SharedArrayBufferGrow),
-        )?;
-        self.set_non_enumerable_property(self.shared_array_buffer_proto, "grow", true);
-        self.set_named(
-            program,
-            self.shared_array_buffer_proto,
-            "constructor",
-            shared_array_buffer,
-        )?;
-        self.set_non_enumerable_property(self.shared_array_buffer_proto, "constructor", true);
-        self.set_native_name(program, Native::SharedArrayBuffer, "SharedArrayBuffer")?;
-        self.set_native_name(program, Native::SharedArrayBufferGrow, "grow")?;
-        self.install_array_buffer_getters(program, self.shared_array_buffer_proto, true)?;
+        self.shared_array_buffer_proto = prototype;
         self.global(program, "SharedArrayBuffer", shared_array_buffer)
+    }
+
+    pub(super) fn install_shared_array_buffer_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<(Value, Value), JsError> {
+        let current_realm = global == self.realm.globals;
+        let constructor = self.realm_native_value(Native::SharedArrayBuffer, global, current_realm);
+        if current_realm {
+            self.set_native_name(program, Native::SharedArrayBuffer, "SharedArrayBuffer")?;
+        } else {
+            self.set_builtin_function_name(constructor, "SharedArrayBuffer")?;
+        }
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_named(program, constructor, "prototype", prototype)?;
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_named(program, prototype, "constructor", constructor)?;
+        self.set_non_enumerable_property(prototype, "constructor", true);
+        for (name, native) in [
+            ("grow", Native::SharedArrayBufferGrow),
+            ("slice", Native::SharedArrayBufferSlice),
+        ] {
+            let method = self.realm_native_value(native, global, current_realm);
+            if current_realm {
+                self.set_native_name(program, native, name)?;
+            } else {
+                self.set_builtin_function_name(method, name)?;
+            }
+            self.set_builtin_value_named(prototype, name, method)?;
+            self.set_non_enumerable_property(prototype, name, true);
+        }
+        self.install_shared_array_buffer_getters(program, prototype, global, current_realm)?;
+        if self.well_known_symbols.contains_key("toStringTag") {
+            self.install_builtin_to_string_tag(prototype, "SharedArrayBuffer")?;
+        }
+        if let Some(species) = self.well_known_symbols.get("species").copied() {
+            let getter = self.realm_native_value(Native::ArrayBufferSpecies, global, current_realm);
+            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+            self.set_symbol_property(constructor, species, getter)?;
+            self.set_property_attributes(
+                constructor,
+                PropertyKey::symbol(species),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
+        Ok((constructor, prototype))
+    }
+
+    fn install_shared_array_buffer_getters(
+        &mut self,
+        program: &ResidualProgram,
+        prototype: Value,
+        global: Value,
+        current_realm: bool,
+    ) -> Result<(), JsError> {
+        for (name, native) in [
+            ("byteLength", Native::SharedArrayBufferByteLengthGetter),
+            (
+                "maxByteLength",
+                Native::SharedArrayBufferMaxByteLengthGetter,
+            ),
+            ("growable", Native::SharedArrayBufferGrowableGetter),
+        ] {
+            let getter = self.realm_native_value(native, global, current_realm);
+            if current_realm {
+                self.set_native_name(program, native, &format!("get {name}"))?;
+            } else {
+                self.set_builtin_function_name(getter, &format!("get {name}"))?;
+            }
+            let atom = self.intern_atom(name);
+            self.set_property(prototype, atom, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
+        Ok(())
     }
 
     pub(super) fn detach_array_buffer_native(
@@ -277,19 +365,22 @@ impl<H: Host> Vm<H> {
         let array_buffer = self.native_value(Native::ArrayBuffer);
         let getter = self.native_value(Native::ArrayBufferSpecies);
         self.set_native_name(program, Native::ArrayBufferSpecies, "get [Symbol.species]")?;
-        self.set_index(program, array_buffer, species, getter)?;
-        self.set_property_attributes(
-            array_buffer,
-            PropertyKey::symbol(species),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
-        );
+        let shared_array_buffer = self.native_value(Native::SharedArrayBuffer);
+        for constructor in [array_buffer, shared_array_buffer] {
+            self.set_index(program, constructor, species, getter)?;
+            self.set_property_attributes(
+                constructor,
+                PropertyKey::symbol(species),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
         Ok(())
     }
 
@@ -502,15 +593,23 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
+        shared: bool,
     ) -> Result<Value, JsError> {
         let bytes = match self.heap.get(this) {
             Some(Cell::ArrayBuffer {
                 bytes,
-                shared,
+                shared: receiver_shared,
                 detached,
                 ..
-            }) if !shared && !detached => Rc::clone(bytes),
-            _ => return Err(self.type_error(p, "ArrayBuffer.slice receiver is invalid".into())),
+            }) if *receiver_shared == shared && !detached => Rc::clone(bytes),
+            _ => {
+                let name = if shared {
+                    "SharedArrayBuffer"
+                } else {
+                    "ArrayBuffer"
+                };
+                return Err(self.type_error(p, format!("{name}.slice receiver is invalid")));
+            }
         };
         let source_bytes = Rc::clone(&bytes);
         let length = bytes.len();
@@ -541,8 +640,13 @@ impl<H: Host> Vm<H> {
         let count = end.saturating_sub(start);
         let constructor_atom = self.intern_atom("constructor");
         let constructor = self.get_property(p, this, constructor_atom)?;
+        let default_constructor = if shared {
+            Native::SharedArrayBuffer
+        } else {
+            Native::ArrayBuffer
+        };
         let species = if constructor.is_undefined() {
-            self.native_value(Native::ArrayBuffer)
+            self.native_value(default_constructor)
         } else {
             if constructor.is_null() || self.object_data(constructor).is_none() {
                 return Err(self.type_error(p, "ArrayBuffer constructor must be an object".into()));
@@ -555,7 +659,7 @@ impl<H: Host> Vm<H> {
                 .transpose()?
                 .unwrap_or(Value::UNDEFINED);
             if species.is_null() || species.is_undefined() {
-                self.native_value(Native::ArrayBuffer)
+                self.native_value(default_constructor)
             } else {
                 species
             }
@@ -584,7 +688,7 @@ impl<H: Host> Vm<H> {
                     );
                 }
             };
-        if result == this || result_shared || result_detached || result_immutable {
+        if result == this || (!shared && result_shared) || result_detached || result_immutable {
             return Err(self.type_error(p, "ArrayBuffer species returned an invalid buffer".into()));
         }
         if result_bytes.len() < count {
@@ -761,31 +865,37 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let requested = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        if requested.is_nan() || requested.is_sign_negative() || requested.is_infinite() {
-            return Err(JsError("SharedArrayBuffer grow length is invalid".into()));
-        }
-        let requested = requested.trunc() as usize;
-        let (before, after) = {
-            let Some(Cell::ArrayBuffer {
+        let requested =
+            self.array_buffer_to_index(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let (current_length, max_length, shared, detached, resizable) = match self.heap.get(this) {
+            Some(Cell::ArrayBuffer {
                 bytes,
                 shared,
                 detached,
                 max_byte_length,
                 resizable,
                 ..
-            }) = self.heap.get_mut(this)
-            else {
-                return Err(JsError("SharedArrayBuffer.grow receiver is invalid".into()));
-            };
-            if !*shared
-                || *detached
-                || !*resizable
-                || requested < bytes.len()
-                || requested > *max_byte_length
-            {
-                return Err(JsError("SharedArrayBuffer is not growable".into()));
+            }) => (
+                bytes.len(),
+                *max_byte_length,
+                *shared,
+                *detached,
+                *resizable,
+            ),
+            _ => {
+                return Err(self.type_error(p, "SharedArrayBuffer.grow receiver is invalid".into()));
             }
+        };
+        if !shared || detached || !resizable {
+            return Err(self.type_error(p, "SharedArrayBuffer is not growable".into()));
+        }
+        if requested < current_length || requested > max_length {
+            return Err(self.range_error(p, "SharedArrayBuffer grow length is out of range".into()));
+        }
+        let (before, after) = {
+            let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(this) else {
+                unreachable!("grow receiver validated before mutation");
+            };
             let before = bytes.capacity();
             Rc::make_mut(bytes).resize(requested, 0);
             (before, bytes.capacity())

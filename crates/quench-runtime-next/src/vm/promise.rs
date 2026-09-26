@@ -378,7 +378,10 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::SetClear | Native::SetKeys | Native::SetValues | Native::SetEntries => 0.0,
         Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
-        Native::ArrayBuffer | Native::ArrayBufferIsView | Native::DetachArrayBuffer => 1.0,
+        Native::ArrayBuffer
+        | Native::SharedArrayBuffer
+        | Native::ArrayBufferIsView
+        | Native::DetachArrayBuffer => 1.0,
         Native::Iterator => 0.0,
         Native::IteratorFrom => 1.0,
         Native::IteratorConcat => 0.0,
@@ -436,7 +439,10 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::AsyncDisposableStackUse | Native::AsyncDisposableStackDefer => 1.0,
         Native::AsyncDisposableStackAdopt => 2.0,
         Native::AsyncFunction | Native::GeneratorFunction | Native::AsyncGeneratorFunction => 1.0,
-        Native::ArrayBufferSlice | Native::ArrayBufferSliceToImmutable => 2.0,
+        Native::ArrayBufferSlice
+        | Native::SharedArrayBufferSlice
+        | Native::ArrayBufferSliceToImmutable => 2.0,
+        Native::SharedArrayBufferGrow => 1.0,
         Native::ArrayBufferResize => 1.0,
         Native::ArrayBufferTransfer
         | Native::ArrayBufferTransferToFixedLength

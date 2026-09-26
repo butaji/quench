@@ -133,6 +133,7 @@ const NATIVES: &[Native] = &[
     Native::ArrayIteratorNext,
     Native::SharedArrayBuffer,
     Native::SharedArrayBufferGrow,
+    Native::SharedArrayBufferSlice,
     Native::AtomicsLoad,
     Native::AtomicsStore,
     Native::AtomicsAdd,
