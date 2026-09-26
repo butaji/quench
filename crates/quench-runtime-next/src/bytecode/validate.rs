@@ -149,6 +149,12 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::BinaryOperator => {
             instruction.binary_operator() <= oxc_ast::ast::BinaryOperator::Instanceof as u32
         }
+        super::ImmediateRole::AdditionOperator => {
+            instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Addition as u32
+        }
+        super::ImmediateRole::MultiplicationOperator => {
+            instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Multiplication as u32
+        }
         super::ImmediateRole::UnaryOperator => {
             instruction.unary_operator() <= oxc_ast::ast::UnaryOperator::Void as u32
         }
@@ -178,13 +184,18 @@ fn packed_layout_domains_in_bounds(
         ImmediateLayout::CaptureDepthAndSlot => {
             usize::from(instruction.capture_depth()) < bounds.functions
         }
-        ImmediateLayout::CallWindow | ImmediateLayout::CallWindowWithEvalFlags => {
+        ImmediateLayout::CallWindow
+        | ImmediateLayout::CallWindowWithEvalFlags
+        | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags => {
             let window = instruction.call_window();
-            register_window_in_bounds(
-                u16::from(window.base),
-                u32::from(window.count),
-                bounds.registers,
-            )
+            let layout = instruction.op().immediate_layout();
+            (layout != ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
+                || window.count == super::SINGLE_ARGUMENT_CALL_ARGUMENT_COUNT)
+                && register_window_in_bounds(
+                    u16::from(window.base),
+                    u32::from(window.count),
+                    bounds.registers,
+                )
         }
         ImmediateLayout::ConstructCountAndFlags => match instruction.construct_arguments() {
             super::ConstructArguments::Registers(window) => {
@@ -309,25 +320,6 @@ impl ResidualProgram {
                                 || !is_numeric_index_operand(instruction.operand_c())) =>
                     {
                         return Err(format!("function {index} indexed load is invalid"));
-                    }
-                    Op::NumericAdd
-                        if instruction.binary_operator()
-                            != oxc_ast::ast::BinaryOperator::Addition as u32 =>
-                    {
-                        return Err(format!("function {index} numeric add opcode is invalid"));
-                    }
-                    Op::NumericMultiply
-                        if instruction.binary_operator()
-                            != oxc_ast::ast::BinaryOperator::Multiplication as u32 =>
-                    {
-                        return Err(format!(
-                            "function {index} numeric multiply opcode is invalid"
-                        ));
-                    }
-                    Op::CallDirectEvalArray if instruction.call_window().count != 1 => {
-                        return Err(format!(
-                            "function {index} direct eval arguments are invalid"
-                        ));
                     }
                     _ => {}
                 }
