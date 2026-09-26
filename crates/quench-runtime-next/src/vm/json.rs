@@ -919,7 +919,10 @@ impl<H: Host> Vm<H> {
             | Some(Cell::RegExp { .. })
             | Some(Cell::TypedArray { .. })
             | Some(Cell::ArrayBuffer { .. })
-            | Some(Cell::DataView { .. }) => self.json_serialize_object(p, value, state).map(Some),
+            | Some(Cell::DataView { .. })
+            | Some(Cell::TemporalDuration { .. }) => {
+                self.json_serialize_object(p, value, state).map(Some)
+            }
             Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_)) => Ok(None),

@@ -172,6 +172,7 @@ impl<H: Host> Vm<H> {
                         | Native::Number
                         | Native::Promise
                         | Native::Symbol
+                        | Native::TemporalDuration
                 ),
             },
             _ => false,
@@ -861,6 +862,7 @@ impl<H: Host> Vm<H> {
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args),
             Native::Date => self.date_construct_native(p, args),
+            Native::TemporalDuration => self.temporal_duration_construct(p, args),
             Native::AggregateError => self.construct_aggregate_error(p, args, new_target),
             Native::Symbol => Err(self.type_error(p, "Symbol is not a constructor".into())),
             Native::Error
