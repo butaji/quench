@@ -1,6 +1,6 @@
 use crate::bytecode::{
-    FieldLayout, FieldLookup, FieldSite, Function, Instr, InstructionField, Op, Operand, Register,
-    ResultLayout, Superinstruction,
+    FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, Instr,
+    InstructionField, Op, Operand, Register, ResultLayout, Superinstruction,
 };
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -121,31 +121,31 @@ fn uses(
     } else {
         0
     };
-    match instruction.op() {
-        Op::SuperConstArrayObject2 => {
-            field_reads
-                | superinstructions[instruction.superinstruction_index()]
-                    .code
-                    .iter()
-                    .fold(0, |mask, nested| {
-                        mask | uses(*nested, methods, fields, superinstructions)
-                    })
-        }
-        Op::YieldStar => {
-            let (state, next_method) = instruction.register_pair();
-            field_reads | result | bit(state) | bit(next_method)
-        }
-        Op::Call | Op::CallDirectEvalArray => {
+    let packed_uses = match instruction.op().immediate_layout() {
+        ImmediateLayout::CallWindow
+        | ImmediateLayout::CallWindowWithEvalFlags
+        | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags => {
             let window = instruction.call_window();
-            field_reads | range(window.base, window.count)
+            range(window.base, window.count)
         }
-        Op::CallKnown => {
-            let window = instruction.call_window();
-            field_reads | range(window.base, window.count)
+        ImmediateLayout::RegisterPair => {
+            let (first, second) = instruction.register_pair();
+            bit(first) | bit(second)
         }
-        Op::CallMethod | Op::CallThisMethod => field_reads | method_arguments(instruction, methods),
-        _ => field_reads,
-    }
+        _ => 0,
+    };
+    let indexed_uses = match instruction.op().immediate_role() {
+        ImmediateRole::MethodSiteIndex => method_arguments(instruction, methods),
+        ImmediateRole::SuperinstructionIndex => superinstructions
+            [instruction.superinstruction_index()]
+        .code
+        .iter()
+        .fold(0, |mask, nested| {
+            mask | uses(*nested, methods, fields, superinstructions)
+        }),
+        _ => 0,
+    };
+    field_reads | result | packed_uses | indexed_uses
 }
 
 fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite]) -> u64 {
@@ -191,23 +191,24 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
     .fold(0, |mask, field| {
         mask | field_definitions(instruction, field)
     });
-    match instruction.op() {
-        Op::YieldStar => {
-            let (state, next_method) = instruction.register_pair();
-            result | field_writes | bit(state) | bit(next_method)
+    let packed_definitions = match instruction.op().immediate_layout() {
+        ImmediateLayout::RegisterPair => {
+            let (first, second) = instruction.register_pair();
+            bit(first) | bit(second)
         }
-        Op::SuperConstArrayObject2 => {
-            result
-                | field_writes
-                | superinstructions[instruction.superinstruction_index()]
-                    .code
-                    .iter()
-                    .fold(0, |mask, nested| {
-                        mask | definitions(*nested, superinstructions)
-                    })
-        }
-        _ => result | field_writes,
-    }
+        _ => 0,
+    };
+    let indexed_definitions = match instruction.op().immediate_role() {
+        ImmediateRole::SuperinstructionIndex => superinstructions
+            [instruction.superinstruction_index()]
+        .code
+        .iter()
+        .fold(0, |mask, nested| {
+            mask | definitions(*nested, superinstructions)
+        }),
+        _ => 0,
+    };
+    result | field_writes | packed_definitions | indexed_definitions
 }
 
 fn field_definitions(instruction: Instr, field: InstructionField) -> u64 {
