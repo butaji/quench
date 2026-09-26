@@ -417,12 +417,16 @@ impl<H: Host> Vm<H> {
             let configurable_atom = self.intern_atom("configurable");
             let writable_atom = self.intern_atom("writable");
             for key in self.object_own_key_values(p, source)? {
-                let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
-                if descriptor.is_undefined() {
+                let current = self.object_get_own_property_descriptor(p, &[source, key])?;
+                if current.is_undefined() {
                     continue;
                 }
+                let value_atom = self.intern_atom("value");
+                let is_data = self.own_property(current, value_atom).is_some()
+                    || self.own_property(current, writable_atom).is_some();
+                let descriptor = self.object();
                 self.set_property(descriptor, configurable_atom, Value::FALSE)?;
-                if freeze {
+                if freeze && is_data {
                     self.set_property(descriptor, writable_atom, Value::FALSE)?;
                 }
                 self.object_define_property(p, &[source, key, descriptor])?;
