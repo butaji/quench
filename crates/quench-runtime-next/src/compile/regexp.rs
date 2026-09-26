@@ -3,6 +3,7 @@ const UNICODE_ESCAPE_DIGITS: usize = 4;
 const MAX_UNICODE_CODEPOINT: u32 = char::MAX as u32;
 
 pub(crate) fn validate_pattern(pattern: &str, flags: &str) -> Result<(), String> {
+    quench_regexp::validate_property_escapes(pattern, flags)?;
     validate_initial_quantifier(pattern)?;
     validate_braced_quantifier(pattern)?;
     validate_quantified_assertions(pattern, flags.contains('u') || flags.contains('v'))?;
