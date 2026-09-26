@@ -1155,11 +1155,11 @@ impl<H: Host> Vm<H> {
         let regexp_escape = self.native_with_realm(Native::RegExpEscape, global, global);
         self.set_builtin_function_name(regexp_escape, "escape")?;
         self.set_builtin_value_named(regexp, "escape", regexp_escape)?;
-        let regexp_prototype = self.heap.alloc(Cell::RegExp {
-            object: Self::empty_object(object_prototype),
-            source: JsString::from_str("(?:)"),
-            flags: String::new(),
-        });
+        let regexp_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.regexp_prototypes.insert(global, regexp_prototype);
+        self.install_regexp_accessors(program, regexp_prototype, global)?;
         self.set_builtin_value_named(regexp, "prototype", regexp_prototype)?;
         self.set_builtin_value_named(regexp_prototype, "constructor", regexp)?;
         self.install_regexp_symbol_properties(regexp, regexp_prototype, global)?;

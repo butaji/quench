@@ -74,6 +74,11 @@ impl<H: Host> Vm<H> {
                     self.async_from_sync_iterator_proto,
                     self.regexp_proto,
                 ])
+                .chain(
+                    self.regexp_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(
                     self.iterator_realm_prototypes

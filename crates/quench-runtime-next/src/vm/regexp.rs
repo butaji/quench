@@ -56,7 +56,11 @@ impl<H: Host> Vm<H> {
             if matches!(self.heap.get(current), Some(Cell::RegExp { .. })) {
                 return true;
             }
-            if current == self.regexp_proto {
+            if self
+                .regexp_prototypes
+                .values()
+                .any(|prototype| *prototype == current)
+            {
                 return true;
             }
             let Some(Cell::Object(object)) = self.heap.get(current) else {
@@ -76,6 +80,8 @@ impl<H: Host> Vm<H> {
         }
         let constructor = self.native_value(Native::RegExp);
         self.regexp_proto = self.object();
+        self.regexp_prototypes
+            .insert(self.realm.globals, self.regexp_proto);
         self.set_named(program, constructor, "prototype", self.regexp_proto)?;
         self.set_builtin_named(program, constructor, "escape", Native::RegExpEscape)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -101,12 +107,23 @@ impl<H: Host> Vm<H> {
             Native::RegExpToString,
         )?;
         self.install_regexp_symbol_properties(constructor, self.regexp_proto, self.realm.globals)?;
+        self.install_regexp_accessors(program, self.regexp_proto, self.realm.globals)?;
+        self.global(program, "RegExp", constructor)
+    }
+
+    pub(super) fn install_regexp_accessors(
+        &mut self,
+        program: &ResidualProgram,
+        prototype: Value,
+        realm: Value,
+    ) -> Result<(), JsError> {
         for (name, native) in REGEXP_FLAG_ACCESSORS {
-            let getter = self.native_value(*native);
+            let getter = self.native_with_realm(*native, realm, realm);
+            self.set_builtin_function_name(getter, &format!("get {name}"))?;
             let atom = self.intern_atom(name);
-            self.set_named(program, self.regexp_proto, name, getter)?;
+            self.set_named(program, prototype, name, getter)?;
             self.set_property_attributes(
-                self.regexp_proto,
+                prototype,
                 PropertyKey::string(atom),
                 PropertyAttributes {
                     writable: false,
@@ -122,11 +139,12 @@ impl<H: Host> Vm<H> {
             ("source", Native::RegExpSource),
             ("flags", Native::RegExpFlags),
         ] {
-            let getter = self.native_value(native);
+            let getter = self.native_with_realm(native, realm, realm);
+            self.set_builtin_function_name(getter, &format!("get {name}"))?;
             let atom = self.intern_atom(name);
-            self.set_named(program, self.regexp_proto, name, getter)?;
+            self.set_named(program, prototype, name, getter)?;
             self.set_property_attributes(
-                self.regexp_proto,
+                prototype,
                 PropertyKey::string(atom),
                 PropertyAttributes {
                     writable: false,
@@ -138,7 +156,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.global(program, "RegExp", constructor)
+        Ok(())
     }
 
     pub(super) fn install_regexp_symbol_properties(
@@ -671,14 +689,10 @@ impl<H: Host> Vm<H> {
             (Native::RegExpSource, Some(Cell::RegExp { source, .. })) => {
                 Ok(self.heap.alloc(Cell::String(source.clone())))
             }
-            (Native::RegExpFlags, Some(Cell::RegExp { flags, .. })) => {
-                Ok(self.heap.alloc(Cell::String(flags.clone().into())))
-            }
-            (Native::RegExpSource, _) if this == self.regexp_proto => {
+            (Native::RegExpSource, _)
+                if self.regexp_prototypes.get(&self.realm.globals) == Some(&this) =>
+            {
                 Ok(self.heap.alloc(Cell::String("(?:)".into())))
-            }
-            (Native::RegExpFlags, _) if this == self.regexp_proto => {
-                Ok(self.heap.alloc(Cell::String(String::new().into())))
             }
             _ => Err(self.type_error(p, "RegExp accessor called on incompatible receiver".into())),
         }
@@ -708,6 +722,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let flags = match self.heap.get(this) {
             Some(Cell::RegExp { flags, .. }) => flags.clone(),
+            _ if self.regexp_prototypes.get(&self.realm.globals) == Some(&this) => {
+                return Ok(Value::UNDEFINED);
+            }
             _ => {
                 return Err(
                     self.type_error(p, "RegExp accessor called on incompatible receiver".into())
@@ -719,13 +736,42 @@ impl<H: Host> Vm<H> {
             Native::RegExpIgnoreCase => flags.contains('i'),
             Native::RegExpMultiline => flags.contains('m'),
             Native::RegExpDotAll => flags.contains('s'),
-            Native::RegExpUnicode => flags.contains('u') || flags.contains('v'),
+            Native::RegExpUnicode => flags.contains('u'),
             Native::RegExpUnicodeSets => flags.contains('v'),
             Native::RegExpSticky => flags.contains('y'),
             Native::RegExpHasIndices => flags.contains('d'),
             _ => return Err(JsError("invalid RegExp flag accessor".into())),
         };
         Ok(if contains { Value::TRUE } else { Value::FALSE })
+    }
+
+    pub(super) fn regexp_flags_native(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(p, "RegExp.prototype.flags called on non-object".into()));
+        }
+        let properties = [
+            ("hasIndices", 'd'),
+            ("global", 'g'),
+            ("ignoreCase", 'i'),
+            ("multiline", 'm'),
+            ("dotAll", 's'),
+            ("unicode", 'u'),
+            ("unicodeSets", 'v'),
+            ("sticky", 'y'),
+        ];
+        let mut flags = String::new();
+        for (property, flag) in properties {
+            let atom = self.intern_atom(property);
+            let value = self.get_property(p, receiver, atom)?;
+            if self.truthy(value) {
+                flags.push(flag);
+            }
+        }
+        Ok(self.heap.alloc(Cell::String(flags.into())))
     }
 
     pub(super) fn construct_regexp_native(
