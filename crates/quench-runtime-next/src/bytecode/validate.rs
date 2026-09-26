@@ -151,7 +151,14 @@ impl ResidualProgram {
                     Op::LoadCapture if !destination(instruction.result_register()) => {
                         return Err(format!("function {index} capture result is invalid"));
                     }
-                    Op::LoadName | Op::LoadNameTypeof | Op::StoreName | Op::DeleteName
+                    Op::LoadName | Op::LoadNameTypeof
+                        if !atom(instruction.atom_index())
+                            || !cache(instruction.cache_site_index())
+                            || !destination(instruction.result_register()) =>
+                    {
+                        return Err(format!("function {index} name load is invalid"));
+                    }
+                    Op::StoreName | Op::DeleteName
                         if !atom(instruction.atom_index()) || !cache(instruction.c()) =>
                     {
                         return Err(format!("function {index} name site is invalid"));
