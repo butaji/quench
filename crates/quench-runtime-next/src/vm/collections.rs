@@ -2,6 +2,7 @@ use super::*;
 
 const MAP_ENTRY_KEY_INDEX: usize = 0;
 const MAP_ENTRY_VALUE_INDEX: usize = 1;
+include!("collections_set_relations.rs");
 impl<H: Host> Vm<H> {
     pub(super) fn is_collection_native(native: Native) -> bool {
         matches!(
@@ -55,6 +56,14 @@ impl<H: Host> Vm<H> {
                 | Native::SetEntries
                 | Native::SetForEach
                 | Native::SetSizeGetter
+                | Native::SetDifference
+                | Native::SetIntersection
+                | Native::SetSymmetricDifference
+                | Native::SetUnion
+                | Native::SetIsDisjointFrom
+                | Native::SetIsSubsetOf
+                | Native::SetIsSupersetOf
+                | Native::SetSpeciesGetter
                 | Native::IteratorNext
                 | Native::RegExpStringIteratorNext
                 | Native::ArrayIteratorNext
@@ -211,13 +220,25 @@ impl<H: Host> Vm<H> {
         self.set_builtin_named(program, map, "groupBy", Native::MapGroupBy)?;
         self.global(program, "Map", map)?;
         let set = self.native_value(Native::Set);
-        self.set_proto = self.object();
+        self.set_proto = self.install_set_prototype(program, set, self.object_proto)?;
+        self.global(program, "Set", set)
+    }
+
+    pub(super) fn install_set_prototype(
+        &mut self,
+        program: &ResidualProgram,
+        set: Value,
+        prototype_parent: Value,
+    ) -> Result<Value, JsError> {
+        let set_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(prototype_parent)));
         let size_getter = self.native_value(Native::SetSizeGetter);
         self.set_builtin_function_name(size_getter, "get size")?;
-        self.set_named(program, self.set_proto, "size", size_getter)?;
+        self.set_named(program, set_proto, "size", size_getter)?;
         let size_atom = self.intern_atom("size");
         self.set_property_attributes(
-            self.set_proto,
+            set_proto,
             PropertyKey::string(size_atom),
             PropertyAttributes {
                 writable: false,
@@ -233,15 +254,38 @@ impl<H: Host> Vm<H> {
             ("has", Native::SetHas),
             ("delete", Native::SetDelete),
             ("clear", Native::SetClear),
-            ("keys", Native::SetKeys),
             ("values", Native::SetValues),
             ("entries", Native::SetEntries),
             ("forEach", Native::SetForEach),
+            ("difference", Native::SetDifference),
+            ("intersection", Native::SetIntersection),
+            ("symmetricDifference", Native::SetSymmetricDifference),
+            ("union", Native::SetUnion),
+            ("isDisjointFrom", Native::SetIsDisjointFrom),
+            ("isSubsetOf", Native::SetIsSubsetOf),
+            ("isSupersetOf", Native::SetIsSupersetOf),
         ] {
-            self.set_builtin_named(program, self.set_proto, name, native)?;
+            self.set_builtin_named(program, set_proto, name, native)?;
         }
-        self.set_named(program, set, "prototype", self.set_proto)?;
-        self.global(program, "Set", set)
+        let values = self.native_value(Native::SetValues);
+        self.set_builtin_value_named(set_proto, "keys", values)?;
+        self.set_builtin_value_named(set_proto, "constructor", set)?;
+        self.set_named(program, set, "prototype", set_proto)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            set,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_function_name(set, "Set")?;
+        Ok(set_proto)
     }
     pub(super) fn install_map_species(&mut self) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
@@ -253,6 +297,28 @@ impl<H: Host> Vm<H> {
         self.set_symbol_property(map, species, Value::UNDEFINED)?;
         self.set_property_attributes(
             map,
+            PropertyKey::symbol(species),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+
+    pub(super) fn install_set_species(&mut self, set: Value) -> Result<(), JsError> {
+        let Some(species) = self.well_known_symbols.get("species").copied() else {
+            return Ok(());
+        };
+        let getter = self.native_value(Native::SetSpeciesGetter);
+        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+        self.set_symbol_property(set, species, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            set,
             PropertyKey::symbol(species),
             PropertyAttributes {
                 writable: false,
@@ -354,11 +420,7 @@ impl<H: Host> Vm<H> {
                 self.set_proto
             }
         };
-        let entries = args
-            .first()
-            .copied()
-            .filter(|value| self.array_length(*value).is_some());
-        let cell = match native {
+        match native {
             Native::Map => {
                 let map = self.heap.alloc(Cell::Map {
                     object: Self::empty_object(prototype),
@@ -434,26 +496,58 @@ impl<H: Host> Vm<H> {
                 }
             }
             Native::Set => {
-                let mut values = Vec::new();
-                if let Some(entries) = entries {
-                    for index in 0..self.array_length(entries).unwrap_or(0) {
-                        let value = self.array_value_at(entries, index);
-                        if !values
-                            .iter()
-                            .any(|candidate| self.same_value_zero(*candidate, value))
-                        {
-                            values.push(value);
-                        }
-                    }
-                }
-                Cell::Set {
+                let set = self.heap.alloc(Cell::Set {
                     object: Self::empty_object(prototype),
-                    entries: values,
+                    entries: Vec::new(),
+                });
+                let Some(iterable) = args
+                    .first()
+                    .copied()
+                    .filter(|value| !value.is_null() && !value.is_undefined())
+                else {
+                    return Ok(set);
+                };
+                let add_atom = self.intern_atom("add");
+                let adder = self.get_property(p, set, add_atom)?;
+                if self.call_target(adder).is_err() {
+                    return Err(self.type_error(p, "Set.prototype.add is not callable".into()));
+                }
+                let iterator = self.get_iterator(p, iterable)?;
+                loop {
+                    let step = match self.iterator_next(p, iterator) {
+                        Ok(step) => step,
+                        Err(error) => {
+                            let _ = self.iterator_close(p, iterator);
+                            return Err(error);
+                        }
+                    };
+                    let done_atom = self.intern_atom("done");
+                    let done = match self.get_property(p, step, done_atom) {
+                        Ok(done) => self.truthy(done),
+                        Err(error) => {
+                            let _ = self.iterator_close(p, iterator);
+                            return Err(error);
+                        }
+                    };
+                    if done {
+                        return Ok(set);
+                    }
+                    let value_atom = self.intern_atom("value");
+                    let value = match self.get_property(p, step, value_atom) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let _ = self.iterator_close(p, iterator);
+                            return Err(error);
+                        }
+                    };
+                    if let Err(error) = self.call_value(p, adder, set, &[value]) {
+                        let _ = self.iterator_close(p, iterator);
+                        return Err(error);
+                    }
                 }
             }
             _ => return Err(JsError("invalid collection constructor".into())),
-        };
-        Ok(self.heap.alloc(cell))
+        }
     }
     pub(super) fn call_collection_native(
         &mut self,
@@ -652,70 +746,128 @@ impl<H: Host> Vm<H> {
             }
             Native::MapGroupBy => self.map_group_by(p, args),
             Native::SetAdd => {
+                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.add called on incompatible receiver".into(),
+                    ));
+                }
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let exists = self.set_entry_index(this, value).is_some();
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
-                    return Err(JsError("Set method receiver is not a Set".into()));
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.add called on incompatible receiver".into(),
+                    ));
                 };
                 if !exists {
                     entries.push(value);
                 }
                 Ok(this)
             }
-            Native::SetHas => Ok(
-                if self
-                    .set_entry_index(this, args.first().copied().unwrap_or(Value::UNDEFINED))
-                    .is_some()
-                {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                },
-            ),
+            Native::SetHas => {
+                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.has called on incompatible receiver".into(),
+                    ));
+                }
+                Ok(
+                    if self
+                        .set_entry_index(this, args.first().copied().unwrap_or(Value::UNDEFINED))
+                        .is_some()
+                    {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    },
+                )
+            }
             Native::SetDelete => {
+                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.delete called on incompatible receiver".into(),
+                    ));
+                }
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
-                    return Err(JsError("Set method receiver is not a Set".into()));
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.delete called on incompatible receiver".into(),
+                    ));
                 };
                 entries.remove(index);
                 Ok(Value::TRUE)
             }
             Native::SetClear => {
+                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.clear called on incompatible receiver".into(),
+                    ));
+                }
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
-                    return Err(JsError("Set method receiver is not a Set".into()));
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.clear called on incompatible receiver".into(),
+                    ));
                 };
                 entries.clear();
                 Ok(Value::UNDEFINED)
             }
             Native::SetKeys | Native::SetValues => {
+                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.values called on incompatible receiver".into(),
+                    ));
+                }
                 self.collection_iterator(this, IteratorKind::SetValues)
             }
-            Native::SetEntries => self.collection_iterator(this, IteratorKind::SetEntries),
+            Native::SetEntries => {
+                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.entries called on incompatible receiver".into(),
+                    ));
+                }
+                self.collection_iterator(this, IteratorKind::SetEntries)
+            }
             Native::SetForEach => {
                 let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
-                    return Err(JsError("Set method receiver is not a Set".into()));
+                    return Err(self.type_error(
+                        p,
+                        "Set.prototype.forEach called on incompatible receiver".into(),
+                    ));
                 }
+                self.call_target(callback)?;
+                let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let mut index = 0;
                 while let Some(value) = self.heap.get(this).and_then(|cell| match cell {
                     Cell::Set { entries, .. } => entries.get(index).copied(),
                     _ => None,
                 }) {
-                    self.call_value(p, callback, Value::UNDEFINED, &[value, value, this])?;
+                    self.call_value(p, callback, this_arg, &[value, value, this])?;
                     let Some(position) = self.set_entry_index(this, value) else {
                         continue;
                     };
-                    index = if position == index {
-                        index + 1
-                    } else {
-                        position
-                    };
+                    index = position + 1;
                 }
                 Ok(Value::UNDEFINED)
             }
+            Native::SetDifference
+            | Native::SetIntersection
+            | Native::SetSymmetricDifference
+            | Native::SetUnion
+            | Native::SetIsDisjointFrom
+            | Native::SetIsSubsetOf
+            | Native::SetIsSupersetOf => self.set_relation(p, native, this, args),
+            Native::SetSpeciesGetter => Ok(this),
             Native::IteratorNext => self.iterator_next_with_args(p, this, args),
             Native::RegExpStringIteratorNext => self.regexp_string_iterator_next(p, this, args),
             Native::IteratorProtocolNext => self.iterator_next_with_args(p, this, args),

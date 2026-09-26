@@ -3,15 +3,6 @@ use super::*;
 const DEFAULT_FLAT_DEPTH: usize = 1;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn array_length(&self, array: Value) -> Option<usize> {
-        match self.heap.get(array) {
-            Some(Cell::Array { elements, .. }) => {
-                Some(self.heap.sparse_length(array).unwrap_or(elements.len()))
-            }
-            _ => None,
-        }
-    }
-
     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
         let value = match self.heap.get(array) {
             Some(Cell::Array { elements, .. }) => elements
