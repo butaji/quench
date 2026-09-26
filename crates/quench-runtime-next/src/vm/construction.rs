@@ -1,6 +1,32 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn function_realm(
+        &mut self,
+        p: &ResidualProgram,
+        function: Value,
+    ) -> Result<Value, JsError> {
+        match self.heap.get(function).cloned() {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionBoundCall),
+                env,
+                ..
+            }) => {
+                let target_atom = self.intern_atom("\0rqj:bound-target");
+                let target = self
+                    .own_property(env, target_atom)
+                    .unwrap_or(Value::UNDEFINED);
+                self.function_realm(p, target)
+            }
+            Some(Cell::Function { realm, .. }) => Ok(realm),
+            Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
+                Err(self.type_error(p, "cannot access a revoked proxy".into()))
+            }
+            Some(Cell::Proxy { target, .. }) => self.function_realm(p, target),
+            _ => Ok(self.realm.globals),
+        }
+    }
+
     pub(super) fn string_constructor_argument(&mut self, args: &[Value]) -> Value {
         args.first().copied().unwrap_or_else(|| {
             self.heap
@@ -444,10 +470,7 @@ impl<H: Host> Vm<H> {
             return self.construct_value_with_new_target(p, target, new_target, &arguments);
         }
         if let FunctionKind::Native(native) = kind {
-            let realm = match self.heap.get(callee) {
-                Some(Cell::Function { realm, .. }) => *realm,
-                _ => self.realm.globals,
-            };
+            let realm = self.function_realm(p, callee)?;
             let previous_global = std::mem::replace(&mut self.realm.globals, realm);
             let result = self.construct_native_with_new_target(p, native, args, new_target);
             self.realm.globals = previous_global;
@@ -519,9 +542,10 @@ impl<H: Host> Vm<H> {
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
-        let realm = match self.heap.get(constructor) {
-            Some(Cell::Function { realm, .. }) => *realm,
-            _ => return Ok(self.object_proto),
+        let realm = if self.is_function(constructor) {
+            self.function_realm(p, constructor)?
+        } else {
+            return Ok(self.object_proto);
         };
         let object_atom = self.intern_atom("Object");
         let object_constructor = self.get_property(p, realm, object_atom)?;
@@ -543,10 +567,7 @@ impl<H: Host> Vm<H> {
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
-        let realm = match self.heap.get(new_target) {
-            Some(Cell::Function { realm, .. }) => *realm,
-            _ => self.realm.globals,
-        };
+        let realm = self.function_realm(p, new_target)?;
         let array_atom = self.intern_atom("Array");
         let array = self.get_property(p, realm, array_atom)?;
         let prototype = self.get_property(p, array, prototype_atom)?;
@@ -604,10 +625,7 @@ impl<H: Host> Vm<H> {
             }) else {
                 return Ok(());
             };
-            let realm = match self.heap.get(new_target) {
-                Some(Cell::Function { realm, .. }) => *realm,
-                _ => self.realm.globals,
-            };
+            let realm = self.function_realm(p, new_target)?;
             let constructor_atom = self.intern_atom(intrinsic);
             let constructor = self.get_property(p, realm, constructor_atom)?;
             let prototype = self.get_property(p, constructor, prototype_atom)?;
@@ -644,10 +662,7 @@ impl<H: Host> Vm<H> {
         let prototype = if self.object_data(prototype).is_some() {
             prototype
         } else {
-            let realm = match self.heap.get(new_target) {
-                Some(Cell::Function { realm, .. }) => *realm,
-                _ => self.realm.globals,
-            };
+            let realm = self.function_realm(p, new_target)?;
             let (name, fallback) = match native {
                 Native::AsyncFunction => ("AsyncFunction", Native::AsyncFunction),
                 Native::GeneratorFunction => ("GeneratorFunction", Native::GeneratorFunction),
