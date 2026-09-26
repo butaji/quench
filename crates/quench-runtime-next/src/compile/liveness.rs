@@ -153,8 +153,12 @@ fn uses(
                 | bit(state)
                 | bit(next_method)
         }
-        Op::SetIndex => bit(instruction.a()) | bit(instruction.b()) | bit(instruction.c()),
-        Op::DefineArrayElement => bit(instruction.a()) | bit(instruction.b()),
+        Op::SetIndex => {
+            bit(instruction.register_a())
+                | bit(instruction.register_b())
+                | bit(instruction.register_c())
+        }
+        Op::DefineArrayElement => bit(instruction.register_a()) | bit(instruction.register_b()),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
             operand(instruction.operand_b().0, fields) | operand(instruction.operand_c().0, fields)
         }
