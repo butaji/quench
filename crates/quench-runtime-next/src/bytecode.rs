@@ -89,6 +89,7 @@ pub(crate) enum FieldLayout {
     ElementCount,
     FieldBase,
     CacheSiteIndex,
+    WideIndexChunk,
     BooleanFlag,
     Operand,
     NumericIndexOperand,
@@ -125,6 +126,7 @@ pub(crate) enum ImmediateRole {
     ObjectSiteIndex,
     SuperinstructionIndex,
     FieldLookup,
+    WideInstructionIndex,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,12 +153,6 @@ struct OperandLayout {
 }
 
 impl OperandLayout {
-    const UNDECLARED: Self = Self {
-        a: FieldLayout::Undeclared,
-        b: FieldLayout::Undeclared,
-        c: FieldLayout::Undeclared,
-    };
-
     const fn field(self, field: InstructionField) -> FieldLayout {
         match field {
             InstructionField::A => self.a,
@@ -370,7 +366,6 @@ macro_rules! opcodes {
     (@fields $a:ident, $b:ident, $c:ident) => {
         OperandLayout { a: FieldLayout::$a, b: FieldLayout::$b, c: FieldLayout::$c }
     };
-    (@fields) => { OperandLayout::UNDECLARED };
     (@immediate $role:ident) => { ImmediateRole::$role };
     (@immediate) => { ImmediateRole::Undeclared };
 }
@@ -381,7 +376,7 @@ const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 opcodes!(
     Nop => Effect::PURE; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
-    Wide => Effect::PURE,
+    Wide => Effect::PURE; meaning WideInstructionIndex, @ NoResult, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
     LoadConst => Effect::PURE; meaning ConstantIndex, @ Register, @ fields(Undeclared, Unused, Unused),
     LoadLocal => Effect::PURE; meaning LocalSlot, @ Register, @ fields(Undeclared, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocal => Effect::PURE; meaning LocalSlot, @ NoResult, @ fields(Register, OptionalRegister, BooleanFlag),
