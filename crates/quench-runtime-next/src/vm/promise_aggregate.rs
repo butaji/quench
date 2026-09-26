@@ -1,7 +1,33 @@
-use super::promise::{AggregateJob, AggregateMode};
+use super::promise::{AggregateJob, AggregateMode, AggregateRecord};
+use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn aggregate_result(
+        &mut self,
+        record: &AggregateRecord,
+        values: Vec<Value>,
+    ) -> Result<Value, JsError> {
+        let Some(keys) = record.keys.as_ref() else {
+            return Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: std::rc::Rc::new(values),
+            }));
+        };
+        let result = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        for (key, value) in keys.iter().copied().zip(values) {
+            let key = match self.heap.get(key).cloned() {
+                Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
+                Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
+                _ => continue,
+            };
+            self.set_shape_property(result, key, value)?;
+        }
+        Ok(result)
+    }
+
     pub(super) fn aggregate_error(&mut self, errors: Vec<Value>) -> Result<Value, JsError> {
         let errors = self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.array_proto),
@@ -43,7 +69,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("invalid Promise aggregate".into()))?;
         let (fulfilled, rejected) = match record.mode {
             AggregateMode::Race => (record.resolve, record.reject),
-            AggregateMode::All => (
+            AggregateMode::All | AggregateMode::AllKeyed => (
                 self.aggregate_element_function(aggregate, index, false),
                 record.reject,
             ),
@@ -51,7 +77,7 @@ impl<H: Host> Vm<H> {
                 record.resolve,
                 self.aggregate_element_function(aggregate, index, true),
             ),
-            AggregateMode::AllSettled => (
+            AggregateMode::AllSettled | AggregateMode::AllSettledKeyed => (
                 self.aggregate_element_function(aggregate, index, false),
                 self.aggregate_element_function(aggregate, index, true),
             ),

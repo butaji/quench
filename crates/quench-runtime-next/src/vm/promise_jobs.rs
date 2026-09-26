@@ -84,6 +84,61 @@ impl<H: Host> Vm<H> {
             }
         };
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let mut keys = None;
+        let source = if mode.is_keyed() {
+            if self.object_data(source).is_none() {
+                let error = self.type_error(p, "Promise keyed input must be an object".into());
+                self.call_value(
+                    p,
+                    reject,
+                    Value::UNDEFINED,
+                    &[error.thrown_value().unwrap_or(Value::UNDEFINED)],
+                )?;
+                return Ok(output);
+            }
+            let key_array = match self.object_own_keys(p, source) {
+                Ok(keys) => keys,
+                Err(error) => {
+                    self.reject_aggregate_completion(p, reject, error)?;
+                    return Ok(output);
+                }
+            };
+            let own_keys = match self.heap.get(key_array) {
+                Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                _ => Vec::new(),
+            };
+            let mut enumerable_keys = Vec::with_capacity(own_keys.len());
+            let mut values = Vec::with_capacity(own_keys.len());
+            for key in own_keys {
+                let descriptor = match self.object_get_own_property_descriptor(p, &[source, key]) {
+                    Ok(descriptor) => descriptor,
+                    Err(error) => {
+                        self.reject_aggregate_completion(p, reject, error)?;
+                        return Ok(output);
+                    }
+                };
+                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                    continue;
+                }
+                match self.get_index(p, source, key) {
+                    Ok(value) => {
+                        enumerable_keys.push(key);
+                        values.push(value);
+                    }
+                    Err(error) => {
+                        self.reject_aggregate_completion(p, reject, error)?;
+                        return Ok(output);
+                    }
+                }
+            }
+            keys = Some(enumerable_keys);
+            self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: std::rc::Rc::new(values),
+            })
+        } else {
+            source
+        };
         self.promise.aggregates.insert(
             output,
             AggregateRecord {
@@ -94,6 +149,7 @@ impl<H: Host> Vm<H> {
                 remaining: 1,
                 values: vec![],
                 called: vec![],
+                keys,
             },
         );
         let source_root = self.heap.root(source);
@@ -191,26 +247,18 @@ impl<H: Host> Vm<H> {
                 (record.remaining, record.values.clone())
             };
             if remaining == 0 {
-                match mode {
-                    AggregateMode::All | AggregateMode::AllSettled => {
-                        let values = self.heap.alloc(Cell::Array {
-                            object: Self::empty_object(self.array_proto),
-                            elements: std::rc::Rc::new(values),
-                        });
-                        if let Err(error) = self.call_value(p, resolve, Value::UNDEFINED, &[values])
-                        {
-                            self.reject_aggregate_completion(p, reject, error)?;
-                        }
+                if mode.is_all() || mode.is_all_settled() {
+                    let record = self.promise.aggregates[&output].clone();
+                    let values = self.aggregate_result(&record, values)?;
+                    if let Err(error) = self.call_value(p, resolve, Value::UNDEFINED, &[values]) {
+                        self.reject_aggregate_completion(p, reject, error)?;
                     }
-                    AggregateMode::Any => {
-                        let error = self.aggregate_error(vec![])?;
-                        if let Err(completion) =
-                            self.call_value(p, reject, Value::UNDEFINED, &[error])
-                        {
-                            return Err(completion);
-                        }
+                } else if mode == AggregateMode::Any {
+                    let error = self.aggregate_error(vec![])?;
+                    if let Err(completion) = self.call_value(p, reject, Value::UNDEFINED, &[error])
+                    {
+                        return Err(completion);
                     }
-                    AggregateMode::Race => {}
                 }
             }
         }
@@ -264,13 +312,17 @@ impl<H: Host> Vm<H> {
                 };
                 self.call_value(p, settler, Value::UNDEFINED, &[value])?;
             }
-            AggregateMode::All if aggregate_job.rejected => {
+            AggregateMode::All | AggregateMode::AllKeyed if aggregate_job.rejected => {
                 self.call_value(p, record.reject, Value::UNDEFINED, &[value])?;
             }
             AggregateMode::Any if !aggregate_job.rejected => {
                 self.call_value(p, record.resolve, Value::UNDEFINED, &[value])?;
             }
-            AggregateMode::All | AggregateMode::AllSettled | AggregateMode::Any => {
+            AggregateMode::All
+            | AggregateMode::AllKeyed
+            | AggregateMode::AllSettled
+            | AggregateMode::AllSettledKeyed
+            | AggregateMode::Any => {
                 let index = aggregate_job.index;
                 if record.called.get(index).copied().unwrap_or(true) {
                     return Ok(Value::UNDEFINED);
@@ -280,7 +332,7 @@ impl<H: Host> Vm<H> {
                     .get_mut(&aggregate_job.aggregate)
                     .unwrap()
                     .called[index] = true;
-                let result = if mode == AggregateMode::AllSettled {
+                let result = if mode.is_all_settled() {
                     let result = self
                         .heap
                         .alloc(Cell::Object(Self::empty_object(self.object_proto)));
@@ -317,11 +369,10 @@ impl<H: Host> Vm<H> {
                         let error = self.aggregate_error(values)?;
                         self.call_value(p, record.reject, Value::UNDEFINED, &[error])?;
                     } else {
-                        let values = self.heap.alloc(Cell::Array {
-                            object: Self::empty_object(self.array_proto),
-                            elements: std::rc::Rc::new(values),
-                        });
-                        self.call_value(p, record.resolve, Value::UNDEFINED, &[values])?;
+                        let values = self.aggregate_result(&record, values)?;
+                        let completion =
+                            self.call_value(p, record.resolve, Value::UNDEFINED, &[values]);
+                        completion?;
                     }
                 }
             }
