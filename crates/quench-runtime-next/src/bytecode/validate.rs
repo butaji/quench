@@ -196,7 +196,7 @@ impl ResidualProgram {
                     }
                     Op::MakeArray
                         if !destination(instruction.a())
-                            || instruction.imm() > u32::from(u16::MAX) =>
+                            || instruction.array_length() > usize::from(u16::MAX) =>
                     {
                         return Err(format!("function {index} array allocation is invalid"));
                     }

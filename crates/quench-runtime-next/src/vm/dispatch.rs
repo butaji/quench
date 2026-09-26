@@ -337,7 +337,7 @@ impl<H: Host> Vm<H> {
             Op::MakeArray => {
                 let v = self.heap.alloc(Cell::Array {
                     object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(vec![Value::DELETED; i.imm() as usize]),
+                    elements: Rc::new(vec![Value::DELETED; i.array_length()]),
                 });
                 self.write(f, i.a(), v);
             }
