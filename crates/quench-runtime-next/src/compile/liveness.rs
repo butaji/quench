@@ -1,6 +1,6 @@
 use crate::bytecode::{
     ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Op, Operand, Register, ResultLayout, Superinstruction,
+    ImmediateRole, Instr, InstructionField, Operand, Register, ResultLayout, Superinstruction,
 };
 
 pub(super) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -63,8 +63,12 @@ fn successors(function: &Function, live: &[u64], pc: usize, instruction: Instr) 
             fallthrough | live[instruction.jump_target() as usize]
         }
         ControlFlowLayout::Terminal => 0,
-        ControlFlowLayout::Fallthrough if instruction.returns_from_frame() => 0,
-        ControlFlowLayout::Fallthrough => fallthrough,
+        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
+            if instruction.returns_from_frame() =>
+        {
+            0
+        }
+        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => fallthrough,
     };
     function
         .handlers
@@ -82,15 +86,7 @@ fn successors(function: &Function, live: &[u64], pc: usize, instruction: Instr) 
 
 fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
     for (pc, instruction) in function.code.iter().enumerate() {
-        if !matches!(
-            instruction.op(),
-            Op::Call
-                | Op::CallDirectEvalArray
-                | Op::CallKnown
-                | Op::CallMethod
-                | Op::CallThisMethod
-                | Op::Construct
-        ) {
+        if instruction.op().control_flow_layout() != ControlFlowLayout::Call {
             continue;
         }
         for handler in &function.handlers {
@@ -279,6 +275,7 @@ fn bit(register: u16) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::Op;
 
     #[test]
     fn branch_roots_are_derived_from_successor_uses() {
