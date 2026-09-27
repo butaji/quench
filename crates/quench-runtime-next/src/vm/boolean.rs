@@ -18,6 +18,20 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        let boolean_value = self.intern_atom("\0rqj:boolean-value");
+        self.set_property(prototype, boolean_value, Value::FALSE)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(boolean_value),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
@@ -73,10 +87,6 @@ impl<H: Host> Vm<H> {
         {
             return Some(value);
         }
-        let constructor_atom = self.intern_atom("Boolean");
-        let prototype_atom = self.intern_atom("prototype");
-        let constructor = self.own_property(self.realm.globals, constructor_atom)?;
-        let prototype = self.own_property(constructor, prototype_atom)?;
-        (receiver == prototype).then_some(Value::FALSE)
+        None
     }
 }
