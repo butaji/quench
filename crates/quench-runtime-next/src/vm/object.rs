@@ -75,37 +75,27 @@ impl<H: Host> Vm<H> {
             .collect()
     }
     pub(super) fn shape_entries(&self, shape: u32) -> Vec<(PropertyKey, u32)> {
-        let mut entries = Vec::<Option<(PropertyKey, u32)>>::new();
-        let mut positions = FxHashMap::<PropertyKey, usize>::default();
-        for id in self.shape_chain(shape) {
-            match self.shapes[id as usize].transition {
-                ShapeTransition::Add { key, slot } => {
-                    positions.insert(key, entries.len());
-                    entries.push(Some((key, slot)));
+        let mut entries = Vec::new();
+        let mut seen = FxHashSet::default();
+        let mut current = Some(shape);
+        while let Some(id) = current {
+            let shape = &self.shapes[id as usize];
+            match shape.transition {
+                ShapeTransition::Add { key, slot } if seen.insert(key) => {
+                    entries.push((key, slot));
                 }
                 ShapeTransition::Delete { key, .. } => {
-                    if let Some(position) = positions.remove(&key) {
-                        entries[position] = None;
-                    }
+                    seen.insert(key);
                 }
                 ShapeTransition::Root
+                | ShapeTransition::Add { .. }
                 | ShapeTransition::Vacant
                 | ShapeTransition::Descriptor { .. } => {}
             }
+            current = shape.parent;
         }
-        entries.into_iter().flatten().collect()
-    }
-    fn shape_chain(&self, mut shape: u32) -> Vec<u32> {
-        let mut chain = Vec::new();
-        loop {
-            chain.push(shape);
-            let Some(parent) = self.shapes[shape as usize].parent else {
-                break;
-            };
-            shape = parent;
-        }
-        chain.reverse();
-        chain
+        entries.reverse();
+        entries
     }
     fn append_shape(
         &mut self,
