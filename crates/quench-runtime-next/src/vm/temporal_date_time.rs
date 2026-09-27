@@ -2,6 +2,11 @@ use super::temporal_date::{IsoDate, checked_iso_date};
 use super::*;
 
 const MONTH_CODE_DIGITS: usize = 2;
+const TIME_COMPONENT_WIDTH: usize = 2;
+const FRACTIONAL_SECOND_DIGITS: usize = 9;
+const MILLISECOND_FIELD: usize = 3;
+const MICROSECOND_FIELD: usize = 4;
+const NANOSECOND_FIELD: usize = 5;
 const HOUR_LIMIT: i32 = 23;
 const MINUTE_SECOND_LIMIT: i32 = 59;
 const SUBSECOND_LIMIT: i32 = 999;
@@ -47,6 +52,21 @@ impl<H: Host> Vm<H> {
             "compare",
             Native::TemporalPlainDateTimeCompare,
         )?;
+        for (name, native) in [
+            ("add", Native::TemporalPlainDateTimeAdd),
+            ("subtract", Native::TemporalPlainDateTimeSubtract),
+            ("round", Native::TemporalPlainDateTimeRound),
+            ("until", Native::TemporalPlainDateTimeUntil),
+            ("since", Native::TemporalPlainDateTimeSince),
+            ("toString", Native::TemporalPlainDateTimeToString),
+            ("toJSON", Native::TemporalPlainDateTimeToJSON),
+            ("toPlainDate", Native::TemporalPlainDateTimeToPlainDate),
+            ("toPlainTime", Native::TemporalPlainDateTimeToPlainTime),
+            ("toZonedDateTime", Native::TemporalPlainDateTimeToZonedDateTime),
+            ("valueOf", Native::TemporalPlainDateTimeValueOf),
+        ] {
+            self.set_builtin_named(p, prototype, name, native)?;
+        }
         for (name, native) in [
             ("calendarId", Native::TemporalPlainDateTimeCalendarIdGetter),
             ("year", Native::TemporalPlainDateTimeYearGetter),
@@ -187,6 +207,62 @@ impl<H: Host> Vm<H> {
         if native == Native::TemporalPlainDateTimeEquals {
             return self.temporal_plain_date_time_equals(p, this, args);
         }
+        if matches!(
+            native,
+            Native::TemporalPlainDateTimeAdd | Native::TemporalPlainDateTimeSubtract
+        ) {
+            return self.temporal_plain_date_time_arithmetic(p, native, this, args);
+        }
+        if native == Native::TemporalPlainDateTimeRound {
+            return self.temporal_plain_date_time_round(p, this, args);
+        }
+        if matches!(native, Native::TemporalPlainDateTimeUntil | Native::TemporalPlainDateTimeSince) {
+            return self.temporal_plain_date_time_difference(p, native, this, args);
+        }
+        if matches!(
+            native,
+            Native::TemporalPlainDateTimeToString | Native::TemporalPlainDateTimeToJSON
+        ) {
+            let (date, time, _) = self.temporal_plain_date_time_slots(p, this)?;
+            let date = super::temporal_date::format_iso_date(date.year, date.month, date.day);
+            let fraction = time[MILLISECOND_FIELD]
+                * super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
+                    [MILLISECOND_FIELD] as u32
+                + time[MICROSECOND_FIELD]
+                    * super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
+                        [MICROSECOND_FIELD] as u32
+                + time[NANOSECOND_FIELD];
+            let fraction = if fraction == 0 {
+                String::new()
+            } else {
+                let digits = format!("{fraction:0width$}", width = FRACTIONAL_SECOND_DIGITS);
+                format!(".{}", digits.trim_end_matches('0'))
+            };
+            let text = format!(
+                "{date}T{:0width$}:{:0width$}:{:0width$}{fraction}",
+                time[0],
+                time[1],
+                time[2],
+                width = TIME_COMPONENT_WIDTH,
+            );
+            return Ok(self.heap.alloc(Cell::String(text.into())));
+        }
+        if native == Native::TemporalPlainDateTimeToPlainDate {
+            let (date, _, calendar) = self.temporal_plain_date_time_slots(p, this)?;
+            let constructor = self.temporal_plain_date_constructor(p)?;
+            return self.make_temporal_plain_date(p, date, calendar, constructor);
+        }
+        if native == Native::TemporalPlainDateTimeToPlainTime {
+            let (_, time, _) = self.temporal_plain_date_time_slots(p, this)?;
+            let args = time.map(|value| Value::number(f64::from(value)));
+            return self.temporal_plain_time_construct(p, &args);
+        }
+        if native == Native::TemporalPlainDateTimeValueOf {
+            return Err(self.type_error(p, "Cannot convert PlainDateTime to a number".into()));
+        }
+        if native == Native::TemporalPlainDateTimeToZonedDateTime {
+            return self.temporal_plain_date_time_to_zoned_date_time(p, this, args);
+        }
         if native == Native::TemporalPlainDateTime {
             return Err(self.type_error(p, "Temporal.PlainDateTime requires new".into()));
         }
@@ -214,7 +290,7 @@ impl<H: Host> Vm<H> {
         Ok(Value::number(value as f64))
     }
 
-    fn temporal_plain_date_time_from(
+    pub(super) fn temporal_plain_date_time_from(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,
@@ -506,7 +582,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn temporal_plain_date_time_constructor(
+    pub(super) fn temporal_plain_date_time_constructor(
         &mut self,
         p: &ResidualProgram,
     ) -> Result<Value, JsError> {
@@ -560,5 +636,225 @@ impl<H: Host> Vm<H> {
                 "Temporal.PlainDateTime method called on incompatible receiver".into(),
             )),
         }
+    }
+
+    fn temporal_plain_date_time_arithmetic(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let mut duration =
+            self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        if native == Native::TemporalPlainDateTimeSubtract {
+            duration.iter_mut().for_each(|field| *field = -*field);
+        }
+        self.validate_duration_fields(p, &duration)?;
+        let constrain = self.plain_date_overflow(
+            p,
+            args.get(1).copied().unwrap_or(Value::UNDEFINED),
+        )?;
+        let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
+        let month_delta = i128::from(
+            duration[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64,
+        )
+            * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+            + i128::from(
+                duration[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64,
+            );
+        let original_day = date.day;
+        let mut date = super::temporal_date::shift_iso_months(date, month_delta)
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        if !constrain && date.day != original_day {
+            return Err(self.range_error(p, "Invalid PlainDateTime".into()));
+        }
+
+        let mut time_nanos = time
+            .iter()
+            .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+            .map(|(value, scale)| i128::from(*value) * scale)
+            .sum::<i128>();
+        time_nanos += duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..]
+            .iter()
+            .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+            .map(|(value, scale)| *value as i128 * scale)
+            .sum::<i128>();
+        let carry_days = time_nanos.div_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
+        let remainder = time_nanos.rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
+        let duration_days = i128::from(
+            duration[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] as i64,
+        )
+            * i128::from(super::temporal_date_arithmetic::DAYS_PER_WEEK)
+            + i128::from(duration[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] as i64);
+        let days = i64::try_from(duration_days + carry_days)
+            .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        if days != 0 {
+            date = super::temporal_date::shift_iso_days(date, days)
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        }
+
+        let mut time = [0_i32; 6];
+        let mut remainder = remainder;
+        for (index, scale) in super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
+            .into_iter()
+            .enumerate()
+        {
+            time[index] = i32::try_from(remainder / scale)
+                .map_err(|_| self.range_error(p, "Invalid PlainDateTime time".into()))?;
+            remainder %= scale;
+        }
+        let constructor = self.temporal_plain_date_time_constructor(p)?;
+        self.make_plain_date_time(
+            p,
+            constructor,
+            date.year,
+            date.month,
+            date.day,
+            calendar,
+            time,
+        )
+    }
+
+    fn temporal_plain_date_time_round(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
+        let options = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let parsed = super::temporal_instant_round::read_options(self, p, options)?;
+        let (_, scale) = super::temporal_instant_round::parse_unit(
+            self,
+            p,
+            parsed.smallest_unit.as_deref(),
+        )?;
+        let increment =
+            super::temporal_instant_round::validate_increment(self, p, parsed.increment, scale)?;
+        let mode = super::temporal_instant_round::validate_mode(
+            self,
+            p,
+            parsed.rounding_mode.as_deref(),
+        )?;
+        let total = time
+            .iter()
+            .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+            .map(|(value, scale)| i128::from(*value) * scale)
+            .sum::<i128>();
+        let quantum = scale * increment;
+        let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+            total,
+            quantum,
+            mode,
+        ) * quantum;
+        let carry = rounded.div_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
+        let remainder = rounded.rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
+        let days = i64::try_from(carry)
+            .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        let date = super::temporal_date::shift_iso_days(date, days)
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        let mut time = [0_i32; 6];
+        let mut remainder = remainder;
+        for (index, scale) in super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
+            .into_iter()
+            .enumerate()
+        {
+            time[index] = i32::try_from(remainder / scale)
+                .map_err(|_| self.range_error(p, "Invalid PlainDateTime time".into()))?;
+            remainder %= scale;
+        }
+        let constructor = self.temporal_plain_date_time_constructor(p)?;
+        self.make_plain_date_time(
+            p,
+            constructor,
+            date.year,
+            date.month,
+            date.day,
+            calendar,
+            time,
+        )
+    }
+
+    fn temporal_plain_date_time_to_zoned_date_time(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
+        let timezone_value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if timezone_value.is_undefined() {
+            return Err(self.type_error(p, "Missing time zone".into()));
+        }
+        let timezone = self.temporal_timezone_id(p, timezone_value)?;
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let disambiguation = if options.is_undefined() {
+            "compatible"
+        } else {
+            if !self.is_object_like(options) {
+                return Err(self.type_error(p, "Invalid options".into()));
+            }
+            let key = self.intern_atom("disambiguation");
+            let value = self.get_property(p, options, key)?;
+            if value.is_undefined() {
+                "compatible"
+            } else {
+                let mode = self.to_string(p, value)?.to_string();
+                if !super::temporal_zoned_date_time::DISAMBIGUATION_OPTIONS.contains(&mode.as_str()) {
+                    return Err(self.range_error(p, "Invalid disambiguation".into()));
+                }
+                return self.make_zoned_date_time_from_local(
+                    p,
+                    date,
+                    time,
+                    calendar,
+                    timezone,
+                    &mode,
+                );
+            }
+        };
+        self.make_zoned_date_time_from_local(p, date, time, calendar, timezone, disambiguation)
+    }
+
+    fn make_zoned_date_time_from_local(
+        &mut self,
+        p: &ResidualProgram,
+        date: super::temporal_date::IsoDate,
+        time: [u32; 6],
+        calendar: String,
+        timezone: String,
+        disambiguation: &str,
+    ) -> Result<Value, JsError> {
+        let local = chrono::NaiveDate::from_ymd_opt(date.year, date.month, date.day)
+            .and_then(|date| {
+                let subsecond = time[MILLISECOND_FIELD]
+                    * super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
+                        [MILLISECOND_FIELD] as u32
+                    + time[MICROSECOND_FIELD]
+                        * super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
+                            [MICROSECOND_FIELD] as u32
+                    + time[NANOSECOND_FIELD];
+                date.and_hms_nano_opt(time[0], time[1], time[2], subsecond)
+            })
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        let epoch = super::temporal_zoned_date_time::zoned_local_epoch_with_disambiguation(
+            local,
+            &timezone,
+            disambiguation,
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid time zone transition".into()))?;
+        if epoch.unsigned_abs()
+            > super::temporal_zoned_date_time::MAX_EPOCH_NANOSECONDS as u128
+        {
+            return Err(self.range_error(p, "Invalid instant".into()));
+        }
+        let arguments = [
+            self.heap.alloc(Cell::BigInt(epoch.to_string())),
+            self.heap.alloc(Cell::String(timezone.into())),
+            self.heap.alloc(Cell::String(calendar.into())),
+        ];
+        let constructor = self.native_value(Native::TemporalZonedDateTime);
+        self.temporal_zoned_date_time_construct(p, &arguments, constructor)
     }
 }
