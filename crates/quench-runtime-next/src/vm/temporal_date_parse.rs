@@ -1,4 +1,4 @@
-use super::temporal_date::{checked_iso_date, IsoDate};
+use super::temporal_date::{IsoDate, checked_iso_date};
 
 const ISO_CALENDAR: &str = "iso8601";
 const GREGORIAN_CALENDAR: &str = "gregory";
@@ -73,7 +73,28 @@ fn valid_plain_date_string(text: &str) -> bool {
         && !has_invalid_time(text)
         && !has_utc_designator(text)
         && !has_excess_fraction(text)
+        && !has_invalid_offset(text)
         && parse_iso_date_part(date_part(text)).is_some()
+}
+
+fn has_invalid_offset(text: &str) -> bool {
+    let base = text.split('[').next().unwrap_or(text);
+    let Some((_, time)) = base.split_once(['T', 't', ' ']) else {
+        return false;
+    };
+    let offset_index = time
+        .get(1..)
+        .and_then(|tail| tail.find(['+', '-']).map(|index| index + 1));
+    if let Some(index) = offset_index {
+        let offset = &time[index..];
+        if !quench_temporal::valid_date_time_offset(offset) {
+            return true;
+        }
+    }
+    text.split('[').skip(1).any(|annotation| {
+        let annotation = annotation.split(']').next().unwrap_or(annotation);
+        annotation.starts_with(['+', '-']) && !quench_temporal::valid_timezone_offset(annotation)
+    })
 }
 
 fn parse_iso_date_part(date: &str) -> Option<IsoDate> {
