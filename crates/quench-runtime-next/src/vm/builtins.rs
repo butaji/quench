@@ -319,6 +319,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalPlainTimeRound,
     Native::TemporalPlainTimeUntil, Native::TemporalPlainTimeSince,
     Native::TemporalPlainTimeToString, Native::TemporalPlainTimeToJSON,
+    Native::TemporalPlainTimeWith,
     Native::TemporalPlainMonthDay, Native::TemporalPlainMonthDayFrom,
     Native::TemporalPlainMonthDayCompare, Native::TemporalPlainMonthDayCalendarIdGetter,
     Native::TemporalPlainMonthDayDayGetter, Native::TemporalPlainMonthDayMonthCodeGetter,

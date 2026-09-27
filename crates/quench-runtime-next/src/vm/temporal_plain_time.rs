@@ -13,6 +13,18 @@ const DEFAULT_DIFFERENCE_SMALLEST_UNIT: &str = "nanosecond";
 const DEFAULT_DIFFERENCE_ROUNDING_MODE: &str = "trunc";
 const PLAIN_TIME_FRACTIONAL_SECOND_DIGITS: usize = 9;
 const PLAIN_TIME_TIME_COMPONENT_WIDTH: usize = 2;
+const PLAIN_TIME_MINIMUM: i32 = 0;
+const PLAIN_TIME_HOUR_LIMIT: i32 = 23;
+const PLAIN_TIME_MINUTE_SECOND_LIMIT: i32 = 59;
+const PLAIN_TIME_SUBSECOND_LIMIT: i32 = 999;
+const PLAIN_TIME_WITH_FIELDS: [(&str, i32); 6] = [
+    ("hour", PLAIN_TIME_HOUR_LIMIT),
+    ("microsecond", PLAIN_TIME_SUBSECOND_LIMIT),
+    ("millisecond", PLAIN_TIME_SUBSECOND_LIMIT),
+    ("minute", PLAIN_TIME_MINUTE_SECOND_LIMIT),
+    ("nanosecond", PLAIN_TIME_SUBSECOND_LIMIT),
+    ("second", PLAIN_TIME_MINUTE_SECOND_LIMIT),
+];
 const PLAIN_TIME_SMALLEST_UNITS: [&str; 5] = [
     "minute",
     "second",
@@ -76,6 +88,7 @@ impl<H: Host> Vm<H> {
             ("since", Native::TemporalPlainTimeSince),
             ("toString", Native::TemporalPlainTimeToString),
             ("toJSON", Native::TemporalPlainTimeToJSON),
+            ("with", Native::TemporalPlainTimeWith),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -115,6 +128,7 @@ impl<H: Host> Vm<H> {
                 | Native::TemporalPlainTimeSince
                 | Native::TemporalPlainTimeToString
                 | Native::TemporalPlainTimeToJSON
+                | Native::TemporalPlainTimeWith
         ) && !self.temporal_plain_time_has_brand(this)
         {
             return Err(self.type_error(p, "Not a PlainTime".into()));
@@ -198,6 +212,9 @@ impl<H: Host> Vm<H> {
                 args.first().copied().unwrap_or(Value::UNDEFINED)
             };
             return self.temporal_plain_time_to_string(p, this, options);
+        }
+        if native == Native::TemporalPlainTimeWith {
+            return self.temporal_plain_time_with(p, this, args);
         }
         if native == Native::TemporalPlainTimeRound {
             let options = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -554,5 +571,90 @@ impl<H: Host> Vm<H> {
             }
         };
         Ok(self.heap.alloc(Cell::String(format!("{time}{fraction}").into())))
+    }
+
+    fn temporal_plain_time_with(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let fields = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_object_like(fields)
+            || matches!(self.heap.get(fields), Some(Cell::Array { .. }))
+            || self.is_temporal_object(fields)
+        {
+            return Err(self.type_error(p, "Invalid time-like object".into()));
+        }
+        for name in ["calendar", "timeZone"] {
+            let key = self.intern_atom(name);
+            if !self.get_property(p, fields, key)?.is_undefined() {
+                return Err(self.type_error(p, format!("Invalid {name}")));
+            }
+        }
+        let current = PLAIN_TIME_WITH_FIELDS
+            .iter()
+            .map(|(name, _)| {
+                let key = self.intern_atom(name);
+                self.get_property(p, this, key)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let replacements = PLAIN_TIME_WITH_FIELDS
+            .iter()
+            .map(|(name, _)| {
+                let key = self.intern_atom(name);
+                let value = self.get_property(p, fields, key)?;
+                if value.is_undefined() {
+                    Ok(Value::UNDEFINED)
+                } else {
+                    let number = self.to_number(p, value)?;
+                    if !number.is_finite() {
+                        return Err(self.range_error(p, "Invalid time".into()));
+                    }
+                    Ok(Value::number(number))
+                }
+            })
+            .collect::<Result<Vec<_>, JsError>>()?;
+        if replacements.iter().all(|value| value.is_undefined()) {
+            return Err(self.type_error(p, "No time fields".into()));
+        }
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let constrain_overflow = self.plain_date_overflow(p, options)?;
+        let mut time = [0_i32; 6];
+        for ((old, replacement), (name, maximum)) in current
+            .iter()
+            .zip(replacements.iter())
+            .zip(PLAIN_TIME_WITH_FIELDS)
+        {
+            let value = if replacement.is_undefined() { *old } else { *replacement };
+            let integer = self.plain_date_integer(p, value)?;
+            let source_index = PLAIN_TIME_FIELDS
+                .iter()
+                .position(|field| field == &name)
+                .expect("PlainTime with fields map to canonical field slots");
+            if !constrain_overflow {
+                if !(PLAIN_TIME_MINIMUM..=maximum).contains(&integer) {
+                    return Err(self.range_error(p, "Invalid time".into()));
+                }
+                time[source_index] = integer;
+            } else {
+                time[source_index] = integer.clamp(PLAIN_TIME_MINIMUM, maximum);
+            }
+        }
+        self.temporal_plain_time_object(time)
+    }
+
+    fn is_temporal_object(&self, value: Value) -> bool {
+        self.temporal_plain_time_has_brand(value)
+            || matches!(
+                self.heap.get(value),
+                Some(
+                    Cell::TemporalPlainDate { .. }
+                        | Cell::TemporalPlainDateTime { .. }
+                        | Cell::TemporalPlainMonthDay { .. }
+                        | Cell::TemporalPlainYearMonth { .. }
+                        | Cell::TemporalZonedDateTime { .. }
+                )
+            )
     }
 }
