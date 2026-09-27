@@ -513,6 +513,12 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn set_jump_target(&mut self, target: u32) {
+                debug_assert_eq!(self.op().immediate_role(), ImmediateRole::JumpTarget);
+                self.set_imm(target);
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn closure_function_index(self) -> u32 {
                 debug_assert_eq!(
                     self.op().immediate_role(),
@@ -766,6 +772,15 @@ impl Instr {
 
     pub(crate) fn set_imm(&mut self, value: u32) {
         *self = Self::new(self.op(), self.a(), self.b(), self.c(), value);
+    }
+
+    pub(crate) fn try_set_jump_target(&mut self, target: u32) -> bool {
+        debug_assert_eq!(self.op().immediate_role(), ImmediateRole::JumpTarget);
+        let Some(patched) = Self::try_new(self.op(), self.a(), self.b(), self.c(), target) else {
+            return false;
+        };
+        *self = patched;
+        true
     }
 
     const fn pack_field(op: Op, position: usize, value: u16) -> Option<u16> {

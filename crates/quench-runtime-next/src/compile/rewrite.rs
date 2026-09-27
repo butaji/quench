@@ -357,7 +357,8 @@ pub(super) fn relocate(
 ) {
     for instruction in code {
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
-            instruction.set_imm(map[instruction.jump_target() as usize] as u32);
+            let target = map[instruction.jump_target() as usize] as u32;
+            assert!(instruction.try_set_jump_target(target));
         }
     }
     for handler in handlers {

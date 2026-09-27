@@ -64,9 +64,12 @@ macro_rules! specialized_numeric_value {
 macro_rules! execute_specialized_numeric {
     ($vm:ident, $program:ident, $frame:ident, $ins:ident, $semantic:ident) => {{
         let operator = $ins.binary_operator();
-        $vm.profile.binary(operator as usize, $ins.b(), $ins.c());
-        let left = $vm.resolve_operand($program, $frame, Operand($ins.b()))?;
-        let right = $vm.resolve_operand($program, $frame, Operand($ins.c()))?;
+        let left_operand = $ins.operand_b();
+        let right_operand = $ins.operand_c();
+        $vm.profile
+            .binary(operator as usize, left_operand.0, right_operand.0);
+        let left = $vm.resolve_operand($program, $frame, left_operand)?;
+        let right = $vm.resolve_operand($program, $frame, right_operand)?;
         let value = specialized_numeric_value!($vm, $program, operator, $semantic, left, right);
         if $ins.returns_from_frame() {
             return Ok(StepResult::Return(value));
