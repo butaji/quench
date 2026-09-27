@@ -650,7 +650,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn temporal_plain_date_time_arithmetic(
+    pub(super) fn temporal_plain_date_time_arithmetic(
         &mut self,
         p: &ResidualProgram,
         native: Native,
