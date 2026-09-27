@@ -336,6 +336,7 @@ pub(crate) enum Native {
     TemporalPlainTimeEquals,
     TemporalPlainTimeRound,
     TemporalPlainTimeUntil, TemporalPlainTimeSince,
+    TemporalPlainTimeToString, TemporalPlainTimeToJSON,
     TemporalPlainMonthDay, TemporalPlainMonthDayFrom, TemporalPlainMonthDayCompare,
     TemporalPlainMonthDayCalendarIdGetter, TemporalPlainMonthDayDayGetter,
     TemporalPlainMonthDayMonthCodeGetter, TemporalPlainMonthDayEquals,

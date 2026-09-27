@@ -602,7 +602,9 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainTimeRound
             | Native::TemporalPlainTimeUntil
-            | Native::TemporalPlainTimeSince => {
+            | Native::TemporalPlainTimeSince
+            | Native::TemporalPlainTimeToString
+            | Native::TemporalPlainTimeToJSON => {
                 self.temporal_plain_time_native(p, native, this, args)
             }
             Native::TemporalPlainMonthDay
