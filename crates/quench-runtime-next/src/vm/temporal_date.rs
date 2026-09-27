@@ -6,6 +6,7 @@ const MAX_BASIC_ISO_YEAR: i32 = 9_999;
 const BASIC_ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_ISO_YEAR_DIGITS: usize = 6;
 const ISO_MONTH_DAY_DIGITS: usize = 2;
+const ISO_MONTH_CODE_DIGITS: usize = 2;
 const MONTHS_BEFORE_ISO_YEAR: i32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -334,7 +335,7 @@ impl<H: Host> Vm<H> {
         Ok(format!("{date}[{critical_marker}u-ca={calendar}]"))
     }
 
-    fn plain_date_from_bag(
+    pub(super) fn plain_date_from_bag(
         &mut self,
         p: &ResidualProgram,
         value: Value,
@@ -394,16 +395,24 @@ impl<H: Host> Vm<H> {
         Ok((date, calendar))
     }
 
-    fn plain_date_month_code(&mut self, p: &ResidualProgram, value: Value) -> Result<i32, JsError> {
+    pub(super) fn plain_date_month_code(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<i32, JsError> {
         let code = self.to_string(p, value)?.to_string();
         let month = code
             .strip_prefix('M')
+            .filter(|month| {
+                month.len() == ISO_MONTH_CODE_DIGITS
+                    && month.bytes().all(|byte| byte.is_ascii_digit())
+            })
             .and_then(|month| month.parse::<i32>().ok())
             .filter(|month| (1..=ISO_MONTHS_PER_YEAR).contains(month));
         month.ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
     }
 
-    fn plain_date_optional_integer(
+    pub(super) fn plain_date_optional_integer(
         &mut self,
         p: &ResidualProgram,
         value: Value,

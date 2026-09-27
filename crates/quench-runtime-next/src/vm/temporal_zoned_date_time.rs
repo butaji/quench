@@ -191,13 +191,11 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if native == Native::TemporalZonedDateTimeFrom {
-            self.validate_zoned_date_time_options(
-                p,
-                args.get(1).copied().unwrap_or(Value::UNDEFINED),
-            )?;
+            let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
             let input = self.temporal_zoned_date_time_record(
                 p,
                 args.first().copied().unwrap_or(Value::UNDEFINED),
+                options,
             )?;
             return self.make_temporal_zoned_date_time(p, this, input);
         }
@@ -205,10 +203,12 @@ impl<H: Host> Vm<H> {
             let left = self.temporal_zoned_date_time_record(
                 p,
                 args.first().copied().unwrap_or(Value::UNDEFINED),
+                Value::UNDEFINED,
             )?;
             let right = self.temporal_zoned_date_time_record(
                 p,
                 args.get(1).copied().unwrap_or(Value::UNDEFINED),
+                Value::UNDEFINED,
             )?;
             let ordering = left.epoch_nanoseconds.cmp(&right.epoch_nanoseconds);
             return Ok(Value::number(match ordering {
@@ -267,6 +267,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         value: Value,
+        options: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
         match self.heap.get(value).cloned() {
             Some(Cell::TemporalZonedDateTime {
@@ -274,39 +275,23 @@ impl<H: Host> Vm<H> {
                 time_zone,
                 calendar,
                 ..
-            }) => Ok(ZonedDateTimeRecord {
-                epoch_nanoseconds,
-                time_zone,
-                calendar,
-            }),
-            Some(Cell::String(_)) => {
-                let text = self.to_string(p, value)?.to_string();
-                parse_zoned_date_time_string(&text)
-                    .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))
-            }
-            Some(Cell::Object(_)) | Some(Cell::Proxy { .. }) => {
-                let epoch_atom = self.intern_atom("epochNanoseconds");
-                let epoch_value = self.get_property(p, value, epoch_atom)?;
-                let epoch_nanoseconds = match self.heap.get(epoch_value).cloned() {
-                    Some(Cell::BigInt(text)) => text
-                        .parse::<i128>()
-                        .map_err(|_| self.range_error(p, "Invalid epochNanoseconds".into()))?,
-                    _ => return Err(self.type_error(p, "Invalid ZonedDateTime".into())),
-                };
-                let zone_atom = self.intern_atom("timeZoneId");
-                let zone = self.get_property(p, value, zone_atom)?;
-                let time_zone = self.temporal_timezone_id(p, zone)?;
-                let calendar_atom = self.intern_atom("calendarId");
-                let calendar_value = self.get_property(p, value, calendar_atom)?;
-                let calendar_text = self.to_string(p, calendar_value)?.to_string();
-                let calendar =
-                    super::temporal_date_parse::parse_calendar_identifier(&calendar_text)
-                        .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?;
+            }) => {
+                self.validate_zoned_date_time_options(p, options)?;
                 Ok(ZonedDateTimeRecord {
                     epoch_nanoseconds,
                     time_zone,
                     calendar,
                 })
+            }
+            Some(Cell::String(_)) => {
+                let text = self.to_string(p, value)?.to_string();
+                let record = parse_zoned_date_time_string(&text)
+                    .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
+                self.validate_zoned_date_time_options(p, options)?;
+                Ok(record)
+            }
+            Some(Cell::Object(_)) | Some(Cell::Function { .. }) | Some(Cell::Proxy { .. }) => {
+                self.temporal_zoned_date_time_property_bag(p, value, options)
             }
             _ => Err(self.type_error(p, "Invalid ZonedDateTime value".into())),
         }
@@ -316,13 +301,14 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         options: Value,
-    ) -> Result<(), JsError> {
+    ) -> Result<bool, JsError> {
         if options.is_undefined() {
-            return Ok(());
+            return Ok(true);
         }
         if !self.is_object_like(options) {
             return Err(self.type_error(p, "Invalid options".into()));
         }
+        let mut constrain = true;
         for (name, allowed) in [
             ("disambiguation", &DISAMBIGUATION_OPTIONS[..]),
             ("offset", &OFFSET_OPTIONS[..]),
@@ -337,8 +323,136 @@ impl<H: Host> Vm<H> {
             if !allowed.contains(&value.as_str()) {
                 return Err(self.range_error(p, "Invalid Temporal option".into()));
             }
+            if name == "overflow" {
+                constrain = value == "constrain";
+            }
         }
-        Ok(())
+        Ok(constrain)
+    }
+
+    fn temporal_zoned_date_time_property_bag(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        options: Value,
+    ) -> Result<ZonedDateTimeRecord, JsError> {
+        let calendar_atom = self.intern_atom("calendar");
+        let calendar_value = self.get_property(p, value, calendar_atom)?;
+        let calendar = if calendar_value.is_undefined() {
+            "iso8601".to_owned()
+        } else if matches!(self.heap.get(calendar_value), Some(Cell::String(_))) {
+            let text = self.to_string(p, calendar_value)?.to_string();
+            super::temporal_date_parse::parse_calendar_identifier(&text)
+                .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
+        } else {
+            return Err(self.type_error(p, "Invalid calendar".into()));
+        };
+        let day = self.temporal_date_bag_field(p, value, "day")?;
+        let hour = self.temporal_date_bag_field(p, value, "hour")?;
+        let microsecond = self.temporal_date_bag_field(p, value, "microsecond")?;
+        let millisecond = self.temporal_date_bag_field(p, value, "millisecond")?;
+        let minute = self.temporal_date_bag_field(p, value, "minute")?;
+        let month = self.temporal_date_bag_field(p, value, "month")?;
+        let month_code_atom = self.intern_atom("monthCode");
+        let month_code_value = self.get_property(p, value, month_code_atom)?;
+        let month_code = if month_code_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, month_code_value)?.to_string())
+        };
+        let nanosecond = self.temporal_date_bag_field(p, value, "nanosecond")?;
+        let offset_atom = self.intern_atom("offset");
+        let offset_value = self.get_property(p, value, offset_atom)?;
+        let offset = if offset_value.is_undefined() {
+            None
+        } else {
+            let offset = self.to_string(p, offset_value)?.to_string();
+            if !quench_temporal::valid_timezone_offset(&offset) {
+                return Err(self.range_error(p, "Invalid offset".into()));
+            }
+            Some(offset)
+        };
+        let second = self.temporal_date_bag_field(p, value, "second")?;
+        let timezone_atom = self.intern_atom("timeZone");
+        let timezone_value = self.get_property(p, value, timezone_atom)?;
+        let timezone = self.temporal_timezone_id(p, timezone_value)?;
+        let year_atom = self.intern_atom("year");
+        let year_value = self.get_property(p, value, year_atom)?;
+        if year_value.is_undefined() {
+            return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
+        }
+        let month_code = month_code
+            .map(|code| {
+                let value = self.heap.alloc(Cell::String(code.into()));
+                self.plain_date_month_code(p, value)
+            })
+            .transpose()?;
+        let year = self.plain_date_optional_integer(p, year_value)?;
+        let constrain = self.validate_zoned_date_time_options(p, options)?;
+        let (Some(year), Some(day)) = (year, day) else {
+            return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
+        };
+        let Some(month) = month.or(month_code) else {
+            return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
+        };
+        if month_code.is_some_and(|month_code| month_code != month) {
+            return Err(self.range_error(p, "month and monthCode must agree".into()));
+        }
+        let (month, day) = if constrain {
+            let month = month.clamp(1, 12);
+            let last_day = super::temporal_date::iso_days_in_month(year, month).unwrap_or(31);
+            (month, day.clamp(1, last_day))
+        } else {
+            (month, day)
+        };
+        let date = super::temporal_date::checked_iso_date(year, month, day)
+            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
+        let local_date = chrono::NaiveDate::from_ymd_opt(date.year, date.month, date.day)
+            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
+        let local = local_date
+            .and_hms_nano_opt(
+                hour.unwrap_or(0) as u32,
+                minute.unwrap_or(0) as u32,
+                second.unwrap_or(0) as u32,
+                millisecond.unwrap_or(0) as u32 * NANOSECONDS_PER_MILLISECOND
+                    + microsecond.unwrap_or(0) as u32 * NANOSECONDS_PER_MICROSECOND
+                    + nanosecond.unwrap_or(0) as u32,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
+        let epoch_nanoseconds = zoned_local_epoch(local, &timezone)
+            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
+        if let Some(offset) = offset {
+            if !quench_temporal::valid_timezone_offset(&offset) {
+                return Err(self.range_error(p, "Invalid offset".into()));
+            }
+            let offset_seconds = quench_temporal::offset_seconds(&offset);
+            let offset_epoch = i128::from(local.and_utc().timestamp()) * NANOSECONDS_PER_SECOND
+                + i128::from(local.and_utc().timestamp_subsec_nanos())
+                - i128::from(offset_seconds) * NANOSECONDS_PER_SECOND;
+            if offset_epoch != epoch_nanoseconds {
+                return Err(self.range_error(p, "Offset does not match time zone".into()));
+            }
+        }
+        Ok(ZonedDateTimeRecord {
+            epoch_nanoseconds,
+            time_zone: timezone,
+            calendar,
+        })
+    }
+
+    fn temporal_date_bag_field(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        name: &str,
+    ) -> Result<Option<i32>, JsError> {
+        let atom = self.intern_atom(name);
+        let value = self.get_property(p, value, atom)?;
+        if value.is_undefined() {
+            return Ok(None);
+        }
+        self.plain_date_optional_integer(p, value)
+            .map(|value| value)
     }
 
     fn make_temporal_zoned_date_time(
@@ -423,6 +537,33 @@ fn canonical_time_zone(value: &str) -> Option<String> {
         .parse::<chrono_tz::Tz>()
         .ok()
         .map(|zone| zone.to_string())
+}
+
+fn zoned_local_epoch(local: chrono::NaiveDateTime, zone: &str) -> Option<i128> {
+    let instant = if zone.starts_with(['+', '-']) {
+        let offset_seconds = quench_temporal::offset_seconds(zone);
+        let utc = local
+            .and_utc()
+            .checked_sub_signed(Duration::seconds(i64::from(offset_seconds)))?;
+        i128::from(utc.timestamp()) * NANOSECONDS_PER_SECOND
+            + i128::from(utc.timestamp_subsec_nanos())
+    } else {
+        let zone = zone.parse::<chrono_tz::Tz>().ok()?;
+        let instant = match zone.from_local_datetime(&local) {
+            chrono::LocalResult::Single(instant) => instant,
+            chrono::LocalResult::Ambiguous(first, second) => {
+                if first.timestamp() <= second.timestamp() {
+                    first
+                } else {
+                    second
+                }
+            }
+            chrono::LocalResult::None => return None,
+        };
+        i128::from(instant.timestamp()) * NANOSECONDS_PER_SECOND
+            + i128::from(instant.timestamp_subsec_nanos())
+    };
+    (instant.unsigned_abs() <= MAX_EPOCH_NANOSECONDS as u128).then_some(instant)
 }
 
 fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]> {
