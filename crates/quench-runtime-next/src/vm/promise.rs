@@ -4012,6 +4012,38 @@ impl<H: Host> Vm<H> {
         self.promise
             .reaction_capabilities
             .insert(next, (resolve, reject));
+        self.perform_promise_then(p, promise, record, on_fulfilled, on_rejected, next)?;
+        Ok(next)
+    }
+
+    pub(super) fn promise_then_intrinsic(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        on_fulfilled: Value,
+        on_rejected: Value,
+    ) -> Result<Value, JsError> {
+        let Some(record) = self.promise.records.get(&promise).cloned() else {
+            return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
+        };
+        let next = self.promise_object();
+        let (resolve, reject) = self.promise_resolving_functions(next);
+        self.promise
+            .reaction_capabilities
+            .insert(next, (resolve, reject));
+        self.perform_promise_then(p, promise, record, on_fulfilled, on_rejected, next)?;
+        Ok(next)
+    }
+
+    fn perform_promise_then(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        record: PromiseRecord,
+        on_fulfilled: Value,
+        on_rejected: Value,
+        next: Value,
+    ) -> Result<(), JsError> {
         let reaction = PromiseReaction {
             on_fulfilled: if self.is_function(on_fulfilled) {
                 on_fulfilled
@@ -4035,7 +4067,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.enqueue_promise_reaction(p, reaction, record.state, record.result);
         }
-        Ok(next)
+        Ok(())
     }
 
     fn promise_species_constructor(
