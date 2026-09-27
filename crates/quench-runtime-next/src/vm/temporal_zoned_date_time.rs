@@ -8,7 +8,6 @@ const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const NANOSECOND: i128 = 1;
 const MIN_ROUNDING_INCREMENT: i128 = NANOSECOND;
 const MAX_SUBSECOND_ROUNDING_INCREMENT: i128 = 1_000;
-const MONTHS_PER_YEAR: i128 = 12;
 const NANOSECONDS_PER_MILLISECOND: u32 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
 const MICROSECONDS_PER_MILLISECOND: u32 = 1_000;
@@ -1556,7 +1555,12 @@ impl<H: Host> Vm<H> {
             MIN_ROUNDING_INCREMENT
         } else {
             let increment = self.to_number(p, increment_value)?;
-            if !increment.is_finite() || increment <= 0.0 || increment > 100_000_000.0 {
+            if !increment.is_finite()
+                || increment <= 0.0
+                || increment
+                    > super::temporal_date_time_difference::MAX_CALENDAR_DIFFERENCE_ROUNDING_INCREMENT
+                        as f64
+            {
                 return Err(self.range_error(p, "Invalid roundingIncrement".into()));
             }
             increment.trunc() as i128
@@ -1603,8 +1607,10 @@ impl<H: Host> Vm<H> {
         if !ROUNDING_MODES.contains(&rounding_mode.as_str()) {
             return Err(self.range_error(p, "Invalid roundingMode".into()));
         }
-        let increment_limit = zoned_date_time_difference_increment_limit(smallest);
-        if !zoned_date_time_increment_is_valid(increment, increment_limit) {
+        if !super::temporal_date_time_difference::difference_increment_is_valid(
+            increment as f64,
+            smallest,
+        ) {
             return Err(self.range_error(p, "Invalid roundingIncrement".into()));
         }
         Ok(ZonedDateTimeDifferenceOptions {
@@ -2991,16 +2997,6 @@ fn zoned_date_time_unit_nanoseconds(value: &str) -> Option<i128> {
         .iter()
         .find(|(unit, _, _)| *unit == value)
         .map(|(_, nanoseconds, _)| *nanoseconds)
-}
-
-fn zoned_date_time_difference_increment_limit(value: &str) -> i128 {
-    match value {
-        "year" | "week" | "day" => MIN_ROUNDING_INCREMENT,
-        "month" => MONTHS_PER_YEAR,
-        "hour" => HOURS_PER_DAY,
-        "minute" | "second" => i128::from(SECONDS_PER_MINUTE),
-        _ => MAX_SUBSECOND_ROUNDING_INCREMENT,
-    }
 }
 
 fn zoned_date_time_increment_is_valid(increment: i128, limit: i128) -> bool {
