@@ -2,7 +2,7 @@ use super::*;
 use chrono::{Datelike, Duration, Offset, TimeZone, Timelike, Utc};
 use std::cmp::Ordering;
 
-const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
+pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const NANOSECONDS_PER_MILLISECOND: u32 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
@@ -23,7 +23,7 @@ const ISO_LEAP_SECOND: u32 = ISO_SECOND_LIMIT + 1;
 const NANOSECONDS_PER_MINUTE: i128 = SECONDS_PER_MINUTE as i128 * NANOSECONDS_PER_SECOND;
 const NANOSECONDS_PER_HOUR: i128 = SECONDS_PER_HOUR as i128 * NANOSECONDS_PER_SECOND;
 const HOURS_PER_DAY: i128 = 24;
-const NANOSECONDS_PER_DAY: i128 = HOURS_PER_DAY * NANOSECONDS_PER_HOUR;
+pub(super) const NANOSECONDS_PER_DAY: i128 = HOURS_PER_DAY * NANOSECONDS_PER_HOUR;
 const FRACTIONAL_MILLISECOND_DIGITS: usize = 3;
 const FRACTIONAL_MICROSECOND_DIGITS: usize = 6;
 const SMALLEST_UNITS: [&str; 5] = [
@@ -249,7 +249,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn temporal_timezone_id(
+    pub(super) fn temporal_timezone_id(
         &mut self,
         p: &ResidualProgram,
         value: Value,
@@ -1046,7 +1046,7 @@ fn naive_epoch_nanoseconds(value: chrono::NaiveDateTime) -> Option<i128> {
     )
 }
 
-fn timezone_offset_nanoseconds(zone: &str, epoch: i128) -> Option<i128> {
+pub(super) fn timezone_offset_nanoseconds(zone: &str, epoch: i128) -> Option<i128> {
     if zone.starts_with(['+', '-']) {
         return Some(i128::from(quench_temporal::offset_seconds(zone)) * NANOSECONDS_PER_SECOND);
     }

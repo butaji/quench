@@ -90,6 +90,78 @@ pub(super) fn to_plain_year_month<H: Host>(
     Ok(value)
 }
 
+pub(super) fn to_zoned_date_time<H: Host>(
+    vm: &mut Vm<H>,
+    p: &ResidualProgram,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    let (year, month, day, calendar) = vm.temporal_plain_date_slots(p, this)?;
+    let item = args.first().copied().unwrap_or(Value::UNDEFINED);
+    let (time_zone_value, time_value) = if vm.is_object_like(item) {
+        let time_zone_atom = vm.intern_atom("timeZone");
+        let time_zone = vm.get_property(p, item, time_zone_atom)?;
+        if time_zone.is_undefined() {
+            return Err(vm.type_error(p, "Invalid time zone".into()));
+        }
+        let plain_time_atom = vm.intern_atom("plainTime");
+        let plain_time = vm.get_property(p, item, plain_time_atom)?;
+        (time_zone, plain_time)
+    } else {
+        (item, Value::UNDEFINED)
+    };
+    if time_zone_value.is_undefined() {
+        return Err(vm.type_error(p, "Invalid time zone".into()));
+    }
+    let time_zone = vm.temporal_timezone_id(p, time_zone_value)?;
+    let time = if time_value.is_undefined() {
+        [0; 6]
+    } else {
+        super::temporal_plain_date_time_conversion::to_time(vm, p, time_value)?
+    };
+    let iso_date = super::temporal_date::IsoDate { year, month, day };
+    let local_midnight =
+        i128::from(super::temporal_date::days_from_iso_date(iso_date))
+            * super::temporal_zoned_date_time::NANOSECONDS_PER_DAY;
+    let local_time = time
+        .iter()
+        .zip(TIME_NANOSECONDS)
+        .map(|(field, scale)| i128::from(*field) * scale)
+        .sum::<i128>();
+    let local_epoch = local_midnight + local_time;
+    let offset = super::temporal_zoned_date_time::timezone_offset_nanoseconds(
+        &time_zone,
+        local_epoch,
+    )
+    .ok_or_else(|| vm.range_error(p, "Invalid time zone".into()))?;
+    let epoch_nanoseconds = local_epoch - offset;
+    if epoch_nanoseconds.unsigned_abs()
+        > super::temporal_zoned_date_time::MAX_EPOCH_NANOSECONDS as u128
+    {
+        return Err(vm.range_error(p, "Invalid instant".into()));
+    }
+    let temporal_atom = vm.intern_atom("Temporal");
+    let temporal = vm.get_property(p, vm.realm.globals, temporal_atom)?;
+    let constructor_atom = vm.intern_atom("ZonedDateTime");
+    let constructor = vm.get_property(p, temporal, constructor_atom)?;
+    let args = [
+        vm.heap.alloc(Cell::BigInt(epoch_nanoseconds.to_string())),
+        vm.heap.alloc(Cell::String(time_zone.into())),
+        vm.heap.alloc(Cell::String(calendar.into())),
+    ];
+    let result = vm.temporal_zoned_date_time_construct(p, &args, constructor)?;
+    Ok(result)
+}
+
+const TIME_NANOSECONDS: [i128; 6] = [
+    3_600_000_000_000,
+    60_000_000_000,
+    1_000_000_000,
+    1_000_000,
+    1_000,
+    1,
+];
+
 pub(super) fn native<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
