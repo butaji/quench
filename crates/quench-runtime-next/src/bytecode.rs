@@ -703,6 +703,7 @@ pub(crate) enum OperandKind {
     Field = 2,
     Local = 3,
 }
+#[cfg(feature = "profile-aggregate")]
 impl OperandKind {
     pub(crate) const COUNT: usize = Self::Local as usize + 1;
 }

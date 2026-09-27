@@ -55,6 +55,7 @@ pub(crate) struct GcProfile {
     pub sweep_nanos: u64,
     pub marked_kinds: [u64; CellKind::COUNT],
 }
+#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 #[repr(usize)]
 #[derive(Clone, Copy)]
 pub(crate) enum CellKind {
@@ -79,6 +80,7 @@ pub(crate) enum CellKind {
     TemporalPlainDate,
     TemporalPlainDateTime,
 }
+#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
     pub(crate) const COUNT: usize = Self::TemporalPlainDateTime as usize + 1;
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
@@ -203,6 +205,50 @@ impl Heap {
         self.properties.reset_shapes();
         for (shape, length) in lengths.iter().copied().enumerate() {
             self.properties.register_shape(shape as u32, length);
+        }
+    }
+    pub(crate) fn compact_property_arena(&mut self) {
+        if !self.properties.has_released_ranges() {
+            return;
+        }
+        #[cfg(feature = "profile-memory")]
+        let before = self.properties.stats();
+        let mut objects = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                let object = slot.cell.as_ref()?.object()?;
+                self.properties
+                    .has_values(object.properties)
+                    .then_some(())?;
+                Some((object.properties.start_offset(), index))
+            })
+            .collect::<Vec<_>>();
+        objects.sort_unstable();
+        let mut target = 0;
+        for (_, index) in objects {
+            let slot = self
+                .slots
+                .get_mut(index)
+                .expect("property owner slot exists");
+            let object = slot
+                .cell
+                .as_mut()
+                .and_then(Cell::object_mut)
+                .expect("property owner remains live during compaction");
+            target += self
+                .properties
+                .compact_vector(&mut object.properties, target);
+        }
+        self.properties.finish_compaction(target);
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("RQJ_MEMORY").is_some() {
+            let after = self.properties.stats();
+            eprintln!(
+                "{{\"kind\":\"rqj-property-compaction\",\"values_before\":{},\"values_after\":{},\"capacity_before\":{},\"capacity_after\":{},\"free_ranges_before\":{},\"free_ranges_after\":{}}}",
+                before.0, after.0, before.1, after.1, before.2, after.2
+            );
         }
     }
     pub(crate) fn reset(&mut self) {
