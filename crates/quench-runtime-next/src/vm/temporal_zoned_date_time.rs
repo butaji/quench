@@ -1274,7 +1274,7 @@ impl<H: Host> Vm<H> {
             &DISAMBIGUATION_OPTIONS,
             "compatible",
         )?;
-        let _offset_mode = option(self, "offset", &OFFSET_OPTIONS, "prefer")?;
+        let offset_mode = option(self, "offset", &OFFSET_OPTIONS, "prefer")?;
         let overflow = option(self, "overflow", &OVERFLOW_OPTIONS, "constrain")?;
         if supplied.iter().all(|(_, value)| value.is_undefined()) {
             return Err(self.type_error(p, "Insufficient date-time data".into()));
@@ -1371,13 +1371,51 @@ impl<H: Host> Vm<H> {
         if primitive_options {
             return Err(self.type_error(p, "Invalid options".into()));
         }
-        self.make_zoned_date_time_from_local(
+        let date = super::temporal_date::IsoDate { year, month, day };
+        let time = time.map(|field| field as u32);
+        let offset = match supplied
+            .iter()
+            .find(|(name, value)| *name == "offset" && !value.is_undefined())
+        {
+            Some((_, value)) => {
+                let text = self.to_string(p, *value)?.to_string();
+                Some(
+                    parse_offset_nanoseconds(&text)
+                        .ok_or_else(|| self.range_error(p, "Invalid offset".into()))?,
+                )
+            }
+            None => None,
+        };
+        if offset.is_none() && offset_mode != "ignore" {
+            return self.make_zoned_date_time_from_local(
             p,
-            super::temporal_date::IsoDate { year, month, day },
-            time.map(|field| field as u32),
+                date,
+                time,
             calendar,
             time_zone,
             &disambiguation,
+            );
+        }
+        let local_epoch = local_epoch_from_iso_fields(date, time);
+        let epoch_nanoseconds = resolve_zoned_local_epoch(
+            date,
+            time,
+            &time_zone,
+            local_epoch,
+            offset,
+            false,
+            &offset_mode,
+            &disambiguation,
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_atom)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            ZonedDateTimeRecord { epoch_nanoseconds, time_zone, calendar },
         )
     }
 
@@ -1991,30 +2029,26 @@ impl<H: Host> Vm<H> {
             nanosecond.unwrap_or(0) as u32,
         ];
         let local_epoch = local_epoch_from_iso_fields(date, time);
-        let zone_epoch = zoned_local_epoch_from_iso_fields(
-            date,
-            time,
-            &timezone,
-            &options.disambiguation,
-        )
-            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
-        let epoch_nanoseconds = if let Some(offset) = offset {
+        let offset = if let Some(offset) = offset {
             if !quench_temporal::valid_timezone_offset(&offset) {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
-            let offset_epoch = local_epoch
-                - parse_offset_nanoseconds(&offset)
-                    .ok_or_else(|| self.range_error(p, "Invalid offset".into()))?;
-            match options.offset.as_str() {
-                "use" => offset_epoch,
-                "ignore" => zone_epoch,
-                "prefer" if offset_epoch != zone_epoch => zone_epoch,
-                "prefer" | "reject" if offset_epoch == zone_epoch => offset_epoch,
-                _ => return Err(self.range_error(p, "Offset does not match time zone".into())),
-        }
+            Some(parse_offset_nanoseconds(&offset)
+                .ok_or_else(|| self.range_error(p, "Invalid offset".into()))?)
         } else {
-            zone_epoch
+            None
         };
+        let epoch_nanoseconds = resolve_zoned_local_epoch(
+            date,
+            time,
+            &timezone,
+            local_epoch,
+            offset,
+            false,
+            &options.offset,
+            &options.disambiguation,
+        )
+        .ok_or_else(|| self.range_error(p, "Offset does not match time zone".into()))?;
         Ok(ZonedDateTimeRecord {
             epoch_nanoseconds,
             time_zone: timezone,
@@ -2139,28 +2173,16 @@ fn resolve_zoned_date_time_string(
     {
         return None;
     }
-    let fixed_zone_offset = fixed_time_zone_offset_nanoseconds(&time_zone);
-    let zone_epoch = || -> Option<i128> {
-        zoned_local_epoch_from_iso_fields(local.date, local.time, &time_zone, "compatible")
-    };
-    let epoch_nanoseconds = match (offset_mode, local.offset_nanoseconds, local.z_designator) {
-        ("use", Some(offset), _) | (_, Some(offset), true) => {
-            local_epoch_nanoseconds - offset
-        }
-        ("ignore", _, _) | (_, None, _) => zone_epoch()?,
-        (_, Some(offset), false) => {
-            let exact_epoch = local_epoch_nanoseconds - offset;
-            let actual_offset = fixed_zone_offset
-                .or_else(|| timezone_offset_nanoseconds(&time_zone, exact_epoch));
-            if actual_offset == Some(offset) {
-                exact_epoch
-            } else if offset_mode == "reject" {
-        return None;
-            } else {
-                zone_epoch()?
-            }
-    }
-    };
+    let epoch_nanoseconds = resolve_zoned_local_epoch(
+        local.date,
+        local.time,
+        &time_zone,
+        local_epoch_nanoseconds,
+        local.offset_nanoseconds,
+        local.z_designator,
+        offset_mode,
+        "compatible",
+    )?;
     if epoch_nanoseconds.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
         return None;
     }
@@ -2169,6 +2191,36 @@ fn resolve_zoned_date_time_string(
         time_zone,
         calendar,
     })
+}
+
+fn resolve_zoned_local_epoch(
+    date: super::temporal_date::IsoDate,
+    time: [u32; 6],
+    time_zone: &str,
+    local_epoch: i128,
+    offset: Option<i128>,
+    z_designator: bool,
+    offset_mode: &str,
+    disambiguation: &str,
+) -> Option<i128> {
+    let zone_epoch = || zoned_local_epoch_from_iso_fields(date, time, time_zone, disambiguation);
+    let Some(offset) = offset else {
+        return zone_epoch();
+    };
+    let offset_epoch = local_epoch.checked_sub(offset)?;
+    if offset_mode == "use" || z_designator {
+        return Some(offset_epoch);
+    }
+    if offset_mode == "ignore" {
+        return zone_epoch();
+    }
+    let actual_offset = fixed_time_zone_offset_nanoseconds(time_zone)
+        .or_else(|| timezone_offset_nanoseconds(time_zone, offset_epoch));
+    match (offset_mode, actual_offset == Some(offset)) {
+        (_, true) => Some(offset_epoch),
+        ("prefer", false) => zone_epoch(),
+        _ => None,
+    }
 }
 
 pub(super) fn parse_iso_zoned_base(
