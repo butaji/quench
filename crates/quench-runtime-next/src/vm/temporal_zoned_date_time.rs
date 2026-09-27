@@ -767,6 +767,8 @@ impl<H: Host> Vm<H> {
             p,
             args.first().copied().unwrap_or(Value::UNDEFINED),
         )?;
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let constrain = self.plain_date_overflow(p, options)?;
         self.validate_duration_fields(p, &duration)?;
         if native == Native::TemporalZonedDateTimeSubtract {
             duration.iter_mut().for_each(|field| *field = -*field);
@@ -795,12 +797,16 @@ impl<H: Host> Vm<H> {
         date_duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..].fill(0.0);
         let date_duration_args = date_duration.map(Value::number);
         let date_duration = self.temporal_duration_construct(p, &date_duration_args)?;
-        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let internal_options = self.object();
+        let overflow_key = self.intern_atom("overflow");
+        let overflow = if constrain { "constrain" } else { "reject" };
+        let overflow = self.heap.alloc(Cell::String(overflow.into()));
+        self.set_property(internal_options, overflow_key, overflow)?;
         let local_date_time = self.temporal_plain_date_time_arithmetic(
             p,
             Native::TemporalPlainDateTimeAdd,
             local_date_time,
-            &[date_duration, options],
+            &[date_duration, internal_options],
         )?;
         let (date, time, _) = self.temporal_plain_date_time_slots(p, local_date_time)?;
         let date_epoch = zoned_local_epoch_from_iso_fields(date, time, &time_zone, "compatible")
@@ -1415,7 +1421,11 @@ impl<H: Host> Vm<H> {
         self.make_temporal_zoned_date_time(
             p,
             constructor,
-            ZonedDateTimeRecord { epoch_nanoseconds, time_zone, calendar },
+            ZonedDateTimeRecord {
+                epoch_nanoseconds,
+                time_zone,
+                calendar,
+            },
         )
     }
 
