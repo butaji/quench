@@ -1,5 +1,5 @@
 use super::*;
-const ISO_MONTHS_PER_YEAR: i32 = 12;
+pub(super) const ISO_MONTHS_PER_YEAR: i32 = 12;
 const MIN_ISO_YEAR: i32 = -271_821;
 const MAX_ISO_YEAR: i32 = 275_760;
 const MAX_BASIC_ISO_YEAR: i32 = 9_999;
