@@ -314,7 +314,7 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr $(; layout $layout:ident)? $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
+    ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -331,14 +331,14 @@ macro_rules! opcodes {
                 opcodes!(@flow $($flow)?)),+
             ];
             const IMMEDIATE_LAYOUTS: [ImmediateLayout; Self::COUNT] = [$(
-                opcodes!(@layout $($layout)?)),+
+                opcodes!(@layout $layout)),+
             ];
 
             const OPERAND_LAYOUTS: [OperandLayout; Self::COUNT] = [$(
                 opcodes!(@fields $a, $b, $c)),+
             ];
             const IMMEDIATE_ROLES: [ImmediateRole; Self::COUNT] = [$(
-                opcodes!(@immediate $($immediate_role)?; $($layout)?)),+
+                opcodes!(@immediate $($immediate_role)?; $layout)),+
             ];
 
             pub(crate) const fn effect(self) -> Effect {
@@ -376,7 +376,6 @@ macro_rules! opcodes {
         }
     };
     (@layout $layout:ident) => { ImmediateLayout::$layout };
-    (@layout) => { ImmediateLayout::Scalar };
     (@result $result:ident) => { ResultLayout::$result };
     (@flow $flow:ident) => { ControlFlowLayout::$flow };
     (@flow) => { ControlFlowLayout::Fallthrough };
@@ -393,83 +392,83 @@ const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
 const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 
 opcodes!(
-    Nop => Effect::PURE; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
-    CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
-    Wide => Effect::PURE; meaning WideInstructionIndex, @ NoResult, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
-    LoadConst => Effect::PURE; meaning ConstantIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadLocal => Effect::PURE; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocal => Effect::PURE; meaning LocalSlot, @ NoResult, @ fields(Register, OptionalRegister, BooleanFlag),
-    LoadEnvLocal => Effect::READS_HEAP; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreEnvLocal => Effect::WRITES_HEAP; meaning LocalSlot, @ NoResult, @ fields(Register, OptionalRegister, BooleanFlag),
+    Nop => Effect::PURE; layout Scalar; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
+    CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
+    Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex, @ NoResult, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
+    LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ NoResult, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
+    StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot, @ NoResult, @ fields(Register, OptionalRegister, BooleanFlag),
     LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot, @ NoResult, @ fields(Register, Unused, Unused),
-    LoadName => READ_THROW; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    LoadNameCall => READ_THROW; meaning AtomIndex, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
-    LoadNameTypeof => Effect::READS_HEAP; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    ResolveName => READ_THROW; meaning AtomIndex, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
-    LoadResolvedName => READ_THROW; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
-    DeleteName => READ_THROW; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreName => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, CacheSiteIndex),
-    StoreResolvedName => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, BooleanFlag),
-    LoadThis => Effect::PURE; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeClosure => CALL_EFFECT; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeArray => CALL_EFFECT; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeConstArray => CALL_EFFECT; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Unused),
-    MakeObject => CALL_EFFECT; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeObject2 => CALL_EFFECT; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
-    SuperConstArrayObject2 => CALL_EFFECT; meaning SuperinstructionIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
-    GetIterator => READ_THROW; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    GetAsyncIterator => READ_THROW; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    IteratorClose => READ_THROW; meaning Unused, @ NoResult, @ fields(Unused, Register, Unused),
-    SpreadToArray => CALL_EFFECT; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    RequireObjectCoercible => READ_THROW; meaning Unused, @ NoResult, @ fields(Unused, Register, Unused),
-    RequireIteratorResult => READ_THROW; meaning Unused, @ NoResult, @ fields(Unused, Register, Unused),
-    SuperCallCheck => READ_THROW; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
-    IteratorCleanupPush => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Register, Register, Unused),
-    IteratorCleanupPop => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
-    SetFunctionName => Effect::WRITES_HEAP; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, Unused),
-    SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning FunctionNamePrefix, @ NoResult, @ fields(Register, Register, Unused),
-    InitializeTdz => Effect::PURE; meaning LocalSlot, @ NoResult, @ fields(Unused, Unused, Unused),
-    Await => READ_THROW.union(Effect::CONTROL); meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    Yield => READ_THROW.union(Effect::CONTROL); meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    LoadName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
+    LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    ResolveName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
+    LoadResolvedName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
+    DeleteName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+    StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, CacheSiteIndex),
+    StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ NoResult, @ fields(Register, Register, BooleanFlag),
+    LoadThis => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Unused),
+    MakeObject => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
+    SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
+    GetIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    IteratorClose => READ_THROW; layout Scalar; meaning Unused, @ NoResult, @ fields(Unused, Register, Unused),
+    SpreadToArray => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused, @ NoResult, @ fields(Unused, Register, Unused),
+    RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused, @ NoResult, @ fields(Unused, Register, Unused),
+    SuperCallCheck => READ_THROW; layout Scalar; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
+    IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused, @ NoResult, @ fields(Register, Register, Unused),
+    IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused, @ NoResult, @ fields(Unused, Unused, Unused),
+    SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, Unused),
+    SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix, @ NoResult, @ fields(Register, Register, Unused),
+    InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot, @ NoResult, @ fields(Unused, Unused, Unused),
+    Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
-    GetField => READ_THROW; meaning FieldLookup, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
-    GetIndex => READ_THROW; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
-    ToPropertyKey => READ_THROW; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    ToNumeric => READ_THROW; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    CopyDataProperties => CALL_EFFECT; meaning Unused, @ NoResult, @ fields(Register, Register, Register),
-    MarkPrivateName => Effect::WRITES_HEAP; meaning AtomIndex, @ NoResult, @ fields(Unused, Register, Register),
-    SetField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, CacheSiteIndex),
-    DefineComputedField => WRITE_THROW; meaning Unused, @ NoResult, @ fields(Register, Register, Register),
-    SetThisField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, CacheSiteIndex),
-    SetIndex => WRITE_THROW; meaning BooleanFlag, @ NoResult, @ fields(Register, Register, Register),
-    DefineArrayElement => WRITE_THROW; meaning ArrayIndex, @ NoResult, @ fields(Register, Register, Unused),
-    Binary => READ_THROW; meaning BinaryOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    IncDec => READ_THROW; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
-    Unary => READ_THROW; meaning UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
-    Delete => READ_THROW; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
-    CheckPrivate => READ_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, Unused),
-    PrivateIn => READ_THROW; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    Move => Effect::PURE; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    GetField => READ_THROW; layout Scalar; meaning FieldLookup, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
+    GetIndex => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
+    ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    ToNumeric => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ NoResult, @ fields(Register, Register, Register),
+    MarkPrivateName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ NoResult, @ fields(Unused, Register, Register),
+    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ NoResult, @ fields(Register, Register, CacheSiteIndex),
+    DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused, @ NoResult, @ fields(Register, Register, Register),
+    SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, CacheSiteIndex),
+    SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag, @ NoResult, @ fields(Register, Register, Register),
+    DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex, @ NoResult, @ fields(Register, Register, Unused),
+    Binary => READ_THROW; layout Scalar; meaning BinaryOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
+    Unary => READ_THROW; layout Scalar; meaning UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
+    Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
+    CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex, @ NoResult, @ fields(Register, Unused, Unused),
+    PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
+    Move => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallDirectEvalArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
-    CallMethod => CALL_EFFECT; meaning MethodSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Unused),
-    CallThisMethod => CALL_EFFECT; meaning MethodSiteIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
+    CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Unused),
+    CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     Construct => CALL_EFFECT; layout ConstructCountAndFlags, @ Returnable, @ fields(ResultRegister, Register, ConstructArguments),
-    Jump => Effect::CONTROL; meaning JumpTarget; flow Jump, @ NoResult, @ fields(Unused, Unused, Unused),
-    JumpFalse => Effect::CONTROL; meaning JumpTarget; flow ConditionalJump, @ NoResult, @ fields(Register, Unused, Unused),
-    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); meaning JumpTarget; flow ConditionalJump, @ NoResult, @ fields(BinaryOperator, Operand, Operand),
-    Return => Effect::CONTROL; meaning Unused; flow Terminal, @ NoResult, @ fields(Register, Unused, Unused),
-    Throw => Effect::THROWS.union(Effect::CONTROL); meaning Unused; flow Terminal, @ NoResult, @ fields(Register, Unused, Unused),
-    NumericAdd => READ_THROW; meaning AdditionOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    NumericMultiply => READ_THROW; meaning MultiplicationOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    InitializeThis => Effect::CONTROL; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
-    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadCachedTemplateObject => Effect::READS_HEAP; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    DefineField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Unused),
-    ValidateClassHeritage => READ_THROW; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
+    Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump, @ NoResult, @ fields(Unused, Unused, Unused),
+    JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ NoResult, @ fields(Register, Unused, Unused),
+    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ NoResult, @ fields(BinaryOperator, Operand, Operand),
+    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal, @ NoResult, @ fields(Register, Unused, Unused),
+    Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ NoResult, @ fields(Register, Unused, Unused),
+    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    InitializeThis => Effect::CONTROL; layout Scalar; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
+    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Unused),
+    ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
 );
 
 const _: () = {
