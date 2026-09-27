@@ -505,6 +505,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalDurationAbs
             | Native::TemporalDurationNegated
             | Native::TemporalDurationTotal
+            | Native::TemporalDurationRound
             | Native::TemporalDurationToString
             | Native::TemporalDurationToJSON
             | Native::TemporalDurationValueOf

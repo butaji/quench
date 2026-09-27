@@ -15,6 +15,12 @@ const DURATION_FIELDS: [&str; 10] = [
 const DURATION_DATE_FIELD_LIMIT: f64 = 4_294_967_295.0;
 const DURATION_TOTAL_TIME_LIMIT_NANOS: i128 = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
 const DURATION_TOTAL_DECIMAL_DIGITS: usize = 32;
+const DURATION_ROUNDING_INCREMENT_LIMIT: f64 = 1_000_000_000.0;
+const DURATION_ROUNDING_MODE_NAMES: [&str; 9] = [
+    "ceil", "floor", "expand", "trunc", "halfCeil", "halfFloor", "halfExpand",
+    "halfTrunc", "halfEven",
+];
+const DURATION_ROUNDING_INCREMENT_LIMITS: [f64; 6] = [24.0, 60.0, 60.0, 1_000.0, 1_000.0, 1_000.0];
 const DURATION_TIME_NANOSECOND_SCALES: [i128; 7] = [
     86_400_000_000_000,
     3_600_000_000_000,
@@ -85,6 +91,7 @@ impl<H: Host> Vm<H> {
             ("abs", Native::TemporalDurationAbs),
             ("negated", Native::TemporalDurationNegated),
             ("total", Native::TemporalDurationTotal),
+            ("round", Native::TemporalDurationRound),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -182,6 +189,7 @@ impl<H: Host> Vm<H> {
                 self.make_temporal_duration(p, fields)
             }
             Native::TemporalDurationTotal => self.temporal_duration_total(p, this, args),
+            Native::TemporalDurationRound => self.temporal_duration_round(p, this, args),
             Native::TemporalDurationWith => {
                 let mut fields = self.duration_fields(p, this)?;
                 let options = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -251,7 +259,11 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalDurationToString | Native::TemporalDurationToJSON => {
                 let fields = self.duration_fields(p, this)?;
-                let text = format_duration(&fields);
+                let text = if native == Native::TemporalDurationToString {
+                    self.temporal_duration_to_string(p, &fields, args)?
+                } else {
+                    format_duration(&fields)
+                };
                 Ok(self.heap.alloc(Cell::String(JsString::from_str(&text))))
             }
             Native::TemporalDurationValueOf => Err(self.type_error(p, "Temporal.Duration.prototype.valueOf is not allowed".into())),
@@ -394,6 +406,233 @@ impl<H: Host> Vm<H> {
             divisor,
         )))
     }
+
+    fn temporal_duration_to_string(
+        &mut self,
+        p: &ResidualProgram,
+        fields: &[f64; 10],
+        args: &[Value],
+    ) -> Result<String, JsError> {
+        let options = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if options.is_undefined() {
+            return Ok(format_duration(fields));
+        }
+        if !self.is_object_like(options) {
+            return Err(self.type_error(p, "Options must be an object".into()));
+        }
+        let fractional_atom = self.intern_atom("fractionalSecondDigits");
+        let fractional = self.get_property(p, options, fractional_atom)?;
+        let digits = self.duration_fractional_digits(p, fractional)?;
+        let rounding_atom = self.intern_atom("roundingMode");
+        let rounding = self.get_property(p, options, rounding_atom)?;
+        let rounding_mode = self.duration_rounding_mode(p, rounding, "trunc")?;
+        let smallest_atom = self.intern_atom("smallestUnit");
+        let smallest = self.get_property(p, options, smallest_atom)?;
+        let digits = self
+            .duration_smallest_unit_digits(p, smallest)?
+            .or(digits);
+        let rounded = round_duration_for_string(fields, digits, &rounding_mode);
+        self.validate_duration_fields(p, &rounded)?;
+        Ok(format_duration_with_digits(&rounded, digits))
+    }
+
+    fn duration_fractional_digits(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Option<usize>, JsError> {
+        if value.is_undefined() {
+            return Ok(None);
+        }
+        if value.as_number().is_some() {
+            let number = self.to_number(p, value)?.floor();
+            if !number.is_finite() || !(0.0..=9.0).contains(&number) {
+                return Err(self.range_error(p, "Invalid fractionalSecondDigits".into()));
+            }
+            return Ok(Some(number as usize));
+        }
+        let text = self.to_string(p, value)?.to_string();
+        if text == "auto" {
+            Ok(None)
+        } else {
+            Err(self.range_error(p, "Invalid fractionalSecondDigits".into()))
+        }
+    }
+
+    fn duration_rounding_mode(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        default: &str,
+    ) -> Result<String, JsError> {
+        if value.is_undefined() {
+            return Ok(default.to_owned());
+        }
+        let mode = self.to_string(p, value)?.to_string();
+        if DURATION_ROUNDING_MODE_NAMES.contains(&mode.as_str()) {
+            Ok(mode)
+        } else {
+            Err(self.range_error(p, "Invalid roundingMode".into()))
+        }
+    }
+
+    fn duration_smallest_unit_digits(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Option<usize>, JsError> {
+        if value.is_undefined() {
+            return Ok(None);
+        }
+        let unit = self.to_string(p, value)?.to_string();
+        let digits = match unit.as_str() {
+            "second" | "seconds" => 0,
+            "millisecond" | "milliseconds" => 3,
+            "microsecond" | "microseconds" => 6,
+            "nanosecond" | "nanoseconds" => 9,
+            _ => return Err(self.range_error(p, "Invalid smallestUnit".into())),
+        };
+        Ok(Some(digits))
+    }
+
+    fn temporal_duration_round(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let fields = self.duration_fields(p, this)?;
+        let options = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let (smallest, largest, increment, mode, relative_to, explicit_unit) =
+            self.duration_round_options(p, options)?;
+        let smallest = smallest.ok_or_else(|| self.range_error(p, "smallestUnit is required".into()))?;
+        if !explicit_unit {
+            return Err(self.range_error(p, "largestUnit or smallestUnit is required".into()));
+        }
+        let largest = largest.unwrap_or_else(|| {
+            (0..10)
+                .find(|index| fields[*index] != 0.0)
+                .unwrap_or(smallest)
+                .min(smallest)
+        });
+        if largest > smallest {
+            return Err(self.range_error(p, "largestUnit must not be smaller than smallestUnit".into()));
+        }
+        if (smallest <= 2 || largest <= 2 || fields[..3].iter().any(|value| *value != 0.0))
+            && relative_to.is_undefined()
+        {
+            return Err(self.range_error(p, "relativeTo required for calendar units".into()));
+        }
+        if smallest <= 2 || largest <= 2 || fields[..3].iter().any(|value| *value != 0.0) {
+            return Err(self.range_error(p, "relativeTo required for calendar rounding".into()));
+        }
+        let nanos = self.duration_time_nanos(&fields);
+        let quantum = DURATION_TIME_NANOSECOND_SCALES[smallest - 3] * increment as i128;
+        let rounded_units = round_duration_integer(nanos, quantum, &mode);
+        let mut remainder = (rounded_units * quantum).unsigned_abs();
+        let mut result = [0.0; 10];
+        let sign = rounded_units.signum();
+        for unit in largest.max(3)..=smallest {
+            let scale = DURATION_TIME_NANOSECOND_SCALES[unit - 3] as u128;
+            let component = remainder / scale;
+            result[unit] = component as f64 * sign as f64;
+            remainder %= scale;
+        }
+        result.iter_mut().for_each(|value| {
+            if *value == 0.0 {
+                *value = 0.0;
+            }
+        });
+        self.validate_duration_fields(p, &result)?;
+        self.make_temporal_duration(p, result)
+    }
+
+    fn duration_round_options(
+        &mut self,
+        p: &ResidualProgram,
+        options: Value,
+    ) -> Result<(Option<usize>, Option<usize>, i128, String, Value, bool), JsError> {
+        let is_string = matches!(self.heap.get(options), Some(Cell::String(_)));
+        if !is_string && !self.is_object_like(options) {
+            return Err(self.type_error(p, "Options must be an object or string".into()));
+        }
+        let (smallest_text, largest_text, relative_to, increment, mode) = if is_string {
+            (
+                Some(self.to_string(p, options)?.to_string()),
+                None,
+                Value::UNDEFINED,
+                1.0,
+                "halfExpand".to_owned(),
+            )
+        } else {
+            let largest_atom = self.intern_atom("largestUnit");
+            let largest = self.get_property(p, options, largest_atom)?;
+            let largest = if largest.is_undefined() {
+                None
+            } else {
+                Some(self.to_string(p, largest)?.to_string())
+            };
+            let relative_atom = self.intern_atom("relativeTo");
+            let relative = self.get_property(p, options, relative_atom)?;
+            let increment_atom = self.intern_atom("roundingIncrement");
+            let increment = self.get_property(p, options, increment_atom)?;
+            let increment = if increment.is_undefined() {
+                1.0
+            } else {
+                self.to_number(p, increment)?.trunc()
+            };
+            let mode_atom = self.intern_atom("roundingMode");
+            let mode = self.get_property(p, options, mode_atom)?;
+            let mode = if mode.is_undefined() {
+                "halfExpand".to_owned()
+            } else {
+                self.to_string(p, mode)?.to_string()
+            };
+            let smallest_atom = self.intern_atom("smallestUnit");
+            let smallest = self.get_property(p, options, smallest_atom)?;
+            let smallest = if smallest.is_undefined() {
+                None
+            } else {
+                Some(self.to_string(p, smallest)?.to_string())
+            };
+            (smallest, largest, relative, increment, mode)
+        };
+        let largest = match largest_text.as_deref() {
+            Some("auto") | None => None,
+            Some(text) => Some(parse_duration_unit(text).ok_or_else(|| {
+                self.range_error(p, "Invalid largestUnit".into())
+            })?),
+        };
+        let explicit_unit = smallest_text.is_some() || largest_text.is_some();
+        let smallest = if let Some(text) = smallest_text.as_deref() {
+            Some(parse_duration_unit(text).ok_or_else(|| {
+                self.range_error(p, "Invalid smallestUnit".into())
+            })?)
+        } else if largest.is_some_and(|index| index <= 2) {
+            largest
+        } else {
+            Some(9)
+        };
+        if !increment.is_finite() || increment <= 0.0 || increment > DURATION_ROUNDING_INCREMENT_LIMIT {
+            return Err(self.range_error(p, "Invalid roundingIncrement".into()));
+        }
+        if let Some(index) = smallest.filter(|index| *index >= 4) {
+            let maximum = DURATION_ROUNDING_INCREMENT_LIMITS[index - 4];
+            if increment >= maximum || maximum % increment != 0.0 {
+                return Err(self.range_error(p, "Invalid roundingIncrement".into()));
+            }
+        }
+        if !DURATION_ROUNDING_MODE_NAMES.contains(&mode.as_str()) {
+            return Err(self.range_error(p, "Invalid roundingMode".into()));
+        }
+        if !relative_to.is_undefined()
+            && !matches!(self.heap.get(relative_to), Some(Cell::String(_)))
+            && !self.is_object_like(relative_to)
+        {
+            return Err(self.type_error(p, "relativeTo must be a string or object".into()));
+        }
+        Ok((smallest, largest, increment as i128, mode, relative_to, explicit_unit))
+    }
 }
 
 fn duration_total_time_out_of_range(values: &[f64]) -> bool {
@@ -475,7 +714,41 @@ fn divide_duration_nanos(nanos: i128, divisor: i128) -> f64 {
     if negative { -value } else { value }
 }
 
+fn parse_duration_unit(unit: &str) -> Option<usize> {
+    let unit = unit.strip_suffix('s').unwrap_or(unit);
+    DURATION_FIELDS
+        .iter()
+        .position(|field| field.strip_suffix('s').unwrap_or(field) == unit)
+}
+
+fn round_duration_integer(value: i128, quantum: i128, mode: &str) -> i128 {
+    let sign = value.signum();
+    let absolute = value.unsigned_abs();
+    let quantum = quantum as u128;
+    let mut units = absolute / quantum;
+    let remainder = absolute % quantum;
+    let increment = match mode {
+        "ceil" => sign > 0 && remainder != 0,
+        "floor" => sign < 0 && remainder != 0,
+        "expand" => remainder != 0,
+        "trunc" => false,
+        "halfEven" => remainder * 2 > quantum || remainder * 2 == quantum && units % 2 != 0,
+        "halfCeil" => remainder * 2 >= quantum && sign > 0 || remainder * 2 > quantum && sign < 0,
+        "halfFloor" => remainder * 2 > quantum && sign > 0 || remainder * 2 >= quantum && sign < 0,
+        "halfTrunc" => remainder * 2 > quantum,
+        _ => remainder * 2 >= quantum,
+    };
+    if increment {
+        units += 1;
+    }
+    units as i128 * sign
+}
+
 fn format_duration(fields: &[f64; 10]) -> String {
+    format_duration_with_digits(fields, None)
+}
+
+fn format_duration_with_digits(fields: &[f64; 10], fractional_digits: Option<usize>) -> String {
     let sign = fields.iter().find(|value| **value != 0.0).map_or(1.0, |value| value.signum());
     let values = fields.map(|value| value.abs());
     let mut result = if sign < 0.0 { "-P".to_owned() } else { "P".to_owned() };
@@ -485,7 +758,7 @@ fn format_duration(fields: &[f64; 10]) -> String {
             result.push_str(suffix);
         }
     }
-    let time = values[4..].iter().any(|value| *value != 0.0);
+    let time = values[4..].iter().any(|value| *value != 0.0) || fractional_digits.is_some();
     if time {
         result.push('T');
         for (index, suffix) in [(4, "H"), (5, "M")] {
@@ -499,12 +772,17 @@ fn format_duration(fields: &[f64; 10]) -> String {
             .zip([1_000_000_000_i128, 1_000_000, 1_000, 1])
             .map(|(value, scale)| (*value as i128).abs() * scale)
             .sum::<i128>();
-        if nanos != 0 || values[6] != 0.0 {
+        if nanos != 0 || values[6] != 0.0 || fractional_digits.is_some() {
             let seconds = nanos / 1_000_000_000;
             let fraction = nanos % 1_000_000_000;
             result.push_str(&seconds.to_string());
-            if fraction != 0 {
-                let fraction = format!("{fraction:09}").trim_end_matches('0').to_owned();
+            if fraction != 0 || fractional_digits.is_some_and(|digits| digits > 0) {
+                let fraction = format!("{fraction:09}");
+                let fraction = if let Some(digits) = fractional_digits {
+                    fraction[..digits].to_owned()
+                } else {
+                    fraction.trim_end_matches('0').to_owned()
+                };
                 result.push('.');
                 result.push_str(&fraction);
             }
@@ -512,6 +790,55 @@ fn format_duration(fields: &[f64; 10]) -> String {
         }
     }
     if result == "P" || result == "-P" { format!("{result}T0S") } else { result }
+}
+
+fn round_duration_for_string(
+    fields: &[f64; 10],
+    digits: Option<usize>,
+    rounding_mode: &str,
+) -> [f64; 10] {
+    let Some(digits) = digits else {
+        return *fields;
+    };
+    let total = fields[4..]
+        .iter()
+        .zip(DURATION_TIME_NANOSECOND_SCALES[1..].iter().copied())
+        .map(|(value, scale)| *value as i128 * scale)
+        .sum::<i128>();
+    let quantum = 10_i128.pow((9 - digits) as u32);
+    let rounded = round_duration_integer(total, quantum, rounding_mode) * quantum;
+    let original_top = (4..=9).find(|index| fields[*index] != 0.0).unwrap_or(6);
+    let requested_top = match digits {
+        0 => 6,
+        1..=3 => 7,
+        4..=6 => 8,
+        _ => 9,
+    };
+    let top = if fields[3] != 0.0 {
+        3
+    } else {
+        original_top.min(requested_top)
+    };
+    let mut result = *fields;
+    result[4..].fill(0.0);
+    let sign = rounded.signum();
+    let mut remainder = rounded.unsigned_abs();
+    if top == 3 {
+        let day_scale = DURATION_TIME_NANOSECOND_SCALES[0] as u128;
+        result[3] += sign as f64 * (remainder / day_scale) as f64;
+        remainder %= day_scale;
+    }
+    for index in top.max(4)..10 {
+        let scale = DURATION_TIME_NANOSECOND_SCALES[index - 3] as u128;
+        result[index] = sign as f64 * (remainder / scale) as f64;
+        remainder %= scale;
+    }
+    result.iter_mut().for_each(|value| {
+        if *value == 0.0 {
+            *value = 0.0;
+        }
+    });
+    result
 }
 
 fn format_number(number: f64) -> String {
