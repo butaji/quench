@@ -369,6 +369,24 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalPlainDateToJSON
         | Native::TemporalPlainDateToLocaleString
         | Native::TemporalPlainDateValueOf => 0.0,
+        Native::TemporalZonedDateTime => 2.0,
+        Native::TemporalZonedDateTimeFrom => 1.0,
+        Native::TemporalZonedDateTimeCompare => 2.0,
+        Native::TemporalZonedDateTimeEquals | Native::TemporalZonedDateTimeWithTimeZone => 1.0,
+        Native::TemporalZonedDateTimeEpochNanosecondsGetter
+        | Native::TemporalZonedDateTimeTimeZoneIdGetter
+        | Native::TemporalZonedDateTimeCalendarIdGetter
+        | Native::TemporalZonedDateTimeYearGetter
+        | Native::TemporalZonedDateTimeMonthGetter
+        | Native::TemporalZonedDateTimeDayGetter
+        | Native::TemporalZonedDateTimeHourGetter
+        | Native::TemporalZonedDateTimeMinuteGetter
+        | Native::TemporalZonedDateTimeSecondGetter
+        | Native::TemporalZonedDateTimeMillisecondGetter
+        | Native::TemporalZonedDateTimeMicrosecondGetter
+        | Native::TemporalZonedDateTimeNanosecondGetter
+        | Native::TemporalZonedDateTimeToString
+        | Native::TemporalZonedDateTimeToJSON => 0.0,
         Native::Symbol => 0.0,
         Native::SymbolFor | Native::SymbolKeyFor => 1.0,
         Native::SymbolToString | Native::SymbolValueOf => 0.0,
