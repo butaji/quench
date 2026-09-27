@@ -219,8 +219,10 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
 }
 
 fn has_invalid_calendar_annotation(text: &str) -> bool {
-    first_calendar_annotation(text)
-        .is_some_and(|value| !matches!(value, ISO_CALENDAR | GREGORIAN_CALENDAR))
+    first_calendar_annotation(text).is_some_and(|value| {
+        !value.eq_ignore_ascii_case(ISO_CALENDAR)
+            && !value.eq_ignore_ascii_case(GREGORIAN_CALENDAR)
+    })
 }
 
 fn has_time_junk(text: &str) -> bool {
