@@ -151,6 +151,7 @@ fn third_method_receiver_promotes_site_to_megamorphic() {
                 shape,
                 atom: 0,
                 proto: crate::Value::NULL,
+                guard: super::EMPTY_CACHE,
                 target: Some(CallTarget::User(shape, crate::Value::NULL)),
             },
         );
@@ -184,12 +185,14 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
             shape: 1,
             atom: 0,
             proto: crate::Value::NULL,
+            guard: super::EMPTY_CACHE,
             target: Some(CallTarget::User(1, live)),
         },
         MethodCache {
             shape: 2,
             atom: 0,
             proto: crate::Value::NULL,
+            guard: super::EMPTY_CACHE,
             target: Some(CallTarget::User(2, dead)),
         },
     ]);
