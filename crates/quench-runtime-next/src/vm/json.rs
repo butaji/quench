@@ -923,6 +923,8 @@ impl<H: Host> Vm<H> {
             | Some(Cell::TemporalDuration { .. })
             | Some(Cell::TemporalPlainDate { .. })
             | Some(Cell::TemporalPlainDateTime { .. })
+            | Some(Cell::TemporalPlainMonthDay { .. })
+            | Some(Cell::TemporalPlainYearMonth { .. })
             | Some(Cell::TemporalZonedDateTime { .. })
             | Some(Cell::TemporalInstant { .. }) => {
                 self.json_serialize_object(p, value, state).map(Some)

@@ -469,6 +469,8 @@ impl<H: Host> Vm<H> {
                 | Some(Cell::TemporalDuration { object: x, .. })
                 | Some(Cell::TemporalPlainDate { object: x, .. })
                 | Some(Cell::TemporalPlainDateTime { object: x, .. })
+                | Some(Cell::TemporalPlainMonthDay { object: x, .. })
+                | Some(Cell::TemporalPlainYearMonth { object: x, .. })
                 | Some(Cell::TemporalZonedDateTime { object: x, .. })
                 | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
                 Some(Cell::Object(x))
