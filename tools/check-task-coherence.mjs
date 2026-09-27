@@ -12,6 +12,8 @@ const queue = JSON.parse(fs.readFileSync(queuePath, "utf8"));
 const items = new Map(queue.items.map((item) => [item.id, item]));
 const errors = [];
 
+if (items.size !== queue.items.length) errors.push("duplicate task ids");
+
 const lanes = new Map();
 for (const [lane, ids] of Object.entries(queue.lanes)) {
   for (const id of ids) {
@@ -30,6 +32,9 @@ for (const item of queue.items) {
     errors.push(`invalid status for ${item.id}: ${item.status}`);
   }
   const file = path.join(root, "tasks", item.file);
+  if (item.file !== `${item.id}.md`) {
+    errors.push(`task ${item.id} must use its numbered specification file`);
+  }
   if (!fs.existsSync(file)) errors.push(`missing task file ${item.file}`);
   for (const dependency of item.depends_on) {
     if (!items.has(dependency)) {
@@ -40,16 +45,17 @@ for (const item of queue.items) {
 }
 
 const active = queue.items.filter((item) => item.status === "in_progress");
-if (active.length > 1) {
+const criticalPath = queue.lanes.critical_path;
+const nextCriticalTask = criticalPath.find(
+  (id) => items.get(id)?.status !== "done",
+);
+if (queue.next_task !== nextCriticalTask) {
   errors.push(
-    `multiple active tasks: ${active.map((item) => item.id).join(", ")}`,
+    `next_task ${queue.next_task} is not the first unfinished critical-path task (${nextCriticalTask ?? "none"})`,
   );
 }
-if (active[0]?.id !== queue.next_task) {
-  errors.push(`next_task ${queue.next_task} is not the active task`);
-}
-if (!active.length && queue.next_task !== null) {
-  errors.push(`next_task ${queue.next_task} has no active task`);
+if (queue.next_task !== null && items.get(queue.next_task)?.status !== "in_progress") {
+  errors.push(`next_task ${queue.next_task} is not in progress`);
 }
 
 const visiting = new Set();
