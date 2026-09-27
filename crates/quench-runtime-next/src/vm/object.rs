@@ -625,6 +625,8 @@ impl<H: Host> Vm<H> {
             (slot, data.shape(), exists)
         };
         self.check_property_key_write(object, key, exists)?;
+        let invalidates_method =
+            slot.is_some_and(|slot| self.callable_write(object, slot, value));
         if let Some(slot) = slot {
             self.heap.property_set(object, slot, value);
         } else {
@@ -632,7 +634,9 @@ impl<H: Host> Vm<H> {
             self.heap.property_push(object, value);
             self.object_data_mut(object).unwrap().set_shape(next_shape);
         }
-        self.invalidate_method_caches_for_key(key);
+        if invalidates_method {
+            self.invalidate_method_caches_for_key(key);
+        }
         Ok(())
     }
 
