@@ -94,10 +94,17 @@ impl<H: Host> Vm<H> {
                 && self
                     .object_data(current)
                     .is_some_and(Object::is_module_namespace)
-                && (self.module_binding_value(current, atom).is_some()
-                    || self.own_property(current, atom).is_some())
             {
-                return Ok(true);
+                self.evaluate_deferred_namespace_for_key(
+                    p,
+                    current,
+                    Some(crate::vm::property_key::PropertyKey::string(atom)),
+                )?;
+                if self.module_binding_value(current, atom).is_some()
+                    || self.own_property(current, atom).is_some()
+                {
+                    return Ok(true);
+                }
             }
             let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
             if !descriptor.is_undefined() {
