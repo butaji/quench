@@ -123,6 +123,7 @@ impl<H: Host> Vm<H> {
             ("equals", Native::TemporalInstantEquals),
             ("add", Native::TemporalInstantAdd),
             ("subtract", Native::TemporalInstantSubtract),
+            ("round", Native::TemporalInstantRound),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -208,6 +209,9 @@ impl<H: Host> Vm<H> {
             Native::TemporalInstantEquals => self.temporal_instant_equals(p, this, args),
             Native::TemporalInstantAdd | Native::TemporalInstantSubtract => {
                 self.temporal_instant_arithmetic(p, native, this, args)
+            }
+            Native::TemporalInstantRound => {
+                super::temporal_instant_round::round(self, p, this, args)
             }
             _ => unreachable!("not a Temporal.Instant native"),
         }
@@ -348,7 +352,7 @@ impl<H: Host> Vm<H> {
         self.make_temporal_instant(p, epoch, constructor)
     }
 
-    fn make_temporal_instant(
+    pub(super) fn make_temporal_instant(
         &mut self,
         p: &ResidualProgram,
         epoch: i128,
@@ -370,7 +374,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn temporal_instant_epoch(
+    pub(super) fn temporal_instant_epoch(
         &mut self,
         p: &ResidualProgram,
         value: Value,
@@ -386,7 +390,10 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn temporal_instant_constructor(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
+    pub(super) fn temporal_instant_constructor(
+        &mut self,
+        p: &ResidualProgram,
+    ) -> Result<Value, JsError> {
         let temporal_atom = self.intern_atom("Temporal");
         let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
         let instant_atom = self.intern_atom("Instant");
