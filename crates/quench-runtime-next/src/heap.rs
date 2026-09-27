@@ -654,7 +654,8 @@ impl Heap {
             | Cell::TemporalDuration { object: value, .. }
             | Cell::TemporalPlainDate { object: value, .. }
             | Cell::TemporalPlainDateTime { object: value, .. }
-            | Cell::TemporalZonedDateTime { object: value, .. } => object(value),
+            | Cell::TemporalZonedDateTime { object: value, .. }
+            | Cell::TemporalInstant { object: value, .. } => object(value),
             Cell::String(_) | Cell::BigInt(_) | Cell::Symbol(_) | Cell::Error(_) => {}
             _ => unreachable!("typed array backing handled above"),
         }

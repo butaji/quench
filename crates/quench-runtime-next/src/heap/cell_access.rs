@@ -31,6 +31,7 @@ impl Cell {
             Self::TemporalPlainDate { object, .. } => Some(object),
             Self::TemporalPlainDateTime { object, .. } => Some(object),
             Self::TemporalZonedDateTime { object, .. } => Some(object),
+            Self::TemporalInstant { object, .. } => Some(object),
             _ => None,
         }
     }
@@ -58,6 +59,7 @@ impl Cell {
             Self::TemporalPlainDate { object, .. } => Some(object),
             Self::TemporalPlainDateTime { object, .. } => Some(object),
             Self::TemporalZonedDateTime { object, .. } => Some(object),
+            Self::TemporalInstant { object, .. } => Some(object),
             _ => None,
         }
     }
