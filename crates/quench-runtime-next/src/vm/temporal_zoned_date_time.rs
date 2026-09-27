@@ -331,13 +331,19 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
         }
         let timezone_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if self.is_string(timezone_value) {
+            let timezone = self.to_string(p, timezone_value)?.to_string();
+            if time_zone_from_datetime_identifier(&timezone).is_some() {
+                return Err(self.range_error(p, "Invalid time zone".into()));
+            }
+        }
         let timezone = self.temporal_timezone_id(p, timezone_value)?;
         let calendar_value = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         let calendar = if calendar_value.is_undefined() {
             "iso8601".to_owned()
         } else if matches!(self.heap.get(calendar_value), Some(Cell::String(_))) {
             let text = self.to_string(p, calendar_value)?.to_string();
-            super::temporal_date_parse::parse_calendar_identifier(&text)
+            super::temporal_date_parse::parse_calendar_identifier_name(&text)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
         } else {
             return Err(self.type_error(p, "Invalid calendar".into()));
