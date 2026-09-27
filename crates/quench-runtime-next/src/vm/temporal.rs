@@ -1,4 +1,5 @@
 use super::*;
+use crate::host::{CapabilityId, HostContext};
 
 const DURATION_FIELDS: [&str; 10] = [
     "years",
@@ -38,6 +39,7 @@ const DURATION_TIME_NANOSECOND_SCALES: [i128; 7] = [
     1_000,
     1,
 ];
+const NOW_NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let temporal = self.object();
@@ -104,6 +106,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(p, prototype, name, native)?;
         }
         self.set_builtin_value_named(temporal, "Duration", duration)?;
+        self.install_temporal_now(p, temporal)?;
         self.install_temporal_plain_time(p, temporal)?;
         self.install_temporal_plain_date(p, temporal)?;
         self.install_temporal_calendar_projections(p, temporal)?;
@@ -111,6 +114,114 @@ impl<H: Host> Vm<H> {
         self.install_temporal_instant(p, temporal)?;
         self.install_temporal_zoned_date_time(p, temporal)?;
         self.set_builtin_value_named(self.realm.globals, "Temporal", temporal)
+    }
+
+    fn install_temporal_now(
+        &mut self,
+        p: &ResidualProgram,
+        temporal: Value,
+    ) -> Result<(), JsError> {
+        let now = self.object();
+        for (name, native) in [
+            ("instant", Native::TemporalNowInstant),
+            ("plainDateISO", Native::TemporalNowPlainDateISO),
+            ("plainDateTimeISO", Native::TemporalNowPlainDateTimeISO),
+            ("plainTimeISO", Native::TemporalNowPlainTimeISO),
+            ("timeZoneId", Native::TemporalNowTimeZoneId),
+            ("zonedDateTimeISO", Native::TemporalNowZonedDateTimeISO),
+        ] {
+            self.set_builtin_named(p, now, name, native)?;
+        }
+        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+            let tag = self.heap.alloc(Cell::String("Temporal.Now".into()));
+            self.set_symbol_property(now, symbol, tag)?;
+            self.set_property_attributes(
+                now,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        self.set_builtin_value_named(temporal, "Now", now)
+    }
+
+    pub(super) fn temporal_now_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if native == Native::TemporalNowTimeZoneId {
+            return Ok(self.heap.alloc(Cell::String("UTC".into())));
+        }
+        let milliseconds = HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None);
+        if !milliseconds.is_finite() {
+            return Err(self.range_error(p, "Invalid current time".into()));
+        }
+        let epoch_nanoseconds = milliseconds.trunc() as i128 * NOW_NANOSECONDS_PER_MILLISECOND;
+        if native == Native::TemporalNowInstant {
+            let constructor = self.temporal_instant_constructor(p)?;
+            return self.make_temporal_instant(p, epoch_nanoseconds, constructor);
+        }
+        let timezone = match args.first().copied().unwrap_or(Value::UNDEFINED) {
+            value if value.is_undefined() => "UTC".to_owned(),
+            value => self.temporal_timezone_id(p, value)?,
+        };
+        let fields = super::temporal_zoned_date_time::zoned_date_time_fields(
+            epoch_nanoseconds,
+            &timezone,
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid current time".into()))?;
+        let date = (fields[0], fields[1], fields[2]);
+        let time = [fields[3], fields[4], fields[5], fields[6], fields[7], fields[8]];
+        match native {
+            Native::TemporalNowPlainDateISO => {
+                let constructor = self.temporal_plain_date_constructor(p)?;
+                let args = [
+                    Value::number(f64::from(date.0)),
+                    Value::number(f64::from(date.1)),
+                    Value::number(f64::from(date.2)),
+                ];
+                self.temporal_plain_date_construct(p, &args, constructor)
+            }
+            Native::TemporalNowPlainDateTimeISO => {
+                let constructor = self.temporal_plain_date_time_constructor(p)?;
+                let args = [
+                    Value::number(f64::from(date.0)),
+                    Value::number(f64::from(date.1)),
+                    Value::number(f64::from(date.2)),
+                    Value::number(f64::from(time[0])),
+                    Value::number(f64::from(time[1])),
+                    Value::number(f64::from(time[2])),
+                    Value::number(f64::from(time[3])),
+                    Value::number(f64::from(time[4])),
+                    Value::number(f64::from(time[5])),
+                ];
+                self.temporal_plain_date_time_construct(p, &args, constructor)
+            }
+            Native::TemporalNowPlainTimeISO => {
+                let args = time.map(|value| Value::number(f64::from(value)));
+                self.temporal_plain_time_construct(p, &args)
+            }
+            Native::TemporalNowZonedDateTimeISO => {
+                let temporal_key = self.intern_atom("Temporal");
+                let temporal = self.get_property(p, self.realm.globals, temporal_key)?;
+                let constructor_key = self.intern_atom("ZonedDateTime");
+                let constructor = self.get_property(p, temporal, constructor_key)?;
+                let args = [
+                    self.heap.alloc(Cell::BigInt(epoch_nanoseconds.to_string().into())),
+                    self.heap.alloc(Cell::String(timezone.into())),
+                ];
+                self.temporal_zoned_date_time_construct(p, &args, constructor)
+            }
+            _ => Err(self.type_error(p, "Invalid Temporal.Now method".into())),
+        }
     }
 
     pub(super) fn temporal_duration_construct(

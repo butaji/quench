@@ -372,6 +372,12 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalPlainTimeUntil | Native::TemporalPlainTimeSince => 1.0,
         Native::TemporalPlainTimeToString | Native::TemporalPlainTimeToJSON => 0.0,
         Native::TemporalPlainTimeWith => 1.0,
+        Native::TemporalNowInstant
+        | Native::TemporalNowPlainDateISO
+        | Native::TemporalNowPlainDateTimeISO
+        | Native::TemporalNowPlainTimeISO
+        | Native::TemporalNowTimeZoneId
+        | Native::TemporalNowZonedDateTimeISO => 0.0,
         Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => 2.0,
         Native::TemporalPlainMonthDayFrom | Native::TemporalPlainYearMonthFrom => 1.0,
         Native::TemporalPlainMonthDayCompare | Native::TemporalPlainYearMonthCompare => 2.0,

@@ -150,7 +150,9 @@ impl<H: Host> Vm<H> {
             }
             Native::Date => self.date_call(),
             Native::DateNow => Ok(Value::number(
-                HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None),
+                HostContext::new(&mut self.host)
+                    .invoke(CapabilityId::ClockMillis, None)
+                    .trunc(),
             )),
             Native::DateGetTime
             | Native::DateValueOf
@@ -690,6 +692,12 @@ impl<H: Host> Vm<H> {
             | Native::TemporalInstantToZonedDateTimeISO => {
                 self.temporal_instant_native(p, native, this, args)
             }
+            Native::TemporalNowInstant
+            | Native::TemporalNowPlainDateISO
+            | Native::TemporalNowPlainDateTimeISO
+            | Native::TemporalNowPlainTimeISO
+            | Native::TemporalNowTimeZoneId
+            | Native::TemporalNowZonedDateTimeISO => self.temporal_now_native(p, native, args),
             Native::Object
             | Native::Array
             | Native::Map
