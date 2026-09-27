@@ -19,7 +19,7 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    fn eval_script_native_in_realm(
+    pub(super) fn eval_script_native_in_realm(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],

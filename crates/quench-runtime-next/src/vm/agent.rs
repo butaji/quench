@@ -123,7 +123,10 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "agent.start expects a string".into()));
         }
         self.begin_agent_callback();
-        let result = self.eval_script_native(p, &[source]);
+        // The agent native's environment is its method-dispatch state, not a
+        // realm global. Evaluate in the current agent realm instead of letting
+        // evalScript's realm selection interpret that state as a global.
+        let result = self.eval_script_native_in_realm(p, &[source]);
         self.end_agent_callback();
         result
     }
