@@ -325,123 +325,23 @@ fn total_calendar(
     unit: usize,
     (year, month, day): (i32, u32, u32),
 ) -> Result<Value, VmError> {
-    let start = NaiveDate::from_ymd_opt(year, month, day)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
-    let mut target = shift_calendar_by(start, 0, duration_field(object, "years"))
-        .and_then(|date| shift_calendar_by(date, 1, duration_field(object, "months")))
-        .and_then(|date| shift_calendar_by(date, 2, duration_field(object, "weeks")))
-        .and_then(|date| shift_calendar_by(date, 3, duration_field(object, "days")))?;
-    let mut time_nanos = [
-        ("hours", 3_600_000_000_000_i128),
-        ("minutes", 60_000_000_000),
-        ("seconds", 1_000_000_000),
-        ("milliseconds", 1_000_000),
-        ("microseconds", 1_000),
-        ("nanoseconds", 1),
+    let fields = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
     ]
-    .iter()
-    .map(|(name, scale)| duration_field(object, name) * scale)
-    .sum::<i128>();
-    if time_nanos.abs() >= 9_007_199_254_740_991_i128 * 1_000_000_000 {
-        return Err(crate::value::error::throw_range_error(
-            "Duration time span is out of range",
-        ));
-    }
-    let time_days = time_nanos / 86_400_000_000_000;
-    if time_days != 0 {
-        target = shift_calendar_by(target, 3, time_days)?;
-        time_nanos -= time_days * 86_400_000_000_000;
-    }
-    let days = (target - start).num_days() as i128;
-    let total_nanos = days * 86_400_000_000_000 + time_nanos;
-    if unit == 3 {
-        let divisor = 86_400_000_000_000_i128;
-        return Ok(Value::Number(divide_duration_nanos(total_nanos, divisor)));
-    }
-    if unit == 2 {
-        let divisor = 604_800_000_000_000_i128;
-        return Ok(Value::Number(divide_duration_nanos(total_nanos, divisor)));
-    }
-    let months = (target.year() - start.year()) as i128 * 12
-        + i128::from(target.month() as i32 - start.month() as i32);
-    let anchor = shift_calendar_by(start, 1, months)?;
-    let remainder_nanos = (target - anchor).num_days() as i128 * 86_400_000_000_000 + time_nanos;
-    let span_days = if unit == 0 {
-        (shift_calendar(start, 0, if remainder_nanos >= 0 { 1 } else { -1 })? - start)
-            .num_days()
-            .unsigned_abs() as f64
-    } else {
-        let current = days_in_month(anchor.year(), anchor.month());
-        if total_nanos >= 0 && remainder_nanos >= 0 && anchor.day() == current {
-            let year = if anchor.month() == 12 {
-                anchor.year() + 1
-            } else {
-                anchor.year()
-            };
-            let month = if anchor.month() == 12 {
-                1
-            } else {
-                anchor.month() + 1
-            };
-            days_in_month(year, month) as f64
-        } else {
-            current as f64
-        }
-    };
-    let remainder_days =
-        (target - anchor).num_days() as f64 + time_nanos as f64 / 86_400_000_000_000.0;
-    if unit == 0 {
-        let mut whole_years = i128::from(target.year() - start.year());
-        let mut year_anchor = shift_calendar_by(start, 0, whole_years)?;
-        if total_nanos >= 0 {
-            while year_anchor > target {
-                whole_years -= 1;
-                year_anchor = shift_calendar_by(start, 0, whole_years)?;
-            }
-        } else {
-            while year_anchor < target {
-                whole_years += 1;
-                year_anchor = shift_calendar_by(start, 0, whole_years)?;
-            }
-        }
-        let mut year_span = (shift_calendar(year_anchor, 0, if total_nanos >= 0 { 1 } else { -1 })?
-            - year_anchor)
-            .num_days()
-            .unsigned_abs() as f64;
-        let year_remainder =
-            (target - year_anchor).num_days() as f64 + time_nanos as f64 / 86_400_000_000_000.0;
-        if year_span == 365.0 && (year_remainder * 2.0 - 366.0).abs() < 1e-9 {
-            year_span = 366.0;
-        }
-        return Ok(Value::Number(
-            whole_years as f64 + year_remainder / year_span,
-        ));
-    }
-    let (months, remainder_days) = if total_nanos >= 0 && remainder_days < 0.0 {
-        (months - 1, remainder_days + span_days)
-    } else if total_nanos < 0 && remainder_days > 0.0 {
-        (months + 1, remainder_days - span_days)
-    } else {
-        (months, remainder_days)
-    };
-    let total_months = (months as f64 * span_days + remainder_days) / span_days;
-    if unit == 1 {
-        return Ok(Value::Number(total_months));
-    }
-    let divisor = [
-        86_400_000_000_000.0,
-        3_600_000_000_000.0,
-        60_000_000_000.0,
-        1_000_000_000.0,
-        1_000_000.0,
-        1_000.0,
-        1.0,
-    ][unit - 3];
-    let divisor_i128 = divisor as i128;
-    Ok(Value::Number(divide_duration_nanos(
-        total_nanos,
-        divisor_i128,
-    )))
+    .map(|name| duration_field(object, name));
+    let date = quench_temporal::IsoDate { year, month, day };
+    quench_temporal::total_duration(date, fields, unit)
+        .map(Value::Number)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))
 }
 
 fn divide_duration_nanos(nanos: i128, divisor: i128) -> f64 {
