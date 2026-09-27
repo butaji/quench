@@ -24,6 +24,7 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Root
                 | ShapeTransition::Add { .. }
                 | ShapeTransition::Delete { .. }
+                | ShapeTransition::Vacant
                 | ShapeTransition::Descriptor { .. } => current = shape.parent,
             }
         }
@@ -47,6 +48,7 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Root
                 | ShapeTransition::Add { .. }
                 | ShapeTransition::Delete { .. }
+                | ShapeTransition::Vacant
                 | ShapeTransition::Descriptor { .. } => current = shape.parent,
             }
         }
@@ -72,7 +74,9 @@ impl<H: Host> Vm<H> {
                         entries[position] = None;
                     }
                 }
-                ShapeTransition::Root | ShapeTransition::Descriptor { .. } => {}
+                ShapeTransition::Root
+                | ShapeTransition::Vacant
+                | ShapeTransition::Descriptor { .. } => {}
             }
         }
         entries.into_iter().flatten().collect()

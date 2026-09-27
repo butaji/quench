@@ -30,6 +30,7 @@ fn active_shape_attributes(
                     *current = attributes;
                 }
             }
+            ShapeTransition::Vacant => entries.push(None),
             ShapeTransition::Root => {}
         }
     }
@@ -47,6 +48,67 @@ fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
                     .chain([attributes.getter, attributes.setter].into_iter().flatten())
             }),
     );
+}
+
+fn append_compacted_shape(
+    shapes: &mut Vec<Shape>,
+    transitions: &mut FxHashMap<(u32, property_key::PropertyKey), u32>,
+    parent: u32,
+    transition: ShapeTransition,
+    storage_len: usize,
+) -> u32 {
+    if let ShapeTransition::Add {
+        key: property_key::PropertyKey::String(_),
+        ..
+    } = transition
+        && let ShapeTransition::Add { key, .. } = transition
+        && let Some(shape) = transitions.get(&(parent, key))
+    {
+        return *shape;
+    }
+    let shape = u32::try_from(shapes.len()).expect("object shape table exhausted");
+    shapes.push(Shape::child(Some(parent), transition, storage_len));
+    if let ShapeTransition::Add {
+        key: key @ property_key::PropertyKey::String(_),
+        ..
+    } = transition
+    {
+        transitions.insert((parent, key), shape);
+    }
+    shape
+}
+
+fn rebuild_shape(
+    old_shapes: &[Shape],
+    old_shape: u32,
+    shapes: &mut Vec<Shape>,
+    transitions: &mut FxHashMap<(u32, property_key::PropertyKey), u32>,
+) -> u32 {
+    let mut parent = 0;
+    for (slot, entry) in active_shape_attributes(old_shapes, old_shape)
+        .into_iter()
+        .enumerate()
+    {
+        let slot = u32::try_from(slot).expect("object property index exceeds u32");
+        let storage_len = slot as usize + 1;
+        let transition = match entry {
+            Some((key, _)) => ShapeTransition::Add { key, slot },
+            None => ShapeTransition::Vacant,
+        };
+        parent = append_compacted_shape(shapes, transitions, parent, transition, storage_len);
+        if let Some((_, attributes)) = entry
+            && attributes != DEFAULT_PROPERTY_ATTRIBUTES
+        {
+            parent = append_compacted_shape(
+                shapes,
+                transitions,
+                parent,
+                ShapeTransition::Descriptor { slot, attributes },
+                storage_len,
+            );
+        }
+    }
+    parent
 }
 
 impl<H: Host> Vm<H> {
@@ -273,11 +335,12 @@ impl<H: Host> Vm<H> {
                         .chain(frame.registers.iter().copied())
                 }));
         let shapes = &self.shapes;
+        let finalization_jobs = self.heap.collect_with_shape_roots(roots, |shape, roots| {
+            append_shape_roots(shapes, shape, roots)
+        });
+        self.compact_live_shapes();
         self.realm.jobs.extend(
-            self.heap
-                .collect_with_shape_roots(roots, |shape, roots| {
-                    append_shape_roots(shapes, shape, roots)
-                })
+            finalization_jobs
                 .into_iter()
                 .map(|(callback, held)| PendingJob {
                     callback,
@@ -285,7 +348,6 @@ impl<H: Host> Vm<H> {
                     args: vec![held],
                 }),
         );
-        self.invalidate_field_caches();
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
         self.promise
@@ -321,7 +383,6 @@ impl<H: Host> Vm<H> {
         self.promise
             .async_resume_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.retain_live_method_caches();
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {
@@ -330,6 +391,64 @@ impl<H: Host> Vm<H> {
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
         }
+    }
+
+    fn compact_live_shapes(&mut self) {
+        let live_shapes = self.heap.live_object_shapes();
+        let old_shapes = std::mem::replace(&mut self.shapes, vec![Shape::root()]);
+        #[cfg(feature = "profile-memory")]
+        let old_shape_count = old_shapes.len();
+        #[cfg(feature = "profile-memory")]
+        let live_object_shape_count = live_shapes.len();
+        let mut mapping = vec![u32::MAX; old_shapes.len()];
+        let mut shapes = vec![Shape::root()];
+        let mut transitions = FxHashMap::default();
+        for old_shape in live_shapes {
+            let mapping_entry = &mut mapping[old_shape as usize];
+            if *mapping_entry == u32::MAX {
+                *mapping_entry =
+                    rebuild_shape(&old_shapes, old_shape, &mut shapes, &mut transitions);
+            }
+        }
+        let lengths = shapes
+            .iter()
+            .map(|shape| shape.storage_len)
+            .collect::<Vec<_>>();
+        self.heap.remap_live_object_shapes(&mapping, &lengths);
+        self.shapes = shapes;
+        self.transitions = transitions;
+        self.object_shapes.fill(u32::MAX);
+        self.invalidate_field_caches();
+        self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
+        self.megamorphic_methods.clear();
+        #[cfg(feature = "profile-aggregate")]
+        self.remap_invalidated_method_shapes(&mapping);
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("RQJ_MEMORY").is_some() {
+            eprintln!(
+                "{{\"kind\":\"rqj-shape-compaction\",\"before\":{},\"after\":{},\"live_objects\":{}}}",
+                old_shape_count,
+                self.shapes.len(),
+                live_object_shape_count
+            );
+        }
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    fn remap_invalidated_method_shapes(&mut self, mapping: &[u32]) {
+        let mut remapped = FxHashMap::default();
+        for (mut key, method) in self.invalidated_methods.drain() {
+            let Some(shape) = mapping
+                .get(key.shape as usize)
+                .copied()
+                .filter(|shape| *shape != u32::MAX)
+            else {
+                continue;
+            };
+            key.shape = shape;
+            remapped.insert(key, method);
+        }
+        self.invalidated_methods = remapped;
     }
 
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {

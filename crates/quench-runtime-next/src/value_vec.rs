@@ -103,6 +103,11 @@ impl ValueArena {
         self.shape_lengths[shape] = length as u32;
     }
 
+    pub(crate) fn reset_shapes(&mut self) {
+        self.shape_lengths.clear();
+        self.shape_lengths.push(0);
+    }
+
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {
         (index < self.len(vector)).then(|| self.values[vector.start() + index])
     }
