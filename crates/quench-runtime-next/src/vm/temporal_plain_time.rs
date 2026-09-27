@@ -11,6 +11,26 @@ const PLAIN_TIME_FIELDS: [&str; 6] = [
 const DEFAULT_DIFFERENCE_LARGEST_UNIT: &str = "hour";
 const DEFAULT_DIFFERENCE_SMALLEST_UNIT: &str = "nanosecond";
 const DEFAULT_DIFFERENCE_ROUNDING_MODE: &str = "trunc";
+const PLAIN_TIME_FRACTIONAL_SECOND_DIGITS: usize = 9;
+const PLAIN_TIME_TIME_COMPONENT_WIDTH: usize = 2;
+const PLAIN_TIME_SMALLEST_UNITS: [&str; 5] = [
+    "minute",
+    "second",
+    "millisecond",
+    "microsecond",
+    "nanosecond",
+];
+const PLAIN_TIME_ROUNDING_MODES: [&str; 9] = [
+    "ceil",
+    "floor",
+    "expand",
+    "trunc",
+    "halfCeil",
+    "halfFloor",
+    "halfExpand",
+    "halfTrunc",
+    "halfEven",
+];
 
 struct PlainTimeDifferenceOptions {
     largest_unit: String,
@@ -54,6 +74,8 @@ impl<H: Host> Vm<H> {
             ("round", Native::TemporalPlainTimeRound),
             ("until", Native::TemporalPlainTimeUntil),
             ("since", Native::TemporalPlainTimeSince),
+            ("toString", Native::TemporalPlainTimeToString),
+            ("toJSON", Native::TemporalPlainTimeToJSON),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -91,6 +113,8 @@ impl<H: Host> Vm<H> {
                 | Native::TemporalPlainTimeRound
                 | Native::TemporalPlainTimeUntil
                 | Native::TemporalPlainTimeSince
+                | Native::TemporalPlainTimeToString
+                | Native::TemporalPlainTimeToJSON
         ) && !self.temporal_plain_time_has_brand(this)
         {
             return Err(self.type_error(p, "Not a PlainTime".into()));
@@ -166,6 +190,14 @@ impl<H: Host> Vm<H> {
         }
         if matches!(native, Native::TemporalPlainTimeUntil | Native::TemporalPlainTimeSince) {
             return self.temporal_plain_time_difference(p, native, this, args);
+        }
+        if matches!(native, Native::TemporalPlainTimeToString | Native::TemporalPlainTimeToJSON) {
+            let options = if native == Native::TemporalPlainTimeToJSON {
+                Value::UNDEFINED
+            } else {
+                args.first().copied().unwrap_or(Value::UNDEFINED)
+            };
+            return self.temporal_plain_time_to_string(p, this, options);
         }
         if native == Native::TemporalPlainTimeRound {
             let options = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -397,5 +429,130 @@ impl<H: Host> Vm<H> {
             increment,
             rounding_mode,
         })
+    }
+
+    fn temporal_plain_time_to_string(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        options: Value,
+    ) -> Result<Value, JsError> {
+        let mut fractional_digits = None;
+        let mut smallest_unit = None;
+        let mut rounding_mode = "trunc".to_owned();
+        if !options.is_undefined() {
+            if !self.is_object_like(options) {
+                return Err(self.type_error(p, "Invalid string options".into()));
+            }
+            let fractional_atom = self.intern_atom("fractionalSecondDigits");
+            let fractional_value = self.get_property(p, options, fractional_atom)?;
+            if !fractional_value.is_undefined() {
+                if fractional_value.as_number().is_some() {
+                    let number = self.to_number(p, fractional_value)?.floor();
+                    if !(0.0..=PLAIN_TIME_FRACTIONAL_SECOND_DIGITS as f64).contains(&number) {
+                        return Err(self.range_error(p, "Invalid fractionalSecondDigits".into()));
+                    }
+                    fractional_digits = Some(number as usize);
+                } else {
+                    let text = self.to_string(p, fractional_value)?.to_string();
+                    if text != "auto" {
+                        return Err(self.range_error(p, "Invalid fractionalSecondDigits".into()));
+                    }
+                }
+            }
+            let rounding_atom = self.intern_atom("roundingMode");
+            let rounding_value = self.get_property(p, options, rounding_atom)?;
+            if !rounding_value.is_undefined() {
+                rounding_mode = self.to_string(p, rounding_value)?.to_string();
+            }
+            let smallest_atom = self.intern_atom("smallestUnit");
+            let smallest_value = self.get_property(p, options, smallest_atom)?;
+            if !smallest_value.is_undefined() {
+                let unit = self.to_string(p, smallest_value)?.to_string();
+                let unit = unit.strip_suffix('s').unwrap_or(&unit);
+                if !PLAIN_TIME_SMALLEST_UNITS.contains(&unit) {
+                    return Err(self.range_error(p, "Invalid smallestUnit".into()));
+                }
+                smallest_unit = Some(unit.to_owned());
+            }
+        }
+        if !PLAIN_TIME_ROUNDING_MODES.contains(&rounding_mode.as_str()) {
+            return Err(self.range_error(p, "Invalid roundingMode".into()));
+        }
+        let time = super::temporal_plain_date_time_conversion::to_time(self, p, this)?;
+        let mut quantum = 1_i128;
+        let mut precision = None;
+        let mut omit_seconds = false;
+        if let Some(unit) = smallest_unit.as_deref() {
+            let (index, digits) = match unit {
+                "minute" => (1, 0),
+                "second" => (2, 0),
+                "millisecond" => (3, 3),
+                "microsecond" => (4, 6),
+                _ => (5, PLAIN_TIME_FRACTIONAL_SECOND_DIGITS),
+            };
+            quantum = super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[index];
+            precision = Some(digits);
+            omit_seconds = unit == "minute";
+        } else if let Some(digits) = fractional_digits {
+            quantum = 10_i128.pow((PLAIN_TIME_FRACTIONAL_SECOND_DIGITS - digits) as u32);
+            precision = Some(digits);
+        }
+        let total = time
+            .iter()
+            .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+            .map(|(value, scale)| i128::from(*value) * scale)
+            .sum::<i128>();
+        let rounded = (super::temporal_zoned_date_time::round_temporal_nanoseconds(
+            total,
+            quantum,
+            &rounding_mode,
+        ) * quantum)
+            .rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
+        let hour = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[0];
+        let minute = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[1]
+            % 60;
+        let second = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[2]
+            % 60;
+        let fractional = rounded
+            % super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[2];
+        let time = if omit_seconds {
+            format!(
+                "{hour:0width$}:{minute:0width$}",
+                width = PLAIN_TIME_TIME_COMPONENT_WIDTH,
+            )
+        } else {
+            format!(
+                "{hour:0width$}:{minute:0width$}:{second:0width$}",
+                width = PLAIN_TIME_TIME_COMPONENT_WIDTH,
+            )
+        };
+        let fraction = if omit_seconds {
+            String::new()
+        } else if let Some(digits) = precision {
+            if digits == 0 {
+                String::new()
+            } else {
+                let digits_text = format!(
+                    "{fractional:0width$}",
+                    width = PLAIN_TIME_FRACTIONAL_SECOND_DIGITS,
+                );
+                format!(".{}", &digits_text[..digits])
+            }
+        } else if fractional == 0 {
+            String::new()
+        } else {
+            let digits_text = format!(
+                "{fractional:0width$}",
+                width = PLAIN_TIME_FRACTIONAL_SECOND_DIGITS,
+            );
+            let trimmed = digits_text.trim_end_matches('0');
+            if trimmed.is_empty() {
+                String::new()
+            } else {
+                format!(".{trimmed}")
+            }
+        };
+        Ok(self.heap.alloc(Cell::String(format!("{time}{fraction}").into())))
     }
 }
