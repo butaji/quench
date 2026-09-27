@@ -126,6 +126,7 @@ impl<H: Host> Vm<H> {
             ("round", Native::TemporalInstantRound),
             ("since", Native::TemporalInstantSince),
             ("until", Native::TemporalInstantUntil),
+            ("toZonedDateTimeISO", Native::TemporalInstantToZonedDateTimeISO),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -217,6 +218,11 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalInstantSince | Native::TemporalInstantUntil => {
                 super::temporal_instant_difference::difference(self, p, native, this, args)
+            }
+            Native::TemporalInstantToZonedDateTimeISO => {
+                let epoch = self.temporal_instant_epoch(p, this)?;
+                let time_zone = args.first().copied().unwrap_or(Value::UNDEFINED);
+                self.temporal_instant_to_zoned_date_time_iso(p, epoch, time_zone)
             }
             _ => unreachable!("not a Temporal.Instant native"),
         }
