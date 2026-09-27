@@ -55,7 +55,7 @@ fn duration_relative_nanoseconds(start: NaiveDate, fields: &[f64; 10]) -> Option
     elapsed_days.checked_mul(NANOS_PER_DAY)?.checked_add(elapsed_time)
 }
 
-fn shift_relative_months(date: NaiveDate, months: i128) -> Option<NaiveDate> {
+pub(super) fn shift_relative_months(date: NaiveDate, months: i128) -> Option<NaiveDate> {
     let month_index = i128::from(date.year()) * 12 + i128::from(date.month0()) + months;
     let year = i32::try_from(month_index.div_euclid(12)).ok()?;
     let month = u32::try_from(month_index.rem_euclid(12)).ok()? + 1;
@@ -162,7 +162,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn validate_duration_fields(
+    pub(super) fn validate_duration_fields(
         &mut self,
         p: &ResidualProgram,
         fields: &[f64; 10],
@@ -354,7 +354,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn duration_record(&mut self, p: &ResidualProgram, value: Value) -> Result<[f64; 10], JsError> {
+    pub(super) fn duration_record(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<[f64; 10], JsError> {
         if let Some(Cell::TemporalDuration { fields, .. }) = self.heap.get(value) {
             return Ok(*fields);
         }

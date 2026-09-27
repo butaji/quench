@@ -531,12 +531,16 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateMonthGetter
             | Native::TemporalPlainDateMonthCodeGetter
             | Native::TemporalPlainDateDayGetter
+            | Native::TemporalPlainDateDaysInMonthGetter
             | Native::TemporalPlainDateToString
             | Native::TemporalPlainDateToJSON
             | Native::TemporalPlainDateToLocaleString
             | Native::TemporalPlainDateEquals
             | Native::TemporalPlainDateValueOf => {
                 self.temporal_plain_date_native(p, native, this, args)
+            }
+            Native::TemporalPlainDateAdd | Native::TemporalPlainDateSubtract => {
+                self.temporal_plain_date_arithmetic(p, native, this, args)
             }
             Native::Object
             | Native::Array
