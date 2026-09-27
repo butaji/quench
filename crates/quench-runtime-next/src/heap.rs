@@ -517,7 +517,8 @@ impl Heap {
             }
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
-            | Cell::TemporalPlainDate { object: value, .. } => object(value),
+            | Cell::TemporalPlainDate { object: value, .. }
+            | Cell::TemporalPlainDateTime { object: value, .. } => object(value),
             Cell::String(_) | Cell::BigInt(_) | Cell::Symbol(_) | Cell::Error(_) => {}
             _ => unreachable!("typed array backing handled above"),
         }
@@ -550,6 +551,7 @@ impl Heap {
             Cell::RegExp { .. } => 15,
             Cell::TemporalDuration { .. } => 17,
             Cell::TemporalPlainDate { .. } => 18,
+            Cell::TemporalPlainDateTime { .. } => 19,
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
@@ -563,6 +565,7 @@ impl Heap {
             | Cell::Date { .. } => 0,
             Cell::TemporalDuration { .. } => 0,
             Cell::TemporalPlainDate { .. } => 0,
+            Cell::TemporalPlainDateTime { .. } => 0,
             Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
