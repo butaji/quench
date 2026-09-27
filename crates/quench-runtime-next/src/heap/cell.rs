@@ -412,6 +412,7 @@ pub(crate) enum Native {
     TemporalZonedDateTimeDaysInYearGetter, TemporalZonedDateTimeMonthsInYearGetter,
     TemporalZonedDateTimeInLeapYearGetter,
     TemporalZonedDateTimeEpochMillisecondsGetter, TemporalZonedDateTimeHoursInDayGetter,
+    TemporalZonedDateTimeOffsetGetter, TemporalZonedDateTimeOffsetNanosecondsGetter,
     TemporalInstant, TemporalInstantFrom, TemporalInstantCompare,
     TemporalInstantFromEpochMilliseconds, TemporalInstantFromEpochNanoseconds,
     TemporalInstantEpochNanosecondsGetter, TemporalInstantEpochMillisecondsGetter,
