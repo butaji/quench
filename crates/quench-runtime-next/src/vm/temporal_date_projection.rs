@@ -921,11 +921,18 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(bag) {
             return Err(self.type_error(p, "Invalid PlainYearMonth".into()));
         }
-        let (calendar, year, month) = self.temporal_plain_year_month_fields(p, bag)?;
+        let (calendar, year, month, month_code) = self.temporal_plain_year_month_fields(p, bag)?;
         let constrain = self.plain_date_overflow(p, options)?;
-        let month = match month {
-            Some(month) => month,
-            None => return Err(self.type_error(p, "Missing month".into())),
+        if month_code.is_some_and(|code| !(1..=super::temporal_date::ISO_MONTHS_PER_YEAR).contains(&code)) {
+            return Err(self.range_error(p, "Invalid monthCode".into()));
+        }
+        let month = match (month, month_code) {
+            (Some(month), Some(code)) if month != code => {
+                return Err(self.range_error(p, "Conflicting month fields".into()));
+            }
+            (Some(month), _) => month,
+            (None, Some(code)) => code,
+            (None, None) => return Err(self.type_error(p, "Missing month".into())),
         };
         if month <= 0 {
             return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
@@ -949,7 +956,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         bag: Value,
-    ) -> Result<(String, i32, Option<i32>), JsError> {
+    ) -> Result<(String, i32, Option<i32>, Option<i32>), JsError> {
         let calendar_atom = self.intern_atom("calendar");
         let calendar_value = self.get_property(p, bag, calendar_atom)?;
         let calendar = self.temporal_calendar_property(p, calendar_value)?;
@@ -958,24 +965,32 @@ impl<H: Host> Vm<H> {
         let month = self.plain_date_optional_integer(p, month_value)?;
         let month_code_atom = self.intern_atom("monthCode");
         let month_code_value = self.get_property(p, bag, month_code_atom)?;
-        let month_code = if month_code_value.is_undefined() {
+        let month_code_text = if month_code_value.is_undefined() {
             None
         } else {
-            Some(self.plain_date_month_code(p, month_code_value)?)
+            let string_or_object = matches!(self.heap.get(month_code_value), Some(Cell::String(_)))
+                || self.is_object_like(month_code_value);
+            if !string_or_object {
+                return Err(self.type_error(p, "Invalid monthCode".into()));
+            }
+            let text = self.to_string(p, month_code_value)?.to_string();
+            if self.is_object_like(month_code_value) && !text.starts_with('M') {
+                return Err(self.type_error(p, "Invalid monthCode".into()));
+            }
+            Some(text)
         };
+        let month_code = month_code_text
+            .map(|text| {
+                super::temporal_date::parse_iso_month_code_syntax(&text)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+            })
+            .transpose()?;
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, bag, year_atom)?;
         let year = self
             .plain_date_optional_integer(p, year_value)?
             .ok_or_else(|| self.type_error(p, "Missing year".into()))?;
-        let month = match (month, month_code) {
-            (Some(month), Some(code)) if month != code => {
-                return Err(self.range_error(p, "Conflicting month fields".into()));
-            }
-            (Some(month), _) => Some(month),
-            (None, code) => code,
-        };
-        Ok((calendar, year, month))
+        Ok((calendar, year, month, month_code))
     }
 
     fn make_plain_month_day(
