@@ -305,7 +305,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalPlainDateToPlainDateTime, Native::TemporalPlainDateToPlainMonthDay,
     Native::TemporalPlainDateToPlainYearMonth, Native::TemporalPlainDateToZonedDateTime,
     Native::TemporalPlainDateEquals, Native::TemporalPlainDateWith,
-    Native::TemporalPlainDateValueOf,
+    Native::TemporalPlainDateWithCalendar, Native::TemporalPlainDateValueOf,
     Native::TemporalPlainDateAdd, Native::TemporalPlainDateSubtract,
     Native::TemporalPlainDateUntil, Native::TemporalPlainDateSince,
     Native::TemporalPlainTime, Native::TemporalPlainTimeFrom,

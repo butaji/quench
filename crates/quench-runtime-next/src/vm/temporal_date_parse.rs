@@ -26,6 +26,21 @@ pub(super) fn parse_calendar_identifier(text: &str) -> Option<String> {
     }
 }
 
+pub(super) fn calendar_identifier_from_string(text: &str) -> Option<String> {
+    if let Some(calendar) = parse_calendar_identifier(text) {
+        return Some(calendar);
+    }
+    if text.contains("-000000-") || text.contains("[u-ca=") {
+        return None;
+    }
+    let base = text.split('[').next().unwrap_or(text);
+    (base.chars().any(|ch| ch.is_ascii_digit())
+        && base
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || "-+Tt:., ".contains(ch)))
+    .then(|| ISO_CALENDAR.to_owned())
+}
+
 fn parse_calendar_annotation(text: &str) -> Option<String> {
     let lower = text.to_ascii_lowercase();
     if matches!(lower.as_str(), ISO_CALENDAR | GREGORIAN_CALENDAR) {
