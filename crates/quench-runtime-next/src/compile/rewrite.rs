@@ -1,5 +1,5 @@
 use super::*;
-use crate::bytecode::{ImmediateRole, REGISTER_MASK, Superinstruction};
+use crate::bytecode::{ImmediateRole, Superinstruction};
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -198,13 +198,16 @@ fn fuse_const_array_object2(
     superinstructions: &mut Vec<Superinstruction>,
 ) -> Option<Instr> {
     let code: [Instr; 4] = window.try_into().ok()?;
-    if code.map(|instruction| instruction.op()) != CONST_ARRAY_OBJECT2
-        || code[0].a() > REGISTER_MASK
-        || code[1].a() > REGISTER_MASK
-        || code[2].a() > REGISTER_MASK
-        || code[3].a() > REGISTER_MASK
-        || !([code[3].b(), code[3].c()].contains(&code[0].a())
-            && [code[3].b(), code[3].c()].contains(&code[2].a()))
+    if code.map(|instruction| instruction.op()) != CONST_ARRAY_OBJECT2 {
+        return None;
+    }
+    let [array, _, second, object] = code;
+    let object_inputs = [object.register_b(), object.register_c()];
+    if code
+        .iter()
+        .any(|instruction| instruction.result_flags() != 0)
+        || !object_inputs.contains(&array.result_register())
+        || !object_inputs.contains(&second.result_register())
     {
         return None;
     }
@@ -212,7 +215,7 @@ fn fuse_const_array_object2(
     superinstructions.push(Superinstruction { code });
     Some(Instr::new(
         Op::SuperConstArrayObject2,
-        code[3].a(),
+        object.result_register(),
         0,
         0,
         site,
