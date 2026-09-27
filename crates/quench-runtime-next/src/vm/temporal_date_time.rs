@@ -169,7 +169,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if native == Native::TemporalPlainDateTimeFrom {
-            return self.temporal_plain_date_time_from(p, this, args);
+            let constructor = self.temporal_plain_date_time_constructor(p)?;
+            return self.temporal_plain_date_time_from(p, constructor, args);
         }
         if native == Native::TemporalPlainDateTimeCompare {
             return self.temporal_plain_date_time_compare(p, args);
@@ -221,6 +222,8 @@ impl<H: Host> Vm<H> {
                 super::temporal_plain_date_time_conversion::to_date_time(self, p, value)?
                     .map(|value| value as i32)
             };
+            let _ =
+                self.plain_date_overflow(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
             let args = [
                 Value::number(f64::from(year)),
                 Value::number(f64::from(month)),
@@ -248,6 +251,7 @@ impl<H: Host> Vm<H> {
         } else {
             [0; 6]
         };
+        let _ = self.plain_date_overflow(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
         let args = [
             Value::number(f64::from(date.year)),
             Value::number(f64::from(date.month)),
@@ -268,7 +272,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let constructor = self.native_value(Native::TemporalPlainDateTime);
+        let constructor = self.temporal_plain_date_time_constructor(p)?;
         let left = self.temporal_plain_date_time_from(
             p,
             constructor,
@@ -289,6 +293,16 @@ impl<H: Host> Vm<H> {
             std::cmp::Ordering::Equal => 0.0,
             std::cmp::Ordering::Greater => 1.0,
         }))
+    }
+
+    fn temporal_plain_date_time_constructor(
+        &mut self,
+        p: &ResidualProgram,
+    ) -> Result<Value, JsError> {
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("PlainDateTime");
+        self.get_property(p, temporal, constructor_atom)
     }
 
     fn temporal_plain_date_time_equals(
