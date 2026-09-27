@@ -563,6 +563,7 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainDateTime
             | Native::TemporalPlainDateTimeFrom
+            | Native::TemporalPlainDateTimeCompare
             | Native::TemporalPlainDateTimeCalendarIdGetter
             | Native::TemporalPlainDateTimeYearGetter
             | Native::TemporalPlainDateTimeMonthGetter
