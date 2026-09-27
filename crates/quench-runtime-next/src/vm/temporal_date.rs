@@ -351,9 +351,9 @@ impl<H: Host> Vm<H> {
         let calendar = if calendar.is_undefined() {
             "iso8601".to_owned()
         } else if matches!(self.heap.get(calendar), Some(Cell::String(_))) {
-            self.to_string(p, calendar)?
-                .to_string()
-                .to_ascii_lowercase()
+            let value = self.to_string(p, calendar)?.to_string();
+            parse_calendar_annotation(&value)
+                .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
         } else {
             return Err(self.type_error(p, "Invalid calendar".into()));
         };
@@ -522,12 +522,50 @@ fn parse_iso_date(text: &str) -> Option<IsoDate> {
 }
 
 fn parse_calendar_annotation(text: &str) -> Option<String> {
-    let calendar = text
+    let lower = text.to_ascii_lowercase();
+    if matches!(lower.as_str(), "iso8601" | "gregory") {
+        return Some(lower);
+    }
+    if !valid_calendar_source(text) {
+        return None;
+    }
+    let calendar = lower
         .split_once("[u-ca=")
         .map(|(_, annotation)| annotation.split(']').next().unwrap_or(""))
-        .unwrap_or("iso8601")
-        .to_ascii_lowercase();
-    matches!(calendar.as_str(), "iso8601" | "gregory").then_some(calendar)
+        .unwrap_or("iso8601");
+    if !matches!(calendar, "iso8601" | "gregory") {
+        return None;
+    }
+    Some(calendar.to_owned())
+}
+
+fn valid_calendar_source(text: &str) -> bool {
+    if matches!(text.to_ascii_lowercase().as_str(), "iso8601" | "gregory") {
+        return true;
+    }
+    let source = text.split('[').next().unwrap_or("");
+    let date = source.split('T').next().unwrap_or(source);
+    if parse_iso_date(date).is_some() {
+        return true;
+    }
+    let fields = date.as_bytes();
+    match fields {
+        [month @ b'0'..=b'1', b'0'..=b'9', b'-', day @ b'0'..=b'3', b'0'..=b'9'] => {
+            let month = i32::from(*month - b'0') * 10 + i32::from(fields[1] - b'0');
+            let day = i32::from(*day - b'0') * 10 + i32::from(fields[4] - b'0');
+            iso_days_in_month(2000, month).is_some_and(|days| (1..=days).contains(&day))
+        }
+        [year @ b'0'..=b'9', b'0'..=b'9', b'0'..=b'9', b'0'..=b'9', b'-', month @ b'0'..=b'1', b'0'..=b'9'] =>
+        {
+            let month = i32::from(*month - b'0') * 10 + i32::from(fields[6] - b'0');
+            let year = i32::from(*year - b'0') * 1_000
+                + i32::from(fields[1] - b'0') * 100
+                + i32::from(fields[2] - b'0') * 10
+                + i32::from(fields[3] - b'0');
+            iso_days_in_month(year, month).is_some()
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn iso_days_in_month(year: i32, month: i32) -> Option<i32> {
