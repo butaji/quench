@@ -510,6 +510,8 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalZonedDateTimeDaysInYearGetter
         | Native::TemporalZonedDateTimeMonthsInYearGetter
         | Native::TemporalZonedDateTimeInLeapYearGetter
+        | Native::TemporalZonedDateTimeEpochMillisecondsGetter
+        | Native::TemporalZonedDateTimeHoursInDayGetter
         | Native::TemporalZonedDateTimeToString
         | Native::TemporalZonedDateTimeToJSON => 0.0,
         Native::TemporalInstant => 1.0,
