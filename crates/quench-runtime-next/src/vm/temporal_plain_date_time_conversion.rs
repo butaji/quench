@@ -25,7 +25,7 @@ pub(super) fn convert<H: Host>(
     construct(vm, p, year, month, day, calendar, time)
 }
 
-fn to_time<H: Host>(
+pub(super) fn to_time<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     value: Value,

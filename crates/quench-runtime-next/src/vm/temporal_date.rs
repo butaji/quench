@@ -79,6 +79,7 @@ impl<H: Host> Vm<H> {
             ("toPlainDateTime", Native::TemporalPlainDateToPlainDateTime),
             ("toPlainMonthDay", Native::TemporalPlainDateToPlainMonthDay),
             ("toPlainYearMonth", Native::TemporalPlainDateToPlainYearMonth),
+            ("toZonedDateTime", Native::TemporalPlainDateToZonedDateTime),
             ("equals", Native::TemporalPlainDateEquals),
             ("valueOf", Native::TemporalPlainDateValueOf),
             ("add", Native::TemporalPlainDateAdd),
@@ -214,6 +215,9 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainDateToPlainYearMonth => {
                 super::temporal_date_projection::to_plain_year_month(self, p, this)
+            }
+            Native::TemporalPlainDateToZonedDateTime => {
+                super::temporal_date_projection::to_zoned_date_time(self, p, this, args)
             }
             Native::TemporalPlainDateCalendarIdGetter
             | Native::TemporalPlainDateYearGetter

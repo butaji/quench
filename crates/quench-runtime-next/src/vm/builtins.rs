@@ -303,7 +303,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalPlainDateToString,
     Native::TemporalPlainDateToJSON, Native::TemporalPlainDateToLocaleString,
     Native::TemporalPlainDateToPlainDateTime, Native::TemporalPlainDateToPlainMonthDay,
-    Native::TemporalPlainDateToPlainYearMonth,
+    Native::TemporalPlainDateToPlainYearMonth, Native::TemporalPlainDateToZonedDateTime,
     Native::TemporalPlainDateEquals, Native::TemporalPlainDateValueOf,
     Native::TemporalPlainDateAdd, Native::TemporalPlainDateSubtract,
     Native::TemporalPlainDateUntil, Native::TemporalPlainDateSince,
