@@ -1,4 +1,5 @@
 use super::*;
+use chrono::{Datelike, NaiveDate};
 
 const DURATION_FIELDS: [&str; 10] = [
     "years",
@@ -30,6 +31,42 @@ const DURATION_TIME_NANOSECOND_SCALES: [i128; 7] = [
     1_000,
     1,
 ];
+const NANOS_PER_DAY: i128 = 86_400_000_000_000;
+
+fn parse_relative_date(text: &str) -> Option<NaiveDate> {
+    let date = text.split(['T', 't', '[', ' ']).next()?;
+    if date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit()) {
+        return NaiveDate::parse_from_str(date, "%Y%m%d").ok();
+    }
+    NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()
+}
+
+fn duration_relative_nanoseconds(start: NaiveDate, fields: &[f64; 10]) -> Option<i128> {
+    let mut target = shift_relative_months(start, fields[0] as i128 * 12)?;
+    target = shift_relative_months(target, fields[1] as i128)?;
+    let calendar_days = fields[2] as i128 * 7 + fields[3] as i128;
+    target = target.checked_add_signed(chrono::Duration::days(i64::try_from(calendar_days).ok()?))?;
+    let elapsed_days = i128::from((target - start).num_days());
+    let elapsed_time = fields[4..]
+        .iter()
+        .zip(DURATION_TIME_NANOSECOND_SCALES[1..].iter())
+        .map(|(value, scale)| *value as i128 * scale)
+        .sum::<i128>();
+    elapsed_days.checked_mul(NANOS_PER_DAY)?.checked_add(elapsed_time)
+}
+
+fn shift_relative_months(date: NaiveDate, months: i128) -> Option<NaiveDate> {
+    let month_index = i128::from(date.year()) * 12 + i128::from(date.month0()) + months;
+    let year = i32::try_from(month_index.div_euclid(12)).ok()?;
+    let month = u32::try_from(month_index.rem_euclid(12)).ok()? + 1;
+    let first_of_next_month = if month == 12 {
+        NaiveDate::from_ymd_opt(year.checked_add(1)?, 1, 1)?
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)?
+    };
+    let last_day = (first_of_next_month - chrono::Duration::days(1)).day();
+    NaiveDate::from_ymd_opt(year, month, date.day().min(last_day))
+}
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
@@ -246,6 +283,9 @@ impl<H: Host> Vm<H> {
                 self.validate_duration_fields(p, &left)?;
                 self.validate_duration_fields(p, &right)?;
                 if left == right {
+                    if !relative_to.is_undefined() {
+                        self.temporal_relative_date(p, relative_to)?;
+                    }
                     return Ok(Value::number(0.0));
                 }
                 if left[..3].iter().chain(right[..3].iter()).any(|value| *value != 0.0)
@@ -253,9 +293,22 @@ impl<H: Host> Vm<H> {
                 {
                     return Err(self.range_error(p, "relativeTo is required to compare calendar units".into()));
                 }
-                let left = self.duration_time_nanos(&left);
-                let right = self.duration_time_nanos(&right);
-                Ok(Value::number(if left < right { -1.0 } else if left > right { 1.0 } else { 0.0 }))
+                let ordering = if relative_to.is_undefined() {
+                    self.duration_time_nanos(&left)
+                        .cmp(&self.duration_time_nanos(&right))
+                } else {
+                    let date = self.temporal_relative_date(p, relative_to)?;
+                    let left = duration_relative_nanoseconds(date, &left)
+                        .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+                    let right = duration_relative_nanoseconds(date, &right)
+                        .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+                    left.cmp(&right)
+                };
+                Ok(Value::number(match ordering {
+                    std::cmp::Ordering::Less => -1.0,
+                    std::cmp::Ordering::Equal => 0.0,
+                    std::cmp::Ordering::Greater => 1.0,
+                }))
             }
             Native::TemporalDurationToString | Native::TemporalDurationToJSON => {
                 let fields = self.duration_fields(p, this)?;
@@ -357,6 +410,40 @@ impl<H: Host> Vm<H> {
             .zip(DURATION_TIME_NANOSECOND_SCALES)
             .map(|(value, scale)| *value as i128 * scale)
             .sum()
+    }
+
+    fn temporal_relative_date(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<NaiveDate, JsError> {
+        if let Some(Cell::String(text)) = self.heap.get(value) {
+            return parse_relative_date(text.host_string())
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()));
+        }
+        if !self.is_object_like(value) {
+            return Err(self.type_error(p, "Invalid relativeTo".into()));
+        }
+        let year_atom = self.intern_atom("year");
+        let month_atom = self.intern_atom("month");
+        let day_atom = self.intern_atom("day");
+        let year = self.get_property(p, value, year_atom)?;
+        let month = self.get_property(p, value, month_atom)?;
+        let day = self.get_property(p, value, day_atom)?;
+        let year = self.to_number(p, year)?;
+        let month = self.to_number(p, month)?;
+        let day = self.to_number(p, day)?;
+        if !year.is_finite()
+            || !month.is_finite()
+            || !day.is_finite()
+            || year.fract() != 0.0
+            || month.fract() != 0.0
+            || day.fract() != 0.0
+        {
+            return Err(self.range_error(p, "Invalid relativeTo".into()));
+        }
+        NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))
     }
 
     fn temporal_duration_total(
