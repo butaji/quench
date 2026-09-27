@@ -21,7 +21,11 @@ impl Heap {
 }
 
 impl Heap {
-    pub(super) fn mark_ephemerons(&mut self, work: &mut Vec<Value>) {
+    pub(super) fn mark_ephemerons(
+        &mut self,
+        work: &mut Vec<Value>,
+        shape_roots: &mut impl FnMut(u32, &mut Vec<Value>),
+    ) {
         loop {
             let mut discovered = false;
             for index in 0..self.slots.len() {
@@ -47,7 +51,7 @@ impl Heap {
             if !discovered {
                 break;
             }
-            self.mark_work(work);
+            self.mark_work(work, shape_roots);
         }
     }
 

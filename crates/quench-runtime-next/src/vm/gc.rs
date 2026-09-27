@@ -2,6 +2,53 @@ use super::module::ModuleRecord;
 use super::promise::PromiseState;
 use super::*;
 
+fn active_shape_attributes(
+    shapes: &[Shape],
+    shape: u32,
+) -> Vec<Option<(property_key::PropertyKey, PropertyAttributes)>> {
+    let mut chain = Vec::new();
+    let mut current = Some(shape);
+    while let Some(id) = current {
+        chain.push(id);
+        current = shapes[id as usize].parent;
+    }
+    chain.reverse();
+
+    let mut entries = Vec::new();
+    for id in chain {
+        match shapes[id as usize].transition {
+            ShapeTransition::Add { key, .. } => {
+                entries.push(Some((key, DEFAULT_PROPERTY_ATTRIBUTES)));
+            }
+            ShapeTransition::Delete { slot, .. } => {
+                if let Some(entry) = entries.get_mut(slot as usize) {
+                    *entry = None;
+                }
+            }
+            ShapeTransition::Descriptor { slot, attributes } => {
+                if let Some(Some((_, current))) = entries.get_mut(slot as usize) {
+                    *current = attributes;
+                }
+            }
+            ShapeTransition::Root => {}
+        }
+    }
+    entries
+}
+
+fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
+    roots.extend(
+        active_shape_attributes(shapes, shape)
+            .into_iter()
+            .flatten()
+            .flat_map(|(key, attributes)| {
+                key.symbol_value()
+                    .into_iter()
+                    .chain([attributes.getter, attributes.setter].into_iter().flatten())
+            }),
+    );
+}
+
 impl<H: Host> Vm<H> {
     /// Run a named collection safepoint even when the allocation threshold has
     /// not been reached. Hosts and focused conformance tests use this boundary
@@ -208,39 +255,10 @@ impl<H: Host> Vm<H> {
                 .chain(self.symbol_registry.values().copied())
                 .chain(self.well_known_symbols.values().copied())
                 .chain(
-                    self.shapes
-                        .iter()
-                        .filter_map(|shape| match shape.transition {
-                            ShapeTransition::Add { key, .. }
-                            | ShapeTransition::Delete { key, .. } => key.symbol_value(),
-                            ShapeTransition::Root | ShapeTransition::Descriptor { .. } => None,
-                        }),
-                )
-                .chain(
                     self.descriptors
                         .values()
                         .flat_map(|attributes| [attributes.getter, attributes.setter])
                         .flatten(),
-                )
-                .chain(
-                    self.shapes
-                        .iter()
-                        .filter_map(|shape| match shape.transition {
-                            ShapeTransition::Descriptor { attributes, .. } => attributes.getter,
-                            ShapeTransition::Root
-                            | ShapeTransition::Add { .. }
-                            | ShapeTransition::Delete { .. } => None,
-                        }),
-                )
-                .chain(
-                    self.shapes
-                        .iter()
-                        .filter_map(|shape| match shape.transition {
-                            ShapeTransition::Descriptor { attributes, .. } => attributes.setter,
-                            ShapeTransition::Root
-                            | ShapeTransition::Add { .. }
-                            | ShapeTransition::Delete { .. } => None,
-                        }),
                 )
                 .chain(self.frames.iter().flat_map(|frame| {
                     [frame.env, frame.this]
@@ -254,9 +272,12 @@ impl<H: Host> Vm<H> {
                         // argument is a semantic use-after-collection.
                         .chain(frame.registers.iter().copied())
                 }));
+        let shapes = &self.shapes;
         self.realm.jobs.extend(
             self.heap
-                .collect(roots)
+                .collect_with_shape_roots(roots, |shape, roots| {
+                    append_shape_roots(shapes, shape, roots)
+                })
                 .into_iter()
                 .map(|(callback, held)| PendingJob {
                     callback,

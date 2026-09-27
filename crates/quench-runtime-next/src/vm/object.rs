@@ -12,7 +12,10 @@ impl<H: Host> Vm<H> {
         while let Some(id) = current {
             let shape = &self.shapes[id as usize];
             match shape.transition {
-                ShapeTransition::Add { key: candidate, slot } if candidate == key => {
+                ShapeTransition::Add {
+                    key: candidate,
+                    slot,
+                } if candidate == key => {
                     return Some(slot as usize);
                 }
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => {
@@ -1096,9 +1099,11 @@ impl<H: Host> Vm<H> {
         self.transition_property_shape(shape, PropertyKey::string(atom))
     }
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
-        if let Some(next) = self.transitions.get(&(shape, key)).copied() {
-            self.profile.shape_transition(true);
-            return next;
+        if matches!(key, PropertyKey::String(_)) {
+            if let Some(next) = self.transitions.get(&(shape, key)).copied() {
+                self.profile.shape_transition(true);
+                return next;
+            }
         }
         self.profile.shape_transition(false);
         let storage_len = self.shapes[shape as usize].storage_len;
@@ -1108,7 +1113,9 @@ impl<H: Host> Vm<H> {
             .expect("object property storage exhausted");
         let slot = u32::try_from(storage_len).expect("object property index exceeds u32");
         let next = self.append_shape(shape, ShapeTransition::Add { key, slot }, next_storage_len);
-        self.transitions.insert((shape, key), next);
+        if matches!(key, PropertyKey::String(_)) {
+            self.transitions.insert((shape, key), next);
+        }
         next
     }
     pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
