@@ -9,6 +9,16 @@ const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
 const MICROSECONDS_PER_MILLISECOND: u32 = 1_000;
 const SECONDS_PER_HOUR: i32 = 3_600;
 const SECONDS_PER_MINUTE: i32 = 60;
+const ISO_YEAR_DIGITS: usize = 4;
+const EXTENDED_YEAR_DIGITS: usize = 6;
+const ISO_MONTH_DIGITS: usize = 2;
+const ISO_DAY_DIGITS: usize = 2;
+const MAX_FRACTION_DIGITS: usize = 9;
+const ISO_TIME_FIELD_DIGITS: usize = 2;
+const ISO_HOUR_LIMIT: u32 = 23;
+const ISO_MINUTE_LIMIT: u32 = 59;
+const ISO_SECOND_LIMIT: u32 = 59;
+const ISO_LEAP_SECOND: u32 = ISO_SECOND_LIMIT + 1;
 const DISAMBIGUATION_OPTIONS: [&str; 4] = ["compatible", "earlier", "later", "reject"];
 const OFFSET_OPTIONS: [&str; 4] = ["prefer", "use", "ignore", "reject"];
 const OVERFLOW_OPTIONS: [&str; 2] = ["constrain", "reject"];
@@ -399,7 +409,7 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "month and monthCode must agree".into()));
         }
         let (month, day) = if constrain {
-            let month = month.clamp(1, 12);
+            let month = month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR);
             let last_day = super::temporal_date::iso_days_in_month(year, month).unwrap_or(31);
             (month, day.clamp(1, last_day))
         } else {
@@ -488,34 +498,230 @@ struct ZonedDateTimeRecord {
 }
 
 fn parse_zoned_date_time_string(text: &str) -> Option<ZonedDateTimeRecord> {
-    let (base, annotations) = text.split_once('[')?;
-    if !annotations.ends_with(']') || annotations.matches('[').count() != 0 {
-        return None;
-    }
-    let annotations = annotations[..annotations.len() - 1].split("][");
+    let (base, annotation_text) = text.split_once('[')?;
+    let mut rest = annotation_text;
     let mut time_zone = None;
     let mut calendar = None;
-    for annotation in annotations {
-        if let Some(value) = annotation.strip_prefix("u-ca=") {
-            calendar = Some(value);
-        } else if !annotation.contains('=') {
-            time_zone = Some(annotation);
+    loop {
+        let (annotation, tail) = rest.split_once(']')?;
+        let body = annotation.strip_prefix('!').unwrap_or(annotation);
+        if let Some((key, value)) = body.split_once('=') {
+            if key == "u-ca" {
+                calendar.get_or_insert(value);
+            } else if annotation.starts_with('!') {
+                return None;
+            }
+        } else if time_zone.replace(body).is_some() {
+            return None;
         }
+        if tail.is_empty() {
+            break;
+        }
+        rest = tail.strip_prefix('[')?;
     }
     let time_zone = canonical_time_zone(time_zone?)?;
-    let parsed = chrono::DateTime::parse_from_rfc3339(base).ok()?;
-    let epoch_nanoseconds = i128::from(parsed.timestamp()) * NANOSECONDS_PER_SECOND
-        + i128::from(parsed.timestamp_subsec_nanos());
+    let calendar =
+        super::temporal_date_parse::parse_calendar_identifier(calendar.unwrap_or("iso8601"))?;
+    let (local, offset, leap_second) = parse_iso_zoned_base(base)?;
+    let mut epoch_nanoseconds = match offset {
+        Some(offset) => naive_epoch_nanoseconds(local)? - offset,
+        None => zoned_local_epoch(local, &time_zone)?,
+    };
+    if leap_second {
+        epoch_nanoseconds += NANOSECONDS_PER_SECOND;
+    }
     if epoch_nanoseconds.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
         return None;
     }
-    let calendar = calendar.unwrap_or("iso8601");
-    let calendar = super::temporal_date_parse::parse_calendar_identifier(calendar)?;
+    if offset.is_some() && timezone_offset_nanoseconds(&time_zone, epoch_nanoseconds)? != offset? {
+        return None;
+    }
     Some(ZonedDateTimeRecord {
         epoch_nanoseconds,
         time_zone,
         calendar,
     })
+}
+
+fn parse_iso_zoned_base(value: &str) -> Option<(chrono::NaiveDateTime, Option<i128>, bool)> {
+    let (date, time) = value.split_once(['T', 't', ' '])?;
+    if date == "-000000" || date.starts_with("-000000-") {
+        return None;
+    }
+    let date = parse_iso_zoned_date(date)?;
+    let (time, offset_text) = if let Some(time) = time.strip_suffix(['Z', 'z']) {
+        (time, Some("+00:00"))
+    } else if let Some(index) = time.get(1..)?.find(['+', '-']).map(|index| index + 1) {
+        (&time[..index], Some(&time[index..]))
+    } else {
+        (time, None)
+    };
+    let (clock, fraction) = time
+        .split_once(['.', ','])
+        .map_or((time, None), |(clock, fraction)| (clock, Some(fraction)));
+    if fraction.is_some_and(|fraction| {
+        fraction.is_empty()
+            || fraction.len() > MAX_FRACTION_DIGITS
+            || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    }) {
+        return None;
+    }
+    let fields = if clock.contains(':') {
+        let parts = clock.split(':').collect::<Vec<_>>();
+        match parts.as_slice() {
+            [hour, minute] if fraction.is_none() => {
+                [parse_two_digits(hour)?, parse_two_digits(minute)?, 0]
+            }
+            [hour, minute, second] => [
+                parse_two_digits(hour)?,
+                parse_two_digits(minute)?,
+                parse_two_digits(second)?,
+            ],
+            _ => return None,
+        }
+    } else {
+        let bytes = clock.as_bytes();
+        let valid_length = clock.len() == ISO_TIME_FIELD_DIGITS
+            || clock.len() == ISO_TIME_FIELD_DIGITS * 2
+            || clock.len() == ISO_TIME_FIELD_DIGITS * 3;
+        if !bytes.iter().all(u8::is_ascii_digit)
+            || !valid_length
+            || fraction.is_some() && clock.len() != ISO_TIME_FIELD_DIGITS * 3
+        {
+            return None;
+        }
+        [
+            clock.get(..ISO_TIME_FIELD_DIGITS)?.parse().ok()?,
+            clock
+                .get(ISO_TIME_FIELD_DIGITS..ISO_TIME_FIELD_DIGITS * 2)
+                .filter(|_| clock.len() >= ISO_TIME_FIELD_DIGITS * 2)?
+                .parse()
+                .ok()
+                .unwrap_or(0),
+            clock
+                .get(ISO_TIME_FIELD_DIGITS * 2..ISO_TIME_FIELD_DIGITS * 3)
+                .filter(|_| clock.len() == ISO_TIME_FIELD_DIGITS * 3)?
+                .parse()
+                .ok()
+                .unwrap_or(0),
+        ]
+    };
+    let [hour, minute, second] = fields;
+    if hour > ISO_HOUR_LIMIT || minute > ISO_MINUTE_LIMIT || second > ISO_LEAP_SECOND {
+        return None;
+    }
+    let leap_second = second == ISO_LEAP_SECOND;
+    let second = second.min(ISO_SECOND_LIMIT);
+    let nanosecond = fraction.map_or(Some(0), parse_fraction_nanoseconds)?;
+    let local = date.and_hms_nano_opt(hour, minute, second, nanosecond)?;
+    let offset = match offset_text {
+        Some(value) => Some(parse_offset_nanoseconds(value)?),
+        None => None,
+    };
+    Some((local, offset, leap_second))
+}
+
+fn parse_iso_zoned_date(value: &str) -> Option<chrono::NaiveDate> {
+    let (year_text, month_text, day_text) = if value.starts_with(['+', '-']) {
+        let sign = &value[..1];
+        let body = value.get(1..)?;
+        let year = body.get(..EXTENDED_YEAR_DIGITS)?;
+        let remainder = body.get(EXTENDED_YEAR_DIGITS..)?;
+        let (month, day) = parse_month_day(remainder)?;
+        let year = format!("{sign}{year}");
+        return chrono::NaiveDate::from_ymd_opt(
+            year.parse().ok()?,
+            month.parse().ok()?,
+            day.parse().ok()?,
+        );
+    } else if value.contains('-') {
+        let (year, remainder) = value.split_once('-')?;
+        let (month, day) = parse_extended_month_day(remainder)?;
+        (year, month, day)
+    } else {
+        if value.len() != ISO_YEAR_DIGITS + ISO_MONTH_DIGITS + ISO_DAY_DIGITS {
+            return None;
+        }
+        (
+            value.get(..ISO_YEAR_DIGITS)?,
+            value.get(ISO_YEAR_DIGITS..ISO_YEAR_DIGITS + ISO_MONTH_DIGITS)?,
+            value.get(ISO_YEAR_DIGITS + ISO_MONTH_DIGITS..)?,
+        )
+    };
+    chrono::NaiveDate::from_ymd_opt(
+        year_text.parse().ok()?,
+        month_text.parse().ok()?,
+        day_text.parse().ok()?,
+    )
+}
+
+fn parse_month_day(value: &str) -> Option<(&str, &str)> {
+    if value.contains('-') {
+        parse_extended_month_day(value)
+    } else {
+        (value.len() == ISO_MONTH_DIGITS + ISO_DAY_DIGITS).then_some((
+            value.get(..ISO_MONTH_DIGITS)?,
+            value.get(ISO_MONTH_DIGITS..)?,
+        ))
+    }
+}
+
+fn parse_extended_month_day(value: &str) -> Option<(&str, &str)> {
+    let value = value.strip_prefix('-').unwrap_or(value);
+    let (month, day) = value.split_once('-')?;
+    (month.len() == ISO_MONTH_DIGITS && day.len() == ISO_DAY_DIGITS).then_some((month, day))
+}
+
+fn parse_two_digits(value: &str) -> Option<u32> {
+    (value.len() == ISO_TIME_FIELD_DIGITS && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| value.parse().ok())?
+}
+
+fn parse_fraction_nanoseconds(value: &str) -> Option<u32> {
+    let mut digits = value.to_owned();
+    digits.extend(std::iter::repeat_n('0', MAX_FRACTION_DIGITS - value.len()));
+    digits.parse().ok()
+}
+
+fn parse_offset_nanoseconds(value: &str) -> Option<i128> {
+    if !quench_temporal::valid_date_time_offset(value) {
+        return None;
+    }
+    let sign = if value.starts_with('-') { -1 } else { 1 };
+    let (clock, fraction) = value
+        .split_once(['.', ','])
+        .map_or((value, None), |(clock, fraction)| (clock, Some(fraction)));
+    let fraction = fraction
+        .map(parse_fraction_nanoseconds)
+        .unwrap_or(Some(0))?;
+    Some(
+        i128::from(quench_temporal::offset_seconds(clock)) * NANOSECONDS_PER_SECOND
+            + i128::from(sign) * i128::from(fraction),
+    )
+}
+
+fn naive_epoch_nanoseconds(value: chrono::NaiveDateTime) -> Option<i128> {
+    let utc = value.and_utc();
+    Some(
+        i128::from(utc.timestamp()) * NANOSECONDS_PER_SECOND
+            + i128::from(utc.timestamp_subsec_nanos()),
+    )
+}
+
+fn timezone_offset_nanoseconds(zone: &str, epoch: i128) -> Option<i128> {
+    if zone.starts_with(['+', '-']) {
+        return Some(i128::from(quench_temporal::offset_seconds(zone)) * NANOSECONDS_PER_SECOND);
+    }
+    let seconds = i64::try_from(epoch.div_euclid(NANOSECONDS_PER_SECOND)).ok()?;
+    let nanos = epoch.rem_euclid(NANOSECONDS_PER_SECOND) as u32;
+    let utc = Utc.timestamp_opt(seconds, nanos).single()?;
+    let offset = zone
+        .parse::<chrono_tz::Tz>()
+        .ok()?
+        .offset_from_utc_datetime(&utc.naive_utc())
+        .fix()
+        .local_minus_utc();
+    Some(i128::from(offset) * NANOSECONDS_PER_SECOND)
 }
 
 fn canonical_time_zone(value: &str) -> Option<String> {
