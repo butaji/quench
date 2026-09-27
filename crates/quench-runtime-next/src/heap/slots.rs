@@ -55,7 +55,6 @@ impl SlotArena {
         }
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(super) fn iter(&self) -> impl Iterator<Item = &Slot> {
         self.slabs
             .iter()
