@@ -234,6 +234,7 @@ impl<H: Host> Vm<H> {
                     | Cell::Function { .. }
                     | Cell::Date { .. }
                     | Cell::TemporalDuration { .. }
+                    | Cell::TemporalPlainDate { .. }
                     | Cell::RegExp { .. }
                     | Cell::Error(_)
             )

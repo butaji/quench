@@ -341,6 +341,19 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalDurationNanosecondsGetter
         | Native::TemporalDurationSignGetter
         | Native::TemporalDurationBlankGetter => 0.0,
+        Native::TemporalPlainDate => 3.0,
+        Native::TemporalPlainDateFrom => 1.0,
+        Native::TemporalPlainDateCompare => 2.0,
+        Native::TemporalPlainDateEquals => 1.0,
+        Native::TemporalPlainDateCalendarIdGetter
+        | Native::TemporalPlainDateYearGetter
+        | Native::TemporalPlainDateMonthGetter
+        | Native::TemporalPlainDateMonthCodeGetter
+        | Native::TemporalPlainDateDayGetter
+        | Native::TemporalPlainDateToString
+        | Native::TemporalPlainDateToJSON
+        | Native::TemporalPlainDateToLocaleString
+        | Native::TemporalPlainDateValueOf => 0.0,
         Native::Symbol => 0.0,
         Native::SymbolFor | Native::SymbolKeyFor => 1.0,
         Native::SymbolToString | Native::SymbolValueOf => 0.0,

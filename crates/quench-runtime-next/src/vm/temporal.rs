@@ -133,6 +133,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(p, prototype, name, native)?;
         }
         self.set_builtin_value_named(temporal, "Duration", duration)?;
+        self.install_temporal_plain_date(p, temporal)?;
         self.set_builtin_value_named(self.realm.globals, "Temporal", temporal)
     }
 
@@ -419,6 +420,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<NaiveDate, JsError> {
         if let Some(Cell::String(text)) = self.heap.get(value) {
             return parse_relative_date(text.host_string())
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()));
+        }
+        if let Some(Cell::TemporalPlainDate {
+            year, month, day, ..
+        }) = self.heap.get(value)
+        {
+            return NaiveDate::from_ymd_opt(*year, *month, *day)
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()));
         }
         if !self.is_object_like(value) {
