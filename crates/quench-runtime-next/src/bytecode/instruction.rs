@@ -100,32 +100,39 @@ macro_rules! layout_accessors {
                 self.a() & REGISTER_MASK
             }
 
+            pub(crate) fn result_flags(self) -> Register {
+                debug_assert_ne!(self.op().result_layout(), ResultLayout::NoResult);
+                self.a() & !REGISTER_MASK
+            }
+
             #[allow(dead_code)]
             pub(crate) fn set_result_register(&mut self, register: Register) {
                 debug_assert_ne!(self.op().result_layout(), ResultLayout::NoResult);
                 debug_assert!(register <= REGISTER_MASK);
-                let flags = self.a() & !REGISTER_MASK;
+                let flags = self.result_flags();
                 *self = Self::new(self.op(), register | flags, self.b(), self.c(), self.imm());
             }
 
             pub(crate) fn returns_from_frame(self) -> bool {
-                self.op().result_layout().allows_return() && self.a() & RETURN_REGISTER != 0
+                self.op().result_layout().allows_return()
+                    && self.result_flags() & RETURN_REGISTER != 0
             }
 
             pub(crate) fn writes_current_this(self) -> bool {
-                self.op().result_layout().allows_this_write() && self.a() & SET_THIS_REGISTER != 0
+                self.op().result_layout().allows_this_write()
+                    && self.result_flags() & SET_THIS_REGISTER != 0
             }
 
             #[allow(dead_code)]
             pub(crate) fn writes_numeric_local(self) -> bool {
                 self.op().result_layout().allows_numeric_local()
-                    && self.a() & super::NUMERIC_LOCAL_TARGET != 0
+                    && self.result_flags() & super::NUMERIC_LOCAL_TARGET != 0
             }
 
             #[allow(dead_code)]
             pub(crate) fn result_flags_valid(self) -> bool {
                 let layout: ResultLayout = self.op().result_layout();
-                self.a() & !REGISTER_MASK & !layout.allowed_flags() == 0
+                self.result_flags() & !layout.allowed_flags() == 0
             }
 
             pub(crate) fn call_window(self) -> RegisterWindow {
