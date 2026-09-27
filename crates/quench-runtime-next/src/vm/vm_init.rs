@@ -55,6 +55,7 @@ impl<H: Host> Vm<H> {
             async_from_sync_iterator_proto: Value::NULL,
             regexp_proto: Value::NULL,
             regexp_prototypes: FxHashMap::default(),
+            temporal_plain_date_proto: Value::NULL,
             natives: vec![],
             frames: vec![],
             frame_pool: vec![],

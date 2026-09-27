@@ -376,6 +376,7 @@ pub struct Vm<H> {
     async_from_sync_iterator_proto: Value,
     regexp_proto: Value,
     regexp_prototypes: FxHashMap<Value, Value>,
+    temporal_plain_date_proto: Value,
     natives: Vec<(Native, Value)>,
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
@@ -810,6 +811,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program);
         self.active_program = ProgramId::MAIN;
         self.finalization_registry_proto = Value::NULL;
+        self.temporal_plain_date_proto = Value::NULL;
         self.random_state = DEFAULT_RANDOM_SEED;
         self.realm.globals = self
             .heap
