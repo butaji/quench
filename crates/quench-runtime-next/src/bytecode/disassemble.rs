@@ -236,7 +236,7 @@ fn write_immediate(output: &mut String, instruction: WideInstruction) -> fmt::Re
 fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> fmt::Result {
     match instruction.op().immediate_role() {
         ImmediateRole::Unused => Ok(()),
-        ImmediateRole::Undeclared => write!(output, " imm={}", instruction.imm()),
+        ImmediateRole::LayoutEncoded => write!(output, " imm={}", instruction.imm()),
         ImmediateRole::FieldLookup => write!(output, " lookup={:?}", instruction.field_lookup()),
         ImmediateRole::ConstantIndex
         | ImmediateRole::ClosureFunctionIndex
