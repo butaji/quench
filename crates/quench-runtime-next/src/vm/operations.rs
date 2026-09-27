@@ -679,6 +679,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeWith
             | Native::TemporalZonedDateTimeWithTimeZone
             | Native::TemporalZonedDateTimeWithCalendar
+            | Native::TemporalZonedDateTimeWithPlainTime
             | Native::TemporalZonedDateTimeToInstant
             | Native::TemporalZonedDateTimeToPlainDate
             | Native::TemporalZonedDateTimeToPlainDateTime
