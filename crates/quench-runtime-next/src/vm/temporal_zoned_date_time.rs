@@ -1660,12 +1660,12 @@ impl<H: Host> Vm<H> {
                     self, p, &text,
                 )?;
                 let offset_mode = if options.is_undefined() || !self.is_object_like(options) {
-                    "prefer".to_owned()
+                    "reject".to_owned()
                 } else {
                     let key = self.intern_atom("offset");
                     let value = self.get_property(p, options, key)?;
                     if value.is_undefined() {
-                        "prefer".to_owned()
+                        "reject".to_owned()
                     } else {
                         let value = self.to_string(p, value)?.to_string();
                         if !OFFSET_OPTIONS.contains(&value.as_str()) {
