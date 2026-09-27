@@ -10,8 +10,8 @@ const ISO_WEDNESDAY: i64 = 3;
 const ISO_JANUARY: u32 = 1;
 const ISO_FEBRUARY: i32 = 2;
 const ISO_JANUARY_FIRST: u32 = 1;
-const MIN_ISO_YEAR: i32 = -271_821;
-const MAX_ISO_YEAR: i32 = 275_760;
+pub(super) const MIN_ISO_YEAR: i32 = -271_821;
+pub(super) const MAX_ISO_YEAR: i32 = 275_760;
 const MAX_BASIC_ISO_YEAR: i32 = 9_999;
 const BASIC_ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_ISO_YEAR_DIGITS: usize = 6;
@@ -336,7 +336,7 @@ impl<H: Host> Vm<H> {
             || matches!(
                 self.heap.get(changes),
                 Some(
-                        Cell::TemporalPlainDate { .. }
+                    Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
                         | Cell::TemporalPlainMonthDay { .. }
                         | Cell::TemporalPlainYearMonth { .. }
