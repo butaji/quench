@@ -87,6 +87,7 @@ impl<H: Host> Vm<H> {
             ("until", Native::TemporalPlainTimeUntil),
             ("since", Native::TemporalPlainTimeSince),
             ("toString", Native::TemporalPlainTimeToString),
+            ("toLocaleString", Native::TemporalToLocaleString),
             ("toJSON", Native::TemporalPlainTimeToJSON),
             ("with", Native::TemporalPlainTimeWith),
         ] {

@@ -326,7 +326,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalDurationAbs | Native::TemporalDurationNegated => 0.0,
         Native::TemporalDurationTotal => 1.0,
         Native::TemporalDurationRound => 1.0,
-        Native::TemporalDurationToString => 0.0,
+        Native::TemporalToLocaleString | Native::TemporalDurationToString => 0.0,
         Native::TemporalDurationToJSON
         | Native::TemporalDurationValueOf
         | Native::TemporalDurationYearsGetter

@@ -285,6 +285,7 @@ const NATIVES: &[Native] = &[
     Native::DateToLocaleDateString, Native::DateToLocaleTimeString,
     Native::DateToISOString, Native::DateToJSON, Native::DateToPrimitive,
     Native::DateToTemporalInstant, Native::DateParse, Native::DateUTC,
+    Native::TemporalToLocaleString,
     Native::TemporalDuration, Native::TemporalDurationFrom, Native::TemporalDurationCompare,
     Native::TemporalDurationAdd, Native::TemporalDurationSubtract, Native::TemporalDurationWith,
     Native::TemporalDurationAbs, Native::TemporalDurationNegated, Native::TemporalDurationTotal,
