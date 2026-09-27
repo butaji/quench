@@ -46,6 +46,10 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 2] = [
+    ("equals", Native::TemporalZonedDateTimeEquals),
+    ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
+];
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal_zoned_date_time(
@@ -96,6 +100,9 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
+        }
+        for (name, native) in ZONED_DATE_TIME_METHODS {
+            self.set_builtin_named(p, prototype, name, native)?;
         }
         if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
             let tag = self
@@ -178,7 +185,7 @@ impl<H: Host> Vm<H> {
             return Ok("UTC".into());
         }
         if text.starts_with(['+', '-']) {
-            if !quench_temporal::valid_timezone_offset(&text) {
+            if !valid_time_zone_offset(&text) {
                 return Err(self.range_error(p, "Invalid time zone".into()));
             }
             let seconds = quench_temporal::offset_seconds(&text);
@@ -187,6 +194,9 @@ impl<H: Host> Vm<H> {
             let hours = seconds / SECONDS_PER_HOUR as u32;
             let minutes = seconds / SECONDS_PER_MINUTE as u32 % SECONDS_PER_MINUTE as u32;
             return Ok(format!("{sign}{hours:02}:{minutes:02}"));
+        }
+        if let Some(identifier) = time_zone_from_datetime_identifier(&text) {
+            return Ok(identifier);
         }
         text.parse::<chrono_tz::Tz>()
             .map(|zone| zone.to_string())
@@ -225,6 +235,65 @@ impl<H: Host> Vm<H> {
                 Ordering::Less => -1.0,
                 Ordering::Equal => 0.0,
                 Ordering::Greater => 1.0,
+            }));
+        }
+        if native == Native::TemporalZonedDateTimeEquals {
+            let Some(Cell::TemporalZonedDateTime {
+                epoch_nanoseconds,
+                time_zone,
+                calendar,
+                ..
+            }) = self.heap.get(this)
+            else {
+                return Err(self.type_error(
+                    p,
+                    "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+                ));
+            };
+            let receiver = ZonedDateTimeRecord {
+                epoch_nanoseconds: *epoch_nanoseconds,
+                time_zone: time_zone.clone(),
+                calendar: calendar.clone(),
+            };
+            let other = self.temporal_zoned_date_time_record(
+                p,
+                args.first().copied().unwrap_or(Value::UNDEFINED),
+                Value::UNDEFINED,
+            )?;
+            return Ok(
+                if receiver.epoch_nanoseconds == other.epoch_nanoseconds
+                    && receiver.time_zone == other.time_zone
+                    && receiver.calendar == other.calendar
+                {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            );
+        }
+        if native == Native::TemporalZonedDateTimeWithTimeZone {
+            let Some(Cell::TemporalZonedDateTime {
+                object,
+                epoch_nanoseconds,
+                calendar,
+                ..
+            }) = self.heap.get(this)
+            else {
+                return Err(self.type_error(
+                    p,
+                    "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+                ));
+            };
+            let epoch_nanoseconds = *epoch_nanoseconds;
+            let calendar = calendar.clone();
+            let prototype = object.proto;
+            let zone = args.first().copied().unwrap_or(Value::UNDEFINED);
+            let time_zone = self.temporal_timezone_id(p, zone)?;
+            return Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
+                object: Box::new(Self::empty_object(prototype)),
+                epoch_nanoseconds,
+                time_zone,
+                calendar,
             }));
         }
         if native == Native::TemporalZonedDateTime {
@@ -376,6 +445,9 @@ impl<H: Host> Vm<H> {
         let offset = if offset_value.is_undefined() {
             None
         } else {
+            if !matches!(self.heap.get(offset_value), Some(Cell::String(_))) {
+                return Err(self.type_error(p, "Invalid offset".into()));
+            }
             let offset = self.to_string(p, offset_value)?.to_string();
             if !quench_temporal::valid_timezone_offset(&offset) {
                 return Err(self.range_error(p, "Invalid offset".into()));
@@ -544,7 +616,13 @@ fn parse_zoned_date_time_string(text: &str) -> Option<ZonedDateTimeRecord> {
 }
 
 fn parse_iso_zoned_base(value: &str) -> Option<(chrono::NaiveDateTime, Option<i128>, bool)> {
-    let (date, time) = value.split_once(['T', 't', ' '])?;
+    let Some((date, time)) = value.split_once(['T', 't', ' ']) else {
+        if value.ends_with(['Z', 'z']) {
+            return None;
+        }
+        let date = parse_iso_zoned_date(value)?;
+        return Some((date.and_hms_opt(0, 0, 0)?, None, false));
+    };
     if date == "-000000" || date.starts_with("-000000-") {
         return None;
     }
@@ -729,7 +807,7 @@ fn canonical_time_zone(value: &str) -> Option<String> {
         return Some("UTC".into());
     }
     if value.starts_with(['+', '-']) {
-        if !quench_temporal::valid_timezone_offset(value) {
+        if !valid_time_zone_offset(value) {
             return None;
         }
         let seconds = quench_temporal::offset_seconds(value);
@@ -743,6 +821,39 @@ fn canonical_time_zone(value: &str) -> Option<String> {
         .parse::<chrono_tz::Tz>()
         .ok()
         .map(|zone| zone.to_string())
+}
+
+fn valid_time_zone_offset(value: &str) -> bool {
+    if quench_temporal::valid_timezone_offset(value) {
+        return true;
+    }
+    value.strip_prefix(['+', '-']).is_some_and(|hours| {
+        hours.len() == ISO_TIME_FIELD_DIGITS
+            && hours.bytes().all(|byte| byte.is_ascii_digit())
+            && quench_temporal::valid_date_time_offset(value)
+    })
+}
+
+fn time_zone_from_datetime_identifier(value: &str) -> Option<String> {
+    let (date_time, annotations) = value
+        .split_once('[')
+        .map_or((value, None), |(base, rest)| (base, Some(rest)));
+    if !date_time.contains(['T', 't', ' ']) {
+        return None;
+    }
+    if let Some(annotations) = annotations {
+        let annotation = annotations.split(']').next()?;
+        let zone = annotation.strip_prefix('!').unwrap_or(annotation);
+        if !zone.contains('=') {
+            return canonical_time_zone(zone);
+        }
+    }
+    if date_time.ends_with(['Z', 'z']) {
+        return Some("UTC".into());
+    }
+    let time_start = date_time.find(['T', 't', ' '])? + 1;
+    let offset_start = date_time.get(time_start..)?.find(['+', '-'])? + time_start;
+    canonical_time_zone(date_time.get(offset_start..)?)
 }
 
 fn zoned_local_epoch(local: chrono::NaiveDateTime, zone: &str) -> Option<i128> {
