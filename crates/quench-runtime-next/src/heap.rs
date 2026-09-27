@@ -567,8 +567,8 @@ impl Heap {
             | Cell::Date { .. }
             | Cell::PromiseResolvingState { .. } => 0,
             Cell::TemporalDuration { .. } => 0,
-            Cell::TemporalPlainDate { .. } => 0,
-            Cell::TemporalPlainDateTime { .. } => 0,
+            Cell::TemporalPlainDate { calendar, .. }
+            | Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
             Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
