@@ -172,10 +172,10 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
         let number_value = self.intern_atom("\0rqj:number-value");
         self.set_property(prototype, number_value, Value::number(0.0))?;
         let methods = [
-            ("constructor", Native::Number),
             ("toString", Native::NumberString),
             ("valueOf", Native::NumberValueOf),
             ("toLocaleString", Native::NumberToLocaleString),
@@ -194,8 +194,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(function, name)?;
             let target = if matches!(
                 name,
-                "constructor"
-                    | "toString"
+                "toString"
                     | "valueOf"
                     | "toLocaleString"
                     | "toFixed"
