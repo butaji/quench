@@ -1,6 +1,4 @@
 use super::*;
-use chrono::{Datelike, NaiveDate};
-
 const ISO_MONTHS_PER_YEAR: i32 = 12;
 const MIN_ISO_YEAR: i32 = -271_821;
 const MAX_ISO_YEAR: i32 = 275_760;
@@ -8,6 +6,23 @@ const MAX_BASIC_ISO_YEAR: i32 = 9_999;
 const BASIC_ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_ISO_YEAR_DIGITS: usize = 6;
 const ISO_MONTH_DAY_DIGITS: usize = 2;
+const MONTHS_BEFORE_ISO_YEAR: i32 = 1;
+const DAYS_PER_400_YEAR_CYCLE: i64 = 146_097;
+const YEARS_PER_GREGORIAN_CYCLE: i64 = 400;
+const ISO_EPOCH_OFFSET_DAYS: i64 = 719_468;
+const DAYS_PER_COMMON_YEAR: i64 = 365;
+const DAYS_PER_4_YEAR_CYCLE: i64 = 1_460;
+const DAYS_PER_CENTURY: i64 = 36_524;
+const DAYS_BEFORE_LAST_400_YEAR_DAY: i64 = 146_096;
+const DAYS_PER_MONTH_TRANSFORM_CYCLE: i64 = 153;
+const MONTH_TRANSFORM_DIVISOR: i64 = 5;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct IsoDate {
+    pub(super) year: i32,
+    pub(super) month: u32,
+    pub(super) day: u32,
+}
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal_plain_date(
@@ -46,6 +61,7 @@ impl<H: Host> Vm<H> {
             ("month", Native::TemporalPlainDateMonthGetter),
             ("monthCode", Native::TemporalPlainDateMonthCodeGetter),
             ("day", Native::TemporalPlainDateDayGetter),
+            ("daysInMonth", Native::TemporalPlainDateDaysInMonthGetter),
         ] {
             let getter = self.native_value(native);
             self.set_builtin_function_name(getter, &format!("get {name}"))?;
@@ -70,6 +86,8 @@ impl<H: Host> Vm<H> {
             ("toLocaleString", Native::TemporalPlainDateToLocaleString),
             ("equals", Native::TemporalPlainDateEquals),
             ("valueOf", Native::TemporalPlainDateValueOf),
+            ("add", Native::TemporalPlainDateAdd),
+            ("subtract", Native::TemporalPlainDateSubtract),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -128,10 +146,10 @@ impl<H: Host> Vm<H> {
         Ok(number.trunc() as i32)
     }
 
-    fn make_temporal_plain_date(
+    pub(super) fn make_temporal_plain_date(
         &mut self,
         p: &ResidualProgram,
-        date: NaiveDate,
+        date: IsoDate,
         calendar: String,
         new_target: Value,
     ) -> Result<Value, JsError> {
@@ -144,9 +162,9 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalPlainDate {
             object: Box::new(Self::empty_object(prototype)),
-            year: date.year(),
-            month: date.month(),
-            day: date.day(),
+            year: date.year,
+            month: date.month,
+            day: date.day,
             calendar,
         }))
     }
@@ -191,7 +209,8 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateYearGetter
             | Native::TemporalPlainDateMonthGetter
             | Native::TemporalPlainDateMonthCodeGetter
-            | Native::TemporalPlainDateDayGetter => {
+            | Native::TemporalPlainDateDayGetter
+            | Native::TemporalPlainDateDaysInMonthGetter => {
                 let (year, month, day, calendar) = self.temporal_plain_date_slots(p, this)?;
                 Ok(match native {
                     Native::TemporalPlainDateCalendarIdGetter => {
@@ -201,6 +220,9 @@ impl<H: Host> Vm<H> {
                     Native::TemporalPlainDateMonthGetter => Value::number(f64::from(month)),
                     Native::TemporalPlainDateMonthCodeGetter => self.heap.alloc(Cell::String(
                         format!("M{month:0width$}", width = ISO_MONTH_DAY_DIGITS).into(),
+                    )),
+                    Native::TemporalPlainDateDaysInMonthGetter => Value::number(f64::from(
+                        iso_days_in_month(year, month as i32).unwrap_or(31),
                     )),
                     _ => Value::number(f64::from(day)),
                 })
@@ -249,7 +271,7 @@ impl<H: Host> Vm<H> {
         self.make_temporal_plain_date(p, date, calendar, constructor)
     }
 
-    fn plain_date_overflow(
+    pub(super) fn plain_date_overflow(
         &mut self,
         p: &ResidualProgram,
         options: Value,
@@ -317,7 +339,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
         options: Value,
-    ) -> Result<(NaiveDate, String), JsError> {
+    ) -> Result<(IsoDate, String), JsError> {
         let calendar_atom = self.intern_atom("calendar");
         let day_atom = self.intern_atom("day");
         let month_atom = self.intern_atom("month");
@@ -429,7 +451,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn temporal_plain_date_slots(
+    pub(super) fn temporal_plain_date_slots(
         &mut self,
         p: &ResidualProgram,
         value: Value,
@@ -450,19 +472,51 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn checked_iso_date(year: i32, month: i32, day: i32) -> Option<NaiveDate> {
+pub(super) fn checked_iso_date(year: i32, month: i32, day: i32) -> Option<IsoDate> {
     if !(MIN_ISO_YEAR..=MAX_ISO_YEAR).contains(&year) {
         return None;
     }
-    NaiveDate::from_ymd_opt(year, u32::try_from(month).ok()?, u32::try_from(day).ok()?)
+    let month = u32::try_from(month).ok()?;
+    let day = u32::try_from(day).ok()?;
+    if !(1..=ISO_MONTHS_PER_YEAR as u32).contains(&month)
+        || !(1..=iso_days_in_month(year, month as i32)? as u32).contains(&day)
+    {
+        return None;
+    }
+    let date = IsoDate { year, month, day };
+    iso_date_in_range(date).then_some(date)
 }
 
-fn parse_iso_date(text: &str) -> Option<NaiveDate> {
+fn parse_iso_date(text: &str) -> Option<IsoDate> {
     let date = text.split(['T', 't', '[', ' ']).next()?;
     if date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit()) {
-        return NaiveDate::parse_from_str(date, "%Y%m%d").ok();
+        return checked_iso_date(
+            date[..4].parse().ok()?,
+            date[4..6].parse().ok()?,
+            date[6..8].parse().ok()?,
+        );
     }
-    NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()
+    let (year, fields) = if date.starts_with(['+', '-']) {
+        if date.len() != 13 || date.as_bytes()[7] != b'-' || date.as_bytes()[10] != b'-' {
+            return None;
+        }
+        let magnitude = date[1..7].parse::<i32>().ok()?;
+        if date.as_bytes()[0] == b'-' && magnitude == 0 {
+            return None;
+        }
+        let year = if date.as_bytes()[0] == b'-' {
+            -magnitude
+        } else {
+            magnitude
+        };
+        (year, &date[8..])
+    } else {
+        if date.len() != 10 || date.as_bytes()[4] != b'-' || date.as_bytes()[7] != b'-' {
+            return None;
+        }
+        (date[..4].parse().ok()?, &date[5..])
+    };
+    checked_iso_date(year, fields[..2].parse().ok()?, fields[3..5].parse().ok()?)
 }
 
 fn parse_calendar_annotation(text: &str) -> Option<String> {
@@ -474,13 +528,75 @@ fn parse_calendar_annotation(text: &str) -> Option<String> {
     matches!(calendar.as_str(), "iso8601" | "gregory").then_some(calendar)
 }
 
-fn iso_days_in_month(year: i32, month: i32) -> Option<i32> {
-    let next = if month == ISO_MONTHS_PER_YEAR {
-        NaiveDate::from_ymd_opt(year.checked_add(1)?, 1, 1)?
-    } else {
-        NaiveDate::from_ymd_opt(year, u32::try_from(month + 1).ok()?, 1)?
-    };
-    Some((next - chrono::Duration::days(1)).day() as i32)
+pub(super) fn iso_days_in_month(year: i32, month: i32) -> Option<i32> {
+    Some(match month {
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return None,
+    })
+}
+
+pub(super) fn shift_iso_months(date: IsoDate, delta: i128) -> Option<IsoDate> {
+    let month_index = i128::from(date.year) * i128::from(ISO_MONTHS_PER_YEAR)
+        + i128::from(date.month - MONTHS_BEFORE_ISO_YEAR as u32)
+        + delta;
+    let year = i32::try_from(month_index.div_euclid(i128::from(ISO_MONTHS_PER_YEAR))).ok()?;
+    let month = u32::try_from(month_index.rem_euclid(i128::from(ISO_MONTHS_PER_YEAR))).ok()? + 1;
+    let day = date.day.min(iso_days_in_month(year, month as i32)? as u32);
+    checked_iso_date(year, month as i32, day as i32)
+}
+
+pub(super) fn shift_iso_days(date: IsoDate, days: i64) -> Option<IsoDate> {
+    let absolute_day = days_from_iso_date(date).checked_add(days)?;
+    let shifted = iso_date_from_days(absolute_day)?;
+    iso_date_in_range(shifted).then_some(shifted)
+}
+
+fn is_leap_year(year: i32) -> bool {
+    year.rem_euclid(4) == 0 && (year.rem_euclid(100) != 0 || year.rem_euclid(400) == 0)
+}
+
+fn iso_date_in_range(date: IsoDate) -> bool {
+    (date.year, date.month, date.day) >= (MIN_ISO_YEAR, 4, 19)
+        && (date.year, date.month, date.day) <= (MAX_ISO_YEAR, 9, 13)
+}
+
+fn days_from_iso_date(date: IsoDate) -> i64 {
+    let year = i64::from(date.year) - i64::from(date.month <= 2);
+    let era = year.div_euclid(YEARS_PER_GREGORIAN_CYCLE);
+    let year_of_era = year - era * YEARS_PER_GREGORIAN_CYCLE;
+    let adjusted_month = i64::from(date.month) + if date.month > 2 { -3 } else { 9 };
+    let day_of_year = (DAYS_PER_MONTH_TRANSFORM_CYCLE * adjusted_month + 2)
+        / MONTH_TRANSFORM_DIVISOR
+        + i64::from(date.day)
+        - 1;
+    let day_of_era =
+        year_of_era * DAYS_PER_COMMON_YEAR + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * DAYS_PER_400_YEAR_CYCLE + day_of_era - ISO_EPOCH_OFFSET_DAYS
+}
+
+fn iso_date_from_days(days: i64) -> Option<IsoDate> {
+    let adjusted_days = days.checked_add(ISO_EPOCH_OFFSET_DAYS)?;
+    let era = adjusted_days.div_euclid(DAYS_PER_400_YEAR_CYCLE);
+    let day_of_era = adjusted_days - era * DAYS_PER_400_YEAR_CYCLE;
+    let year_of_era = (day_of_era - day_of_era / DAYS_PER_4_YEAR_CYCLE
+        + day_of_era / DAYS_PER_CENTURY
+        - day_of_era / DAYS_BEFORE_LAST_400_YEAR_DAY)
+        / DAYS_PER_COMMON_YEAR;
+    let year = i32::try_from(year_of_era + era * YEARS_PER_GREGORIAN_CYCLE).ok()?;
+    let day_of_year =
+        day_of_era - (DAYS_PER_COMMON_YEAR * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_part = (MONTH_TRANSFORM_DIVISOR * day_of_year + 2) / DAYS_PER_MONTH_TRANSFORM_CYCLE;
+    let day = u32::try_from(
+        day_of_year - (DAYS_PER_MONTH_TRANSFORM_CYCLE * month_part + 2) / MONTH_TRANSFORM_DIVISOR
+            + 1,
+    )
+    .ok()?;
+    let month = u32::try_from(month_part + if month_part < 10 { 3 } else { -9 }).ok()?;
+    let year = year + i32::from(month <= 2);
+    Some(IsoDate { year, month, day })
 }
 
 fn format_iso_date(year: i32, month: u32, day: u32) -> String {
