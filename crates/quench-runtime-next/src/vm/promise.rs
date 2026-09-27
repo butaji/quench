@@ -352,6 +352,14 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalPlainDateTime => 3.0,
         Native::TemporalPlainDateTimeFrom => 1.0,
         Native::TemporalPlainDateTimeCompare => 2.0,
+        Native::TemporalPlainDateTimeAdd | Native::TemporalPlainDateTimeSubtract => 1.0,
+        Native::TemporalPlainDateTimeRound => 1.0,
+        Native::TemporalPlainDateTimeUntil | Native::TemporalPlainDateTimeSince => 1.0,
+        Native::TemporalPlainDateTimeToString | Native::TemporalPlainDateTimeToPlainDate => 0.0,
+        Native::TemporalPlainDateTimeToJSON
+        | Native::TemporalPlainDateTimeToPlainTime
+        | Native::TemporalPlainDateTimeValueOf => 0.0,
+        Native::TemporalPlainDateTimeToZonedDateTime => 1.0,
         Native::TemporalPlainTime => 6.0,
         Native::TemporalPlainTimeFrom => 1.0,
         Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => 2.0,

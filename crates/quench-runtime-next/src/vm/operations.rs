@@ -564,6 +564,17 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainDateTime
             | Native::TemporalPlainDateTimeFrom
             | Native::TemporalPlainDateTimeCompare
+            | Native::TemporalPlainDateTimeAdd
+            | Native::TemporalPlainDateTimeSubtract
+            | Native::TemporalPlainDateTimeRound
+            | Native::TemporalPlainDateTimeUntil
+            | Native::TemporalPlainDateTimeSince
+            | Native::TemporalPlainDateTimeToString
+            | Native::TemporalPlainDateTimeToJSON
+            | Native::TemporalPlainDateTimeToPlainDate
+            | Native::TemporalPlainDateTimeToPlainTime
+            | Native::TemporalPlainDateTimeValueOf
+            | Native::TemporalPlainDateTimeToZonedDateTime
             | Native::TemporalPlainDateTimeCalendarIdGetter
             | Native::TemporalPlainDateTimeYearGetter
             | Native::TemporalPlainDateTimeMonthGetter

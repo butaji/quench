@@ -1,13 +1,14 @@
 use super::temporal_date::{self, IsoDate};
 use super::*;
 
-const DURATION_YEARS_FIELD: usize = 0;
-const DURATION_MONTHS_FIELD: usize = 1;
-const DURATION_WEEKS_FIELD: usize = 2;
-const DURATION_DAYS_FIELD: usize = 3;
-const DAYS_PER_WEEK: i128 = 7;
-const NANOS_PER_DAY: i128 = 86_400_000_000_000;
-const TIME_UNIT_NANOSECOND_SCALES: [i128; 6] = [
+pub(super) const DURATION_YEARS_FIELD: usize = 0;
+pub(super) const DURATION_MONTHS_FIELD: usize = 1;
+pub(super) const DURATION_WEEKS_FIELD: usize = 2;
+pub(super) const DURATION_DAYS_FIELD: usize = 3;
+pub(super) const DURATION_HOURS_FIELD: usize = 4;
+pub(super) const DAYS_PER_WEEK: i128 = 7;
+pub(super) const NANOS_PER_DAY: i128 = 86_400_000_000_000;
+pub(super) const TIME_UNIT_NANOSECOND_SCALES: [i128; 6] = [
     3_600_000_000_000,
     60_000_000_000,
     1_000_000_000,
