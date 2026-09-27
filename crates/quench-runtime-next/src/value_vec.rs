@@ -57,6 +57,15 @@ impl ValueVec {
     fn start(self) -> usize {
         (self.start & START_MASK) as usize
     }
+
+    pub(crate) fn start_offset(self) -> usize {
+        self.start()
+    }
+
+    fn relocate(&mut self, start: usize) {
+        assert!(start <= START_MASK as usize, "property arena exhausted");
+        self.start = start as u32 | (self.start & !START_MASK);
+    }
 }
 
 impl Default for ValueVec {
@@ -166,6 +175,35 @@ impl ValueArena {
         let capacity = self.capacity(vector);
         if capacity != 0 {
             self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
+        }
+    }
+
+    pub(crate) fn has_released_ranges(&self) -> bool {
+        self.free.iter().any(|bucket| !bucket.is_empty())
+    }
+
+    pub(crate) fn has_values(&self, vector: ValueVec) -> bool {
+        self.len(vector) != 0
+    }
+
+    pub(crate) fn compact_vector(&mut self, vector: &mut ValueVec, target: usize) -> usize {
+        let length = self.len(*vector);
+        let capacity = self.capacity(*vector);
+        let source = vector.start();
+        assert!(
+            target <= source,
+            "property ranges must compact in source order"
+        );
+        self.values.copy_within(source..source + length, target);
+        self.values[target + length..target + capacity].fill(Value::UNDEFINED);
+        vector.relocate(target);
+        capacity
+    }
+
+    pub(crate) fn finish_compaction(&mut self, length: usize) {
+        self.values.truncate(length);
+        for bucket in &mut self.free {
+            bucket.clear();
         }
     }
 
