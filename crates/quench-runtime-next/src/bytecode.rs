@@ -637,7 +637,7 @@ pub(crate) struct FieldSite {
     pub sink: Option<(Atom, u16)>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub(crate) struct Operand(pub(crate) u16);
 

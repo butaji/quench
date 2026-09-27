@@ -1,6 +1,6 @@
 #![cfg(feature = "profile-aggregate")]
 
-use crate::bytecode::{NUMERIC_LOCAL_TARGET, Op, Operand, REGISTER_MASK, RETURN_REGISTER};
+use crate::bytecode::{Op, Operand};
 
 pub(super) fn binary_pairs(
     sites: &rustc_hash::FxHashMap<(u32, u32), u64>,
@@ -24,8 +24,8 @@ pub(super) fn binary_pairs(
         let Some(output) = binary_output(*first) else {
             continue;
         };
-        let left = second.b() == output.0;
-        let right = second.c() == output.0;
+        let left = second.operand_b() == output;
+        let right = second.operand_c() == output;
         counts[usize::from(left) + 2 * usize::from(right)] += count;
     }
     counts
@@ -34,8 +34,8 @@ pub(super) fn binary_pairs(
 fn binary_output(instruction: crate::bytecode::Instr) -> Option<Operand> {
     if instruction.returns_from_frame() {
         None
-    } else if instruction.writes_numeric_local() {
-        Some(Operand::local(instruction.result_register()))
+    } else if let Some(local) = instruction.numeric_local_target() {
+        Some(Operand::local(local))
     } else {
         Some(Operand::register(instruction.result_register()))
     }
@@ -44,6 +44,7 @@ fn binary_output(instruction: crate::bytecode::Instr) -> Option<Operand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::{NUMERIC_LOCAL_TARGET, Op};
 
     #[test]
     fn output_preserves_register_and_local_address_space() {
