@@ -390,7 +390,9 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::GetField => {
-                let lookup = i.field_lookup();
+                let lookup = i.field_lookup().ok_or_else(|| {
+                    JsError::validation("invalid nested field lookup encoding".into())
+                })?;
                 let v = match lookup {
                     crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
                     crate::bytecode::FieldLookup::Atom {

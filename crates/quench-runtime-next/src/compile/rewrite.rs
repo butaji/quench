@@ -89,7 +89,7 @@ fusion_recipes! {
         |mut first: Instr, second: Instr, fields: &mut Vec<FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
             let sink = (second.atom_index(), second.cache_site_index());
-            match first.field_lookup() {
+            match first.field_lookup()? {
                 crate::bytecode::FieldLookup::Site(index) => {
                     let site = fields.get_mut(index)?;
                     if site.sink.is_some() { return None; }

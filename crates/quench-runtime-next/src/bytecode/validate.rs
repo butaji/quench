@@ -113,16 +113,17 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                 u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
             }
             FieldLayout::FieldBase => match instruction.field_lookup() {
-                super::FieldLookup::Site(site) => site < bounds.field_sites && instruction.c() == 0,
-                super::FieldLookup::Atom {
+                Some(super::FieldLookup::Site(site)) => site < bounds.field_sites,
+                Some(super::FieldLookup::Atom {
                     atom,
                     base,
                     cache_site,
-                } => {
+                }) => {
                     field_base_in_bounds(base.0, bounds.registers)
                         && atom_in_bounds(atom, bounds.atoms)
                         && cache_in_bounds(cache_site, bounds.cache_sites)
                 }
+                None => false,
             },
             FieldLayout::NumericLocalTarget => {
                 instruction.numeric_local_store_fields_valid()

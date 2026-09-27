@@ -492,7 +492,7 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
-            pub(crate) fn field_lookup(self) -> FieldLookup {
+            pub(crate) fn field_lookup(self) -> Option<FieldLookup> {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::FieldLookup);
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
@@ -503,13 +503,13 @@ macro_rules! layout_accessors {
                     FieldLayout::CacheSiteIndex
                 );
                 if self.b() == FieldBase::NESTED {
-                    FieldLookup::Site(self.imm() as usize)
+                    (self.c() == 0).then_some(FieldLookup::Site(self.imm() as usize))
                 } else {
-                    FieldLookup::Atom {
+                    Some(FieldLookup::Atom {
                         atom: self.imm(),
                         base: FieldBase(self.b()),
                         cache_site: self.c(),
-                    }
+                    })
                 }
             }
 
