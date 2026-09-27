@@ -608,6 +608,18 @@ impl<H: Host> Vm<H> {
         if data.is_extensible() {
             return Ok(Value::FALSE);
         }
+        if data.is_module_namespace() {
+            for key in self.object_own_key_values(p, target)? {
+                let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+                if descriptor.is_undefined() || self.descriptor_flag(descriptor, "configurable") {
+                    return Ok(Value::FALSE);
+                }
+                if freeze && self.descriptor_flag(descriptor, "writable") {
+                    return Ok(Value::FALSE);
+                }
+            }
+            return Ok(Value::TRUE);
+        }
         let named_ok = self
             .ordered_shape(data)
             .into_iter()
