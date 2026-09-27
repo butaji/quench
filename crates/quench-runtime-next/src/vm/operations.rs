@@ -535,6 +535,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateToString
             | Native::TemporalPlainDateToJSON
             | Native::TemporalPlainDateToLocaleString
+            | Native::TemporalPlainDateToPlainDateTime
             | Native::TemporalPlainDateEquals
             | Native::TemporalPlainDateValueOf => {
                 self.temporal_plain_date_native(p, native, this, args)
@@ -546,6 +547,7 @@ impl<H: Host> Vm<H> {
                 self.temporal_plain_date_difference(p, native, this, args)
             }
             Native::TemporalPlainDateTime
+            | Native::TemporalPlainDateTimeFrom
             | Native::TemporalPlainDateTimeCalendarIdGetter
             | Native::TemporalPlainDateTimeYearGetter
             | Native::TemporalPlainDateTimeMonthGetter
@@ -556,8 +558,12 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateTimeSecondGetter
             | Native::TemporalPlainDateTimeMillisecondGetter
             | Native::TemporalPlainDateTimeMicrosecondGetter
-            | Native::TemporalPlainDateTimeNanosecondGetter => {
-                self.temporal_plain_date_time_native(p, native, this)
+            | Native::TemporalPlainDateTimeNanosecondGetter
+            | Native::TemporalPlainDateTimeEquals => {
+                self.temporal_plain_date_time_native(p, native, this, args)
+            }
+            Native::TemporalPlainTime | Native::TemporalPlainTimeFrom => {
+                self.temporal_plain_time_native(p, native, args)
             }
             Native::TemporalZonedDateTime
             | Native::TemporalZonedDateTimeFrom

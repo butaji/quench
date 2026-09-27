@@ -173,6 +173,7 @@ impl<H: Host> Vm<H> {
                         | Native::Promise
                         | Native::Symbol
                         | Native::TemporalDuration
+                        | Native::TemporalPlainTime
                         | Native::TemporalInstant
                         | Native::TemporalPlainDate
                         | Native::TemporalPlainDateTime
@@ -867,6 +868,7 @@ impl<H: Host> Vm<H> {
             Native::RegExp => self.construct_regexp_native(p, args),
             Native::Date => self.date_construct_native(p, args),
             Native::TemporalDuration => self.temporal_duration_construct(p, args),
+            Native::TemporalPlainTime => self.temporal_plain_time_construct(p, args),
             Native::TemporalPlainDate => {
                 self.temporal_plain_date_construct(p, args, new_target)
             }
