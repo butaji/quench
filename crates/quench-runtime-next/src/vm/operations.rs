@@ -619,6 +619,9 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainTimeNanosecondGetter => {
                 self.temporal_plain_time_native(p, native, this, args)
             }
+            Native::TemporalPlainTimeValueOf => {
+                self.temporal_plain_time_native(p, native, this, args)
+            }
             Native::TemporalPlainTimeRound
             | Native::TemporalPlainTimeUntil
             | Native::TemporalPlainTimeSince

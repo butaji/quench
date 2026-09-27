@@ -319,6 +319,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalPlainTimeHourGetter, Native::TemporalPlainTimeMinuteGetter,
     Native::TemporalPlainTimeSecondGetter, Native::TemporalPlainTimeMillisecondGetter,
     Native::TemporalPlainTimeMicrosecondGetter, Native::TemporalPlainTimeNanosecondGetter,
+    Native::TemporalPlainTimeValueOf,
     Native::TemporalPlainTimeRound,
     Native::TemporalPlainTimeUntil, Native::TemporalPlainTimeSince,
     Native::TemporalPlainTimeToString, Native::TemporalPlainTimeToJSON,

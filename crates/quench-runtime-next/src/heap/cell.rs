@@ -337,6 +337,7 @@ pub(crate) enum Native {
     TemporalPlainTimeHourGetter, TemporalPlainTimeMinuteGetter,
     TemporalPlainTimeSecondGetter, TemporalPlainTimeMillisecondGetter,
     TemporalPlainTimeMicrosecondGetter, TemporalPlainTimeNanosecondGetter,
+    TemporalPlainTimeValueOf,
     TemporalPlainTimeRound,
     TemporalPlainTimeUntil, TemporalPlainTimeSince,
     TemporalPlainTimeToString, TemporalPlainTimeToJSON,
