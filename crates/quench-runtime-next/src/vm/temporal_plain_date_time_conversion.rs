@@ -1,7 +1,7 @@
 use super::*;
 
 const MIN_PLAIN_DATE_TIME_DATE: (i32, u32, u32) = (-271_821, 4, 19);
-const TIME_FIELDS: [&str; 6] = [
+pub(super) const TIME_FIELDS: [&str; 6] = [
     "hour",
     "microsecond",
     "millisecond",
@@ -9,7 +9,8 @@ const TIME_FIELDS: [&str; 6] = [
     "nanosecond",
     "second",
 ];
-const TIME_LIMITS: [i32; 6] = [23, 999, 999, 59, 999, 59];
+pub(super) const TIME_FIELDS_BEFORE_MONTH: usize = 4;
+pub(super) const TIME_LIMITS: [i32; 6] = [23, 999, 999, 59, 999, 59];
 const DEFAULT_DATE_PREFIX: &str = "1970-01-01T";
 
 pub(super) fn convert<H: Host>(
@@ -56,23 +57,30 @@ pub(super) fn to_time<H: Host>(
     if !vm.is_object_like(value) {
         return Err(vm.type_error(p, "Invalid time".into()));
     }
-    read_time_bag(vm, p, value, true)
+    read_time_bag(vm, p, value, true, None)
 }
 
 pub(super) fn to_date_time<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     value: Value,
+    options: Value,
 ) -> Result<[i32; 6], JsError> {
+    if matches!(vm.heap.get(value), Some(Cell::TemporalPlainDate { .. })) {
+        let _ = vm.plain_date_overflow(p, options)?;
+        return Ok([0; 6]);
+    }
     if !vm.is_object_like(value)
         || matches!(
             vm.heap.get(value),
             Some(Cell::TemporalPlainDateTime { .. } | Cell::TemporalZonedDateTime { .. })
         )
     {
-        return to_time(vm, p, value);
+        let time = to_time(vm, p, value)?;
+        let _ = vm.plain_date_overflow(p, options)?;
+        return Ok(time);
     }
-    read_time_bag(vm, p, value, false)
+    read_time_bag(vm, p, value, false, Some(options))
 }
 
 fn read_time_bag<H: Host>(
@@ -80,6 +88,7 @@ fn read_time_bag<H: Host>(
     p: &ResidualProgram,
     bag: Value,
     require_any: bool,
+    options: Option<Value>,
 ) -> Result<[i32; 6], JsError> {
     let mut fields = [None; 6];
     for (index, name) in TIME_FIELDS.iter().enumerate() {
@@ -92,15 +101,32 @@ fn read_time_bag<H: Host>(
     if require_any && fields.iter().all(Option::is_none) {
         return Err(vm.type_error(p, "Missing hour".into()));
     }
+    let constrain = match options {
+        Some(options) => vm.plain_date_overflow(p, options)?,
+        None => true,
+    };
     let bag_fields = fields
         .into_iter()
         .enumerate()
-        .map(|(index, value)| value.unwrap_or_default().clamp(0, TIME_LIMITS[index]))
+        .map(|(index, value)| {
+            let value = value.unwrap_or_default();
+            if constrain {
+                value.clamp(0, TIME_LIMITS[index])
+            } else {
+                value
+            }
+        })
         .collect::<Vec<_>>()
         .try_into()
         .map_err(|_| JsError("invalid time field width".into()))?;
     let [hour, microsecond, millisecond, minute, nanosecond, second] = bag_fields;
-    Ok([hour, minute, second, millisecond, microsecond, nanosecond])
+    let time = [hour, minute, second, millisecond, microsecond, nanosecond];
+    if constrain {
+        Ok(time)
+    } else {
+        vm.validate_plain_date_time_time(p, &time)?;
+        Ok(time)
+    }
 }
 
 pub(super) fn parse_time_string<H: Host>(

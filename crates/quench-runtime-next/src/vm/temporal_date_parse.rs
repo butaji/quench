@@ -8,6 +8,7 @@ const ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_YEAR_DIGITS: usize = 6;
 const ISO_MONTH_DIGITS: usize = 2;
 const ISO_DAY_DIGITS: usize = 2;
+const COMPACT_ISO_TIME_SECONDS_DIGITS: usize = ISO_DAY_DIGITS * 3;
 const MAX_FRACTION_DIGITS: usize = 9;
 
 pub(super) fn parse_plain_date_string(text: &str) -> Option<(IsoDate, String)> {
@@ -170,6 +171,22 @@ fn parse_iso_date_part(date: &str) -> Option<IsoDate> {
                 .parse()
                 .ok()?,
             date[ISO_YEAR_DIGITS + ISO_MONTH_DIGITS..].parse().ok()?,
+        );
+    }
+    if date.len() == 1 + EXTENDED_YEAR_DIGITS + ISO_MONTH_DIGITS + ISO_DAY_DIGITS
+        && date.starts_with(['+', '-'])
+        && date[1..].bytes().all(|byte| byte.is_ascii_digit())
+    {
+        let year = date[..=EXTENDED_YEAR_DIGITS].parse::<i32>().ok()?;
+        if year == 0 {
+            return None;
+        }
+        let month_start = 1 + EXTENDED_YEAR_DIGITS;
+        let day_start = month_start + ISO_MONTH_DIGITS;
+        return checked_iso_date(
+            year,
+            date[month_start..day_start].parse().ok()?,
+            date[day_start..].parse().ok()?,
         );
     }
     let fields = date.split('-').collect::<Vec<_>>();
@@ -401,6 +418,13 @@ fn has_fractional_minutes(text: &str) -> bool {
         .get(1..)
         .and_then(|tail| tail.find(['+', '-']).map(|index| &time[..index + 1]))
         .unwrap_or(time);
+    if !time.contains(':') {
+        return time.contains(['.', ','])
+            && time
+                .split(['.', ','])
+                .next()
+                .is_some_and(|clock| clock.len() != COMPACT_ISO_TIME_SECONDS_DIGITS);
+    }
     let mut fields = time.split(':');
     let hours = fields.next().unwrap_or("");
     let minutes = fields.next().unwrap_or("");
