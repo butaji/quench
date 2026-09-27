@@ -56,13 +56,30 @@ pub(super) fn to_time<H: Host>(
     if !vm.is_object_like(value) {
         return Err(vm.type_error(p, "Invalid time".into()));
     }
-    read_time_bag(vm, p, value)
+    read_time_bag(vm, p, value, true)
+}
+
+pub(super) fn to_date_time<H: Host>(
+    vm: &mut Vm<H>,
+    p: &ResidualProgram,
+    value: Value,
+) -> Result<[i32; 6], JsError> {
+    if !vm.is_object_like(value)
+        || matches!(
+            vm.heap.get(value),
+            Some(Cell::TemporalPlainDateTime { .. } | Cell::TemporalZonedDateTime { .. })
+        )
+    {
+        return to_time(vm, p, value);
+    }
+    read_time_bag(vm, p, value, false)
 }
 
 fn read_time_bag<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     bag: Value,
+    require_any: bool,
 ) -> Result<[i32; 6], JsError> {
     let mut fields = [None; 6];
     for (index, name) in TIME_FIELDS.iter().enumerate() {
@@ -72,7 +89,7 @@ fn read_time_bag<H: Host>(
             fields[index] = Some(vm.plain_date_integer(p, value)?);
         }
     }
-    if fields.iter().all(Option::is_none) {
+    if require_any && fields.iter().all(Option::is_none) {
         return Err(vm.type_error(p, "Missing hour".into()));
     }
     let bag_fields = fields
@@ -226,7 +243,7 @@ fn normalize_disambiguated_time(text: &str) -> Option<&'static str> {
     }
 }
 
-fn validate_annotations<H: Host>(
+pub(super) fn validate_annotations<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     text: &str,
@@ -265,7 +282,7 @@ fn validate_annotations<H: Host>(
     Ok(())
 }
 
-fn validate_bounds<H: Host>(
+pub(super) fn validate_bounds<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     year: i32,

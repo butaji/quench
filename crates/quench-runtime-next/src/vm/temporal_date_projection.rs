@@ -1211,7 +1211,7 @@ impl<H: Host> Vm<H> {
             None if value.is_undefined() => Ok("iso8601".into()),
             Some(Cell::String(_)) => {
                 let text = self.to_string(p, value)?.to_string();
-                temporal_date_parse::parse_calendar_identifier(&text)
+                temporal_date_parse::calendar_identifier_from_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))
             }
             Some(Cell::TemporalPlainDate { calendar, .. })
