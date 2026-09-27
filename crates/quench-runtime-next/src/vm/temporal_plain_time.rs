@@ -8,6 +8,16 @@ const PLAIN_TIME_FIELDS: [&str; 6] = [
     "microsecond",
     "nanosecond",
 ];
+const DEFAULT_DIFFERENCE_LARGEST_UNIT: &str = "hour";
+const DEFAULT_DIFFERENCE_SMALLEST_UNIT: &str = "nanosecond";
+const DEFAULT_DIFFERENCE_ROUNDING_MODE: &str = "trunc";
+
+struct PlainTimeDifferenceOptions {
+    largest_unit: String,
+    smallest_unit: String,
+    increment: f64,
+    rounding_mode: String,
+}
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal_plain_time(
@@ -42,6 +52,8 @@ impl<H: Host> Vm<H> {
             ("subtract", Native::TemporalPlainTimeSubtract),
             ("equals", Native::TemporalPlainTimeEquals),
             ("round", Native::TemporalPlainTimeRound),
+            ("until", Native::TemporalPlainTimeUntil),
+            ("since", Native::TemporalPlainTimeSince),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -77,6 +89,8 @@ impl<H: Host> Vm<H> {
                 | Native::TemporalPlainTimeSubtract
                 | Native::TemporalPlainTimeEquals
                 | Native::TemporalPlainTimeRound
+                | Native::TemporalPlainTimeUntil
+                | Native::TemporalPlainTimeSince
         ) && !self.temporal_plain_time_has_brand(this)
         {
             return Err(self.type_error(p, "Not a PlainTime".into()));
@@ -149,6 +163,9 @@ impl<H: Host> Vm<H> {
                 args.first().copied().unwrap_or(Value::UNDEFINED),
             )?;
             return Ok(if time == other { Value::TRUE } else { Value::FALSE });
+        }
+        if matches!(native, Native::TemporalPlainTimeUntil | Native::TemporalPlainTimeSince) {
+            return self.temporal_plain_time_difference(p, native, this, args);
         }
         if native == Native::TemporalPlainTimeRound {
             let options = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -239,5 +256,146 @@ impl<H: Host> Vm<H> {
             prototype = object.proto;
         }
         false
+    }
+
+    fn temporal_plain_time_difference(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let other = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if other.is_undefined() {
+            return Err(self.type_error(p, "Invalid PlainTime".into()));
+        }
+        let receiver_time = super::temporal_plain_date_time_conversion::to_time(self, p, this)?;
+        let other_time = super::temporal_plain_date_time_conversion::to_time(self, p, other)?;
+        let receiver_nanos = receiver_time
+            .iter()
+            .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+            .map(|(value, scale)| i128::from(*value) * scale)
+            .sum::<i128>();
+        let other_nanos = other_time
+            .iter()
+            .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+            .map(|(value, scale)| i128::from(*value) * scale)
+            .sum::<i128>();
+        let direction = if native == Native::TemporalPlainTimeSince {
+            -1_i128
+        } else {
+            1_i128
+        };
+        let delta = (other_nanos - receiver_nanos) * direction;
+        let options = self.temporal_plain_time_difference_options(
+            p,
+            args.get(1).copied().unwrap_or(Value::UNDEFINED),
+        )?;
+        let (largest_unit, largest_scale) = super::temporal_instant_round::parse_unit(
+            self,
+            p,
+            Some(&options.largest_unit),
+        )?;
+        let (smallest_unit, smallest_scale) = super::temporal_instant_round::parse_unit(
+            self,
+            p,
+            Some(&options.smallest_unit),
+        )?;
+        if largest_unit == "day"
+            || smallest_unit == "day"
+            || largest_scale < smallest_scale
+        {
+            return Err(self.range_error(p, "Invalid time unit relationship".into()));
+        }
+        let increment = super::temporal_instant_round::validate_increment(
+            self,
+            p,
+            Some(options.increment),
+            smallest_scale,
+        )?;
+        let rounding_mode = super::temporal_instant_round::validate_mode(
+            self,
+            p,
+            Some(&options.rounding_mode),
+        )?;
+        let quantum = smallest_scale * increment;
+        let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+            delta, quantum, rounding_mode,
+        ) * quantum;
+        let units = super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES;
+        let largest_index = units
+            .iter()
+            .position(|scale| *scale == largest_scale)
+            .ok_or_else(|| self.range_error(p, "Invalid largestUnit".into()))?;
+        let smallest_index = units
+            .iter()
+            .position(|scale| *scale == smallest_scale)
+            .ok_or_else(|| self.range_error(p, "Invalid smallestUnit".into()))?;
+        let mut duration = [0.0; 10];
+        let mut remainder = rounded;
+        for (index, scale) in units
+            .into_iter()
+            .enumerate()
+            .skip(largest_index)
+            .take(smallest_index - largest_index + 1)
+        {
+            duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD + index] =
+                (remainder / scale) as f64;
+            remainder %= scale;
+        }
+        self.make_temporal_duration(p, duration)
+    }
+
+    fn temporal_plain_time_difference_options(
+        &mut self,
+        p: &ResidualProgram,
+        options: Value,
+    ) -> Result<PlainTimeDifferenceOptions, JsError> {
+        let mut largest_unit = DEFAULT_DIFFERENCE_LARGEST_UNIT.to_owned();
+        let mut smallest_unit = DEFAULT_DIFFERENCE_SMALLEST_UNIT.to_owned();
+        let mut increment = 1.0;
+        let mut rounding_mode = DEFAULT_DIFFERENCE_ROUNDING_MODE.to_owned();
+        if !options.is_undefined() {
+            if !self.is_object_like(options) {
+                return Err(self.type_error(p, "Invalid options".into()));
+            }
+            let largest_atom = self.intern_atom("largestUnit");
+            let largest_value = self.get_property(p, options, largest_atom)?;
+            if !largest_value.is_undefined() {
+                largest_unit = self.to_string(p, largest_value)?.to_string();
+            }
+            let increment_atom = self.intern_atom("roundingIncrement");
+            let increment_value = self.get_property(p, options, increment_atom)?;
+            if !increment_value.is_undefined() {
+                increment = self.to_number(p, increment_value)?;
+            }
+            let rounding_atom = self.intern_atom("roundingMode");
+            let rounding_value = self.get_property(p, options, rounding_atom)?;
+            if !rounding_value.is_undefined() {
+                rounding_mode = self.to_string(p, rounding_value)?.to_string();
+            }
+            let smallest_atom = self.intern_atom("smallestUnit");
+            let smallest_value = self.get_property(p, options, smallest_atom)?;
+            if !smallest_value.is_undefined() {
+                smallest_unit = self.to_string(p, smallest_value)?.to_string();
+            }
+        }
+        if largest_unit == "auto" {
+            largest_unit = DEFAULT_DIFFERENCE_LARGEST_UNIT.to_owned();
+        }
+        largest_unit = largest_unit
+            .strip_suffix('s')
+            .unwrap_or(&largest_unit)
+            .to_owned();
+        smallest_unit = smallest_unit
+            .strip_suffix('s')
+            .unwrap_or(&smallest_unit)
+            .to_owned();
+        Ok(PlainTimeDifferenceOptions {
+            largest_unit,
+            smallest_unit,
+            increment,
+            rounding_mode,
+        })
     }
 }
