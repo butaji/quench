@@ -58,6 +58,7 @@ impl<H: Host> Vm<H> {
             natives: vec![],
             frames: vec![],
             frame_pool: vec![],
+            active_call_roots: vec![],
             with_stack: vec![],
             suspended: vec![],
             suspended_free: vec![],

@@ -515,6 +515,7 @@ impl Heap {
                 work.extend(dynamic_bindings.iter().map(|(_, value)| *value));
                 work.extend(with_objects.iter().copied());
             }
+            Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
             | Cell::TemporalPlainDate { object: value, .. }
@@ -549,6 +550,7 @@ impl Heap {
             Cell::Date { .. } => 13,
             Cell::Error(_) => 14,
             Cell::RegExp { .. } => 15,
+            Cell::PromiseResolvingState { .. } => 0,
             Cell::TemporalDuration { .. } => 17,
             Cell::TemporalPlainDate { .. } => 18,
             Cell::TemporalPlainDateTime { .. } => 19,
@@ -562,7 +564,8 @@ impl Heap {
             | Cell::Iterator { .. }
             | Cell::ArrayFromAsyncState(_)
             | Cell::Proxy { .. }
-            | Cell::Date { .. } => 0,
+            | Cell::Date { .. }
+            | Cell::PromiseResolvingState { .. } => 0,
             Cell::TemporalDuration { .. } => 0,
             Cell::TemporalPlainDate { .. } => 0,
             Cell::TemporalPlainDateTime { .. } => 0,
