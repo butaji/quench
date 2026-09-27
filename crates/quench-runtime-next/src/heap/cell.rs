@@ -304,6 +304,8 @@ pub(crate) enum Native {
     StringFromCharCode, StringFromCodePoint, StringRaw, StringIsWellFormed,
     StringToWellFormed, ParseInt,
     TemporalDuration, TemporalDurationFrom, TemporalDurationCompare,
+    TemporalDurationAdd, TemporalDurationSubtract, TemporalDurationWith,
+    TemporalDurationAbs, TemporalDurationNegated,
     TemporalDurationToString, TemporalDurationToJSON, TemporalDurationValueOf,
     TemporalDurationYearsGetter, TemporalDurationMonthsGetter,
     TemporalDurationWeeksGetter, TemporalDurationDaysGetter,
