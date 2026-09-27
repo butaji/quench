@@ -87,9 +87,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::ResultRegister => {
                 register_in_bounds(instruction.result_register(), bounds.registers, 0)
             }
-            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
-                register_in_bounds(value, bounds.registers, 0)
-            }
+            layout if layout.is_register_field() => register_in_bounds(value, bounds.registers, 0),
             FieldLayout::OptionalRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),

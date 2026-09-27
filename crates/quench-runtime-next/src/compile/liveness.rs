@@ -147,10 +147,8 @@ pub(super) fn uses(
 fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite]) -> u64 {
     let layout = instruction.op().field_layout(field);
     match layout {
-        FieldLayout::Register | FieldLayout::ReadWriteRegister => {
-            bit(field_register(instruction, field))
-        }
-        FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
+        layout if layout.reads_register() => bit(field_register(instruction, field)),
+        layout if layout.is_operand_field() => {
             let input_operand = match field {
                 InstructionField::B => instruction.operand_b(),
                 InstructionField::C => instruction.operand_c(),
@@ -208,10 +206,9 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
 }
 
 fn field_definitions(instruction: Instr, field: InstructionField) -> u64 {
-    match instruction.op().field_layout(field) {
-        FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
-            bit(field_register(instruction, field))
-        }
+    let layout = instruction.op().field_layout(field);
+    match layout {
+        layout if layout.writes_register() => bit(field_register(instruction, field)),
         FieldLayout::OptionalRegister => instruction.optional_register_b().map_or(0, bit),
         FieldLayout::NumericLocalTarget => instruction
             .numeric_local_store_target()

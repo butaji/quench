@@ -106,6 +106,27 @@ pub(crate) enum FieldLayout {
     BinaryOperator,
 }
 
+impl FieldLayout {
+    pub(crate) const fn is_register_field(self) -> bool {
+        matches!(
+            self,
+            Self::ResultRegister | Self::Register | Self::WriteRegister | Self::ReadWriteRegister
+        )
+    }
+
+    pub(crate) const fn reads_register(self) -> bool {
+        matches!(self, Self::Register | Self::ReadWriteRegister)
+    }
+
+    pub(crate) const fn writes_register(self) -> bool {
+        matches!(self, Self::WriteRegister | Self::ReadWriteRegister)
+    }
+
+    pub(crate) const fn is_operand_field(self) -> bool {
+        matches!(self, Self::Operand | Self::NumericIndexOperand)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstructionField {
     #[allow(dead_code)]

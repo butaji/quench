@@ -10,23 +10,6 @@ const PACKED_PAIR_SOURCE_MASK: u32 = u16::MAX as u32;
 const PACKED_PAIR_LOW_MASK: u32 = (1 << PACKED_PAIR_LOW_BITS) - 1;
 const PACKED_PAIR_HIGH_MASK: u32 = (1 << PACKED_PAIR_HIGH_BITS) - 1;
 
-const fn is_register_field(layout: FieldLayout) -> bool {
-    matches!(
-        layout,
-        FieldLayout::ResultRegister
-            | FieldLayout::Register
-            | FieldLayout::WriteRegister
-            | FieldLayout::ReadWriteRegister
-    )
-}
-
-const fn is_operand_field(layout: FieldLayout) -> bool {
-    matches!(
-        layout,
-        FieldLayout::Operand | FieldLayout::NumericIndexOperand
-    )
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RegisterWindow {
     pub(crate) base: Register,
@@ -96,7 +79,10 @@ macro_rules! layout_accessors {
     ($instruction:ty) => {
         impl $instruction {
             pub(crate) fn result_register(self) -> Register {
-                debug_assert_ne!(self.op().result_layout(), ResultLayout::NoResult);
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::A),
+                    FieldLayout::ResultRegister
+                );
                 self.a() & REGISTER_MASK
             }
 
@@ -107,7 +93,10 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn set_result_register(&mut self, register: Register) {
-                debug_assert_ne!(self.op().result_layout(), ResultLayout::NoResult);
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::A),
+                    FieldLayout::ResultRegister
+                );
                 debug_assert!(register <= REGISTER_MASK);
                 let flags = self.result_flags();
                 *self = Self::new(self.op(), register | flags, self.b(), self.c(), self.imm());
@@ -179,17 +168,21 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn register_a(self) -> Register {
-                debug_assert!(is_register_field(
-                    self.op().field_layout(InstructionField::A)
-                ));
+                debug_assert!(
+                    self.op()
+                        .field_layout(InstructionField::A)
+                        .is_register_field()
+                );
                 self.a()
             }
 
             #[allow(dead_code)]
             pub(crate) fn register_b(self) -> Register {
-                debug_assert!(is_register_field(
-                    self.op().field_layout(InstructionField::B)
-                ));
+                debug_assert!(
+                    self.op()
+                        .field_layout(InstructionField::B)
+                        .is_register_field()
+                );
                 self.b()
             }
 
@@ -290,9 +283,11 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn register_c(self) -> Register {
-                debug_assert!(is_register_field(
-                    self.op().field_layout(InstructionField::C)
-                ));
+                debug_assert!(
+                    self.op()
+                        .field_layout(InstructionField::C)
+                        .is_register_field()
+                );
                 self.c()
             }
 
@@ -352,33 +347,41 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn operand_b(self) -> Operand {
-                debug_assert!(is_operand_field(
-                    self.op().field_layout(InstructionField::B)
-                ));
+                debug_assert!(
+                    self.op()
+                        .field_layout(InstructionField::B)
+                        .is_operand_field()
+                );
                 Operand(self.b())
             }
 
             #[allow(dead_code)]
             pub(crate) fn set_operand_b(&mut self, operand: Operand) {
-                debug_assert!(is_operand_field(
-                    self.op().field_layout(InstructionField::B)
-                ));
+                debug_assert!(
+                    self.op()
+                        .field_layout(InstructionField::B)
+                        .is_operand_field()
+                );
                 self.set_b(operand.0);
             }
 
             #[allow(dead_code)]
             pub(crate) fn operand_c(self) -> Operand {
-                debug_assert!(is_operand_field(
-                    self.op().field_layout(InstructionField::C)
-                ));
+                debug_assert!(
+                    self.op()
+                        .field_layout(InstructionField::C)
+                        .is_operand_field()
+                );
                 Operand(self.c())
             }
 
             #[allow(dead_code)]
             pub(crate) fn set_operand_c(&mut self, operand: Operand) {
-                debug_assert!(is_operand_field(
-                    self.op().field_layout(InstructionField::C)
-                ));
+                debug_assert!(
+                    self.op()
+                        .field_layout(InstructionField::C)
+                        .is_operand_field()
+                );
                 self.set_c(operand.0);
             }
 
