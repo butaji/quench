@@ -269,19 +269,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let instruction = self.code[at];
         if instruction.is_wide() {
             if let Some(wide) = self.wide.get_mut(instruction.wide_index()) {
-                wide.set_imm(target);
+                wide.set_jump_target(target);
             } else {
                 self.reject_packed_domain();
             }
             return;
         }
-        if let Some(patched) = Instr::try_new(
-            instruction.op(),
-            instruction.a(),
-            instruction.b(),
-            instruction.c(),
-            target,
-        ) {
+        let mut patched = instruction;
+        if patched.try_set_jump_target(target) {
             self.code[at] = patched;
         } else {
             self.reject_packed_domain();
