@@ -483,7 +483,8 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalZonedDateTimeCompare => 2.0,
         Native::TemporalZonedDateTimeEquals
         | Native::TemporalZonedDateTimeWithTimeZone
-        | Native::TemporalZonedDateTimeWith => 1.0,
+        | Native::TemporalZonedDateTimeWith
+        | Native::TemporalZonedDateTimeWithCalendar => 1.0,
         Native::TemporalZonedDateTimeEpochNanosecondsGetter
         | Native::TemporalZonedDateTimeTimeZoneIdGetter
         | Native::TemporalZonedDateTimeCalendarIdGetter
