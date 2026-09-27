@@ -19,6 +19,28 @@ const ISO_MONTH_DAY_DIGITS: usize = 2;
 pub(super) const ISO_MONTH_CODE_DIGITS: usize = 2;
 const MONTHS_BEFORE_ISO_YEAR: i32 = 1;
 
+pub(super) fn parse_iso_month_code(code: &str) -> Option<i32> {
+    parse_iso_month_code_syntax(code).filter(|month| (1..=ISO_MONTHS_PER_YEAR).contains(month))
+}
+
+pub(super) fn parse_iso_month_code_syntax(code: &str) -> Option<i32> {
+    let month_code = code.strip_prefix('M')?;
+    let (digits, leap) = if let Some(digits) = month_code.strip_suffix('L') {
+        (digits, true)
+    } else {
+        (month_code, false)
+    };
+    if digits.len() != ISO_MONTH_CODE_DIGITS
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let month = digits.parse::<i32>().ok()?;
+    Some(if leap { month + ISO_LEAP_MONTH_CODE_OFFSET } else { month })
+}
+
+const ISO_LEAP_MONTH_CODE_OFFSET: i32 = 1_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct IsoDate {
     pub(super) year: i32,
@@ -666,15 +688,8 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<i32, JsError> {
         let code = self.to_string(p, value)?.to_string();
-        let month = code
-            .strip_prefix('M')
-            .filter(|month| {
-                month.len() == ISO_MONTH_CODE_DIGITS
-                    && month.bytes().all(|byte| byte.is_ascii_digit())
-            })
-            .and_then(|month| month.parse::<i32>().ok())
-            .filter(|month| (1..=ISO_MONTHS_PER_YEAR).contains(month));
-        month.ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+        parse_iso_month_code(&code)
+            .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
     }
 
     pub(super) fn plain_date_optional_integer(
