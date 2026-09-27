@@ -930,6 +930,7 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         descriptor: Value,
     ) -> Result<Value, JsError> {
+        let descriptor = self.to_property_descriptor(p, descriptor)?;
         let existing = match key {
             PropertyKey::String(atom) => self.own_property(target, atom),
             PropertyKey::Symbol(symbol) => self.symbol_property(target, symbol),
@@ -939,27 +940,7 @@ impl<H: Host> Vm<H> {
             .property_attributes(target, key)
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let is_new = existing.is_none();
-        let mut attributes = if is_new {
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            }
-        } else {
-            current
-        };
-        for (name, slot) in [
-            ("writable", &mut attributes.writable),
-            ("enumerable", &mut attributes.enumerable),
-            ("configurable", &mut attributes.configurable),
-        ] {
-            if let Some(value) = self.descriptor_field(p, descriptor, name)? {
-                *slot = self.truthy(value);
-            }
-        }
+        let attributes = descriptor.fold_attributes(current, is_new);
         if !is_new
             && !current.configurable
             && (attributes.configurable != current.configurable
@@ -968,18 +949,9 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
         }
-        let descriptor_value = self.descriptor_field(p, descriptor, "value")?;
-        let descriptor_getter = self.descriptor_field(p, descriptor, "get")?;
-        let descriptor_setter = self.descriptor_field(p, descriptor, "set")?;
-        let descriptor_writable = self.descriptor_field(p, descriptor, "writable")?;
-        let descriptor_accessor = descriptor_getter.is_some() || descriptor_setter.is_some();
-        let descriptor_data = descriptor_value.is_some() || descriptor_writable.is_some();
-        if descriptor_accessor && descriptor_data {
-            return Err(self.type_error(
-                p,
-                "property descriptor mixes data and accessor fields".into(),
-            ));
-        }
+        let descriptor_value = descriptor.value;
+        let descriptor_accessor = descriptor.has_accessor_fields();
+        let descriptor_data = descriptor.has_data_fields();
         if !is_new
             && !current.configurable
             && descriptor_accessor != current.accessor
@@ -989,26 +961,20 @@ impl<H: Host> Vm<H> {
         }
         let accessor = descriptor_accessor;
         if accessor {
-            let getter = descriptor_getter
-                .map(|value| (!value.is_undefined()).then_some(value))
-                .or_else(|| current.accessor.then_some(current.getter))
-                .flatten();
-            let setter = descriptor_setter
-                .map(|value| (!value.is_undefined()).then_some(value))
-                .or_else(|| current.accessor.then_some(current.setter))
-                .flatten();
+            let getter = attributes.getter;
+            let setter = attributes.setter;
             if !is_new
                 && current.accessor
                 && !current.configurable
-                && ((descriptor_getter.is_some()
-                    && !descriptor_getter.is_some_and(|value| {
+                && ((descriptor.getter.is_some()
+                    && !descriptor.getter.is_some_and(|value| {
                         (value.is_undefined() && current.getter.is_none())
                             || current
                                 .getter
                                 .is_some_and(|old| self.same_value(old, value))
                     }))
-                    || (descriptor_setter.is_some()
-                        && !descriptor_setter.is_some_and(|value| {
+                    || (descriptor.setter.is_some()
+                        && !descriptor.setter.is_some_and(|value| {
                             (value.is_undefined() && current.setter.is_none())
                                 || current
                                     .setter
@@ -1016,11 +982,6 @@ impl<H: Host> Vm<H> {
                         })))
             {
                 return Err(self.type_error(p, "cannot change non-configurable accessor".into()));
-            }
-            if getter.is_some_and(|value| !self.is_function(value))
-                || setter.is_some_and(|value| !self.is_function(value))
-            {
-                return Err(self.type_error(p, "property accessor is not callable".into()));
             }
             if !is_new && !current.configurable && !current.accessor {
                 return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
@@ -1050,11 +1011,6 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "cannot write non-writable property".into()));
         }
         let value = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
-        if descriptor_data {
-            attributes.accessor = false;
-            attributes.getter = None;
-            attributes.setter = None;
-        }
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
             if (current.accessor || !current.writable && current.configurable) && descriptor_data {
                 self.remove_property_attributes(target, key);
