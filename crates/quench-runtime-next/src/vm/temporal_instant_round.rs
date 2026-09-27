@@ -7,7 +7,8 @@ const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: i128 = 1_000;
 const MAX_ROUNDING_INCREMENT: f64 = 1_000_000_000.0;
-const UNITS: [(&str, i128); 6] = [
+const UNITS: [(&str, i128); 7] = [
+    ("day", NANOSECONDS_PER_DAY),
     ("hour", NANOSECONDS_PER_HOUR),
     ("minute", NANOSECONDS_PER_MINUTE),
     ("second", NANOSECONDS_PER_SECOND),
@@ -53,13 +54,13 @@ pub(super) fn round<H: Host>(
     vm.make_temporal_instant(p, rounded, constructor)
 }
 
-struct RoundOptions {
-    increment: Option<f64>,
-    rounding_mode: Option<String>,
-    smallest_unit: Option<String>,
+pub(super) struct RoundOptions {
+    pub(super) increment: Option<f64>,
+    pub(super) rounding_mode: Option<String>,
+    pub(super) smallest_unit: Option<String>,
 }
 
-fn read_options<H: Host>(
+pub(super) fn read_options<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     options: Value,
@@ -121,7 +122,7 @@ fn read_option<H: Host>(
     vm.get_property(p, options, key)
 }
 
-fn parse_unit<H: Host>(
+pub(super) fn parse_unit<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     unit: Option<&str>,
@@ -135,7 +136,7 @@ fn parse_unit<H: Host>(
         .ok_or_else(|| vm.range_error(p, "Invalid smallestUnit".into()))
 }
 
-fn validate_increment<H: Host>(
+pub(super) fn validate_increment<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     increment: Option<f64>,
@@ -154,7 +155,7 @@ fn validate_increment<H: Host>(
     Ok(increment as i128)
 }
 
-fn validate_mode<'a, H: Host>(
+pub(super) fn validate_mode<'a, H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     mode: Option<&'a str>,
