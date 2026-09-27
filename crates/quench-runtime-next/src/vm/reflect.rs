@@ -272,6 +272,9 @@ impl<H: Host> Vm<H> {
         if self.same_value(current, prototype) {
             return Ok(Value::TRUE);
         }
+        if target == self.object_proto {
+            return Ok(Value::FALSE);
+        }
         let extensible = self.object_is_extensible(p, &[target])?;
         if !self.truthy(extensible) {
             return Ok(Value::FALSE);
