@@ -600,7 +600,9 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainTimeEquals => {
                 self.temporal_plain_time_native(p, native, this, args)
             }
-            Native::TemporalPlainTimeRound => {
+            Native::TemporalPlainTimeRound
+            | Native::TemporalPlainTimeUntil
+            | Native::TemporalPlainTimeSince => {
                 self.temporal_plain_time_native(p, native, this, args)
             }
             Native::TemporalPlainMonthDay
