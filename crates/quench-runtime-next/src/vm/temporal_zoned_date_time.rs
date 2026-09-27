@@ -162,9 +162,10 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 24] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 17] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 18] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("with", Native::TemporalZonedDateTimeWith),
+    ("withCalendar", Native::TemporalZonedDateTimeWithCalendar),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
     ("add", Native::TemporalZonedDateTimeAdd),
     ("subtract", Native::TemporalZonedDateTimeSubtract),
@@ -454,6 +455,9 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTimeWith {
             return self.temporal_zoned_date_time_with(p, this, args);
+        }
+        if native == Native::TemporalZonedDateTimeWithCalendar {
+            return self.temporal_zoned_date_time_with_calendar(p, this, args);
         }
         if native == Native::TemporalZonedDateTimeWithTimeZone {
             let Some(Cell::TemporalZonedDateTime {
@@ -982,6 +986,55 @@ impl<H: Host> Vm<H> {
             ZonedDateTimeRecord {
                 epoch_nanoseconds: rounded,
                 time_zone,
+                calendar,
+            },
+        )
+    }
+
+    fn temporal_zoned_date_time_with_calendar(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(
+                p,
+                "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+            ));
+        };
+        let record_epoch = *epoch_nanoseconds;
+        let record_time_zone = time_zone.clone();
+        let calendar_like = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let calendar = match self.heap.get(calendar_like) {
+            Some(Cell::String(_)) => {
+                let text = self.to_string(p, calendar_like)?.to_string();
+                super::temporal_date_parse::calendar_identifier_from_string(&text)
+                    .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
+            }
+            Some(Cell::TemporalPlainDate { calendar, .. })
+            | Some(Cell::TemporalPlainDateTime { calendar, .. })
+            | Some(Cell::TemporalPlainMonthDay { calendar, .. })
+            | Some(Cell::TemporalPlainYearMonth { calendar, .. })
+            => calendar.clone(),
+            Some(Cell::TemporalZonedDateTime { .. }) => "iso8601".to_owned(),
+            _ => return Err(self.type_error(p, "Invalid calendar".into())),
+        };
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_atom)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            ZonedDateTimeRecord {
+                epoch_nanoseconds: record_epoch,
+                time_zone: record_time_zone,
                 calendar,
             },
         )
