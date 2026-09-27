@@ -542,6 +542,9 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainDateAdd | Native::TemporalPlainDateSubtract => {
                 self.temporal_plain_date_arithmetic(p, native, this, args)
             }
+            Native::TemporalPlainDateUntil | Native::TemporalPlainDateSince => {
+                self.temporal_plain_date_difference(p, native, this, args)
+            }
             Native::Object
             | Native::Array
             | Native::Map

@@ -346,6 +346,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalPlainDateCompare => 2.0,
         Native::TemporalPlainDateEquals => 1.0,
         Native::TemporalPlainDateAdd | Native::TemporalPlainDateSubtract => 1.0,
+        Native::TemporalPlainDateUntil | Native::TemporalPlainDateSince => 1.0,
         Native::TemporalPlainDateCalendarIdGetter
         | Native::TemporalPlainDateYearGetter
         | Native::TemporalPlainDateMonthGetter

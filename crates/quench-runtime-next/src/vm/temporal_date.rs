@@ -88,6 +88,8 @@ impl<H: Host> Vm<H> {
             ("valueOf", Native::TemporalPlainDateValueOf),
             ("add", Native::TemporalPlainDateAdd),
             ("subtract", Native::TemporalPlainDateSubtract),
+            ("until", Native::TemporalPlainDateUntil),
+            ("since", Native::TemporalPlainDateSince),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -231,7 +233,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn temporal_plain_date_from(
+    pub(super) fn temporal_plain_date_from(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,
@@ -563,7 +565,7 @@ fn iso_date_in_range(date: IsoDate) -> bool {
         && (date.year, date.month, date.day) <= (MAX_ISO_YEAR, 9, 13)
 }
 
-fn days_from_iso_date(date: IsoDate) -> i64 {
+pub(super) fn days_from_iso_date(date: IsoDate) -> i64 {
     let year = i64::from(date.year) - i64::from(date.month <= 2);
     let era = year.div_euclid(YEARS_PER_GREGORIAN_CYCLE);
     let year_of_era = year - era * YEARS_PER_GREGORIAN_CYCLE;

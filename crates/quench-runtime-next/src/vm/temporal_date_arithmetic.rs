@@ -57,7 +57,10 @@ impl<H: Host> Vm<H> {
         self.make_temporal_plain_date(p, result, calendar, constructor)
     }
 
-    fn temporal_plain_date_constructor(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
+    pub(super) fn temporal_plain_date_constructor(
+        &mut self,
+        p: &ResidualProgram,
+    ) -> Result<Value, JsError> {
         let temporal_atom = self.intern_atom("Temporal");
         let plain_date_atom = self.intern_atom("PlainDate");
         let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
