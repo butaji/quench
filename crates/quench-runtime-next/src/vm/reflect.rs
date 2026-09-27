@@ -8,6 +8,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if native == Native::SuperSet && (target.is_null() || target.is_undefined()) {
+            return Err(self.type_error(p, "cannot convert nullish super base to object".into()));
+        }
         if matches!(
             native,
             Native::ReflectGet
