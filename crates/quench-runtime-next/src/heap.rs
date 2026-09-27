@@ -42,9 +42,9 @@ pub(crate) struct Heap {
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GcProfile {
-    pub allocated_kinds: [u64; 15],
-    pub allocated_payload_bytes: [u64; 15],
-    pub allocated_size_buckets: [[u64; 8]; 15],
+    pub allocated_kinds: [u64; CellKind::COUNT],
+    pub allocated_payload_bytes: [u64; CellKind::COUNT],
+    pub allocated_size_buckets: [[u64; 8]; CellKind::COUNT],
     pub roots: u64,
     pub work_items: u64,
     pub max_worklist: u64,
@@ -53,7 +53,56 @@ pub(crate) struct GcProfile {
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
-    pub marked_kinds: [u64; 15],
+    pub marked_kinds: [u64; CellKind::COUNT],
+}
+#[repr(usize)]
+#[derive(Clone, Copy)]
+pub(crate) enum CellKind {
+    Object,
+    Array,
+    Map,
+    Set,
+    Iterator,
+    WeakMap,
+    WeakSet,
+    WeakRef,
+    Function,
+    Environment,
+    String,
+    BigInt,
+    Symbol,
+    Date,
+    Error,
+    RegExp,
+    ArrayFromAsync,
+    TemporalDuration,
+    TemporalPlainDate,
+    TemporalPlainDateTime,
+}
+impl CellKind {
+    pub(crate) const COUNT: usize = Self::TemporalPlainDateTime as usize + 1;
+    pub(crate) const NAMES: [&'static str; Self::COUNT] = [
+        "object",
+        "array",
+        "map",
+        "set",
+        "iterator",
+        "weak_map",
+        "weak_set",
+        "weak_ref",
+        "function",
+        "environment",
+        "string",
+        "bigint",
+        "symbol",
+        "date",
+        "error",
+        "regexp",
+        "array_from_async",
+        "temporal_duration",
+        "temporal_plain_date",
+        "temporal_plain_date_time",
+    ];
 }
 #[derive(Default)]
 struct SparseElements {
@@ -74,7 +123,7 @@ impl Heap {
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
-            let kind = Self::cell_kind(&cell);
+            let kind = Self::cell_kind(&cell) as usize;
             let bytes = Self::cell_payload_bytes(&cell);
             self.gc_profile.allocated_kinds[kind] += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
@@ -284,7 +333,7 @@ impl Heap {
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.marked += 1;
-                self.gc_profile.marked_kinds[Self::cell_kind(cell)] += 1;
+                self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
             }
             Self::children(cell, &self.properties, work, shape_roots);
             if let Some(elements) = self
@@ -562,35 +611,34 @@ impl Heap {
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
-    pub(super) fn cell_kind(cell: &Cell) -> usize {
+    pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
-            Cell::Object(_) => 0,
-            Cell::Array { .. } => 1,
-            Cell::ArrayBuffer { .. } => 0,
-            Cell::TypedArray { .. } => 0,
-            Cell::DataView { .. } => 0,
-            Cell::Map { .. } => 2,
-            Cell::Set { .. } => 3,
-            Cell::ShadowRealm { .. } => 0,
-            Cell::Iterator { .. } => 4,
-            Cell::ArrayFromAsyncState(_) => 16,
-            Cell::Proxy { .. } => 0,
-            Cell::WeakMap { .. } => 5,
-            Cell::WeakSet { .. } => 6,
-            Cell::WeakRef { .. } => 7,
-            Cell::FinalizationRegistry { .. } => 7,
-            Cell::Function { .. } => 8,
-            Cell::Environment { .. } => 9,
-            Cell::String(_) => 10,
-            Cell::BigInt(_) => 11,
-            Cell::Symbol(_) => 12,
-            Cell::Date { .. } => 13,
-            Cell::Error(_) => 14,
-            Cell::RegExp { .. } => 15,
-            Cell::PromiseResolvingState { .. } => 0,
-            Cell::TemporalDuration { .. } => 17,
-            Cell::TemporalPlainDate { .. } => 18,
-            Cell::TemporalPlainDateTime { .. } => 19,
+            Cell::Object(_)
+            | Cell::ArrayBuffer { .. }
+            | Cell::TypedArray { .. }
+            | Cell::DataView { .. }
+            | Cell::ShadowRealm { .. }
+            | Cell::Proxy { .. }
+            | Cell::PromiseResolvingState { .. } => CellKind::Object,
+            Cell::Array { .. } => CellKind::Array,
+            Cell::Map { .. } => CellKind::Map,
+            Cell::Set { .. } => CellKind::Set,
+            Cell::Iterator { .. } => CellKind::Iterator,
+            Cell::WeakMap { .. } => CellKind::WeakMap,
+            Cell::WeakSet { .. } => CellKind::WeakSet,
+            Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. } => CellKind::WeakRef,
+            Cell::Function { .. } => CellKind::Function,
+            Cell::Environment { .. } => CellKind::Environment,
+            Cell::String(_) => CellKind::String,
+            Cell::BigInt(_) => CellKind::BigInt,
+            Cell::Symbol(_) => CellKind::Symbol,
+            Cell::Date { .. } => CellKind::Date,
+            Cell::Error(_) => CellKind::Error,
+            Cell::RegExp { .. } => CellKind::RegExp,
+            Cell::ArrayFromAsyncState(_) => CellKind::ArrayFromAsync,
+            Cell::TemporalDuration { .. } => CellKind::TemporalDuration,
+            Cell::TemporalPlainDate { .. } => CellKind::TemporalPlainDate,
+            Cell::TemporalPlainDateTime { .. } => CellKind::TemporalPlainDateTime,
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]

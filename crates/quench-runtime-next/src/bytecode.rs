@@ -703,6 +703,9 @@ pub(crate) enum OperandKind {
     Field = 2,
     Local = 3,
 }
+impl OperandKind {
+    pub(crate) const COUNT: usize = Self::Local as usize + 1;
+}
 
 impl Operand {
     const TAG_SHIFT: u16 = 14;
