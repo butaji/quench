@@ -111,6 +111,22 @@ struct ZonedDateTimeDifferenceOptions {
     rounding_mode: String,
 }
 
+struct ZonedDateTimeOptions {
+    disambiguation: String,
+    offset: String,
+    overflow: String,
+}
+
+impl Default for ZonedDateTimeOptions {
+    fn default() -> Self {
+        Self {
+            disambiguation: "compatible".into(),
+            offset: "reject".into(),
+            overflow: "constrain".into(),
+        }
+    }
+}
+
 impl Default for ZonedDateTimeStringOptions {
     fn default() -> Self {
         Self {
@@ -346,6 +362,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
+        if let Some(Cell::TemporalZonedDateTime { time_zone, .. }) = self.heap.get(value) {
+            return Ok(time_zone.clone());
+        }
         let Some(Cell::String(_)) = self.heap.get(value) else {
             return Err(self.type_error(p, "Invalid time zone".into()));
         };
@@ -1610,7 +1629,9 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(value), Some(Cell::String(_))) {
             let text = self.to_string(p, value)?.to_string();
             super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
-            return parse_zoned_date_time_string(&text, "reject")
+            let parsed = parse_zoned_date_time_string(&text)
+                .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
+            return resolve_zoned_date_time_string(parsed, "reject")
                 .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()));
         }
         self.temporal_zoned_date_time_record(p, value, Value::UNDEFINED)
@@ -1629,7 +1650,7 @@ impl<H: Host> Vm<H> {
                 calendar,
                 ..
             }) => {
-                self.validate_zoned_date_time_options(p, options)?;
+                self.temporal_zoned_date_time_options(p, options)?;
                 Ok(ZonedDateTimeRecord {
                     epoch_nanoseconds,
                     time_zone,
@@ -1641,25 +1662,11 @@ impl<H: Host> Vm<H> {
                 super::temporal_plain_date_time_conversion::validate_annotations(
                     self, p, &text,
                 )?;
-                let offset_mode = if options.is_undefined() || !self.is_object_like(options) {
-                    "reject".to_owned()
-                } else {
-                    let key = self.intern_atom("offset");
-                    let value = self.get_property(p, options, key)?;
-                    if value.is_undefined() {
-                        "reject".to_owned()
-                    } else {
-                        let value = self.to_string(p, value)?.to_string();
-                        if !OFFSET_OPTIONS.contains(&value.as_str()) {
-                            return Err(self.range_error(p, "Invalid offset option".into()));
-                        }
-                        value
-                    }
-                };
-                let record = parse_zoned_date_time_string(&text, &offset_mode)
+                let parsed = parse_zoned_date_time_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
-                self.validate_zoned_date_time_options(p, options)?;
-                Ok(record)
+                let options = self.temporal_zoned_date_time_options(p, options)?;
+                resolve_zoned_date_time_string(parsed, &options.offset)
+                    .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))
             }
             Some(Cell::Object(_)) | Some(Cell::Function { .. }) | Some(Cell::Proxy { .. }) => {
                 self.temporal_zoned_date_time_property_bag(p, value, options)
@@ -1668,37 +1675,60 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn validate_zoned_date_time_options(
+    fn temporal_zoned_date_time_options(
         &mut self,
         p: &ResidualProgram,
         options: Value,
-    ) -> Result<bool, JsError> {
+    ) -> Result<ZonedDateTimeOptions, JsError> {
         if options.is_undefined() {
-            return Ok(true);
+            return Ok(ZonedDateTimeOptions::default());
         }
         if !self.is_object_like(options) {
             return Err(self.type_error(p, "Invalid options".into()));
         }
-        let mut constrain = true;
-        for (name, allowed) in [
-            ("disambiguation", &DISAMBIGUATION_OPTIONS[..]),
-            ("offset", &OFFSET_OPTIONS[..]),
-            ("overflow", &OVERFLOW_OPTIONS[..]),
-        ] {
+        Ok(ZonedDateTimeOptions {
+            disambiguation: self.temporal_zoned_date_time_option(
+                p,
+                options,
+                "disambiguation",
+                "compatible",
+                &DISAMBIGUATION_OPTIONS,
+            )?,
+            offset: self.temporal_zoned_date_time_option(
+                p,
+                options,
+                "offset",
+                "reject",
+                &OFFSET_OPTIONS,
+            )?,
+            overflow: self.temporal_zoned_date_time_option(
+                p,
+                options,
+                "overflow",
+                "constrain",
+                &OVERFLOW_OPTIONS,
+            )?,
+        })
+    }
+
+    fn temporal_zoned_date_time_option(
+        &mut self,
+        p: &ResidualProgram,
+        options: Value,
+        name: &str,
+        default: &str,
+        allowed: &[&str],
+    ) -> Result<String, JsError> {
             let atom = self.intern_atom(name);
             let value = self.get_property(p, options, atom)?;
             if value.is_undefined() {
-                continue;
+            return Ok(default.to_owned());
             }
             let value = self.to_string(p, value)?.to_string();
             if !allowed.contains(&value.as_str()) {
                 return Err(self.range_error(p, "Invalid Temporal option".into()));
             }
-            if name == "overflow" {
-                constrain = value == "constrain";
-            }
-        }
-        Ok(constrain)
+        Ok(value)
     }
 
     fn temporal_zoned_date_time_to_string(
@@ -1894,13 +1924,7 @@ impl<H: Host> Vm<H> {
         let millisecond = self.temporal_date_bag_field(p, value, "millisecond")?;
         let minute = self.temporal_date_bag_field(p, value, "minute")?;
         let month = self.temporal_date_bag_field(p, value, "month")?;
-        let month_code_atom = self.intern_atom("monthCode");
-        let month_code_value = self.get_property(p, value, month_code_atom)?;
-        let month_code = if month_code_value.is_undefined() {
-            None
-        } else {
-            Some(self.to_string(p, month_code_value)?.to_string())
-        };
+        let month_code = self.plain_date_time_month_code_field(p, value)?;
         let nanosecond = self.temporal_date_bag_field(p, value, "nanosecond")?;
         let offset_atom = self.intern_atom("offset");
         let offset_value = self.get_property(p, value, offset_atom)?;
@@ -1927,24 +1951,29 @@ impl<H: Host> Vm<H> {
         if year_value.is_undefined() {
             return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
         }
-        let month_code = month_code
-            .map(|code| {
-                let value = self.heap.alloc(Cell::String(code.into()));
-                self.plain_date_month_code(p, value)
-            })
-            .transpose()?;
         let year = self.plain_date_optional_integer(p, year_value)?;
-        let constrain = self.validate_zoned_date_time_options(p, options)?;
+        let options = self.temporal_zoned_date_time_options(p, options)?;
         let (Some(year), Some(day)) = (year, day) else {
             return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
         };
+        let month_code = month_code
+            .map(|code| {
+                (1..=super::temporal_date::ISO_MONTHS_PER_YEAR)
+                    .contains(&code)
+                    .then_some(code)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+            })
+            .transpose()?;
         let Some(month) = month.or(month_code) else {
             return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
         };
+        if month < 1 || day < 1 {
+            return Err(self.range_error(p, "Invalid ZonedDateTime".into()));
+        }
         if month_code.is_some_and(|month_code| month_code != month) {
             return Err(self.range_error(p, "month and monthCode must agree".into()));
         }
-        let (month, day) = if constrain {
+        let (month, day) = if options.overflow == "constrain" {
             let month = month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR);
             let last_day = super::temporal_date::iso_days_in_month(year, month).unwrap_or(31);
             (month, day.clamp(1, last_day))
@@ -1962,20 +1991,30 @@ impl<H: Host> Vm<H> {
             nanosecond.unwrap_or(0) as u32,
         ];
         let local_epoch = local_epoch_from_iso_fields(date, time);
-        let epoch_nanoseconds =
-            zoned_local_epoch_from_iso_fields(date, time, &timezone, "compatible")
+        let zone_epoch = zoned_local_epoch_from_iso_fields(
+            date,
+            time,
+            &timezone,
+            &options.disambiguation,
+        )
             .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
-        if let Some(offset) = offset {
+        let epoch_nanoseconds = if let Some(offset) = offset {
             if !quench_temporal::valid_timezone_offset(&offset) {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
             let offset_epoch = local_epoch
                 - parse_offset_nanoseconds(&offset)
                     .ok_or_else(|| self.range_error(p, "Invalid offset".into()))?;
-            if offset_epoch != epoch_nanoseconds {
-                return Err(self.range_error(p, "Offset does not match time zone".into()));
-            }
+            match options.offset.as_str() {
+                "use" => offset_epoch,
+                "ignore" => zone_epoch,
+                "prefer" if offset_epoch != zone_epoch => zone_epoch,
+                "prefer" | "reject" if offset_epoch == zone_epoch => offset_epoch,
+                _ => return Err(self.range_error(p, "Offset does not match time zone".into())),
         }
+        } else {
+            zone_epoch
+        };
         Ok(ZonedDateTimeRecord {
             epoch_nanoseconds,
             time_zone: timezone,
@@ -2038,10 +2077,13 @@ struct IsoZonedDateTimeBase {
     leap_second: bool,
 }
 
-fn parse_zoned_date_time_string(
-    text: &str,
-    offset_mode: &str,
-) -> Option<ZonedDateTimeRecord> {
+struct ParsedZonedDateTimeString {
+    time_zone: String,
+    calendar: String,
+    local: IsoZonedDateTimeBase,
+}
+
+fn parse_zoned_date_time_string(text: &str) -> Option<ParsedZonedDateTimeString> {
     let (base, annotation_text) = text.split_once('[')?;
     let mut rest = annotation_text;
     let mut time_zone = None;
@@ -2067,9 +2109,25 @@ fn parse_zoned_date_time_string(
     let calendar =
         super::temporal_date_parse::parse_calendar_identifier(calendar.unwrap_or("iso8601"))?;
     let local = parse_iso_zoned_base_fields(base)?;
-    let day = i128::from(super::temporal_date::days_from_iso_date(local.date));
+    Some(ParsedZonedDateTimeString {
+        time_zone,
+        calendar,
+        local,
+    })
+}
+
+fn resolve_zoned_date_time_string(
+    parsed: ParsedZonedDateTimeString,
+    offset_mode: &str,
+) -> Option<ZonedDateTimeRecord> {
+    let ParsedZonedDateTimeString {
+        time_zone,
+        calendar,
+        local,
+    } = parsed;
     let [hour, minute, second, millisecond, microsecond, nanosecond] = local.time;
-    let local_epoch_nanoseconds = day * NANOSECONDS_PER_DAY
+    let local_epoch_nanoseconds = i128::from(super::temporal_date::days_from_iso_date(local.date))
+        * NANOSECONDS_PER_DAY
         + i128::from(hour) * NANOSECONDS_PER_HOUR
         + i128::from(minute) * NANOSECONDS_PER_MINUTE
         + i128::from(second) * NANOSECONDS_PER_SECOND
@@ -2083,11 +2141,7 @@ fn parse_zoned_date_time_string(
     }
     let fixed_zone_offset = fixed_time_zone_offset_nanoseconds(&time_zone);
     let zone_epoch = || -> Option<i128> {
-        if let Some(offset) = fixed_zone_offset {
-            return Some(local_epoch_nanoseconds - offset);
-        }
-        let (local_date_time, _, _) = parse_iso_zoned_base(base)?;
-        zoned_local_epoch(local_date_time, &time_zone)
+        zoned_local_epoch_from_iso_fields(local.date, local.time, &time_zone, "compatible")
     };
     let epoch_nanoseconds = match (offset_mode, local.offset_nanoseconds, local.z_designator) {
         ("use", Some(offset), _) | (_, Some(offset), true) => {
