@@ -1,3 +1,4 @@
+use super::object_descriptors::DescriptorConflict;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -312,19 +313,22 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let attributes = descriptor.fold_attributes(current, is_new);
-        if !is_new
-            && !current.configurable
-            && (attributes.configurable != current.configurable
-                || attributes.enumerable != current.enumerable
-                || attributes.writable && !current.writable)
-        {
-            return Err(JsError(
-                "cannot redefine non-configurable array index".into(),
-            ));
+        if !is_new {
+            if let Some(conflict) = descriptor.non_configurable_conflict(current, attributes) {
+                let message = match conflict {
+                    DescriptorConflict::Attributes => {
+                        "cannot redefine non-configurable array index"
+                    }
+                    DescriptorConflict::Kind if current.accessor => {
+                        "cannot change array accessor to data property"
+                    }
+                    DescriptorConflict::Kind => "cannot change non-configurable array index kind",
+                };
+                return Err(JsError(message.into()));
+            }
         }
         let descriptor_value = descriptor.value;
         let descriptor_accessor = descriptor.has_accessor_fields();
-        let descriptor_data = descriptor.has_data_fields();
         if descriptor_accessor {
             if !is_new
                 && current.accessor
@@ -348,11 +352,6 @@ impl<H: Host> Vm<H> {
                     self.type_error(p, "cannot change non-configurable array accessor".into())
                 );
             }
-            if !is_new && !current.configurable && !current.accessor {
-                return Err(JsError(
-                    "cannot change non-configurable array index kind".into(),
-                ));
-            }
             self.unmap_argument_index(target, index);
             if !self.set_array_element(target, index, Value::DELETED) {
                 return Err(JsError("cannot define array accessor".into()));
@@ -360,11 +359,6 @@ impl<H: Host> Vm<H> {
             self.descriptors
                 .insert((target, PropertyKey::string(atom)), attributes);
             return Ok(target);
-        }
-        if descriptor_data && !is_new && current.accessor && !current.configurable {
-            return Err(JsError(
-                "cannot change array accessor to data property".into(),
-            ));
         }
         let next = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
         if !is_new
