@@ -32,6 +32,12 @@ impl<H: Host> Vm<H> {
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_named(p, constructor, "from", Native::TemporalPlainDateTimeFrom)?;
+        self.set_builtin_named(
+            p,
+            constructor,
+            "compare",
+            Native::TemporalPlainDateTimeCompare,
+        )?;
         for (name, native) in [
             ("calendarId", Native::TemporalPlainDateTimeCalendarIdGetter),
             ("year", Native::TemporalPlainDateTimeYearGetter),
@@ -119,6 +125,9 @@ impl<H: Host> Vm<H> {
         let date = checked_iso_date(year, month, day)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
         self.validate_plain_date_time_time(p, &time)?;
+        super::temporal_plain_date_time_conversion::validate_bounds(
+            self, p, date.year, date.month, date.day, time,
+        )?;
         let prototype_atom = self.intern_atom("prototype");
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
@@ -162,6 +171,9 @@ impl<H: Host> Vm<H> {
         if native == Native::TemporalPlainDateTimeFrom {
             return self.temporal_plain_date_time_from(p, this, args);
         }
+        if native == Native::TemporalPlainDateTimeCompare {
+            return self.temporal_plain_date_time_compare(p, args);
+        }
         if native == Native::TemporalPlainDateTimeEquals {
             return self.temporal_plain_date_time_equals(p, this, args);
         }
@@ -199,26 +211,84 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if self.is_object_like(value) {
+            let plain_date_constructor = self.native_value(Native::TemporalPlainDate);
+            let date = self.temporal_plain_date_from(p, plain_date_constructor, &[value])?;
+            let (year, month, day, calendar) = self.temporal_plain_date_slots(p, date)?;
+            let time = if matches!(self.heap.get(value), Some(Cell::TemporalPlainDate { .. })) {
+                [0; 6]
+            } else {
+                super::temporal_plain_date_time_conversion::to_date_time(self, p, value)?
+                    .map(|value| value as i32)
+            };
+            let args = [
+                Value::number(f64::from(year)),
+                Value::number(f64::from(month)),
+                Value::number(f64::from(day)),
+                Value::number(f64::from(time[0])),
+                Value::number(f64::from(time[1])),
+                Value::number(f64::from(time[2])),
+                Value::number(f64::from(time[3])),
+                Value::number(f64::from(time[4])),
+                Value::number(f64::from(time[5])),
+                self.heap.alloc(Cell::String(calendar.into())),
+            ];
+            return self.temporal_plain_date_time_construct(p, &args, constructor);
+        }
         if !self.is_string(value) {
             return Err(self.type_error(p, "Invalid PlainDateTime".into()));
         }
         let text = self.to_string(p, value)?;
-        let (local, _, _) = super::temporal_zoned_date_time::parse_iso_zoned_base(&text)
+        let (date, calendar) = super::temporal_date_parse::parse_plain_date_string(&text)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime string".into()))?;
-        use chrono::{Datelike, Timelike};
+        let base = text.split('[').next().unwrap_or(&text);
+        let time = if let Some((_, time)) = base.split_once(['T', 't', ' ']) {
+            let time = self.heap.alloc(Cell::String(time.to_owned().into()));
+            super::temporal_plain_date_time_conversion::parse_time_string(self, p, time)?
+        } else {
+            [0; 6]
+        };
         let args = [
-            Value::number(f64::from(local.year())),
-            Value::number(f64::from(local.month())),
-            Value::number(f64::from(local.day())),
-            Value::number(f64::from(local.hour())),
-            Value::number(f64::from(local.minute())),
-            Value::number(f64::from(local.second())),
-            Value::number(f64::from(local.nanosecond() / 1_000_000)),
-            Value::number(f64::from(local.nanosecond() / 1_000 % 1_000)),
-            Value::number(f64::from(local.nanosecond() % 1_000)),
-            self.heap.alloc(Cell::String("iso8601".into())),
+            Value::number(f64::from(date.year)),
+            Value::number(f64::from(date.month)),
+            Value::number(f64::from(date.day)),
+            Value::number(f64::from(time[0])),
+            Value::number(f64::from(time[1])),
+            Value::number(f64::from(time[2])),
+            Value::number(f64::from(time[3])),
+            Value::number(f64::from(time[4])),
+            Value::number(f64::from(time[5])),
+            self.heap.alloc(Cell::String(calendar.into())),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
+    }
+
+    fn temporal_plain_date_time_compare(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let constructor = self.native_value(Native::TemporalPlainDateTime);
+        let left = self.temporal_plain_date_time_from(
+            p,
+            constructor,
+            &[args.first().copied().unwrap_or(Value::UNDEFINED)],
+        )?;
+        let right = self.temporal_plain_date_time_from(
+            p,
+            constructor,
+            &[args.get(1).copied().unwrap_or(Value::UNDEFINED)],
+        )?;
+        let left = self.temporal_plain_date_time_slots(p, left)?;
+        let right = self.temporal_plain_date_time_slots(p, right)?;
+        let left_key = (left.0.year, left.0.month, left.0.day, left.1);
+        let right_key = (right.0.year, right.0.month, right.0.day, right.1);
+        let ordering = left_key.cmp(&right_key);
+        Ok(Value::number(match ordering {
+            std::cmp::Ordering::Less => -1.0,
+            std::cmp::Ordering::Equal => 0.0,
+            std::cmp::Ordering::Greater => 1.0,
+        }))
     }
 
     fn temporal_plain_date_time_equals(
