@@ -117,6 +117,23 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        self.set_builtin_named(p, prototype, "valueOf", Native::TemporalPlainTimeValueOf)?;
+        if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+            let value = self.heap.alloc(Cell::String("Temporal.PlainTime".into()));
+            self.set_symbol_property(prototype, symbol, value)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         self.set_builtin_value_named(temporal, "PlainTime", constructor)
     }
 
@@ -143,6 +160,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if native == Native::TemporalPlainTimeValueOf {
+            return Err(self.type_error(p, "Cannot convert PlainTime to a number".into()));
+        }
         if matches!(
             native,
             Native::TemporalPlainTimeAdd
@@ -242,12 +262,12 @@ impl<H: Host> Vm<H> {
             return self.temporal_plain_time_object(time);
         }
         if native == Native::TemporalPlainTimeEquals {
+            let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+            if value.is_undefined() {
+                return Err(self.type_error(p, "Invalid PlainTime".into()));
+            }
             let time = super::temporal_plain_date_time_conversion::to_time(self, p, this)?;
-            let other = super::temporal_plain_date_time_conversion::to_time(
-                self,
-                p,
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-            )?;
+            let other = super::temporal_plain_date_time_conversion::to_time(self, p, value)?;
             return Ok(if time == other { Value::TRUE } else { Value::FALSE });
         }
         if matches!(native, Native::TemporalPlainTimeUntil | Native::TemporalPlainTimeSince) {
