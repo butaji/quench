@@ -396,6 +396,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalZonedDateTimeRound
         | Native::TemporalZonedDateTimeUntil
         | Native::TemporalZonedDateTimeSince => 1.0,
+        Native::TemporalZonedDateTimeStartOfDay => 0.0,
         Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => 2.0,
         Native::TemporalPlainMonthDayFrom | Native::TemporalPlainYearMonthFrom => 1.0,
         Native::TemporalPlainMonthDayCompare | Native::TemporalPlainYearMonthCompare => 2.0,

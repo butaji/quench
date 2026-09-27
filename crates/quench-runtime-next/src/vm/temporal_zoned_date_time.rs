@@ -1,4 +1,5 @@
 use super::*;
+const ZERO_OFFSET_TIME_ZONES: [&str; 5] = ["UTC", "+00", "-00", "+00:00", "-00:00"];
 use chrono::{Datelike, Duration, Offset, TimeZone, Timelike, Utc};
 use std::cmp::Ordering;
 
@@ -148,7 +149,7 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 15] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 16] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
     ("add", Native::TemporalZonedDateTimeAdd),
@@ -157,6 +158,7 @@ const ZONED_DATE_TIME_METHODS: [(&str, Native); 15] = [
         "getTimeZoneTransition",
         Native::TemporalZonedDateTimeGetTimeZoneTransition,
     ),
+    ("startOfDay", Native::TemporalZonedDateTimeStartOfDay),
     ("round", Native::TemporalZonedDateTimeRound),
     ("until", Native::TemporalZonedDateTimeUntil),
     ("since", Native::TemporalZonedDateTimeSince),
@@ -358,6 +360,9 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTimeGetTimeZoneTransition {
             return self.temporal_zoned_date_time_transition(p, this, args);
+        }
+        if native == Native::TemporalZonedDateTimeStartOfDay {
+            return self.temporal_zoned_date_time_start_of_day(p, this);
         }
         if native == Native::TemporalZonedDateTimeRound {
             return self.temporal_zoned_date_time_round(p, this, args);
@@ -731,6 +736,50 @@ impl<H: Host> Vm<H> {
             constructor,
             ZonedDateTimeRecord {
                 epoch_nanoseconds: transition,
+                time_zone,
+                calendar,
+            },
+        )
+    }
+
+    fn temporal_zoned_date_time_start_of_day(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            calendar,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(
+                p,
+                "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+            ));
+        };
+        let epoch_nanoseconds = *epoch_nanoseconds;
+        let time_zone = time_zone.clone();
+        let calendar = calendar.clone();
+        let at_epoch_limit = epoch_nanoseconds.unsigned_abs() >= MAX_EPOCH_NANOSECONDS as u128;
+        if at_epoch_limit && !ZERO_OFFSET_TIME_ZONES.contains(&time_zone.as_str()) {
+            return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
+        }
+        if at_epoch_limit {
+            return Ok(this);
+        }
+        let midnight = round_zoned_date_time_day(epoch_nanoseconds, &time_zone, "trunc")
+            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_atom)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            ZonedDateTimeRecord {
+                epoch_nanoseconds: midnight,
                 time_zone,
                 calendar,
             },

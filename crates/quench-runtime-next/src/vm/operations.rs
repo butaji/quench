@@ -685,6 +685,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeAdd
             | Native::TemporalZonedDateTimeSubtract
             | Native::TemporalZonedDateTimeGetTimeZoneTransition
+            | Native::TemporalZonedDateTimeStartOfDay
             | Native::TemporalZonedDateTimeRound
             | Native::TemporalZonedDateTimeUntil
             | Native::TemporalZonedDateTimeSince
