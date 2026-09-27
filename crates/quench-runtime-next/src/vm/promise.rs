@@ -351,6 +351,8 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalPlainDateTimeFrom => 1.0,
         Native::TemporalPlainTime => 6.0,
         Native::TemporalPlainTimeFrom => 1.0,
+        Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => 2.0,
+        Native::TemporalPlainMonthDayToString | Native::TemporalPlainYearMonthToString => 0.0,
         Native::TemporalPlainDateTimeCalendarIdGetter
         | Native::TemporalPlainDateTimeYearGetter
         | Native::TemporalPlainDateTimeMonthGetter
@@ -373,6 +375,8 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalPlainDateToJSON
         | Native::TemporalPlainDateToLocaleString
         | Native::TemporalPlainDateToPlainDateTime
+        | Native::TemporalPlainDateToPlainMonthDay
+        | Native::TemporalPlainDateToPlainYearMonth
         | Native::TemporalPlainDateValueOf => 0.0,
         Native::TemporalZonedDateTime => 2.0,
         Native::TemporalZonedDateTimeFrom => 1.0,

@@ -77,6 +77,8 @@ impl<H: Host> Vm<H> {
             ("toJSON", Native::TemporalPlainDateToJSON),
             ("toLocaleString", Native::TemporalPlainDateToLocaleString),
             ("toPlainDateTime", Native::TemporalPlainDateToPlainDateTime),
+            ("toPlainMonthDay", Native::TemporalPlainDateToPlainMonthDay),
+            ("toPlainYearMonth", Native::TemporalPlainDateToPlainYearMonth),
             ("equals", Native::TemporalPlainDateEquals),
             ("valueOf", Native::TemporalPlainDateValueOf),
             ("add", Native::TemporalPlainDateAdd),
@@ -206,6 +208,12 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainDateToPlainDateTime => {
                 super::temporal_plain_date_time_conversion::convert(self, p, this, args)
+            }
+            Native::TemporalPlainDateToPlainMonthDay => {
+                super::temporal_date_projection::to_plain_month_day(self, p, this)
+            }
+            Native::TemporalPlainDateToPlainYearMonth => {
+                super::temporal_date_projection::to_plain_year_month(self, p, this)
             }
             Native::TemporalPlainDateCalendarIdGetter
             | Native::TemporalPlainDateYearGetter
@@ -553,7 +561,7 @@ impl From<quench_temporal::IsoDate> for IsoDate {
     }
 }
 
-fn format_iso_date(year: i32, month: u32, day: u32) -> String {
+pub(super) fn format_iso_date(year: i32, month: u32, day: u32) -> String {
     let year = match year {
         0..=MAX_BASIC_ISO_YEAR => format!("{year:0width$}", width = BASIC_ISO_YEAR_DIGITS),
         year if year < 0 => format!(

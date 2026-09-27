@@ -106,6 +106,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(temporal, "Duration", duration)?;
         self.install_temporal_plain_time(p, temporal)?;
         self.install_temporal_plain_date(p, temporal)?;
+        self.install_temporal_calendar_projections(p, temporal)?;
         self.install_temporal_plain_date_time(p, temporal)?;
         self.install_temporal_instant(p, temporal)?;
         self.install_temporal_zoned_date_time(p, temporal)?;
