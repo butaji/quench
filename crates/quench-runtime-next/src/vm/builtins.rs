@@ -346,6 +346,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalPlainDateTimeToZonedDateTime,
     Native::TemporalPlainDateTimeWith,
     Native::TemporalPlainDateTimeWithCalendar,
+    Native::TemporalPlainDateTimeWithPlainTime,
     Native::TemporalPlainDateTimeEquals,
     Native::TemporalPlainDateTimeCalendarIdGetter,
     Native::TemporalPlainDateTimeYearGetter, Native::TemporalPlainDateTimeMonthGetter,

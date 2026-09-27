@@ -577,6 +577,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateTimeToZonedDateTime
             | Native::TemporalPlainDateTimeWith
             | Native::TemporalPlainDateTimeWithCalendar
+            | Native::TemporalPlainDateTimeWithPlainTime
             | Native::TemporalPlainDateTimeCalendarIdGetter
             | Native::TemporalPlainDateTimeYearGetter
             | Native::TemporalPlainDateTimeMonthGetter

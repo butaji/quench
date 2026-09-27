@@ -359,6 +359,7 @@ pub(crate) enum Native {
     TemporalPlainDateTimeToZonedDateTime,
     TemporalPlainDateTimeWith,
     TemporalPlainDateTimeWithCalendar,
+    TemporalPlainDateTimeWithPlainTime,
     TemporalPlainDateTimeEquals,
     TemporalPlainDateTimeCalendarIdGetter,
     TemporalPlainDateTimeYearGetter, TemporalPlainDateTimeMonthGetter,
