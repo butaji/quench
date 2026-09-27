@@ -131,43 +131,6 @@ impl<H: Host> Vm<H> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         let target = self.box_object(target)?;
         let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-            let Some(value) = self.symbol_property(target, key_value) else {
-                return Ok(Value::UNDEFINED);
-            };
-            let attributes = self
-                .property_attributes(target, PropertyKey::symbol(key_value))
-                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            let descriptor = self.object();
-            if attributes.accessor {
-                for (name, value) in [
-                    ("get", attributes.getter.unwrap_or(Value::UNDEFINED)),
-                    ("set", attributes.setter.unwrap_or(Value::UNDEFINED)),
-                    ("enumerable", Self::integrity_bool(attributes.enumerable)),
-                    (
-                        "configurable",
-                        Self::integrity_bool(attributes.configurable),
-                    ),
-                ] {
-                    let atom = self.intern_atom(name);
-                    self.set_property(descriptor, atom, value)?;
-                }
-                return Ok(descriptor);
-            }
-            for (name, value) in [
-                ("value", value),
-                ("writable", Self::integrity_bool(attributes.writable)),
-                ("enumerable", Self::integrity_bool(attributes.enumerable)),
-                (
-                    "configurable",
-                    Self::integrity_bool(attributes.configurable),
-                ),
-            ] {
-                let atom = self.intern_atom(name);
-                self.set_property(descriptor, atom, value)?;
-            }
-            return Ok(descriptor);
-        }
         let key = self.to_property_key(p, key_value)?;
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             let Some(value) = self.symbol_property(target, key) else {
