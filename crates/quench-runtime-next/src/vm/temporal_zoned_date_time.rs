@@ -7,6 +7,7 @@ const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const NANOSECOND: i128 = 1;
 const MIN_ROUNDING_INCREMENT: i128 = NANOSECOND;
 const MAX_SUBSECOND_ROUNDING_INCREMENT: i128 = 1_000;
+const MONTHS_PER_YEAR: i128 = 12;
 const NANOSECONDS_PER_MILLISECOND: u32 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
 const MICROSECONDS_PER_MILLISECOND: u32 = 1_000;
@@ -52,6 +53,18 @@ const ZONED_DATE_TIME_ROUND_UNITS: [(&str, i128, i128); 7] = [
         MAX_SUBSECOND_ROUNDING_INCREMENT,
     ),
 ];
+const ZONED_DATE_TIME_DIFFERENCE_UNITS: [&str; 10] = [
+    "year",
+    "month",
+    "week",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "millisecond",
+    "microsecond",
+    "nanosecond",
+];
 pub(super) const NANOSECONDS_PER_DAY: i128 = HOURS_PER_DAY * NANOSECONDS_PER_HOUR;
 const FRACTIONAL_MILLISECOND_DIGITS: usize = 3;
 const FRACTIONAL_MICROSECOND_DIGITS: usize = 6;
@@ -87,6 +100,13 @@ struct ZonedDateTimeStringOptions {
     rounding_mode: String,
     smallest_unit: Option<String>,
     time_zone_name: String,
+}
+
+struct ZonedDateTimeDifferenceOptions {
+    largest: &'static str,
+    smallest: &'static str,
+    increment: i128,
+    rounding_mode: String,
 }
 
 impl Default for ZonedDateTimeStringOptions {
@@ -128,7 +148,7 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 13] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 15] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
     ("add", Native::TemporalZonedDateTimeAdd),
@@ -138,6 +158,8 @@ const ZONED_DATE_TIME_METHODS: [(&str, Native); 13] = [
         Native::TemporalZonedDateTimeGetTimeZoneTransition,
     ),
     ("round", Native::TemporalZonedDateTimeRound),
+    ("until", Native::TemporalZonedDateTimeUntil),
+    ("since", Native::TemporalZonedDateTimeSince),
     ("toInstant", Native::TemporalZonedDateTimeToInstant),
     ("toPlainDate", Native::TemporalZonedDateTimeToPlainDate),
     ("toPlainDateTime", Native::TemporalZonedDateTimeToPlainDateTime),
@@ -339,6 +361,12 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTimeRound {
             return self.temporal_zoned_date_time_round(p, this, args);
+        }
+        if matches!(
+            native,
+            Native::TemporalZonedDateTimeUntil | Native::TemporalZonedDateTimeSince
+        ) {
+            return self.temporal_zoned_date_time_difference(p, native, this, args);
         }
         if native == Native::TemporalZonedDateTimeFrom {
             let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -820,6 +848,253 @@ impl<H: Host> Vm<H> {
                 calendar,
             },
         )
+    }
+
+    fn temporal_zoned_date_time_difference(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds: left_epoch,
+            time_zone: left_time_zone,
+            calendar: left_calendar,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(
+                p,
+                "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+            ));
+        };
+        let left = ZonedDateTimeRecord {
+            epoch_nanoseconds: *left_epoch,
+            time_zone: left_time_zone.clone(),
+            calendar: left_calendar.clone(),
+        };
+        let other = self.temporal_zoned_date_time_record(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+            Value::UNDEFINED,
+        )?;
+        let options = self.temporal_zoned_date_time_difference_options(
+            p,
+            args.get(1).copied().unwrap_or(Value::UNDEFINED),
+        )?;
+        if left.calendar != other.calendar {
+            return Err(self.range_error(p, "ZonedDateTime calendars do not match".into()));
+        }
+        if left.time_zone != other.time_zone {
+            return Err(self.range_error(p, "ZonedDateTime time zones do not match".into()));
+        }
+        if zoned_date_time_unit_rank(options.largest) >= zoned_date_time_unit_rank("hour") {
+            return self.zoned_date_time_time_difference(p, native, &left, &other, &options);
+        }
+        let date_time_constructor = self.temporal_plain_date_time_constructor(p)?;
+        let left_date_time = self.zoned_date_time_local_plain_date_time(
+            p,
+            date_time_constructor,
+            &left,
+        )?;
+        let other_date_time = self.zoned_date_time_local_plain_date_time(
+            p,
+            date_time_constructor,
+            &other,
+        )?;
+        let internal_options = self.object();
+        for (name, value) in [
+            ("largestUnit", options.largest),
+            ("smallestUnit", options.smallest),
+            ("roundingMode", options.rounding_mode.as_str()),
+        ] {
+            let atom = self.intern_atom(name);
+            let value = self.heap.alloc(Cell::String(value.into()));
+            self.set_property(internal_options, atom, value)?;
+        }
+        let increment_atom = self.intern_atom("roundingIncrement");
+        self.set_property(
+            internal_options,
+            increment_atom,
+            Value::number(options.increment as f64),
+        )?;
+        let date_time_native = if native == Native::TemporalZonedDateTimeSince {
+            Native::TemporalPlainDateTimeSince
+        } else {
+            Native::TemporalPlainDateTimeUntil
+        };
+        self.temporal_plain_date_time_difference(
+            p,
+            date_time_native,
+            left_date_time,
+            &[other_date_time, internal_options],
+        )
+    }
+
+    fn temporal_zoned_date_time_difference_options(
+        &mut self,
+        p: &ResidualProgram,
+        options: Value,
+    ) -> Result<ZonedDateTimeDifferenceOptions, JsError> {
+        if !options.is_undefined() && !self.is_object_like(options) {
+            return Err(self.type_error(p, "Invalid options".into()));
+        }
+        let largest_value = if options.is_undefined() {
+            Value::UNDEFINED
+        } else {
+            self.get_option_property(p, options, "largestUnit")?
+        };
+        let largest_was_default = largest_value.is_undefined();
+        let largest_value = if largest_was_default {
+            None
+        } else {
+            Some(self.to_string(p, largest_value)?.to_string())
+        };
+        let increment_value = if options.is_undefined() {
+            Value::UNDEFINED
+        } else {
+            self.get_option_property(p, options, "roundingIncrement")?
+        };
+        let increment = if increment_value.is_undefined() {
+            MIN_ROUNDING_INCREMENT
+        } else {
+            let increment = self.to_number(p, increment_value)?;
+            if !increment.is_finite() || increment <= 0.0 || increment > 100_000_000.0 {
+                return Err(self.range_error(p, "Invalid roundingIncrement".into()));
+            }
+            increment.trunc() as i128
+        };
+        let mode_value = if options.is_undefined() {
+            Value::UNDEFINED
+        } else {
+            self.get_option_property(p, options, "roundingMode")?
+        };
+        let rounding_mode = if mode_value.is_undefined() {
+            "trunc".to_owned()
+        } else {
+            self.to_string(p, mode_value)?.to_string()
+        };
+        let smallest_value = if options.is_undefined() {
+            Value::UNDEFINED
+        } else {
+            self.get_option_property(p, options, "smallestUnit")?
+        };
+        let smallest_was_default = smallest_value.is_undefined();
+        let smallest_value = if smallest_was_default {
+            "nanosecond".to_owned()
+        } else {
+            self.to_string(p, smallest_value)?.to_string()
+        };
+        let smallest = canonical_zoned_difference_unit(&smallest_value)
+            .ok_or_else(|| self.range_error(p, "Invalid smallestUnit".into()))?;
+        let largest_value = largest_value.unwrap_or_else(|| {
+            if largest_was_default && zoned_date_time_unit_rank(smallest) < zoned_date_time_unit_rank("hour") {
+                smallest.to_owned()
+            } else {
+                "hour".to_owned()
+            }
+        });
+        let largest = if normalize_zoned_difference_unit(&largest_value) == "auto" {
+            "hour"
+        } else {
+            canonical_zoned_difference_unit(&largest_value)
+                .ok_or_else(|| self.range_error(p, "Invalid largestUnit".into()))?
+        };
+        if zoned_date_time_unit_rank(smallest) < zoned_date_time_unit_rank(largest) {
+            return Err(self.range_error(p, "smallestUnit larger than largestUnit".into()));
+        }
+        if !ROUNDING_MODES.contains(&rounding_mode.as_str()) {
+            return Err(self.range_error(p, "Invalid roundingMode".into()));
+        }
+        let increment_limit = zoned_date_time_difference_increment_limit(smallest);
+        if increment < MIN_ROUNDING_INCREMENT
+            || increment > increment_limit
+            || (increment_limit > MIN_ROUNDING_INCREMENT
+                && increment >= increment_limit
+                && increment_limit % increment != 0)
+            || increment_limit % increment != 0
+        {
+            return Err(self.range_error(p, "Invalid roundingIncrement".into()));
+        }
+        Ok(ZonedDateTimeDifferenceOptions {
+            largest,
+            smallest,
+            increment,
+            rounding_mode,
+        })
+    }
+
+    fn zoned_date_time_local_plain_date_time(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        value: &ZonedDateTimeRecord,
+    ) -> Result<Value, JsError> {
+        let fields = zoned_date_time_fields(value.epoch_nanoseconds, &value.time_zone)
+            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        let args = [
+            Value::number(f64::from(fields[0])),
+            Value::number(f64::from(fields[1])),
+            Value::number(f64::from(fields[2])),
+            Value::number(f64::from(fields[3])),
+            Value::number(f64::from(fields[4])),
+            Value::number(f64::from(fields[5])),
+            Value::number(f64::from(fields[6])),
+            Value::number(f64::from(fields[7])),
+            Value::number(f64::from(fields[8])),
+            self.heap.alloc(Cell::String(value.calendar.clone().into())),
+        ];
+        self.temporal_plain_date_time_construct(p, &args, constructor)
+    }
+
+    fn zoned_date_time_time_difference(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        left: &ZonedDateTimeRecord,
+        right: &ZonedDateTimeRecord,
+        options: &ZonedDateTimeDifferenceOptions,
+    ) -> Result<Value, JsError> {
+        let direction = if native == Native::TemporalZonedDateTimeSince {
+            -1_i128
+        } else {
+            1_i128
+        };
+        let difference = (right.epoch_nanoseconds - left.epoch_nanoseconds) * direction;
+        let quantum = zoned_date_time_unit_nanoseconds(options.smallest)
+            .ok_or_else(|| self.range_error(p, "Invalid smallestUnit".into()))?
+            * options.increment;
+        let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+            difference,
+            quantum,
+            &options.rounding_mode,
+        ) * quantum;
+        let sign = rounded.signum();
+        let mut remainder = rounded.unsigned_abs() as i128;
+        let mut time = [0_i128; 6];
+        let scales = super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES;
+        for (index, scale) in scales.into_iter().enumerate() {
+            time[index] = remainder / scale;
+            remainder %= scale;
+        }
+        let first_unit = zoned_date_time_unit_rank(options.largest)
+            - zoned_date_time_unit_rank("hour");
+        if first_unit != 0 {
+            time[first_unit] += time[..first_unit]
+                .iter()
+                .zip(scales.iter().take(first_unit))
+                .map(|(value, scale)| value * scale)
+                .sum::<i128>()
+                / scales[first_unit];
+            time[..first_unit].fill(0);
+        }
+        let mut fields = [0.0; 10];
+        for (index, value) in time.into_iter().enumerate() {
+            fields[index + super::temporal_date_arithmetic::DURATION_HOURS_FIELD] =
+                (value * sign) as f64;
+        }
+        self.make_temporal_duration(p, fields)
     }
 
     fn temporal_zoned_date_time_record(
@@ -1855,4 +2130,40 @@ fn round_zoned_date_time_day(
         _ => return None,
     };
     Some(if round_up { next } else { start })
+}
+
+fn normalize_zoned_difference_unit(value: &str) -> &str {
+    value.strip_suffix('s').unwrap_or(value)
+}
+
+fn canonical_zoned_difference_unit(value: &str) -> Option<&'static str> {
+    let normalized = normalize_zoned_difference_unit(value);
+    ZONED_DATE_TIME_DIFFERENCE_UNITS
+        .iter()
+        .copied()
+        .find(|unit| *unit == normalized)
+}
+
+fn zoned_date_time_unit_rank(value: &str) -> usize {
+    ZONED_DATE_TIME_DIFFERENCE_UNITS
+        .iter()
+        .position(|unit| *unit == value)
+        .unwrap_or(ZONED_DATE_TIME_DIFFERENCE_UNITS.len())
+}
+
+fn zoned_date_time_unit_nanoseconds(value: &str) -> Option<i128> {
+    ZONED_DATE_TIME_ROUND_UNITS
+        .iter()
+        .find(|(unit, _, _)| *unit == value)
+        .map(|(_, nanoseconds, _)| *nanoseconds)
+}
+
+fn zoned_date_time_difference_increment_limit(value: &str) -> i128 {
+    match value {
+        "year" | "week" | "day" => MIN_ROUNDING_INCREMENT,
+        "month" => MONTHS_PER_YEAR,
+        "hour" => HOURS_PER_DAY,
+        "minute" | "second" => i128::from(SECONDS_PER_MINUTE),
+        _ => MAX_SUBSECOND_ROUNDING_INCREMENT,
+    }
 }
