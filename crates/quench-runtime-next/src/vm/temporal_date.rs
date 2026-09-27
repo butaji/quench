@@ -495,6 +495,25 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
             return self.make_temporal_plain_date(p, date, calendar, constructor);
         }
+        if let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            calendar,
+            ..
+        }) = self.heap.get(value)
+        {
+            let (epoch_nanoseconds, time_zone, calendar) =
+                (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+            let _ = self.plain_date_overflow(p, options)?;
+            let fields = super::temporal_zoned_date_time::zoned_date_time_fields(
+                epoch_nanoseconds,
+                &time_zone,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+            let date = checked_iso_date(fields[0], fields[1], fields[2])
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+            return self.make_temporal_plain_date(p, date, calendar, constructor);
+        }
         let (date, calendar) = if let Some(Cell::String(text)) = self.heap.get(value) {
             let text = text.host_string().to_owned();
             let _ = self.plain_date_overflow(p, options)?;
@@ -584,14 +603,17 @@ impl<H: Host> Vm<H> {
         let month_code_atom = self.intern_atom("monthCode");
         let year_atom = self.intern_atom("year");
         let calendar = self.get_property(p, value, calendar_atom)?;
-        let calendar = if calendar.is_undefined() {
-            "iso8601".to_owned()
-        } else if matches!(self.heap.get(calendar), Some(Cell::String(_))) {
-            let value = self.to_string(p, calendar)?.to_string();
-            temporal_date_parse::parse_calendar_identifier(&value)
-                .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
-        } else {
-            return Err(self.type_error(p, "Invalid calendar".into()));
+        let calendar = match self.heap.get(calendar) {
+            None if calendar.is_undefined() => "iso8601".to_owned(),
+            Some(Cell::String(value)) => {
+                let value = value.host_string();
+                temporal_date_parse::parse_calendar_identifier(value)
+                    .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
+            }
+            Some(Cell::TemporalPlainDate { calendar, .. })
+            | Some(Cell::TemporalPlainDateTime { calendar, .. }) => calendar.clone(),
+            Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.clone(),
+            _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
         if !matches!(calendar.as_str(), "iso8601" | "gregory") {
             return Err(self.range_error(p, "Invalid calendar".into()));
