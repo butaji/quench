@@ -137,7 +137,11 @@ impl<H: Host> Vm<H> {
         self.make_temporal_plain_date(p, date, calendar, new_target)
     }
 
-    fn plain_date_integer(&mut self, p: &ResidualProgram, value: Value) -> Result<i32, JsError> {
+    pub(super) fn plain_date_integer(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<i32, JsError> {
         let number = self.to_number(p, value)?;
         if !number.is_finite()
             || number.trunc() < f64::from(i32::MIN)
@@ -252,6 +256,13 @@ impl<H: Host> Vm<H> {
             let (year, month, day, calendar) = (*year, *month, *day, calendar.clone());
             let _ = self.plain_date_overflow(p, options)?;
             let date = checked_iso_date(year, month as i32, day as i32)
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+            return self.make_temporal_plain_date(p, date, calendar, constructor);
+        }
+        if let Some(Cell::TemporalPlainDateTime { date, calendar, .. }) = self.heap.get(value) {
+            let (date, calendar) = (*date, calendar.clone());
+            let _ = self.plain_date_overflow(p, options)?;
+            let date = checked_iso_date(date.0, date.1 as i32, date.2 as i32)
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
             return self.make_temporal_plain_date(p, date, calendar, constructor);
         }

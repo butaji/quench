@@ -29,6 +29,7 @@ impl Cell {
             Self::Function { object, .. } => Some(object),
             Self::TemporalDuration { object, .. } => Some(object),
             Self::TemporalPlainDate { object, .. } => Some(object),
+            Self::TemporalPlainDateTime { object, .. } => Some(object),
             _ => None,
         }
     }
@@ -54,6 +55,7 @@ impl Cell {
             Self::Function { object, .. } => Some(object),
             Self::TemporalDuration { object, .. } => Some(object),
             Self::TemporalPlainDate { object, .. } => Some(object),
+            Self::TemporalPlainDateTime { object, .. } => Some(object),
             _ => None,
         }
     }
