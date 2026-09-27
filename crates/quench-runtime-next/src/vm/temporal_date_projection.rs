@@ -443,10 +443,12 @@ impl<H: Host> Vm<H> {
                         month: other_month,
                         day: other_day,
                         calendar: other_calendar,
+                        reference_iso_year: other_year,
                         ..
                     }) if *other_month == month
                         && *other_day == day
-                        && *other_calendar == calendar =>
+                        && *other_calendar == calendar
+                        && *other_year == reference_year =>
                     {
                         Value::TRUE
                     }
@@ -907,18 +909,27 @@ impl<H: Host> Vm<H> {
             month,
             day,
             calendar,
+            reference_iso_year,
             ..
         }) = self.heap.get(value)
         {
-            let (month, day, calendar) = (*month, *day, calendar.clone());
+            let (month, day, calendar, year) =
+                (*month, *day, calendar.clone(), *reference_iso_year);
             let _ = self.plain_date_overflow(p, options)?;
-            return self.make_plain_month_day(p, constructor, month, day, calendar);
+            return self.make_plain_month_day(p, constructor, month, day, calendar, year);
         }
         if let Some(Cell::String(text)) = self.heap.get(value) {
             let text = text.host_string().to_owned();
             let (date, calendar) = parse_plain_month_day_string(self, p, &text)?;
             let _ = self.plain_date_overflow(p, options)?;
-            return self.make_plain_month_day(p, constructor, date.month, date.day, calendar);
+            return self.make_plain_month_day(
+                p,
+                constructor,
+                date.month,
+                date.day,
+                calendar,
+                DEFAULT_REFERENCE_ISO_YEAR,
+            );
         }
         if !self.is_object_like(value) {
             return Err(self.type_error(p, "Invalid PlainMonthDay".into()));
@@ -934,9 +945,15 @@ impl<H: Host> Vm<H> {
             let plain_date_constructor = self.native_value(Native::TemporalPlainDate);
             let date =
                 self.temporal_plain_date_from(p, plain_date_constructor, &[value, options])?;
-            let (year, month, day, calendar) = self.temporal_plain_date_slots(p, date)?;
-            let _ = year;
-            return self.make_plain_month_day(p, constructor, month, day, calendar);
+            let (_, month, day, calendar) = self.temporal_plain_date_slots(p, date)?;
+            return self.make_plain_month_day(
+                p,
+                constructor,
+                month,
+                day,
+                calendar,
+                DEFAULT_REFERENCE_ISO_YEAR,
+            );
         }
         self.temporal_plain_month_day_from_bag(p, constructor, value, options)
     }
@@ -995,7 +1012,14 @@ impl<H: Host> Vm<H> {
         let day = if constrain { day.min(max_day) } else { day };
         checked_iso_date(year, month, day)
             .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
-        self.make_plain_month_day(p, constructor, month as u32, day as u32, calendar)
+        self.make_plain_month_day(
+            p,
+            constructor,
+            month as u32,
+            day as u32,
+            calendar,
+            DEFAULT_REFERENCE_ISO_YEAR,
+        )
     }
 
     fn temporal_plain_year_month_from(
@@ -1126,12 +1150,13 @@ impl<H: Host> Vm<H> {
         month: u32,
         day: u32,
         calendar: String,
+        reference_year: i32,
     ) -> Result<Value, JsError> {
         let args = [
             Value::number(f64::from(month)),
             Value::number(f64::from(day)),
             self.heap.alloc(Cell::String(calendar.into())),
-            Value::number(f64::from(DEFAULT_REFERENCE_ISO_YEAR)),
+            Value::number(f64::from(reference_year)),
         ];
         self.temporal_plain_month_day_construct(p, &args, constructor)
     }
@@ -1227,7 +1252,7 @@ fn parse_plain_month_day_string<H: Host>(
     if text.contains(['\u{2212}', 'Z', 'z']) || text.starts_with("-000000") {
         return Err(vm.range_error(p, "Invalid PlainMonthDay".into()));
     }
-    if let Some(date) = temporal_date_parse::parse_plain_date_string(text) {
+    if let Some(date) = temporal_date_parse::parse_plain_month_day_string(text) {
         return Ok(date);
     }
     let (local, _, _) = super::temporal_zoned_date_time::parse_iso_zoned_base(text)

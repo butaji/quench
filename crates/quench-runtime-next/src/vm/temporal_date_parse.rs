@@ -2,6 +2,7 @@ use super::temporal_date::{IsoDate, checked_iso_date};
 
 const ISO_CALENDAR: &str = "iso8601";
 const GREGORIAN_CALENDAR: &str = "gregory";
+const DEFAULT_REFERENCE_ISO_YEAR: i32 = 1972;
 const ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_YEAR_DIGITS: usize = 6;
 const ISO_MONTH_DIGITS: usize = 2;
@@ -14,6 +15,20 @@ pub(super) fn parse_plain_date_string(text: &str) -> Option<(IsoDate, String)> {
     }
     let calendar = parse_calendar_annotation(text)?;
     let date = parse_iso_date_part(date_part(text))?;
+    Some((date, calendar))
+}
+
+pub(super) fn parse_plain_month_day_string(text: &str) -> Option<(IsoDate, String)> {
+    if let Some(date) = parse_plain_date_string(text) {
+        return Some(date);
+    }
+    let base = text.split('[').next().unwrap_or(text);
+    let date = date_part(base)
+        .strip_prefix("--")
+        .unwrap_or(date_part(base));
+    let (month, day) = parse_iso_month_day_part(date)?;
+    let calendar = parse_calendar_identifier(text)?;
+    let date = checked_iso_date(DEFAULT_REFERENCE_ISO_YEAR, month as i32, day as i32)?;
     Some((date, calendar))
 }
 
@@ -183,6 +198,7 @@ fn parse_iso_date_part(date: &str) -> Option<IsoDate> {
 }
 
 fn parse_calendar_partial_date(date: &str) -> Option<()> {
+    let date = date.strip_prefix("--").unwrap_or(date);
     let fields = date.split('-').collect::<Vec<_>>();
     match fields.as_slice() {
         [month, day] if month.len() == ISO_MONTH_DIGITS && day.len() == ISO_DAY_DIGITS => {
@@ -200,6 +216,25 @@ fn parse_calendar_partial_date(date: &str) -> Option<()> {
         }
         _ => None,
     }
+}
+
+fn parse_iso_month_day_part(date: &str) -> Option<(u32, u32)> {
+    if date.len() == ISO_MONTH_DIGITS + ISO_DAY_DIGITS
+        && date.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Some((
+            date[..ISO_MONTH_DIGITS].parse().ok()?,
+            date[ISO_MONTH_DIGITS..].parse().ok()?,
+        ));
+    }
+    let fields = date.split('-').collect::<Vec<_>>();
+    let [month, day] = fields.as_slice() else {
+        return None;
+    };
+    if month.len() != ISO_MONTH_DIGITS || day.len() != ISO_DAY_DIGITS {
+        return None;
+    }
+    Some((month.parse().ok()?, day.parse().ok()?))
 }
 
 fn date_part(text: &str) -> &str {
@@ -225,8 +260,7 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
 
 fn has_invalid_calendar_annotation(text: &str) -> bool {
     first_calendar_annotation(text).is_some_and(|value| {
-        !value.eq_ignore_ascii_case(ISO_CALENDAR)
-            && !value.eq_ignore_ascii_case(GREGORIAN_CALENDAR)
+        !value.eq_ignore_ascii_case(ISO_CALENDAR) && !value.eq_ignore_ascii_case(GREGORIAN_CALENDAR)
     })
 }
 
