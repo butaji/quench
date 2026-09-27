@@ -144,7 +144,9 @@ impl<H: Host> Vm<H> {
         if !descriptor.is_undefined() {
             if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
                 let atom = self.intern_atom("stack");
-                self.set_property_with_receiver(program, receiver, atom, value, receiver)?;
+                if !self.set_property_with_receiver(program, receiver, atom, value, receiver)? {
+                    return Err(self.type_error(program, "cannot set Error stack property".into()));
+                }
                 return Ok(Value::UNDEFINED);
             }
             let get = self.intern_atom("get");
