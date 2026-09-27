@@ -306,6 +306,7 @@ pub(crate) enum Native {
     TemporalDuration, TemporalDurationFrom, TemporalDurationCompare,
     TemporalDurationAdd, TemporalDurationSubtract, TemporalDurationWith,
     TemporalDurationAbs, TemporalDurationNegated, TemporalDurationTotal,
+    TemporalDurationRound,
     TemporalDurationToString, TemporalDurationToJSON, TemporalDurationValueOf,
     TemporalDurationYearsGetter, TemporalDurationMonthsGetter,
     TemporalDurationWeeksGetter, TemporalDurationDaysGetter,
