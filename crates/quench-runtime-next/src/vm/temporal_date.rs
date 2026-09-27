@@ -347,7 +347,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn temporal_plain_date_with(
+    pub(super) fn temporal_plain_date_with(
         &mut self,
         p: &ResidualProgram,
         this: Value,
