@@ -87,7 +87,9 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::ResultRegister => {
                 register_in_bounds(instruction.result_register(), bounds.registers, 0)
             }
-            layout if layout.is_register_field() => register_in_bounds(value, bounds.registers, 0),
+            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
+                register_in_bounds(value, bounds.registers, 0)
+            }
             FieldLayout::OptionalRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
@@ -130,7 +132,10 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                             register_in_bounds(target.register, bounds.registers, 0)
                         })
             }
-            _ => true,
+            FieldLayout::Unused
+            | FieldLayout::NumericLocalStoreMarker
+            | FieldLayout::ConstructArguments
+            | FieldLayout::WideIndexChunk => true,
         },
     )
 }
@@ -176,7 +181,11 @@ fn immediate_domains_in_bounds(
             (instruction.superinstruction_index() as usize) < bounds.superinstructions
         }
         super::ImmediateRole::JumpTarget => instruction.jump_target() < bounds.code_len,
-        _ => true,
+        super::ImmediateRole::FieldLookup
+        | super::ImmediateRole::LayoutEncoded
+        | super::ImmediateRole::TemplateSiteIndex
+        | super::ImmediateRole::Unused
+        | super::ImmediateRole::WideInstructionIndex => true,
     }
 }
 
