@@ -575,7 +575,6 @@ impl<H: Host> Vm<H> {
         self.install_builtin_to_string_tag(data_view_prototype, "DataView")?;
         let date = self.native_value(Native::Date);
         let date_prototype = self.get_property(program, date, prototype_atom)?;
-        self.install_builtin_to_string_tag(date_prototype, "Date")?;
         let date_to_primitive = self.native_value(Native::DateToPrimitive);
         self.set_builtin_function_name(date_to_primitive, "[Symbol.toPrimitive]")?;
         if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
