@@ -3,6 +3,7 @@ use super::temporal_date::{IsoDate, checked_iso_date};
 const ISO_CALENDAR: &str = "iso8601";
 const GREGORIAN_CALENDAR: &str = "gregory";
 const DEFAULT_REFERENCE_ISO_YEAR: i32 = 1972;
+const MAX_NON_ISO_MONTH_DAY_YEAR_MAGNITUDE: i32 = 271_821;
 const ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_YEAR_DIGITS: usize = 6;
 const ISO_MONTH_DIGITS: usize = 2;
@@ -23,11 +24,35 @@ pub(super) fn parse_plain_month_day_string(text: &str) -> Option<(IsoDate, Strin
         return Some(date);
     }
     let base = text.split('[').next().unwrap_or(text);
-    let date = date_part(base)
-        .strip_prefix("--")
-        .unwrap_or(date_part(base));
-    let (month, day) = parse_iso_month_day_part(date)?;
+    let date = date_part(base);
+    if has_uppercase_annotation_key(text) || has_annotation_junk(text) {
+        return None;
+    }
     let calendar = parse_calendar_identifier(text)?;
+    let date = date.strip_prefix("--").unwrap_or(date);
+    let (year, month, day, partial) = if let Some((month, day)) = parse_iso_month_day_part(date) {
+        (None, month, day, true)
+    } else {
+        if base.contains(['T', 't', ' '])
+            || has_unknown_critical_annotation(text)
+            || has_invalid_calendar_annotation(text)
+            || has_multiple_time_zones(text)
+            || (text.contains("[!u-ca=") && text.matches("[u-ca=").count() > 0)
+            || has_invalid_offset(text)
+        {
+            return None;
+        }
+        let (year, month, day) = parse_iso_month_day_from_full_date(date)?;
+        (Some(year), month, day, false)
+    };
+    if partial && calendar != ISO_CALENDAR {
+        return None;
+    }
+    if calendar != ISO_CALENDAR
+        && year.is_some_and(|year| year.abs() > MAX_NON_ISO_MONTH_DAY_YEAR_MAGNITUDE)
+    {
+        return None;
+    }
     let date = checked_iso_date(DEFAULT_REFERENCE_ISO_YEAR, month as i32, day as i32)?;
     Some((date, calendar))
 }
@@ -85,7 +110,10 @@ fn first_calendar_annotation(text: &str) -> Option<&str> {
 fn valid_calendar_source(text: &str) -> bool {
     let base = text.split('[').next().unwrap_or("");
     let date = date_part(base);
+    let partial_date = date.strip_prefix("--").unwrap_or(date);
     parse_iso_date_part(date).is_some()
+        || parse_iso_month_day_part(partial_date).is_some()
+        || parse_iso_month_day_from_full_date(date).is_some()
         || parse_calendar_partial_date(date).is_some()
         || matches!(
             text.to_ascii_lowercase().as_str(),
@@ -235,6 +263,47 @@ fn parse_iso_month_day_part(date: &str) -> Option<(u32, u32)> {
         return None;
     }
     Some((month.parse().ok()?, day.parse().ok()?))
+}
+
+fn parse_iso_month_day_from_full_date(date: &str) -> Option<(i32, u32, u32)> {
+    let fields = date.split('-').collect::<Vec<_>>();
+    let (year, month, day) = if date.len() == ISO_YEAR_DIGITS + ISO_MONTH_DIGITS + ISO_DAY_DIGITS
+        && date.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        (
+            date[..ISO_YEAR_DIGITS].parse().ok()?,
+            &date[ISO_YEAR_DIGITS..ISO_YEAR_DIGITS + ISO_MONTH_DIGITS],
+            &date[ISO_YEAR_DIGITS + ISO_MONTH_DIGITS..],
+        )
+    } else if date.len() == EXTENDED_YEAR_DIGITS + ISO_MONTH_DIGITS + ISO_DAY_DIGITS + 1
+        && date.starts_with(['+', '-'])
+        && date[1..].bytes().all(|byte| byte.is_ascii_digit())
+    {
+        (
+            date[..=EXTENDED_YEAR_DIGITS].parse().ok()?,
+            &date[1 + EXTENDED_YEAR_DIGITS..1 + EXTENDED_YEAR_DIGITS + ISO_MONTH_DIGITS],
+            &date[1 + EXTENDED_YEAR_DIGITS + ISO_MONTH_DIGITS..],
+        )
+    } else {
+        match fields.as_slice() {
+            [year, month, day] if year.len() == ISO_YEAR_DIGITS => {
+                (year.parse::<i32>().ok()?, *month, *day)
+            }
+            [year, month, day]
+                if year.len() == EXTENDED_YEAR_DIGITS + 1 && year.starts_with(['+', '-']) =>
+            {
+                (year.parse::<i32>().ok()?, *month, *day)
+            }
+            ["", year, month, day] if year.len() == EXTENDED_YEAR_DIGITS => {
+                (format!("-{year}").parse::<i32>().ok()?, *month, *day)
+            }
+            _ => return None,
+        }
+    };
+    if year == 0 || month.len() != ISO_MONTH_DIGITS || day.len() != ISO_DAY_DIGITS {
+        return None;
+    }
+    Some((year, month.parse().ok()?, day.parse().ok()?))
 }
 
 fn date_part(text: &str) -> &str {
