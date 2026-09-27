@@ -5,6 +5,14 @@ use super::*;
 
 const DEFAULT_REFERENCE_ISO_YEAR: i32 = 1972;
 const DEFAULT_REFERENCE_ISO_DAY: u32 = 1;
+const BASIC_ISO_YEAR_MONTH_LENGTH: usize = 6;
+const BASIC_ISO_DATE_LENGTH: usize = BASIC_ISO_YEAR_MONTH_LENGTH + 2;
+const SIGNED_COMPACT_YEAR_MONTH_LENGTH: usize = 9;
+const SIGNED_COMPACT_DATE_LENGTH: usize = SIGNED_COMPACT_YEAR_MONTH_LENGTH + 2;
+const BASIC_ISO_YEAR_LENGTH: usize = 4;
+const EXTENDED_ISO_YEAR_LENGTH: usize = 7;
+const BASIC_ISO_TIME_MINUTES_LENGTH: usize = 4;
+const BASIC_ISO_TIME_SECONDS_LENGTH: usize = 6;
 const PLAIN_MONTH_DAY_GETTERS: &[(&str, Native)] = &[
     ("calendarId", Native::TemporalPlainMonthDayCalendarIdGetter),
     ("day", Native::TemporalPlainMonthDayDayGetter),
@@ -281,6 +289,12 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if matches!(
+            native,
+            Native::TemporalPlainMonthDayCompare | Native::TemporalPlainYearMonthCompare
+        ) {
+            return self.temporal_calendar_projection_compare(p, native, args);
+        }
         match self.heap.get(this) {
             Some(Cell::TemporalPlainMonthDay {
                 month,
@@ -326,6 +340,79 @@ impl<H: Host> Vm<H> {
             p,
             "Temporal calendar method called on incompatible receiver".into(),
         ))
+    }
+
+    fn temporal_calendar_projection_compare(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (constructor_native, from_native) = match native {
+            Native::TemporalPlainMonthDayCompare => (
+                Native::TemporalPlainMonthDay,
+                Native::TemporalPlainMonthDayFrom,
+            ),
+            Native::TemporalPlainYearMonthCompare => (
+                Native::TemporalPlainYearMonth,
+                Native::TemporalPlainYearMonthFrom,
+            ),
+            _ => unreachable!("not a Temporal calendar compare native"),
+        };
+        let constructor = self.native_value(constructor_native);
+        let left = self.temporal_calendar_projection_from(
+            p,
+            from_native,
+            constructor,
+            &[args.first().copied().unwrap_or(Value::UNDEFINED)],
+        )?;
+        let right = self.temporal_calendar_projection_from(
+            p,
+            from_native,
+            constructor,
+            &[args.get(1).copied().unwrap_or(Value::UNDEFINED)],
+        )?;
+        self.temporal_calendar_projection_order(left, right, native)
+    }
+
+    fn temporal_calendar_projection_order(
+        &mut self,
+        left: Value,
+        right: Value,
+        native: Native,
+    ) -> Result<Value, JsError> {
+        let ordering = match (native, self.heap.get(left), self.heap.get(right)) {
+            (
+                Native::TemporalPlainMonthDayCompare,
+                Some(Cell::TemporalPlainMonthDay {
+                    month: lm, day: ld, ..
+                }),
+                Some(Cell::TemporalPlainMonthDay {
+                    month: rm, day: rd, ..
+                }),
+            ) => (lm, ld).cmp(&(rm, rd)),
+            (
+                Native::TemporalPlainYearMonthCompare,
+                Some(Cell::TemporalPlainYearMonth {
+                    year: ly,
+                    month: lm,
+                    reference_iso_day: ld,
+                    ..
+                }),
+                Some(Cell::TemporalPlainYearMonth {
+                    year: ry,
+                    month: rm,
+                    reference_iso_day: rd,
+                    ..
+                }),
+            ) => (ly, lm, ld).cmp(&(ry, rm, rd)),
+            _ => unreachable!("calendar comparison operands are not branded"),
+        };
+        Ok(Value::number(match ordering {
+            std::cmp::Ordering::Less => -1.0,
+            std::cmp::Ordering::Equal => 0.0,
+            std::cmp::Ordering::Greater => 1.0,
+        }))
     }
 
     fn temporal_plain_month_day_native(
@@ -443,6 +530,10 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainYearMonthWith => {
                 self.temporal_plain_year_month_with(p, args, year, month, calendar, reference_day)
             }
+            Native::TemporalPlainYearMonthUntil | Native::TemporalPlainYearMonthSince => self
+                .temporal_plain_year_month_difference_native(
+                    p, native, args, year, month, calendar,
+                ),
             Native::TemporalPlainYearMonthToPlainDate => {
                 let item = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if !self.is_object_like(item) {
@@ -572,6 +663,39 @@ impl<H: Host> Vm<H> {
         let year_value = self.get_property(p, changes, year_atom)?;
         let year = self.plain_date_optional_integer(p, year_value)?;
         Ok((year, month, month_code))
+    }
+
+    fn temporal_plain_year_month_difference_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+        year: i32,
+        month: u32,
+        calendar: String,
+    ) -> Result<Value, JsError> {
+        let constructor = self.native_value(Native::TemporalPlainYearMonth);
+        let other_args = [args.first().copied().unwrap_or(Value::UNDEFINED)];
+        let other = self.temporal_plain_year_month_from(p, constructor, &other_args)?;
+        let (other_year, other_month, other_calendar) = match self.heap.get(other) {
+            Some(Cell::TemporalPlainYearMonth {
+                year,
+                month,
+                calendar,
+                ..
+            }) => (*year, *month, calendar.clone()),
+            _ => return Err(self.type_error(p, "Invalid PlainYearMonth".into())),
+        };
+        if calendar != other_calendar {
+            return Err(self.range_error(p, "Calendars must match".into()));
+        }
+        self.temporal_plain_year_month_difference(
+            p,
+            native,
+            (year, month),
+            (other_year, other_month),
+            args.get(1).copied().unwrap_or(Value::UNDEFINED),
+        )
     }
 
     fn validate_plain_year_month_changes(
@@ -951,48 +1075,174 @@ fn parse_plain_year_month_string<H: Host>(
     text: &str,
 ) -> Result<(super::temporal_date::IsoDate, String), JsError> {
     if let Some(date) = temporal_date_parse::parse_plain_date_string(text) {
+        validate_plain_year_month_calendar_string(vm, p, text, &date.1)?;
         return Ok(date);
     }
+    if let Some((padded, year, month)) = normalize_year_month_date(text) {
+        if let Some(date) = temporal_date_parse::parse_plain_date_string(&padded) {
+            validate_plain_year_month_calendar_string(vm, p, text, &date.1)?;
+            return Ok(date);
+        }
+        if !text.contains(['Z', 'z'])
+            && let Some((local, _, _)) = super::temporal_zoned_date_time::parse_iso_zoned_base(text)
+        {
+            use chrono::Datelike;
+            let date = checked_iso_date(local.year(), local.month() as i32, 1)
+                .ok_or_else(|| vm.range_error(p, "Invalid PlainYearMonth".into()))?;
+            let calendar = temporal_date_parse::parse_calendar_identifier(text)
+                .ok_or_else(|| vm.range_error(p, "Invalid PlainYearMonth".into()))?;
+            validate_plain_year_month_calendar_string(vm, p, text, &calendar)?;
+            return Ok((date, calendar));
+        }
+        if !text.contains(['Z', 'z']) {
+            if let Ok(parsed) = parse_plain_year_month_boundary(vm, p, text, year, month) {
+                validate_plain_year_month_calendar_string(vm, p, text, &parsed.1)?;
+                return Ok(parsed);
+            }
+        }
+    }
+    Err(vm.range_error(p, "Invalid PlainYearMonth".into()))
+}
+
+fn validate_plain_year_month_calendar_string<H: Host>(
+    vm: &mut Vm<H>,
+    p: &ResidualProgram,
+    text: &str,
+    calendar: &str,
+) -> Result<(), JsError> {
+    let base = text.split('[').next().unwrap_or(text);
+    if calendar != "iso8601" && !base.contains(['T', 't', ' ']) && base.len() <= 7 {
+        return Err(vm.range_error(p, "Invalid PlainYearMonth".into()));
+    }
+    Ok(())
+}
+
+fn normalize_year_month_date(text: &str) -> Option<(String, i32, u32)> {
     let annotation = text.find('[').unwrap_or(text.len());
     let (base, suffix) = text.split_at(annotation);
-    let Some((year, month)) = base.rsplit_once('-') else {
-        return Err(vm.range_error(p, "Invalid PlainYearMonth".into()));
+    let time_start = base.find(['T', 't', ' ']).unwrap_or(base.len());
+    let (date, time) = base.split_at(time_start);
+    let (year, month) = year_month_components(date)?;
+    let time = normalize_iso_time(time)?;
+    Some((
+        format!("{year}-{month}-01{time}{suffix}"),
+        year.parse().ok()?,
+        month.parse().ok()?,
+    ))
+}
+
+fn normalize_iso_time(time: &str) -> Option<String> {
+    if time.is_empty() {
+        return Some(String::new());
+    }
+    let (designator, clock_and_offset) = time.split_at(1);
+    let offset_start = clock_and_offset
+        .find(['+', '-'])
+        .map(|index| index + 1)
+        .unwrap_or(time.len());
+    let (clock, offset) = time[1..].split_at(offset_start - 1);
+    let fraction_start = clock.find(['.', ',']).unwrap_or(clock.len());
+    let (clock, fraction) = clock.split_at(fraction_start);
+    let clock = match clock.len() {
+        BASIC_ISO_TIME_MINUTES_LENGTH => {
+            format!("{}:{}", &clock[..2], &clock[2..])
+        }
+        BASIC_ISO_TIME_SECONDS_LENGTH => {
+            format!("{}:{}:{}", &clock[..2], &clock[2..4], &clock[4..])
+        }
+        _ => clock.to_owned(),
     };
-    let extended = year.starts_with(['+', '-']);
-    let year_digits = year.strip_prefix(['+', '-']).unwrap_or(year);
-    let year_valid = (4..=6).contains(&year_digits.len())
-        && year_digits.bytes().all(|byte| byte.is_ascii_digit());
-    let month_valid = month.len() == 2 && month.bytes().all(|byte| byte.is_ascii_digit());
-    if !year_valid || !month_valid || (extended && year_digits.len() != 6) {
-        return Err(vm.range_error(p, "Invalid PlainYearMonth".into()));
+    let offset = normalize_iso_offset(offset)?;
+    Some(format!("{designator}{clock}{fraction}{offset}"))
+}
+
+fn normalize_iso_offset(offset: &str) -> Option<String> {
+    if offset.is_empty() {
+        return Some(String::new());
     }
-    let padded = format!("{base}-01{suffix}");
-    if let Some(parsed) = temporal_date_parse::parse_plain_date_string(&padded) {
-        return Ok(parsed);
+    let (sign, digits) = offset.split_at(1);
+    match digits.len() {
+        4 if digits.bytes().all(|byte| byte.is_ascii_digit()) => {
+            Some(format!("{sign}{}:{}", &digits[..2], &digits[2..]))
+        }
+        6 if digits.bytes().all(|byte| byte.is_ascii_digit()) => Some(format!(
+            "{sign}{}:{}:{}",
+            &digits[..2],
+            &digits[2..4],
+            &digits[4..]
+        )),
+        _ => Some(offset.to_owned()),
     }
-    parse_plain_year_month_boundary(vm, p, text, year, month, suffix)
+}
+
+fn year_month_components(date: &str) -> Option<(&str, &str)> {
+    if date.bytes().all(|byte| byte.is_ascii_digit()) {
+        return compact_year_month_components(date);
+    }
+    if date.starts_with(['+', '-']) && date[1..].bytes().all(|byte| byte.is_ascii_digit()) {
+        return signed_compact_year_month_components(date);
+    }
+    let fields = date.split('-').collect::<Vec<_>>();
+    match fields.as_slice() {
+        ["", year, month] if valid_iso_month(month) => Some((&date[..year.len() + 1], *month)),
+        ["", year, month, day] if valid_iso_month(month) && valid_iso_day(day) => {
+            Some((&date[..year.len() + 1], *month))
+        }
+        [year, month] if valid_iso_month(month) => Some((*year, *month)),
+        [year, month, day] if valid_iso_month(month) && valid_iso_day(day) => Some((*year, *month)),
+        _ => None,
+    }
+}
+
+fn valid_iso_month(value: &str) -> bool {
+    value.len() == ISO_MONTH_CODE_DIGITS && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn valid_iso_day(value: &str) -> bool {
+    valid_iso_month(value)
+}
+
+fn compact_year_month_components(date: &str) -> Option<(&str, &str)> {
+    match date.len() {
+        BASIC_ISO_YEAR_MONTH_LENGTH => Some((
+            &date[..BASIC_ISO_YEAR_LENGTH],
+            &date[BASIC_ISO_YEAR_LENGTH..],
+        )),
+        BASIC_ISO_DATE_LENGTH => Some((
+            &date[..BASIC_ISO_YEAR_LENGTH],
+            &date[BASIC_ISO_YEAR_LENGTH..BASIC_ISO_YEAR_LENGTH + 2],
+        )),
+        _ => None,
+    }
+}
+
+fn signed_compact_year_month_components(date: &str) -> Option<(&str, &str)> {
+    match date.len() {
+        SIGNED_COMPACT_YEAR_MONTH_LENGTH => Some((
+            &date[..EXTENDED_ISO_YEAR_LENGTH],
+            &date[EXTENDED_ISO_YEAR_LENGTH..],
+        )),
+        SIGNED_COMPACT_DATE_LENGTH => Some((
+            &date[..EXTENDED_ISO_YEAR_LENGTH],
+            &date[EXTENDED_ISO_YEAR_LENGTH..EXTENDED_ISO_YEAR_LENGTH + 2],
+        )),
+        _ => None,
+    }
 }
 
 fn parse_plain_year_month_boundary<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     text: &str,
-    year: &str,
-    month: &str,
-    suffix: &str,
+    year: i32,
+    month: u32,
 ) -> Result<(super::temporal_date::IsoDate, String), JsError> {
-    let year = year
-        .parse::<i32>()
-        .map_err(|_| vm.range_error(p, "Invalid PlainYearMonth".into()))?;
-    let month = month
-        .parse::<u32>()
-        .map_err(|_| vm.range_error(p, "Invalid PlainYearMonth".into()))?;
     let lower_edge = year == super::temporal_date::MIN_ISO_YEAR && month == 4;
     let upper_edge = year == super::temporal_date::MAX_ISO_YEAR && month == 9;
     if !lower_edge && !upper_edge {
         return Err(vm.range_error(p, "Invalid PlainYearMonth".into()));
     }
-    let calendar = if suffix.is_empty() {
+    let calendar = if !text.contains('[') {
         "iso8601".to_owned()
     } else {
         temporal_date_parse::parse_calendar_identifier(text)

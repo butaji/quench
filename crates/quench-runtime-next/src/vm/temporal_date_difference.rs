@@ -40,6 +40,13 @@ struct DateDifferenceOptions {
     rounding_mode: DateRoundingMode,
 }
 
+struct YearMonthDifferenceOptions {
+    largest: DateUnit,
+    smallest: DateUnit,
+    increment: f64,
+    rounding_mode: DateRoundingMode,
+}
+
 enum ParsedOption<T> {
     Missing,
     Valid(T),
@@ -47,6 +54,89 @@ enum ParsedOption<T> {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn temporal_plain_year_month_difference(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        start: (i32, u32),
+        end: (i32, u32),
+        options: Value,
+    ) -> Result<Value, JsError> {
+        let settings = self.year_month_difference_options(p, options)?;
+        let direction = if native == Native::TemporalPlainYearMonthSince {
+            -1.0
+        } else {
+            1.0
+        };
+        let total = ((end.0 - start.0) * super::temporal_date::ISO_MONTHS_PER_YEAR + end.1 as i32
+            - start.1 as i32) as f64
+            * direction;
+        if total != 0.0 && settings.increment > f64::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+        {
+            return Err(self.range_error(p, "Invalid roundingIncrement".into()));
+        }
+        let (mut years, mut months) = year_month_difference_fields(total, &settings);
+        if years == 0.0 {
+            years = 0.0;
+        }
+        if months == 0.0 {
+            months = 0.0;
+        }
+        self.validate_year_month_difference_target(p, start, total, years, months)?;
+        let mut fields = [0.0; 10];
+        fields[0] = years;
+        fields[1] = months;
+        self.make_temporal_duration(p, fields)
+    }
+
+    fn year_month_difference_options(
+        &mut self,
+        p: &ResidualProgram,
+        options: Value,
+    ) -> Result<YearMonthDifferenceOptions, JsError> {
+        if options.is_undefined() {
+            return Ok(YearMonthDifferenceOptions::default());
+        }
+        if !self.is_object_like(options) {
+            return Err(self.type_error(p, "Invalid options".into()));
+        }
+        let largest = self.date_unit_option(p, options, "largestUnit")?;
+        let increment = self.date_increment_option(p, options)?;
+        let rounding_mode = self.date_rounding_mode_option(p, options)?;
+        let smallest = self.date_unit_option(p, options, "smallestUnit")?;
+        year_month_difference_settings(self, p, largest, smallest, increment, rounding_mode)
+    }
+
+    fn validate_year_month_difference_target(
+        &mut self,
+        p: &ResidualProgram,
+        start: (i32, u32),
+        total: f64,
+        years: f64,
+        months: f64,
+    ) -> Result<(), JsError> {
+        if total == 0.0 {
+            return Ok(());
+        }
+        if start.0 == super::temporal_date::MIN_ISO_YEAR && start.1 == 4 {
+            return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
+        }
+        let target = i128::from(start.0) * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+            + i128::from(start.1 - 1)
+            + (years * f64::from(super::temporal_date::ISO_MONTHS_PER_YEAR) + months) as i128;
+        let year =
+            i32::try_from(target.div_euclid(i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)))
+                .map_err(|_| self.range_error(p, "Invalid PlainYearMonth".into()))?;
+        let month =
+            i32::try_from(target.rem_euclid(i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)))
+                .map_err(|_| self.range_error(p, "Invalid PlainYearMonth".into()))?
+                + 1;
+        if super::temporal_date::checked_iso_date(year, month, 1).is_none() {
+            return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
+        }
+        Ok(())
+    }
+
     pub(super) fn temporal_plain_date_difference(
         &mut self,
         p: &ResidualProgram,
@@ -157,6 +247,92 @@ impl Default for DateDifferenceOptions {
             increment: 1.0,
             rounding_mode: DateRoundingMode::Trunc,
         }
+    }
+}
+
+impl Default for YearMonthDifferenceOptions {
+    fn default() -> Self {
+        Self {
+            largest: DateUnit::Year,
+            smallest: DateUnit::Month,
+            increment: 1.0,
+            rounding_mode: DateRoundingMode::Trunc,
+        }
+    }
+}
+
+fn year_month_difference_settings<H: Host>(
+    vm: &mut Vm<H>,
+    p: &ResidualProgram,
+    largest: ParsedOption<DateUnit>,
+    smallest: ParsedOption<DateUnit>,
+    increment: f64,
+    rounding_mode: ParsedOption<DateRoundingMode>,
+) -> Result<YearMonthDifferenceOptions, JsError> {
+    let largest = match largest {
+        ParsedOption::Missing | ParsedOption::Valid(DateUnit::Auto) => DateUnit::Year,
+        ParsedOption::Valid(unit @ (DateUnit::Year | DateUnit::Month)) => unit,
+        ParsedOption::Valid(_) | ParsedOption::Invalid => {
+            return Err(vm.range_error(p, "Invalid largestUnit".into()));
+        }
+    };
+    let smallest = match smallest {
+        ParsedOption::Missing | ParsedOption::Valid(DateUnit::Auto) => DateUnit::Month,
+        ParsedOption::Valid(unit @ (DateUnit::Year | DateUnit::Month)) => unit,
+        ParsedOption::Valid(_) | ParsedOption::Invalid => {
+            return Err(vm.range_error(p, "Invalid smallestUnit".into()));
+        }
+    };
+    let rounding_mode = match rounding_mode {
+        ParsedOption::Missing => DateRoundingMode::Trunc,
+        ParsedOption::Valid(mode) => mode,
+        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid roundingMode".into())),
+    };
+    if !increment.is_finite()
+        || !(1.0..=DATE_DIFFERENCE_ROUNDING_INCREMENT_LIMIT).contains(&increment)
+        || !valid_date_unit_order(largest, smallest)
+    {
+        return Err(vm.range_error(p, "Invalid difference options".into()));
+    }
+    Ok(YearMonthDifferenceOptions {
+        largest,
+        smallest,
+        increment,
+        rounding_mode,
+    })
+}
+
+fn year_month_difference_fields(
+    total_months: f64,
+    settings: &YearMonthDifferenceOptions,
+) -> (f64, f64) {
+    if settings.smallest == DateUnit::Year {
+        return (
+            round_date_scalar(
+                total_months / MONTHS_PER_YEAR as f64,
+                settings.increment,
+                settings.rounding_mode,
+            ),
+            0.0,
+        );
+    }
+    if settings.largest == DateUnit::Month {
+        let months = round_date_scalar(total_months, settings.increment, settings.rounding_mode);
+        return (0.0, months);
+    }
+    let years = (total_months / MONTHS_PER_YEAR as f64).trunc();
+    let months = round_date_scalar(
+        total_months - years * MONTHS_PER_YEAR as f64,
+        settings.increment,
+        settings.rounding_mode,
+    );
+    if months.abs() >= MONTHS_PER_YEAR as f64 {
+        (
+            years + months.signum(),
+            months - months.signum() * MONTHS_PER_YEAR as f64,
+        )
+    } else {
+        (years, months)
     }
 }
 
