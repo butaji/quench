@@ -101,7 +101,7 @@ the full Test262 run fast enough to gate every kernel change.
 | ----- | ---- | ------- |
 | 0. Kernel | values, strings, heap, roots, shapes, storage, essential internal methods, Call/Construct, activations, realms, jobs, compiler, interpreter, specializers | nothing above it |
 | 1. Language library | spec abstract operations, exotic-object semantics, all intrinsics and builtins | the kernel API only |
-| 2. Algorithms | RegExp, Intl, Temporal, Date, numeric/string conversion (task 45) | no kernel or library types |
+| 2. Algorithms | RegExp, Intl, Temporal, Date, numeric/string conversion (task 45) | the algorithm boundary trait only; no kernel or library types |
 
 The watermark between layers 0 and 1 is a crate boundary crossed only through
 three declared tables:
@@ -131,15 +131,52 @@ is to its engine:
 
 | Legacy code | Examples | Route |
 | ----------- | -------- | ----- |
-| Pure algorithm (no `Value`, heap, realm, or interpreter types) | RegExp matcher, Intl/ICU, Temporal math, Date, number/string conversion, BigInt, URI, Unicode casing/normalization | Extract into a shared crate used by both runtimes (task 45); one authority, no copy |
+| Algorithm behind a narrow value boundary (no interpreter, environment, or storage access; only conversions, property reads, errors, and intrinsic ids) | RegExp matcher, Intl/ICU, Temporal, Date, number/string conversion, BigInt, URI, Unicode casing/normalization | Move into a shared crate generic over the algorithm boundary trait (task 45); both runtimes implement the trait; one authority, no copy |
 | Builtin written against spec operations | Array, Object, String, Promise, TypedArray, Proxy, collection methods | Port file by file onto the kernel API (task 46): Get, Set, DefineOwnProperty, HasProperty, Delete, OwnPropertyKeys, Call, Construct; keep the algorithm, replace storage access |
-| Evaluator, environments, heap, legacy reducer | — | Replaced by the v2 core (tasks 07–11); only proven edge-case logic is carried over |
+| Evaluator, environments, heap, legacy reducer | — | Replaced by the v2 core (tasks 07–11); legacy is a behavioral reference only, and only proven edge-case logic is carried over |
 
-The worklist is data, not directory order: task 19's frozen legacy outcomes
-diffed against the latest next-core run give every test that legacy passes and
-the next core fails. Each cluster in that diff names legacy code that already
+The first route covers the largest block of remaining Test262 files. Legacy
+Temporal, Intl, and Date (about 30k lines, roughly 10k Test262 files) reach
+their engine through about a dozen operations, measured on 2026-09-24:
+
+| Legacy operation | Call sites |
+| ---------------- | ---------: |
+| `ops::Builtin` intrinsic identities | 626 |
+| `throw_range_error` / `throw_type_error` | 1,009 |
+| `get_property_result` (may run guest getters) | 338 |
+| `to_string` / `to_number` / `to_primitive` / `to_object` | about 430 |
+| `is_object` / `is_symbol` | about 100 |
+| `ObjectData` construction, `realm_intrinsic` | about 75 |
+
+Legacy passes its VM implicitly (a thread-local machine and `Rc` values);
+the shared crates take an explicit `cx: &mut impl AlgorithmBoundary` instead.
+Moving a module is therefore mostly mechanical: legacy `Value` becomes the
+boundary's opaque value type, and ambient engine calls become `cx` calls.
+The substantive work is internal slots (guest state lives in a typed record
+owned by the runtime, not in named properties) and rooting (a value held
+across a `reenters` operation must be rooted by the next core's boundary
+implementation).
+
+The worklist is data, not directory order: task 48 freezes per-test legacy
+Test262 outcomes and diffs them against the latest next-core run, giving every
+test that legacy passes and the next core fails (task 19 freezes the Wasm and
+Node outcomes). Each cluster in that diff names legacy code that already
 implements the behavior; port it before writing new code. Tests legacy also
 fails are the only ones that need fresh implementation.
+
+Migration order:
+
+1. Freeze legacy Test262 outcomes and publish the legacy-pass/next-fail diff
+   (task 48).
+2. Declare the algorithm boundary trait; its operations are kernel primitive
+   table rows (task 46) and its first implementations are legacy and next
+   (task 45).
+3. Pilot the route on legacy `temporal/duration.rs`, then move the rest of
+   Temporal, Intl, and Date (tasks 45 and 15).
+4. Seed the library registry's names, lengths, and attributes from legacy
+   `builtin_meta/` (task 46).
+5. Port the spec-operation builtin families onto the kernel API in parallel
+   (tasks 12–17), each checked against the ratchet.
 
 ## Conformance ratchet
 
