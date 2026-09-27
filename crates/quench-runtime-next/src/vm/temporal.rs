@@ -14,6 +14,7 @@ const DURATION_FIELDS: [&str; 10] = [
 ];
 const DURATION_DATE_FIELD_LIMIT: f64 = 4_294_967_295.0;
 const DURATION_TOTAL_TIME_LIMIT_NANOS: i128 = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
+const DURATION_TOTAL_DECIMAL_DIGITS: usize = 32;
 const DURATION_TIME_NANOSECOND_SCALES: [i128; 7] = [
     86_400_000_000_000,
     3_600_000_000_000,
@@ -83,6 +84,7 @@ impl<H: Host> Vm<H> {
             ("with", Native::TemporalDurationWith),
             ("abs", Native::TemporalDurationAbs),
             ("negated", Native::TemporalDurationNegated),
+            ("total", Native::TemporalDurationTotal),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -179,6 +181,7 @@ impl<H: Host> Vm<H> {
                 }
                 self.make_temporal_duration(p, fields)
             }
+            Native::TemporalDurationTotal => self.temporal_duration_total(p, this, args),
             Native::TemporalDurationWith => {
                 let mut fields = self.duration_fields(p, this)?;
                 let options = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -343,6 +346,54 @@ impl<H: Host> Vm<H> {
             .map(|(value, scale)| *value as i128 * scale)
             .sum()
     }
+
+    fn temporal_duration_total(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let fields = self.duration_fields(p, this)?;
+        let options = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let (unit, relative_to) = match self.heap.get(options) {
+            Some(Cell::String(text)) => (text.to_string(), Value::UNDEFINED),
+            _ if self.is_object_like(options) => {
+                let relative_to_atom = self.intern_atom("relativeTo");
+                let relative_to = self.get_property(p, options, relative_to_atom)?;
+                let unit_atom = self.intern_atom("unit");
+                let unit = self.get_property(p, options, unit_atom)?;
+                if unit.is_undefined() {
+                    return Err(self.range_error(p, "unit is required".into()));
+                }
+                (self.to_string(p, unit)?.to_string(), relative_to)
+            }
+            _ => return Err(self.type_error(p, "Options must be an object or unit string".into())),
+        };
+        let unit = unit.strip_suffix('s').unwrap_or(&unit);
+        let index = DURATION_FIELDS
+            .iter()
+            .position(|field| field.strip_suffix('s').unwrap_or(field) == unit)
+            .ok_or_else(|| self.range_error(p, "Invalid unit".into()))?;
+        if (index <= 2 || fields[..3].iter().any(|value| *value != 0.0))
+            && relative_to.is_undefined()
+        {
+            return Err(self.range_error(p, "relativeTo required".into()));
+        }
+        if index <= 2 || fields[..3].iter().any(|value| *value != 0.0) {
+            return Err(self.range_error(p, "relativeTo required for calendar units".into()));
+        }
+        if !relative_to.is_undefined()
+            && !matches!(self.heap.get(relative_to), Some(Cell::String(_)))
+            && !self.is_object_like(relative_to)
+        {
+            return Err(self.type_error(p, "relativeTo must be a string or object".into()));
+        }
+        let divisor = DURATION_TIME_NANOSECOND_SCALES[index - 3];
+        Ok(Value::number(divide_duration_nanos(
+            self.duration_time_nanos(&fields),
+            divisor,
+        )))
+    }
 }
 
 fn duration_total_time_out_of_range(values: &[f64]) -> bool {
@@ -400,6 +451,28 @@ fn balance_duration_time(
         }
     });
     result
+}
+
+fn divide_duration_nanos(nanos: i128, divisor: i128) -> f64 {
+    let negative = nanos < 0;
+    let absolute = nanos.unsigned_abs();
+    let divisor = divisor as u128;
+    let whole = absolute / divisor;
+    let mut remainder = absolute % divisor;
+    if remainder == 0 {
+        return if negative { -(whole as f64) } else { whole as f64 };
+    }
+    let mut decimal = format!("{whole}.");
+    for _ in 0..DURATION_TOTAL_DECIMAL_DIGITS {
+        if remainder == 0 {
+            break;
+        }
+        remainder *= 10;
+        decimal.push(char::from(b'0' + (remainder / divisor) as u8));
+        remainder %= divisor;
+    }
+    let value = decimal.parse::<f64>().unwrap_or(f64::INFINITY);
+    if negative { -value } else { value }
 }
 
 fn format_duration(fields: &[f64; 10]) -> String {
