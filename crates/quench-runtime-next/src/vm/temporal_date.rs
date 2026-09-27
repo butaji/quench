@@ -654,7 +654,14 @@ impl<H: Host> Vm<H> {
         let month_code = if month_code_value.is_undefined() {
             None
         } else {
-            Some(self.plain_date_month_code(p, month_code_value)?)
+            if !self.is_string(month_code_value) {
+                return Err(self.type_error(p, "Invalid monthCode".into()));
+            }
+            let text = self.to_string(p, month_code_value)?.to_string();
+            Some(
+                parse_iso_month_code_syntax(&text)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?,
+            )
         };
         let year = self.get_property(p, value, year_atom)?;
         let year = self.plain_date_optional_integer(p, year)?;
@@ -662,6 +669,14 @@ impl<H: Host> Vm<H> {
         let (Some(day), Some(year)) = (day, year) else {
             return Err(self.type_error(p, "Missing PlainDate field".into()));
         };
+        let month_code = month_code
+            .map(|month| {
+                (1..=ISO_MONTHS_PER_YEAR)
+                    .contains(&month)
+                    .then_some(month)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+            })
+            .transpose()?;
         let month = match (month, month_code) {
             (Some(month), Some(month_code)) if month != month_code => {
                 return Err(self.range_error(p, "month and monthCode must agree".into()));
@@ -670,6 +685,9 @@ impl<H: Host> Vm<H> {
             (None, Some(month_code)) => month_code,
             (None, None) => return Err(self.type_error(p, "Missing PlainDate field".into())),
         };
+        if month < 1 || day < 1 {
+            return Err(self.range_error(p, "Invalid PlainDate".into()));
+        }
         let (month, day) = if constrain {
             let month = month.clamp(1, ISO_MONTHS_PER_YEAR);
             let last_day = iso_days_in_month(year, month).unwrap_or(31);

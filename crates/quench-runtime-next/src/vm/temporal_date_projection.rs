@@ -1202,7 +1202,7 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_year_month_construct(p, &args, constructor)
     }
 
-    fn temporal_calendar_property(
+    pub(super) fn temporal_calendar_property(
         &mut self,
         p: &ResidualProgram,
         value: Value,

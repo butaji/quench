@@ -6,6 +6,15 @@ const HOUR_LIMIT: i32 = 23;
 const MINUTE_SECOND_LIMIT: i32 = 59;
 const SUBSECOND_LIMIT: i32 = 999;
 
+struct PlainDateTimeFromFields {
+    calendar: String,
+    day: Option<i32>,
+    month: Option<i32>,
+    month_code: Option<i32>,
+    year: Option<i32>,
+    time: [Option<i32>; 6],
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal_plain_date_time(
         &mut self,
@@ -213,17 +222,26 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         if self.is_object_like(value) {
+            if !matches!(
+                self.heap.get(value),
+                Some(
+                    Cell::TemporalPlainDateTime { .. }
+                        | Cell::TemporalPlainDate { .. }
+                        | Cell::TemporalZonedDateTime { .. }
+                )
+            ) {
+                return self.temporal_plain_date_time_from_bag(p, constructor, value, args);
+            }
             let plain_date_constructor = self.native_value(Native::TemporalPlainDate);
             let date = self.temporal_plain_date_from(p, plain_date_constructor, &[value])?;
             let (year, month, day, calendar) = self.temporal_plain_date_slots(p, date)?;
-            let time = if matches!(self.heap.get(value), Some(Cell::TemporalPlainDate { .. })) {
-                [0; 6]
-            } else {
-                super::temporal_plain_date_time_conversion::to_date_time(self, p, value)?
-                    .map(|value| value as i32)
-            };
-            let _ =
-                self.plain_date_overflow(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+            let time = super::temporal_plain_date_time_conversion::to_date_time(
+                self,
+                p,
+                value,
+                args.get(1).copied().unwrap_or(Value::UNDEFINED),
+            )?
+            .map(|value| value as i32);
             let args = [
                 Value::number(f64::from(year)),
                 Value::number(f64::from(month)),
@@ -256,6 +274,199 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(date.year)),
             Value::number(f64::from(date.month)),
             Value::number(f64::from(date.day)),
+            Value::number(f64::from(time[0])),
+            Value::number(f64::from(time[1])),
+            Value::number(f64::from(time[2])),
+            Value::number(f64::from(time[3])),
+            Value::number(f64::from(time[4])),
+            Value::number(f64::from(time[5])),
+            self.heap.alloc(Cell::String(calendar.into())),
+        ];
+        self.temporal_plain_date_time_construct(p, &args, constructor)
+    }
+
+    fn temporal_plain_date_time_from_bag(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        bag: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let fields = self.read_plain_date_time_fields(p, bag)?;
+        let constrain =
+            self.plain_date_overflow(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        let resolved = self.resolve_plain_date_time_fields(p, fields, constrain)?;
+        self.make_plain_date_time(
+            p,
+            constructor,
+            resolved.0,
+            resolved.1,
+            resolved.2,
+            resolved.3,
+            resolved.4,
+        )
+    }
+
+    fn read_plain_date_time_fields(
+        &mut self,
+        p: &ResidualProgram,
+        bag: Value,
+    ) -> Result<PlainDateTimeFromFields, JsError> {
+        let calendar_atom = self.intern_atom("calendar");
+        let calendar = self.get_property(p, bag, calendar_atom)?;
+        let calendar = self.temporal_calendar_property(p, calendar)?;
+        let day = self.plain_date_field(p, bag, "day")?;
+        let mut time = [None; 6];
+        for (index, name) in super::temporal_plain_date_time_conversion::TIME_FIELDS
+            .iter()
+            .take(super::temporal_plain_date_time_conversion::TIME_FIELDS_BEFORE_MONTH)
+            .enumerate()
+        {
+            time[index] = self.plain_date_field(p, bag, name)?;
+        }
+        let month = self.plain_date_field(p, bag, "month")?;
+        let month_code = self.plain_date_time_month_code_field(p, bag)?;
+        for (index, name) in super::temporal_plain_date_time_conversion::TIME_FIELDS
+            .iter()
+            .enumerate()
+            .skip(super::temporal_plain_date_time_conversion::TIME_FIELDS_BEFORE_MONTH)
+        {
+            time[index] = self.plain_date_field(p, bag, name)?;
+        }
+        let year = self.plain_date_field(p, bag, "year")?;
+        Ok(PlainDateTimeFromFields {
+            calendar,
+            day,
+            month,
+            month_code,
+            year,
+            time,
+        })
+    }
+
+    fn plain_date_field(
+        &mut self,
+        p: &ResidualProgram,
+        bag: Value,
+        name: &str,
+    ) -> Result<Option<i32>, JsError> {
+        let atom = self.intern_atom(name);
+        let value = self.get_property(p, bag, atom)?;
+        self.plain_date_optional_integer(p, value)
+    }
+
+    fn plain_date_time_month_code_field(
+        &mut self,
+        p: &ResidualProgram,
+        bag: Value,
+    ) -> Result<Option<i32>, JsError> {
+        let month_code_atom = self.intern_atom("monthCode");
+        let value = self.get_property(p, bag, month_code_atom)?;
+        if value.is_undefined() {
+            return Ok(None);
+        }
+        let primitive = if self.is_string(value) {
+            value
+        } else if self.is_object_like(value) {
+            self.to_primitive(p, value, "string")?
+        } else {
+            return Err(self.type_error(p, "Invalid monthCode".into()));
+        };
+        let Some(Cell::String(text)) = self.heap.get(primitive) else {
+            return Err(self.type_error(p, "Invalid monthCode".into()));
+        };
+        super::temporal_date::parse_iso_month_code_syntax(text.host_string())
+            .map(Some)
+            .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+    }
+
+    fn resolve_plain_date_time_fields(
+        &mut self,
+        p: &ResidualProgram,
+        fields: PlainDateTimeFromFields,
+        constrain: bool,
+    ) -> Result<(i32, u32, u32, String, [i32; 6]), JsError> {
+        let year = fields
+            .year
+            .ok_or_else(|| self.type_error(p, "Missing year".into()))?;
+        let day = fields
+            .day
+            .ok_or_else(|| self.type_error(p, "Missing day".into()))?;
+        let month_code = fields
+            .month_code
+            .map(|month| {
+                (1..=super::temporal_date::ISO_MONTHS_PER_YEAR)
+                    .contains(&month)
+                    .then_some(month)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+            })
+            .transpose()?;
+        let month = match (fields.month, month_code) {
+            (Some(month), Some(code)) if month != code => {
+                return Err(self.range_error(p, "month and monthCode must agree".into()));
+            }
+            (Some(month), _) => month,
+            (None, Some(code)) => code,
+            (None, None) => return Err(self.type_error(p, "Missing month".into())),
+        };
+        if month < 1 || day < 1 {
+            return Err(self.range_error(p, "Invalid PlainDateTime".into()));
+        }
+        let month = if constrain {
+            month.min(super::temporal_date::ISO_MONTHS_PER_YEAR)
+        } else {
+            month
+        };
+        let max_day = super::temporal_date::iso_days_in_month(year, month).unwrap_or(31);
+        let day = if constrain { day.min(max_day) } else { day };
+        let date = checked_iso_date(year, month, day)
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        let time = self.resolve_plain_date_time_time(p, fields.time, constrain)?;
+        super::temporal_plain_date_time_conversion::validate_bounds(
+            self, p, date.year, date.month, date.day, time,
+        )?;
+        Ok((date.year, date.month, date.day, fields.calendar, time))
+    }
+
+    fn resolve_plain_date_time_time(
+        &mut self,
+        p: &ResidualProgram,
+        fields: [Option<i32>; 6],
+        constrain: bool,
+    ) -> Result<[i32; 6], JsError> {
+        let time = fields
+            .into_iter()
+            .zip(super::temporal_plain_date_time_conversion::TIME_LIMITS)
+            .map(|(value, limit)| {
+                let value = value.unwrap_or_default();
+                if constrain {
+                    value.clamp(0, limit)
+                } else {
+                    value
+                }
+            })
+            .collect::<Vec<_>>();
+        let [hour, microsecond, millisecond, minute, nanosecond, second] =
+            <[i32; 6]>::try_from(time).map_err(|_| JsError("invalid time field width".into()))?;
+        let time = [hour, minute, second, millisecond, microsecond, nanosecond];
+        self.validate_plain_date_time_time(p, &time)?;
+        Ok(time)
+    }
+
+    fn make_plain_date_time(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        year: i32,
+        month: u32,
+        day: u32,
+        calendar: String,
+        time: [i32; 6],
+    ) -> Result<Value, JsError> {
+        let args = [
+            Value::number(f64::from(year)),
+            Value::number(f64::from(month)),
+            Value::number(f64::from(day)),
             Value::number(f64::from(time[0])),
             Value::number(f64::from(time[1])),
             Value::number(f64::from(time[2])),
