@@ -294,11 +294,15 @@ impl<H: Host> Vm<H> {
                 ))
             }
             "week" => {
-                let days_per_week = super::temporal_date_arithmetic::DAYS_PER_WEEK;
-                Some((
-                    (weeks * days_per_week + i128::from(days)) * nanos_per_day + subday,
-                    days_per_week * nanos_per_day,
-                ))
+                if days == 0 && time == 0 {
+                    None
+                } else {
+                    let days_per_week = super::temporal_date_arithmetic::DAYS_PER_WEEK;
+                    Some((
+                        (weeks * days_per_week + i128::from(days)) * nanos_per_day + subday,
+                        days_per_week * nanos_per_day,
+                    ))
+                }
             }
             _ => None,
         };
@@ -324,17 +328,13 @@ impl<H: Host> Vm<H> {
                 }
                 "week" if largest == "week" => weeks = rounded,
                 "week" => {
-                    days = i64::try_from(
-                        rounded * super::temporal_date_arithmetic::DAYS_PER_WEEK,
-                    )
-                    .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
+                    days = i64::try_from(rounded * super::temporal_date_arithmetic::DAYS_PER_WEEK)
+                        .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
                 }
                 _ => {}
             }
         }
-        if largest == "year"
-            && !matches!(options.smallest, "year" | "month" | "week" | "day")
-        {
+        if largest == "year" && !matches!(options.smallest, "year" | "month" | "week" | "day") {
             let anchor = shift_months_clamped(start.0, years * MONTHS_PER_YEAR)
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
             let year_days = i128::from(temporal_date::iso_days_in_year(anchor.year));
