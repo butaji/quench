@@ -610,7 +610,13 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainTimeCompare
             | Native::TemporalPlainTimeAdd
             | Native::TemporalPlainTimeSubtract
-            | Native::TemporalPlainTimeEquals => {
+            | Native::TemporalPlainTimeEquals
+            | Native::TemporalPlainTimeHourGetter
+            | Native::TemporalPlainTimeMinuteGetter
+            | Native::TemporalPlainTimeSecondGetter
+            | Native::TemporalPlainTimeMillisecondGetter
+            | Native::TemporalPlainTimeMicrosecondGetter
+            | Native::TemporalPlainTimeNanosecondGetter => {
                 self.temporal_plain_time_native(p, native, this, args)
             }
             Native::TemporalPlainTimeRound

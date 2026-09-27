@@ -92,6 +92,31 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
+        for (name, native) in [
+            ("hour", Native::TemporalPlainTimeHourGetter),
+            ("minute", Native::TemporalPlainTimeMinuteGetter),
+            ("second", Native::TemporalPlainTimeSecondGetter),
+            ("millisecond", Native::TemporalPlainTimeMillisecondGetter),
+            ("microsecond", Native::TemporalPlainTimeMicrosecondGetter),
+            ("nanosecond", Native::TemporalPlainTimeNanosecondGetter),
+        ] {
+            let getter = self.native_value(native);
+            self.set_builtin_function_name(getter, &format!("get {name}"))?;
+            let atom = self.intern_atom(name);
+            self.set_property(prototype, atom, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
         self.set_builtin_value_named(temporal, "PlainTime", constructor)
     }
 
@@ -129,6 +154,12 @@ impl<H: Host> Vm<H> {
                 | Native::TemporalPlainTimeToString
                 | Native::TemporalPlainTimeToJSON
                 | Native::TemporalPlainTimeWith
+                | Native::TemporalPlainTimeHourGetter
+                | Native::TemporalPlainTimeMinuteGetter
+                | Native::TemporalPlainTimeSecondGetter
+                | Native::TemporalPlainTimeMillisecondGetter
+                | Native::TemporalPlainTimeMicrosecondGetter
+                | Native::TemporalPlainTimeNanosecondGetter
         ) && !self.temporal_plain_time_has_brand(this)
         {
             return Err(self.type_error(p, "Not a PlainTime".into()));
@@ -154,6 +185,23 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalPlainTime {
             return Err(self.type_error(p, "Temporal.PlainTime requires new".into()));
+        }
+        let getter_name = match native {
+            Native::TemporalPlainTimeHourGetter => Some("hour"),
+            Native::TemporalPlainTimeMinuteGetter => Some("minute"),
+            Native::TemporalPlainTimeSecondGetter => Some("second"),
+            Native::TemporalPlainTimeMillisecondGetter => Some("millisecond"),
+            Native::TemporalPlainTimeMicrosecondGetter => Some("microsecond"),
+            Native::TemporalPlainTimeNanosecondGetter => Some("nanosecond"),
+            _ => None,
+        };
+        if let Some(name) = getter_name {
+            let time = super::temporal_plain_date_time_conversion::to_time(self, p, this)?;
+            let index = PLAIN_TIME_FIELDS
+                .iter()
+                .position(|field| *field == name)
+                .expect("PlainTime getter is a time field");
+            return Ok(Value::number(f64::from(time[index])));
         }
         if matches!(native, Native::TemporalPlainTimeAdd | Native::TemporalPlainTimeSubtract) {
             let duration = self.duration_record(
