@@ -1,30 +1,8 @@
-use super::{Cell, Heap};
+use super::{Cell, CellKind, Heap};
 use crate::value::Value;
 use std::mem::size_of;
 
-const KIND_NAMES: [&str; 20] = [
-    "object",
-    "array",
-    "map",
-    "set",
-    "iterator",
-    "weak_map",
-    "weak_set",
-    "weak_ref",
-    "function",
-    "environment",
-    "string",
-    "bigint",
-    "symbol",
-    "date",
-    "error",
-    "regexp",
-    "array_from_async",
-    "temporal_duration",
-    "temporal_plain_date",
-    "temporal_plain_date_time",
-];
-const KINDS: usize = KIND_NAMES.len();
+const KINDS: usize = CellKind::NAMES.len();
 const BUCKETS: usize = 8;
 
 #[derive(Default)]
@@ -50,7 +28,7 @@ pub(crate) struct MemoryProfile {
 impl MemoryProfile {
     pub(super) fn allocated(&mut self, index: usize, cell: &Cell) {
         self.clock += 1;
-        let kind = Heap::cell_kind(cell);
+        let kind = Heap::cell_kind(cell) as usize;
         let bytes = Heap::cell_payload_bytes(cell);
         self.ensure_slot(index);
         self.births[index] = self.clock;
@@ -73,7 +51,7 @@ impl MemoryProfile {
 
     pub(super) fn freed(&mut self, index: usize, cell: &Cell) {
         let kind = self.kinds[index] as usize;
-        debug_assert_eq!(kind, Heap::cell_kind(cell));
+        debug_assert_eq!(kind, Heap::cell_kind(cell) as usize);
         let bytes = self.birth_bytes[index];
         self.live_counts[kind] -= 1;
         self.live_birth_bytes[kind] -= bytes as u64;
@@ -91,7 +69,7 @@ impl MemoryProfile {
     ) {
         eprintln!(
             "{{\"kind\":\"rqj-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":{:?},\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
-            KIND_NAMES,
+            CellKind::NAMES,
             self.clock,
             self.allocated_counts,
             self.allocated_bytes,
@@ -120,7 +98,7 @@ impl Heap {
     pub(crate) fn cell_counts(&self) -> [usize; KINDS] {
         let mut counts = [0; KINDS];
         for cell in self.slots.iter().filter_map(|slot| slot.cell.as_ref()) {
-            counts[Self::cell_kind(cell)] += 1;
+            counts[Self::cell_kind(cell) as usize] += 1;
         }
         counts
     }
@@ -132,7 +110,7 @@ impl Heap {
     pub(crate) fn live_payload_bytes(&self) -> [usize; KINDS] {
         let mut bytes = [0; KINDS];
         for cell in self.slots.iter().filter_map(|slot| slot.cell.as_ref()) {
-            bytes[Self::cell_kind(cell)] += Self::cell_payload_bytes(cell);
+            bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
         }
         bytes
     }

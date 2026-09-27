@@ -5,6 +5,10 @@ edition = "2021"
 description = "ECMA-262 test262 runner for a host JavaScript engine"
 license = "MIT"
 
+[features]
+profile-aggregate = ["quench-runtime-next/profile-aggregate"]
+profile-memory = ["quench-runtime-next/profile-memory"]
+
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
