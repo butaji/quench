@@ -111,10 +111,27 @@ macro_rules! layout_accessors {
                     && self.result_flags() & SET_THIS_REGISTER != 0
             }
 
-            #[allow(dead_code)]
             pub(crate) fn writes_numeric_local(self) -> bool {
                 self.op().result_layout().allows_numeric_local()
                     && self.result_flags() & super::NUMERIC_LOCAL_TARGET != 0
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn numeric_local_target(self) -> Option<Register> {
+                self.writes_numeric_local().then(|| self.result_register())
+            }
+
+            #[allow(dead_code)]
+            pub(crate) fn set_result_local_target(&mut self, local: Register) {
+                debug_assert!(self.op().result_layout().allows_numeric_local());
+                debug_assert!(local <= REGISTER_MASK);
+                *self = Self::new(
+                    self.op(),
+                    self.result_flags() | super::NUMERIC_LOCAL_TARGET | local,
+                    self.b(),
+                    self.c(),
+                    self.imm(),
+                );
             }
 
             #[allow(dead_code)]
