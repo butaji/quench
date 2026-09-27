@@ -172,7 +172,7 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 28] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 19] = [
+const ZONED_DATE_TIME_METHODS: &[(&str, Native)] = &[
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("with", Native::TemporalZonedDateTimeWith),
     ("withCalendar", Native::TemporalZonedDateTimeWithCalendar),
@@ -193,6 +193,7 @@ const ZONED_DATE_TIME_METHODS: [(&str, Native); 19] = [
     ("toPlainDateTime", Native::TemporalZonedDateTimeToPlainDateTime),
     ("toPlainTime", Native::TemporalZonedDateTimeToPlainTime),
     ("toString", Native::TemporalZonedDateTimeToString),
+    ("toLocaleString", Native::TemporalZonedDateTimeToLocaleString),
     ("toJSON", Native::TemporalZonedDateTimeToJSON),
     ("valueOf", Native::TemporalZonedDateTimeValueOf),
 ];
@@ -269,7 +270,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        for (name, native) in ZONED_DATE_TIME_METHODS {
+        for (name, native) in ZONED_DATE_TIME_METHODS.iter().copied() {
             self.set_builtin_named(p, prototype, name, native)?;
         }
         if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
@@ -495,6 +496,13 @@ impl<H: Host> Vm<H> {
                 time_zone,
                 calendar,
             }));
+        }
+        if native == Native::TemporalZonedDateTimeToLocaleString {
+            return self.temporal_zoned_date_time_to_string(
+                p,
+                this,
+                ZonedDateTimeStringOptions::default(),
+            );
         }
         if matches!(
             native,

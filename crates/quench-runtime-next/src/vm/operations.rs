@@ -694,6 +694,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeSince
             | Native::TemporalZonedDateTimeToString
             | Native::TemporalZonedDateTimeToJSON
+            | Native::TemporalZonedDateTimeToLocaleString
             | Native::TemporalZonedDateTimeEpochNanosecondsGetter
             | Native::TemporalZonedDateTimeTimeZoneIdGetter
             | Native::TemporalZonedDateTimeCalendarIdGetter

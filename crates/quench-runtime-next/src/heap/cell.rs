@@ -398,6 +398,7 @@ pub(crate) enum Native {
     TemporalZonedDateTimeUntil, TemporalZonedDateTimeSince,
     TemporalZonedDateTimeToString,
     TemporalZonedDateTimeToJSON,
+    TemporalZonedDateTimeToLocaleString,
     TemporalZonedDateTimeTimeZoneIdGetter, TemporalZonedDateTimeCalendarIdGetter,
     TemporalZonedDateTimeYearGetter, TemporalZonedDateTimeMonthGetter,
     TemporalZonedDateTimeMonthCodeGetter,
