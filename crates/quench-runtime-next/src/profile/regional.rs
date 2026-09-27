@@ -1,5 +1,5 @@
 use super::Profile;
-use crate::bytecode::{DispatchClass, Op, ResidualProgram};
+use crate::bytecode::{ControlFlowLayout, DispatchClass, Instr, Op, ResidualProgram};
 
 impl Profile {
     #[inline(always)]
@@ -53,8 +53,8 @@ pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
             }
         }
         for (pc, instruction) in function.code.iter().enumerate() {
-            if is_backward_edge(instruction.op(), instruction.imm() as usize, pc) {
-                regions.push(region(profile, id, instruction.imm() as usize, pc, counts));
+            if let Some(start) = backward_edge_target(*instruction, pc) {
+                regions.push(region(profile, id, start, pc, counts));
             }
         }
     }
@@ -148,8 +148,15 @@ fn binary_count(function: &crate::bytecode::Function, counts: &[u64]) -> u64 {
         .sum()
 }
 
-fn is_backward_edge(op: Op, target: usize, pc: usize) -> bool {
-    matches!(op, Op::Jump | Op::JumpFalse | Op::JumpBinaryFalse) && target <= pc
+fn backward_edge_target(instruction: Instr, pc: usize) -> Option<usize> {
+    if !matches!(
+        instruction.op().control_flow_layout(),
+        ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
+    ) {
+        return None;
+    }
+    let target = instruction.jump_target() as usize;
+    (target <= pc).then_some(target)
 }
 
 impl Profile {
