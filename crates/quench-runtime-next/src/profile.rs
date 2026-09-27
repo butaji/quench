@@ -15,6 +15,9 @@ mod root_maps;
 mod virtual_opcode;
 
 #[cfg(feature = "profile-aggregate")]
+const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as usize + 1;
+
+#[cfg(feature = "profile-aggregate")]
 #[derive(Default)]
 pub(crate) struct Profile {
     pub opcodes: Vec<u64>,
@@ -51,8 +54,8 @@ pub(crate) struct Profile {
     pub method_cache_same_targets: [u64; 2],
     pub method_cache_cleared: [u64; 2],
     pub method_cache_dead_after_gc: u64,
-    pub operand_tags: [u64; 4],
-    pub binary_ops: [u64; 20],
+    pub operand_tags: [u64; crate::bytecode::OperandKind::COUNT],
+    pub binary_ops: [u64; BINARY_OPERATOR_COUNT],
     pub binary_operand_modes: Vec<u64>,
     pub method_argc: [u64; 9],
     pub call_sources: [u64; 5],
@@ -64,7 +67,7 @@ pub(crate) struct Profile {
     pub index_sets: [u64; 8],
     pub index_dispatches: [u64; 4],
     pub array_write_ownership: [u64; 2],
-    pub numeric_binary_paths: [[u64; 20]; 3],
+    pub numeric_binary_paths: [[u64; BINARY_OPERATOR_COUNT]; 3],
     pub branch_values: [[u64; 6]; 2],
     #[cfg(feature = "profile-trace")]
     pub trace: Vec<u8>,
@@ -240,9 +243,16 @@ impl Profile {
             let left = crate::bytecode::Operand(left).tag() as usize;
             let right = crate::bytecode::Operand(right).tag() as usize;
             if self.binary_operand_modes.is_empty() {
-                self.binary_operand_modes.resize(20 * 4 * 4, 0);
+                self.binary_operand_modes.resize(
+                    BINARY_OPERATOR_COUNT
+                        * crate::bytecode::OperandKind::COUNT
+                        * crate::bytecode::OperandKind::COUNT,
+                    0,
+                );
             }
-            self.binary_operand_modes[op * 16 + left * 4 + right] += 1;
+            let operand_kinds = crate::bytecode::OperandKind::COUNT;
+            self.binary_operand_modes
+                [op * operand_kinds * operand_kinds + left * operand_kinds + right] += 1;
         }
         #[cfg(not(feature = "profile-aggregate"))]
         let _ = (op, left, right);
