@@ -227,11 +227,12 @@ fn field_register(instruction: Instr, field: InstructionField) -> Register {
 
 fn field_base(instruction: Instr, fields: &[FieldSite]) -> u64 {
     match instruction.field_lookup() {
-        FieldLookup::Site(index) => fields
+        None => 0,
+        Some(FieldLookup::Site(index)) => fields
             .get(index)
             .and_then(|site| site.base.register_index())
             .map_or(0, bit),
-        FieldLookup::Atom { base, .. } => base.register_index().map_or(0, bit),
+        Some(FieldLookup::Atom { base, .. }) => base.register_index().map_or(0, bit),
     }
 }
 
