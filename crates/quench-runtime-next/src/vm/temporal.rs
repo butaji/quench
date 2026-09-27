@@ -491,7 +491,7 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "relativeTo required".into()));
         }
         if index <= 2 || fields[..3].iter().any(|value| *value != 0.0) {
-            return Err(self.range_error(p, "relativeTo required for calendar units".into()));
+            return self.temporal_duration_total_relative_date(p, &fields, index, relative_to);
         }
         if !relative_to.is_undefined()
             && !matches!(self.heap.get(relative_to), Some(Cell::String(_)))
@@ -504,6 +504,52 @@ impl<H: Host> Vm<H> {
             self.duration_time_nanos(&fields),
             divisor,
         )))
+    }
+
+    fn temporal_duration_total_relative_date(
+        &mut self,
+        p: &ResidualProgram,
+        fields: &[f64; 10],
+        unit: usize,
+        relative_to: Value,
+    ) -> Result<Value, JsError> {
+        if fields[4..].iter().any(|value| *value != 0.0) {
+            return Err(self.range_error(p, "relativeTo required for calendar units".into()));
+        }
+        let start = if let Some(Cell::TemporalPlainDate { year, month, day, .. }) =
+            self.heap.get(relative_to)
+        {
+            super::temporal_date::IsoDate {
+                year: *year,
+                month: *month,
+                day: *day,
+            }
+        } else if let Some(Cell::String(text)) = self.heap.get(relative_to) {
+            let (date, _) = super::temporal_date_parse::parse_plain_date_string(text.host_string())
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            date
+        } else {
+            let constructor = self.temporal_plain_date_constructor(p)?;
+            let args = [relative_to];
+            let date = self.temporal_plain_date_from(p, constructor, &args)?;
+            let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
+            super::temporal_date::IsoDate { year, month, day }
+        };
+        let months = fields[0] * 12.0 + fields[1];
+        let date = super::temporal_date::shift_iso_months(start, months as i128)
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+        let days = fields[2] * 7.0 + fields[3];
+        let end = super::temporal_date::shift_iso_days(date, days as i64)
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+        let unit = match unit {
+            0 => super::temporal_date_difference::DateUnit::Year,
+            1 => super::temporal_date_difference::DateUnit::Month,
+            2 => super::temporal_date_difference::DateUnit::Week,
+            _ => super::temporal_date_difference::DateUnit::Day,
+        };
+        let total = super::temporal_date_difference::plain_date_total_between(start, end, unit)
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+        Ok(Value::number(total))
     }
 
     fn temporal_duration_to_string(
