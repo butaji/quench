@@ -432,21 +432,12 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Invalid Instant input".into()));
         }
         let text = self.to_string(p, value)?.to_string();
-        let base = text.split_once('[').map_or(text.as_str(), |(base, _)| base);
-        let Some((local, Some(offset), leap_second)) =
-            super::temporal_zoned_date_time::parse_iso_zoned_base(base)
+        super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
+        let Some(epoch) =
+            super::temporal_zoned_date_time::parse_iso_instant_epoch_nanoseconds(&text)
         else {
             return Err(self.range_error(p, "Invalid Instant string".into()));
         };
-        let utc = local.and_utc();
-        let epoch = i128::from(utc.timestamp()) * INSTANT_NANOSECONDS_PER_SECOND
-            + i128::from(utc.timestamp_subsec_nanos())
-            - offset
-            + if leap_second {
-                INSTANT_NANOSECONDS_PER_SECOND
-            } else {
-                0
-            };
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "Instant is outside supported range".into()));
         }
