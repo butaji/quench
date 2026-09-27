@@ -162,10 +162,11 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 24] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 18] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 19] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("with", Native::TemporalZonedDateTimeWith),
     ("withCalendar", Native::TemporalZonedDateTimeWithCalendar),
+    ("withPlainTime", Native::TemporalZonedDateTimeWithPlainTime),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
     ("add", Native::TemporalZonedDateTimeAdd),
     ("subtract", Native::TemporalZonedDateTimeSubtract),
@@ -458,6 +459,9 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTimeWithCalendar {
             return self.temporal_zoned_date_time_with_calendar(p, this, args);
+        }
+        if native == Native::TemporalZonedDateTimeWithPlainTime {
+            return self.temporal_zoned_date_time_with_plain_time(p, this, args);
         }
         if native == Native::TemporalZonedDateTimeWithTimeZone {
             let Some(Cell::TemporalZonedDateTime {
@@ -1035,6 +1039,85 @@ impl<H: Host> Vm<H> {
             ZonedDateTimeRecord {
                 epoch_nanoseconds: record_epoch,
                 time_zone: record_time_zone,
+                calendar,
+            },
+        )
+    }
+
+    fn temporal_zoned_date_time_with_plain_time(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            calendar,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(
+                p,
+                "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+            ));
+        };
+        let (epoch_nanoseconds, time_zone, calendar) =
+            (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+        let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let epoch = if argument.is_undefined() {
+            round_zoned_date_time_day(epoch_nanoseconds, &time_zone, "trunc")
+                .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?
+        } else {
+            if matches!(self.heap.get(argument), Some(Cell::Symbol(_))) {
+                return Err(self.type_error(p, "Invalid time".into()));
+            }
+            if !self.is_string(argument)
+                && !self.is_object_like(argument)
+            {
+                return Err(self.type_error(p, "Invalid time".into()));
+            }
+            let fields = zoned_date_time_fields(epoch_nanoseconds, &time_zone)
+                .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+            let time = if self.is_string(argument) {
+                super::temporal_plain_date_time_conversion::parse_time_string(self, p, argument)
+                    .map_err(|_| self.range_error(p, "Invalid time".into()))?
+            } else {
+                super::temporal_plain_date_time_conversion::to_time(self, p, argument)?
+            };
+            let resolved = self.make_zoned_date_time_from_local(
+                p,
+                super::temporal_date::IsoDate {
+                    year: fields[0],
+                    month: fields[1] as u32,
+                    day: fields[2] as u32,
+                },
+                time.map(|field| field as u32),
+                calendar.clone(),
+                time_zone.clone(),
+                "compatible",
+            )?;
+            let Some(Cell::TemporalZonedDateTime {
+                epoch_nanoseconds, ..
+            }) = self.heap.get(resolved)
+            else {
+                return Err(self.type_error(p, "Invalid ZonedDateTime".into()));
+            };
+            *epoch_nanoseconds
+        };
+        if epoch.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
+            return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
+        }
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_atom)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            ZonedDateTimeRecord {
+                epoch_nanoseconds: epoch,
+                time_zone,
                 calendar,
             },
         )

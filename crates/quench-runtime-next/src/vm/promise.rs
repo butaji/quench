@@ -485,6 +485,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalZonedDateTimeWithTimeZone
         | Native::TemporalZonedDateTimeWith
         | Native::TemporalZonedDateTimeWithCalendar => 1.0,
+        Native::TemporalZonedDateTimeWithPlainTime => 0.0,
         Native::TemporalZonedDateTimeEpochNanosecondsGetter
         | Native::TemporalZonedDateTimeTimeZoneIdGetter
         | Native::TemporalZonedDateTimeCalendarIdGetter
