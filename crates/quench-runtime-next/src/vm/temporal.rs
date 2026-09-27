@@ -14,12 +14,20 @@ const DURATION_FIELDS: [&str; 10] = [
     "nanoseconds",
 ];
 const DURATION_DATE_FIELD_LIMIT: f64 = 4_294_967_295.0;
-const DURATION_TOTAL_TIME_LIMIT_NANOS: i128 = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
+const DURATION_TOTAL_TIME_LIMIT_NANOS: i128 =
+    9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
 const DURATION_TOTAL_DECIMAL_DIGITS: usize = 32;
 const DURATION_ROUNDING_INCREMENT_LIMIT: f64 = 1_000_000_000.0;
 const DURATION_ROUNDING_MODE_NAMES: [&str; 9] = [
-    "ceil", "floor", "expand", "trunc", "halfCeil", "halfFloor", "halfExpand",
-    "halfTrunc", "halfEven",
+    "ceil",
+    "floor",
+    "expand",
+    "trunc",
+    "halfCeil",
+    "halfFloor",
+    "halfExpand",
+    "halfTrunc",
+    "halfEven",
 ];
 const DURATION_ROUNDING_INCREMENT_LIMITS: [f64; 6] = [24.0, 60.0, 60.0, 1_000.0, 1_000.0, 1_000.0];
 const DURATION_TIME_NANOSECOND_SCALES: [i128; 7] = [
@@ -45,14 +53,17 @@ fn duration_relative_nanoseconds(start: NaiveDate, fields: &[f64; 10]) -> Option
     let mut target = shift_relative_months(start, fields[0] as i128 * 12)?;
     target = shift_relative_months(target, fields[1] as i128)?;
     let calendar_days = fields[2] as i128 * 7 + fields[3] as i128;
-    target = target.checked_add_signed(chrono::Duration::days(i64::try_from(calendar_days).ok()?))?;
+    target =
+        target.checked_add_signed(chrono::Duration::days(i64::try_from(calendar_days).ok()?))?;
     let elapsed_days = i128::from((target - start).num_days());
     let elapsed_time = fields[4..]
         .iter()
         .zip(DURATION_TIME_NANOSECOND_SCALES[1..].iter())
         .map(|(value, scale)| *value as i128 * scale)
         .sum::<i128>();
-    elapsed_days.checked_mul(NANOS_PER_DAY)?.checked_add(elapsed_time)
+    elapsed_days
+        .checked_mul(NANOS_PER_DAY)?
+        .checked_add(elapsed_time)
 }
 
 pub(super) fn shift_relative_months(date: NaiveDate, months: i128) -> Option<NaiveDate> {
@@ -71,7 +82,8 @@ pub(super) fn shift_relative_months(date: NaiveDate, months: i128) -> Option<Nai
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let temporal = self.object();
-        let duration = self.native_with_realm(Native::TemporalDuration, temporal, self.realm.globals);
+        let duration =
+            self.native_with_realm(Native::TemporalDuration, temporal, self.realm.globals);
         self.set_builtin_function_name(duration, "Duration")?;
         let prototype = self.object();
         self.set_builtin_value_named(duration, "prototype", prototype)?;
@@ -197,7 +209,10 @@ impl<H: Host> Vm<H> {
     fn duration_fields(&mut self, p: &ResidualProgram, value: Value) -> Result<[f64; 10], JsError> {
         match self.heap.get(value) {
             Some(Cell::TemporalDuration { fields, .. }) => Ok(*fields),
-            _ => Err(self.type_error(p, "Temporal.Duration method called on incompatible receiver".into())),
+            _ => Err(self.type_error(
+                p,
+                "Temporal.Duration method called on incompatible receiver".into(),
+            )),
         }
     }
 
@@ -209,7 +224,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::TemporalDuration => Err(self.type_error(p, "Temporal.Duration requires new".into())),
+            Native::TemporalDuration => {
+                Err(self.type_error(p, "Temporal.Duration requires new".into()))
+            }
             Native::TemporalDurationFrom => {
                 let input = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let fields = self.duration_record(p, input)?;
@@ -246,20 +263,26 @@ impl<H: Host> Vm<H> {
                     fields[index] = self.to_number(p, value)?;
                 }
                 if !present {
-                    return Err(self.type_error(p, "Duration.with requires a duration field".into()));
+                    return Err(
+                        self.type_error(p, "Duration.with requires a duration field".into())
+                    );
                 }
                 self.validate_duration_fields(p, &fields)?;
                 self.make_temporal_duration(p, fields)
             }
             Native::TemporalDurationAdd | Native::TemporalDurationSubtract => {
                 let left = self.duration_fields(p, this)?;
-                let right = self.duration_record(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                )?;
+                let right =
+                    self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 self.validate_duration_fields(p, &right)?;
-                if left[..3].iter().chain(right[..3].iter()).any(|value| *value != 0.0) {
-                    return Err(self.range_error(p, "relativeTo required for calendar units".into()));
+                if left[..3]
+                    .iter()
+                    .chain(right[..3].iter())
+                    .any(|value| *value != 0.0)
+                {
+                    return Err(
+                        self.range_error(p, "relativeTo required for calendar units".into())
+                    );
                 }
                 let fields = balance_duration_time(
                     &left,
@@ -271,10 +294,14 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalDurationCompare => {
                 let options = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-                let left = self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let right = self.duration_record(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                let left =
+                    self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let right =
+                    self.duration_record(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 if !options.is_undefined() && !self.is_object_like(options) {
-                    return Err(self.type_error(p, "Duration.compare options must be an object".into()));
+                    return Err(
+                        self.type_error(p, "Duration.compare options must be an object".into())
+                    );
                 }
                 let relative_to = if self.is_object_like(options) {
                     let atom = self.intern_atom("relativeTo");
@@ -290,10 +317,16 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(Value::number(0.0));
                 }
-                if left[..3].iter().chain(right[..3].iter()).any(|value| *value != 0.0)
+                if left[..3]
+                    .iter()
+                    .chain(right[..3].iter())
+                    .any(|value| *value != 0.0)
                     && relative_to.is_undefined()
                 {
-                    return Err(self.range_error(p, "relativeTo is required to compare calendar units".into()));
+                    return Err(self.range_error(
+                        p,
+                        "relativeTo is required to compare calendar units".into(),
+                    ));
                 }
                 let ordering = if relative_to.is_undefined() {
                     self.duration_time_nanos(&left)
@@ -321,20 +354,36 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(self.heap.alloc(Cell::String(JsString::from_str(&text))))
             }
-            Native::TemporalDurationValueOf => Err(self.type_error(p, "Temporal.Duration.prototype.valueOf is not allowed".into())),
-            Native::TemporalDurationSignGetter | Native::TemporalDurationBlankGetter
-            | Native::TemporalDurationYearsGetter | Native::TemporalDurationMonthsGetter
-            | Native::TemporalDurationWeeksGetter | Native::TemporalDurationDaysGetter
-            | Native::TemporalDurationHoursGetter | Native::TemporalDurationMinutesGetter
-            | Native::TemporalDurationSecondsGetter | Native::TemporalDurationMillisecondsGetter
-            | Native::TemporalDurationMicrosecondsGetter | Native::TemporalDurationNanosecondsGetter => {
+            Native::TemporalDurationValueOf => Err(self.type_error(
+                p,
+                "Temporal.Duration.prototype.valueOf is not allowed".into(),
+            )),
+            Native::TemporalDurationSignGetter
+            | Native::TemporalDurationBlankGetter
+            | Native::TemporalDurationYearsGetter
+            | Native::TemporalDurationMonthsGetter
+            | Native::TemporalDurationWeeksGetter
+            | Native::TemporalDurationDaysGetter
+            | Native::TemporalDurationHoursGetter
+            | Native::TemporalDurationMinutesGetter
+            | Native::TemporalDurationSecondsGetter
+            | Native::TemporalDurationMillisecondsGetter
+            | Native::TemporalDurationMicrosecondsGetter
+            | Native::TemporalDurationNanosecondsGetter => {
                 let fields = self.duration_fields(p, this)?;
                 if native == Native::TemporalDurationSignGetter {
-                    let sign = fields.iter().find(|value| **value != 0.0).map_or(0.0, |value| value.signum());
+                    let sign = fields
+                        .iter()
+                        .find(|value| **value != 0.0)
+                        .map_or(0.0, |value| value.signum());
                     return Ok(Value::number(sign));
                 }
                 if native == Native::TemporalDurationBlankGetter {
-                    return Ok(if fields.iter().all(|value| *value == 0.0) { Value::TRUE } else { Value::FALSE });
+                    return Ok(if fields.iter().all(|value| *value == 0.0) {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    });
                 }
                 let index = match native {
                     Native::TemporalDurationYearsGetter => 0,
@@ -368,7 +417,9 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| self.range_error(p, "Invalid duration string".into()));
         }
         if !self.is_object_like(value) {
-            return Err(self.type_error(p, "Duration-like value must be an object or string".into()));
+            return Err(
+                self.type_error(p, "Duration-like value must be an object or string".into())
+            );
         }
         let mut fields = [0.0; 10];
         let mut present = false;
@@ -514,11 +565,9 @@ impl<H: Host> Vm<H> {
         unit: usize,
         relative_to: Value,
     ) -> Result<Value, JsError> {
-        if fields[4..].iter().any(|value| *value != 0.0) {
-            return Err(self.range_error(p, "relativeTo required for calendar units".into()));
-        }
-        let start = if let Some(Cell::TemporalPlainDate { year, month, day, .. }) =
-            self.heap.get(relative_to)
+        let start = if let Some(Cell::TemporalPlainDate {
+            year, month, day, ..
+        }) = self.heap.get(relative_to)
         {
             super::temporal_date::IsoDate {
                 year: *year,
@@ -536,19 +585,13 @@ impl<H: Host> Vm<H> {
             let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
             super::temporal_date::IsoDate { year, month, day }
         };
-        let months = fields[0] * 12.0 + fields[1];
-        let date = super::temporal_date::shift_iso_months(start, months as i128)
-            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-        let days = fields[2] * 7.0 + fields[3];
-        let end = super::temporal_date::shift_iso_days(date, days as i64)
-            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-        let unit = match unit {
-            0 => super::temporal_date_difference::DateUnit::Year,
-            1 => super::temporal_date_difference::DateUnit::Month,
-            2 => super::temporal_date_difference::DateUnit::Week,
-            _ => super::temporal_date_difference::DateUnit::Day,
+        let fields = std::array::from_fn(|index| fields[index] as i128);
+        let date = quench_temporal::IsoDate {
+            year: start.year,
+            month: start.month,
+            day: start.day,
         };
-        let total = super::temporal_date_difference::plain_date_total_between(start, end, unit)
+        let total = quench_temporal::total_duration(date, fields, unit)
             .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
         Ok(Value::number(total))
     }
@@ -574,9 +617,7 @@ impl<H: Host> Vm<H> {
         let rounding_mode = self.duration_rounding_mode(p, rounding, "trunc")?;
         let smallest_atom = self.intern_atom("smallestUnit");
         let smallest = self.get_property(p, options, smallest_atom)?;
-        let digits = self
-            .duration_smallest_unit_digits(p, smallest)?
-            .or(digits);
+        let digits = self.duration_smallest_unit_digits(p, smallest)?.or(digits);
         let rounded = round_duration_for_string(fields, digits, &rounding_mode);
         self.validate_duration_fields(p, &rounded)?;
         Ok(format_duration_with_digits(&rounded, digits))
@@ -651,7 +692,8 @@ impl<H: Host> Vm<H> {
         let options = args.first().copied().unwrap_or(Value::UNDEFINED);
         let (smallest, largest, increment, mode, relative_to, explicit_unit) =
             self.duration_round_options(p, options)?;
-        let smallest = smallest.ok_or_else(|| self.range_error(p, "smallestUnit is required".into()))?;
+        let smallest =
+            smallest.ok_or_else(|| self.range_error(p, "smallestUnit is required".into()))?;
         if !explicit_unit {
             return Err(self.range_error(p, "largestUnit or smallestUnit is required".into()));
         }
@@ -662,7 +704,10 @@ impl<H: Host> Vm<H> {
                 .min(smallest)
         });
         if largest > smallest {
-            return Err(self.range_error(p, "largestUnit must not be smaller than smallestUnit".into()));
+            return Err(self.range_error(
+                p,
+                "largestUnit must not be smaller than smallestUnit".into(),
+            ));
         }
         if (smallest <= 2 || largest <= 2 || fields[..3].iter().any(|value| *value != 0.0))
             && relative_to.is_undefined()
@@ -745,21 +790,26 @@ impl<H: Host> Vm<H> {
         };
         let largest = match largest_text.as_deref() {
             Some("auto") | None => None,
-            Some(text) => Some(parse_duration_unit(text).ok_or_else(|| {
-                self.range_error(p, "Invalid largestUnit".into())
-            })?),
+            Some(text) => Some(
+                parse_duration_unit(text)
+                    .ok_or_else(|| self.range_error(p, "Invalid largestUnit".into()))?,
+            ),
         };
         let explicit_unit = smallest_text.is_some() || largest_text.is_some();
         let smallest = if let Some(text) = smallest_text.as_deref() {
-            Some(parse_duration_unit(text).ok_or_else(|| {
-                self.range_error(p, "Invalid smallestUnit".into())
-            })?)
+            Some(
+                parse_duration_unit(text)
+                    .ok_or_else(|| self.range_error(p, "Invalid smallestUnit".into()))?,
+            )
         } else if largest.is_some_and(|index| index <= 2) {
             largest
         } else {
             Some(9)
         };
-        if !increment.is_finite() || increment <= 0.0 || increment > DURATION_ROUNDING_INCREMENT_LIMIT {
+        if !increment.is_finite()
+            || increment <= 0.0
+            || increment > DURATION_ROUNDING_INCREMENT_LIMIT
+        {
             return Err(self.range_error(p, "Invalid roundingIncrement".into()));
         }
         if let Some(index) = smallest.filter(|index| *index >= 4) {
@@ -777,26 +827,29 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.type_error(p, "relativeTo must be a string or object".into()));
         }
-        Ok((smallest, largest, increment as i128, mode, relative_to, explicit_unit))
+        Ok((
+            smallest,
+            largest,
+            increment as i128,
+            mode,
+            relative_to,
+            explicit_unit,
+        ))
     }
 }
 
 fn duration_total_time_out_of_range(values: &[f64]) -> bool {
-    let total = values
-        .iter()
-        .zip(DURATION_TIME_NANOSECOND_SCALES)
-        .try_fold(0_i128, |total, (value, scale)| {
+    let total = values.iter().zip(DURATION_TIME_NANOSECOND_SCALES).try_fold(
+        0_i128,
+        |total, (value, scale)| {
             let value = *value as i128;
             total.checked_add(value.checked_mul(scale)?)
-        });
+        },
+    );
     total.is_none_or(|total| total.unsigned_abs() > DURATION_TOTAL_TIME_LIMIT_NANOS as u128)
 }
 
-fn balance_duration_time(
-    left: &[f64; 10],
-    right: &[f64; 10],
-    subtract: bool,
-) -> [f64; 10] {
+fn balance_duration_time(left: &[f64; 10], right: &[f64; 10], subtract: bool) -> [f64; 10] {
     let direction = if subtract { -1_i128 } else { 1_i128 };
     let mut result = [0.0; 10];
     for (index, value) in result.iter_mut().enumerate().take(3) {
@@ -845,7 +898,11 @@ fn divide_duration_nanos(nanos: i128, divisor: i128) -> f64 {
     let whole = absolute / divisor;
     let mut remainder = absolute % divisor;
     if remainder == 0 {
-        return if negative { -(whole as f64) } else { whole as f64 };
+        return if negative {
+            -(whole as f64)
+        } else {
+            whole as f64
+        };
     }
     let mut decimal = format!("{whole}.");
     for _ in 0..DURATION_TOTAL_DECIMAL_DIGITS {
@@ -857,7 +914,11 @@ fn divide_duration_nanos(nanos: i128, divisor: i128) -> f64 {
         remainder %= divisor;
     }
     let value = decimal.parse::<f64>().unwrap_or(f64::INFINITY);
-    if negative { -value } else { value }
+    if negative {
+        -value
+    } else {
+        value
+    }
 }
 
 fn parse_duration_unit(unit: &str) -> Option<usize> {
@@ -895,9 +956,16 @@ fn format_duration(fields: &[f64; 10]) -> String {
 }
 
 fn format_duration_with_digits(fields: &[f64; 10], fractional_digits: Option<usize>) -> String {
-    let sign = fields.iter().find(|value| **value != 0.0).map_or(1.0, |value| value.signum());
+    let sign = fields
+        .iter()
+        .find(|value| **value != 0.0)
+        .map_or(1.0, |value| value.signum());
     let values = fields.map(|value| value.abs());
-    let mut result = if sign < 0.0 { "-P".to_owned() } else { "P".to_owned() };
+    let mut result = if sign < 0.0 {
+        "-P".to_owned()
+    } else {
+        "P".to_owned()
+    };
     for (index, suffix) in [(0, "Y"), (1, "M"), (2, "W"), (3, "D")] {
         if values[index] != 0.0 {
             result.push_str(&format_number(values[index]));
@@ -935,7 +1003,11 @@ fn format_duration_with_digits(fields: &[f64; 10], fractional_digits: Option<usi
             result.push('S');
         }
     }
-    if result == "P" || result == "-P" { format!("{result}T0S") } else { result }
+    if result == "P" || result == "-P" {
+        format!("{result}T0S")
+    } else {
+        result
+    }
 }
 
 fn round_duration_for_string(
@@ -988,5 +1060,9 @@ fn round_duration_for_string(
 }
 
 fn format_number(number: f64) -> String {
-    if number.fract() == 0.0 { format!("{number:.0}") } else { number.to_string() }
+    if number.fract() == 0.0 {
+        format!("{number:.0}")
+    } else {
+        number.to_string()
+    }
 }

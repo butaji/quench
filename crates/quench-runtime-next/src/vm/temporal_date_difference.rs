@@ -301,30 +301,6 @@ fn iso_date_difference(start: IsoDate, end: IsoDate, largest: DateUnit) -> Optio
     Some(fields)
 }
 
-pub(super) fn plain_date_total_between(
-    start: IsoDate,
-    end: IsoDate,
-    unit: DateUnit,
-) -> Option<f64> {
-    let largest = match unit {
-        DateUnit::Auto => return None,
-        unit => unit,
-    };
-    let fields = iso_date_difference(start, end, largest)?;
-    let sign = (temporal_date::days_from_iso_date(end) - temporal_date::days_from_iso_date(start))
-        .signum() as f64;
-    Some(match unit {
-        DateUnit::Year => rounded_year_scalar(start, end, &fields, sign, sign),
-        DateUnit::Month => rounded_month_scalar(start, end, &fields, sign, sign),
-        DateUnit::Week => fields[DURATION_WEEKS_FIELD] + fields[DURATION_DAYS_FIELD] / 7.0,
-        DateUnit::Day => {
-            (temporal_date::days_from_iso_date(end) - temporal_date::days_from_iso_date(start))
-                as f64
-        }
-        DateUnit::Auto => return None,
-    })
-}
-
 fn round_date_difference(
     start: IsoDate,
     end: IsoDate,
