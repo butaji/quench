@@ -989,12 +989,7 @@ impl<H: Host> Vm<H> {
         else {
             return Err(self.range_error(p, "Invalid smallestUnit".into()));
         };
-        if increment < MIN_ROUNDING_INCREMENT
-            || (*increment_limit > MIN_ROUNDING_INCREMENT
-                && (increment >= *increment_limit || *increment_limit % increment != 0))
-            || (*increment_limit == MIN_ROUNDING_INCREMENT
-                && increment != MIN_ROUNDING_INCREMENT)
-        {
+        if !zoned_date_time_increment_is_valid(increment, *increment_limit) {
             return Err(self.range_error(p, "Invalid roundingIncrement".into()));
         }
         if smallest_unit == "day"
@@ -1531,13 +1526,7 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "Invalid roundingMode".into()));
         }
         let increment_limit = zoned_date_time_difference_increment_limit(smallest);
-        if increment < MIN_ROUNDING_INCREMENT
-            || increment > increment_limit
-            || (increment_limit > MIN_ROUNDING_INCREMENT
-                && increment >= increment_limit
-                && increment_limit % increment != 0)
-            || increment_limit % increment != 0
-        {
+        if !zoned_date_time_increment_is_valid(increment, increment_limit) {
             return Err(self.range_error(p, "Invalid roundingIncrement".into()));
         }
         Ok(ZonedDateTimeDifferenceOptions {
@@ -2848,4 +2837,13 @@ fn zoned_date_time_difference_increment_limit(value: &str) -> i128 {
         "minute" | "second" => i128::from(SECONDS_PER_MINUTE),
         _ => MAX_SUBSECOND_ROUNDING_INCREMENT,
     }
+}
+
+fn zoned_date_time_increment_is_valid(increment: i128, limit: i128) -> bool {
+    increment >= MIN_ROUNDING_INCREMENT
+        && if limit == MIN_ROUNDING_INCREMENT {
+            increment == MIN_ROUNDING_INCREMENT
+        } else {
+            increment < limit && limit % increment == 0
+        }
 }
