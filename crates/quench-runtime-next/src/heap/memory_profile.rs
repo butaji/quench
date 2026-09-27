@@ -2,7 +2,29 @@ use super::{Cell, Heap};
 use crate::value::Value;
 use std::mem::size_of;
 
-const KINDS: usize = 15;
+const KIND_NAMES: [&str; 20] = [
+    "object",
+    "array",
+    "map",
+    "set",
+    "iterator",
+    "weak_map",
+    "weak_set",
+    "weak_ref",
+    "function",
+    "environment",
+    "string",
+    "bigint",
+    "symbol",
+    "date",
+    "error",
+    "regexp",
+    "array_from_async",
+    "temporal_duration",
+    "temporal_plain_date",
+    "temporal_plain_date_time",
+];
+const KINDS: usize = KIND_NAMES.len();
 const BUCKETS: usize = 8;
 
 #[derive(Default)]
@@ -68,7 +90,8 @@ impl MemoryProfile {
         live_bytes: [usize; KINDS],
     ) {
         eprintln!(
-            "{{\"kind\":\"rqj-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
+            "{{\"kind\":\"rqj-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":{:?},\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
+            KIND_NAMES,
             self.clock,
             self.allocated_counts,
             self.allocated_bytes,
@@ -167,7 +190,13 @@ impl Heap {
 
 fn cell_bytes(cell: &Cell) -> usize {
     match cell {
-        Cell::Object(_) | Cell::Function { .. } => 0,
+        Cell::Object(_)
+        | Cell::Function { .. }
+        | Cell::ShadowRealm { .. }
+        | Cell::PromiseResolvingState { .. }
+        | Cell::TemporalDuration { .. } => 0,
+        Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
+        Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
         Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
         Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
         Cell::TypedArray { .. } => 0,

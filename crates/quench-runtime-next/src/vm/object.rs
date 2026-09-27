@@ -1,5 +1,15 @@
 use super::property_key::PropertyKey;
 use super::*;
+
+fn cached_shape_view<T>(cache: &OnceLock<Arc<T>>, build: impl FnOnce() -> T) -> Arc<T> {
+    if let Some(view) = cache.get() {
+        return Arc::clone(view);
+    }
+    let view = Arc::new(build());
+    let _ = cache.set(Arc::clone(&view));
+    cache.get().cloned().unwrap_or(view)
+}
+
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn shape_slot(&self, shape: u32, atom: Atom) -> Option<usize> {
@@ -7,10 +17,86 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     pub(super) fn property_shape_slot(&self, shape: u32, key: PropertyKey) -> Option<usize> {
-        self.shapes
-            .get(shape as usize)
-            .and_then(|shape| shape.slots.get(&key).copied())
+        self.shape_slots(shape)
+            .get(&key)
+            .copied()
             .map(|slot| slot as usize)
+    }
+    pub(super) fn shape_keys(&self, shape: u32) -> Arc<Vec<PropertyKey>> {
+        cached_shape_view(&self.shapes[shape as usize].keys, || {
+            let mut keys = Vec::new();
+            for id in self.shape_chain(shape) {
+                match self.shapes[id as usize].transition {
+                    ShapeTransition::Add { key, .. } => keys.push(key),
+                    ShapeTransition::Delete { key, .. } => {
+                        keys.retain(|candidate| *candidate != key);
+                    }
+                    ShapeTransition::Root | ShapeTransition::Descriptor { .. } => {}
+                }
+            }
+            keys
+        })
+    }
+    pub(super) fn shape_slots(&self, shape: u32) -> Arc<FxHashMap<PropertyKey, u32>> {
+        cached_shape_view(&self.shapes[shape as usize].slots, || {
+            let mut slots = FxHashMap::default();
+            for id in self.shape_chain(shape) {
+                match self.shapes[id as usize].transition {
+                    ShapeTransition::Add { key, slot } => {
+                        slots.insert(key, slot);
+                    }
+                    ShapeTransition::Delete { key, .. } => {
+                        slots.remove(&key);
+                    }
+                    ShapeTransition::Root | ShapeTransition::Descriptor { .. } => {}
+                }
+            }
+            slots
+        })
+    }
+    pub(super) fn shape_descriptors(&self, shape: u32) -> Arc<Vec<PropertyAttributes>> {
+        cached_shape_view(&self.shapes[shape as usize].descriptors, || {
+            let mut descriptors = Vec::new();
+            for id in self.shape_chain(shape) {
+                match self.shapes[id as usize].transition {
+                    ShapeTransition::Add { slot, .. } => {
+                        descriptors.resize(slot as usize + 1, DEFAULT_PROPERTY_ATTRIBUTES);
+                    }
+                    ShapeTransition::Delete { slot, .. } => {
+                        descriptors[slot as usize] = DEFAULT_PROPERTY_ATTRIBUTES;
+                    }
+                    ShapeTransition::Descriptor { slot, attributes } => {
+                        descriptors[slot as usize] = attributes;
+                    }
+                    ShapeTransition::Root => {}
+                }
+            }
+            descriptors
+        })
+    }
+    fn shape_chain(&self, mut shape: u32) -> Vec<u32> {
+        let mut chain = Vec::new();
+        loop {
+            chain.push(shape);
+            let Some(parent) = self.shapes[shape as usize].parent else {
+                break;
+            };
+            shape = parent;
+        }
+        chain.reverse();
+        chain
+    }
+    fn append_shape(
+        &mut self,
+        parent: u32,
+        transition: ShapeTransition,
+        storage_len: usize,
+    ) -> u32 {
+        let next = self.shapes.len() as u32;
+        self.shapes
+            .push(Shape::child(Some(parent), transition, storage_len));
+        self.heap.register_property_shape(next, storage_len);
+        next
     }
     #[inline(always)]
     pub(super) fn property_attributes(
@@ -18,12 +104,9 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: PropertyKey,
     ) -> Option<PropertyAttributes> {
-        if let Some(data) = self.object_data(object)
-            && let Some(slot) = self.property_shape_slot(data.shape(), key)
-            && let Some(attributes) = self
-                .shapes
-                .get(data.shape() as usize)
-                .and_then(|shape| shape.descriptors.get(slot))
+        if let Some(shape) = self.object_data(object).map(Object::shape)
+            && let Some(slot) = self.property_shape_slot(shape, key)
+            && let Some(attributes) = self.shape_descriptors(shape).get(slot)
         {
             return Some(*attributes);
         }
@@ -35,19 +118,21 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         attributes: PropertyAttributes,
     ) {
-        if let Some(data) = self.object_data(object)
-            && let Some(slot) = self.property_shape_slot(data.shape(), key)
+        if let Some(shape) = self.object_data(object).map(Object::shape)
+            && let Some(slot) = self.property_shape_slot(shape, key)
         {
-            let shape = data.shape();
-            if self.shapes[shape as usize].descriptors[slot] == attributes {
+            if self.shape_descriptors(shape)[slot] == attributes {
                 return;
             }
-            let mut next = self.shapes[shape as usize].clone();
-            next.descriptors[slot] = attributes;
-            let next_id = self.shapes.len() as u32;
-            self.shapes.push(next);
-            self.heap
-                .register_property_shape(next_id, self.shapes[next_id as usize].storage_len);
+            let storage_len = self.shapes[shape as usize].storage_len;
+            let next_id = self.append_shape(
+                shape,
+                ShapeTransition::Descriptor {
+                    slot: slot as u32,
+                    attributes,
+                },
+                storage_len,
+            );
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
@@ -58,16 +143,18 @@ impl<H: Host> Vm<H> {
         self.invalidate_method_caches_for_key(key);
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
-        if let Some(data) = self.object_data(object)
-            && let Some(slot) = self.property_shape_slot(data.shape(), key)
+        if let Some(shape) = self.object_data(object).map(Object::shape)
+            && let Some(slot) = self.property_shape_slot(shape, key)
         {
-            let shape = data.shape();
-            let mut next = self.shapes[shape as usize].clone();
-            next.descriptors[slot] = DEFAULT_PROPERTY_ATTRIBUTES;
-            let next_id = self.shapes.len() as u32;
-            self.shapes.push(next);
-            self.heap
-                .register_property_shape(next_id, self.shapes[next_id as usize].storage_len);
+            let storage_len = self.shapes[shape as usize].storage_len;
+            let next_id = self.append_shape(
+                shape,
+                ShapeTransition::Descriptor {
+                    slot: slot as u32,
+                    attributes: DEFAULT_PROPERTY_ATTRIBUTES,
+                },
+                storage_len,
+            );
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
@@ -621,8 +708,7 @@ impl<H: Host> Vm<H> {
             (slot, data.shape(), exists)
         };
         self.check_property_key_write(object, key, exists)?;
-        let invalidates_method =
-            slot.is_some_and(|slot| self.callable_write(object, slot, value));
+        let invalidates_method = slot.is_some_and(|slot| self.callable_write(object, slot, value));
         if let Some(slot) = slot {
             self.heap.property_set(object, slot, value);
         } else {
@@ -1015,22 +1101,9 @@ impl<H: Host> Vm<H> {
             return next;
         }
         self.profile.shape_transition(false);
-        let mut fields = self.shapes[shape as usize].keys.clone();
-        let mut slots = self.shapes[shape as usize].slots.clone();
-        let mut descriptors = self.shapes[shape as usize].descriptors.clone();
         let storage_len = self.shapes[shape as usize].storage_len;
         let slot = u32::try_from(storage_len).expect("object property index exceeds u32");
-        slots.insert(key, slot);
-        fields.push(key);
-        descriptors.push(DEFAULT_PROPERTY_ATTRIBUTES);
-        let next = self.shapes.len() as u32;
-        self.shapes.push(Shape {
-            keys: fields,
-            slots,
-            descriptors,
-            storage_len: storage_len + 1,
-        });
-        self.heap.register_property_shape(next, storage_len + 1);
+        let next = self.append_shape(shape, ShapeTransition::Add { key, slot }, storage_len + 1);
         self.transitions.insert((shape, key), next);
         next
     }
@@ -1041,13 +1114,15 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
-        let mut next = self.shapes[shape as usize].clone();
-        next.keys.retain(|candidate| *candidate != key);
-        next.slots.remove(&key);
-        next.descriptors[slot] = DEFAULT_PROPERTY_ATTRIBUTES;
-        let next_id = self.shapes.len() as u32;
-        self.heap.register_property_shape(next_id, next.storage_len);
-        self.shapes.push(next);
+        let storage_len = self.shapes[shape as usize].storage_len;
+        let next_id = self.append_shape(
+            shape,
+            ShapeTransition::Delete {
+                key,
+                slot: slot as u32,
+            },
+            storage_len,
+        );
         self.object_data_mut(object)
             .expect("object survived property deletion")
             .set_shape(next_id);

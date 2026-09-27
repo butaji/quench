@@ -37,8 +37,8 @@ impl<H: Host> Vm<H> {
             })
             .map(|(atom, _)| atom)
             .collect::<Vec<_>>();
-        let symbols = self.shapes[shape as usize]
-            .keys
+        let symbols = self
+            .shape_keys(shape)
             .iter()
             .filter_map(|key| key.symbol_value())
             .filter(|symbol| self.symbol_property(object, *symbol).is_some())

@@ -3753,10 +3753,9 @@ impl<H: Host> Vm<H> {
             .iter()
             .map(|(atom, program, slot)| (*atom, (*program, *slot)))
             .collect::<FxHashMap<_, _>>();
+        let keys = self.shape_keys(object.shape());
         Some(
-            self.shapes
-                .get(object.shape() as usize)?
-                .keys
+            keys
                 .iter()
                 .filter_map(|key| {
                     let crate::vm::property_key::PropertyKey::String(atom) = key else {
