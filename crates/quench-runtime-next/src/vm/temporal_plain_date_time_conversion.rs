@@ -12,6 +12,9 @@ pub(super) const TIME_FIELDS: [&str; 6] = [
 pub(super) const TIME_FIELDS_BEFORE_MONTH: usize = 4;
 pub(super) const TIME_LIMITS: [i32; 6] = [23, 999, 999, 59, 999, 59];
 const DEFAULT_DATE_PREFIX: &str = "1970-01-01T";
+const ISO_YEAR_DIGITS: usize = 4;
+const ISO_MONTH_DIGITS: usize = 2;
+const FRACTIONAL_SECOND_DIGITS: usize = 9;
 
 pub(super) fn convert<H: Host>(
     vm: &mut Vm<H>,
@@ -170,6 +173,18 @@ pub(super) fn parse_time_string<H: Host>(
         }
     }
     let time = time.strip_prefix(['T', 't']).unwrap_or(time);
+    if is_ambiguous_time(time) {
+        return Err(vm.range_error(p, "Ambiguous PlainTime string".into()));
+    }
+    if time.rfind(['.', ',']).is_some_and(|index| {
+        time[index + 1..]
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .count()
+            > FRACTIONAL_SECOND_DIGITS
+    }) {
+        return Err(vm.range_error(p, "Invalid time string".into()));
+    }
     let time = strip_time_offset(time);
     if time.is_empty() {
         return Err(vm.range_error(p, "Invalid time string".into()));
@@ -194,6 +209,16 @@ pub(super) fn parse_time_string<H: Host>(
 fn is_ambiguous_time(text: &str) -> bool {
     let text = text.split('[').next().unwrap_or(text);
     let ascii_digits = |value: &str| value.bytes().all(|byte| byte.is_ascii_digit());
+    if let Some((year, month)) = text.split_once('-') {
+        if year.len() == ISO_YEAR_DIGITS
+            && month.len() == ISO_MONTH_DIGITS
+            && ascii_digits(year)
+            && ascii_digits(month)
+            && (1..=12).contains(&month.parse::<u32>().unwrap_or_default())
+        {
+            return true;
+        }
+    }
     if let Some((month, day)) = text.split_once('-') {
         return month.len() == 2
             && day.len() == 2

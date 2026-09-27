@@ -65,6 +65,7 @@ impl<H: Host> Vm<H> {
             ("toZonedDateTime", Native::TemporalPlainDateTimeToZonedDateTime),
             ("with", Native::TemporalPlainDateTimeWith),
             ("withCalendar", Native::TemporalPlainDateTimeWithCalendar),
+            ("withPlainTime", Native::TemporalPlainDateTimeWithPlainTime),
             ("valueOf", Native::TemporalPlainDateTimeValueOf),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
@@ -270,6 +271,9 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalPlainDateTimeWithCalendar {
             return self.temporal_plain_date_time_with_calendar(p, this, args);
+        }
+        if native == Native::TemporalPlainDateTimeWithPlainTime {
+            return self.temporal_plain_date_time_with_plain_time(p, this, args);
         }
         if native == Native::TemporalPlainDateTime {
             return Err(self.type_error(p, "Temporal.PlainDateTime requires new".into()));
@@ -990,6 +994,30 @@ impl<H: Host> Vm<H> {
             date.day,
             calendar,
             time.map(|value| value as i32),
+        )
+    }
+
+    fn temporal_plain_date_time_with_plain_time(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (date, _, calendar) = self.temporal_plain_date_time_slots(p, this)?;
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let time = super::temporal_plain_date_time_conversion::to_time(self, p, value)?;
+        super::temporal_plain_date_time_conversion::validate_bounds(
+            self, p, date.year, date.month, date.day, time,
+        )?;
+        let constructor = self.temporal_plain_date_time_constructor(p)?;
+        self.make_plain_date_time(
+            p,
+            constructor,
+            date.year,
+            date.month,
+            date.day,
+            calendar,
+            time,
         )
     }
 
