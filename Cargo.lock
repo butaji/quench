@@ -2800,6 +2800,7 @@ dependencies = [
  "num-bigint 0.4.8",
  "oxc",
  "quench-regexp",
+ "quench-temporal",
  "regex",
  "rug",
  "serde",
@@ -2824,11 +2825,16 @@ dependencies = [
  "oxc_span 0.150.0",
  "oxc_syntax 0.150.0",
  "quench-regexp",
+ "quench-temporal",
  "regex",
  "rustc-hash",
  "serde_json",
  "unicode-normalization",
 ]
+
+[[package]]
+name = "quench-temporal"
+version = "0.1.0"
 
 [[package]]
 name = "quench-test262"
