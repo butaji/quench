@@ -174,7 +174,15 @@ impl Heap {
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.roots.remove(root)
     }
+    #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
+        self.collect_with_shape_roots(roots, |_, _| {})
+    }
+    pub(crate) fn collect_with_shape_roots(
+        &mut self,
+        roots: impl IntoIterator<Item = Value>,
+        mut shape_roots: impl FnMut(u32, &mut Vec<Value>),
+    ) -> Vec<(Value, Value)> {
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
         let mark_started = std::time::Instant::now();
@@ -184,8 +192,8 @@ impl Heap {
             self.gc_profile.roots += work.len() as u64;
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
-        self.mark_work(&mut work);
-        self.mark_ephemerons(&mut work);
+        self.mark_work(&mut work, &mut shape_roots);
+        self.mark_ephemerons(&mut work, &mut shape_roots);
         let finalization_jobs = self.prune_weak_entries();
         #[cfg(feature = "profile-aggregate")]
         {
@@ -233,7 +241,11 @@ impl Heap {
         self.max_threshold = self.max_threshold.max(self.threshold);
         finalization_jobs
     }
-    pub(super) fn mark_work(&mut self, work: &mut Vec<Value>) {
+    pub(super) fn mark_work(
+        &mut self,
+        work: &mut Vec<Value>,
+        shape_roots: &mut impl FnMut(u32, &mut Vec<Value>),
+    ) {
         while let Some(value) = work.pop() {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -255,7 +267,7 @@ impl Heap {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[Self::cell_kind(cell)] += 1;
             }
-            Self::children(cell, &self.properties, work);
+            Self::children(cell, &self.properties, work, shape_roots);
             if let Some(elements) = self
                 .sparse_arrays
                 .as_ref()
@@ -341,9 +353,15 @@ impl Heap {
             .unwrap()
             .properties = vector;
     }
-    fn children(cell: &Cell, properties: &ValueArena, work: &mut Vec<Value>) {
+    fn children(
+        cell: &Cell,
+        properties: &ValueArena,
+        work: &mut Vec<Value>,
+        shape_roots: &mut impl FnMut(u32, &mut Vec<Value>),
+    ) {
         let mut object = |object: &Object| {
             work.push(object.proto);
+            shape_roots(object.shape(), work);
             work.extend(object.private_names.iter().map(|brand| brand.home));
             work.extend(
                 properties
