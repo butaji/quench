@@ -398,6 +398,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalZonedDateTimeDaysInWeekGetter, Native::TemporalZonedDateTimeDaysInMonthGetter,
     Native::TemporalZonedDateTimeDaysInYearGetter, Native::TemporalZonedDateTimeMonthsInYearGetter,
     Native::TemporalZonedDateTimeInLeapYearGetter,
+    Native::TemporalZonedDateTimeEpochMillisecondsGetter, Native::TemporalZonedDateTimeHoursInDayGetter,
     Native::TemporalInstant, Native::TemporalInstantFrom, Native::TemporalInstantCompare,
     Native::TemporalInstantFromEpochMilliseconds, Native::TemporalInstantFromEpochNanoseconds,
     Native::TemporalInstantEpochNanosecondsGetter, Native::TemporalInstantEpochMillisecondsGetter,

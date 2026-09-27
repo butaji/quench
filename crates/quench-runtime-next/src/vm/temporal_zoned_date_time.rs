@@ -127,10 +127,14 @@ pub(super) const DISAMBIGUATION_OPTIONS: [&str; 4] = ["compatible", "earlier", "
 const OFFSET_OPTIONS: [&str; 4] = ["prefer", "use", "ignore", "reject"];
 const OVERFLOW_OPTIONS: [&str; 2] = ["constrain", "reject"];
 
-const ZONED_DATE_TIME_GETTERS: [(&str, Native); 24] = [
+const ZONED_DATE_TIME_GETTERS: [(&str, Native); 26] = [
     (
         "epochNanoseconds",
         Native::TemporalZonedDateTimeEpochNanosecondsGetter,
+    ),
+    (
+        "epochMilliseconds",
+        Native::TemporalZonedDateTimeEpochMillisecondsGetter,
     ),
     ("timeZoneId", Native::TemporalZonedDateTimeTimeZoneIdGetter),
     ("calendarId", Native::TemporalZonedDateTimeCalendarIdGetter),
@@ -149,6 +153,7 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 24] = [
     ("daysInYear", Native::TemporalZonedDateTimeDaysInYearGetter),
     ("monthsInYear", Native::TemporalZonedDateTimeMonthsInYearGetter),
     ("inLeapYear", Native::TemporalZonedDateTimeInLeapYearGetter),
+    ("hoursInDay", Native::TemporalZonedDateTimeHoursInDayGetter),
     ("hour", Native::TemporalZonedDateTimeHourGetter),
     ("minute", Native::TemporalZonedDateTimeMinuteGetter),
     ("second", Native::TemporalZonedDateTimeSecondGetter),
@@ -580,6 +585,24 @@ impl<H: Host> Vm<H> {
         match native {
             Native::TemporalZonedDateTimeEpochNanosecondsGetter => {
                 Ok(self.heap.alloc(Cell::BigInt(epoch.to_string())))
+            }
+            Native::TemporalZonedDateTimeEpochMillisecondsGetter => Ok(Value::number(
+                epoch.div_euclid(i128::from(NANOSECONDS_PER_MILLISECOND)) as f64,
+            )),
+            Native::TemporalZonedDateTimeHoursInDayGetter => {
+                let (start, next_start) = zoned_date_time_day_bounds(epoch, &zone)
+                    .ok_or_else(|| {
+                        self.range_error(p, "ZonedDateTime day boundary is out of range".into())
+                    })?;
+                if next_start.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
+                    return Err(self.range_error(
+                        p,
+                        "ZonedDateTime day boundary is out of range".into(),
+                    ));
+                }
+                Ok(Value::number(
+                    (next_start - start) as f64 / NANOSECONDS_PER_HOUR as f64,
+                ))
             }
             Native::TemporalZonedDateTimeTimeZoneIdGetter => {
                 Ok(self.heap.alloc(Cell::String(zone.into())))
@@ -2703,15 +2726,7 @@ fn round_zoned_date_time_day(
     time_zone: &str,
     rounding_mode: &str,
 ) -> Option<i128> {
-    let fields = zoned_date_time_fields(epoch_nanoseconds, time_zone)?;
-    let date = chrono::NaiveDate::from_ymd_opt(
-        fields[0],
-        u32::try_from(fields[1]).ok()?,
-        u32::try_from(fields[2]).ok()?,
-    )?;
-    let start = zoned_local_epoch(date.and_hms_nano_opt(0, 0, 0, 0)?, time_zone)?;
-    let next_date = date.succ_opt()?;
-    let next = zoned_local_epoch(next_date.and_hms_nano_opt(0, 0, 0, 0)?, time_zone)?;
+    let (start, next) = zoned_date_time_day_bounds(epoch_nanoseconds, time_zone)?;
     let day_length = next.checked_sub(start)?.max(NANOSECOND);
     let elapsed = epoch_nanoseconds.saturating_sub(start).clamp(0, day_length);
     let elapsed_twice = elapsed.checked_mul(ROUNDING_TIE_FACTOR)?;
@@ -2723,6 +2738,19 @@ fn round_zoned_date_time_day(
         _ => return None,
     };
     Some(if round_up { next } else { start })
+}
+
+fn zoned_date_time_day_bounds(epoch_nanoseconds: i128, time_zone: &str) -> Option<(i128, i128)> {
+    let fields = zoned_date_time_fields(epoch_nanoseconds, time_zone)?;
+    let date = chrono::NaiveDate::from_ymd_opt(
+        fields[0],
+        u32::try_from(fields[1]).ok()?,
+        u32::try_from(fields[2]).ok()?,
+    )?;
+    let start = zoned_local_epoch(date.and_hms_nano_opt(0, 0, 0, 0)?, time_zone)?;
+    let next_date = date.succ_opt()?;
+    let next = zoned_local_epoch(next_date.and_hms_nano_opt(0, 0, 0, 0)?, time_zone)?;
+    Some((start, next))
 }
 
 fn normalize_zoned_difference_unit(value: &str) -> &str {
