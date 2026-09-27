@@ -212,11 +212,7 @@ fn field_definitions(instruction: Instr, field: InstructionField) -> u64 {
 }
 
 fn field_register(instruction: Instr, field: InstructionField) -> Register {
-    match field {
-        InstructionField::A => instruction.register_a(),
-        InstructionField::B => instruction.register_b(),
-        InstructionField::C => instruction.register_c(),
-    }
+    instruction.field_value(field)
 }
 
 fn field_base(instruction: Instr, fields: &[FieldSite]) -> u64 {

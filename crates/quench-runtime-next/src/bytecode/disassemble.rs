@@ -126,28 +126,15 @@ fn write_scalar_field(
     field: InstructionField,
     layout: FieldLayout,
 ) -> fmt::Result {
+    if layout.is_register_field() {
+        return write!(
+            output,
+            " {}={}",
+            field_name(field),
+            instruction.field_value(field)
+        );
+    }
     match (field, layout) {
-        (
-            InstructionField::A,
-            FieldLayout::ResultRegister
-            | FieldLayout::Register
-            | FieldLayout::WriteRegister
-            | FieldLayout::ReadWriteRegister,
-        ) => {
-            write!(output, " a={}", instruction.register_a())
-        }
-        (
-            InstructionField::B,
-            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister,
-        ) => {
-            write!(output, " b={}", instruction.register_b())
-        }
-        (
-            InstructionField::C,
-            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister,
-        ) => {
-            write!(output, " c={}", instruction.register_c())
-        }
         (InstructionField::B, FieldLayout::OptionalRegister) => {
             write!(output, " b={:?}", instruction.optional_register_b())
         }
