@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<bool, JsError> {
-        if self.atom_name(atom).starts_with("\0rqj:private:") {
+        if self.is_private_name(atom) {
             return Err(self.type_error(p, "private member is not present on this object".into()));
         }
         if handler.is_null() {
@@ -246,7 +246,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        let private_name = self.atom_name(atom).starts_with("\0rqj:private:");
+        let private_name = self.is_private_name(atom);
         if object.is_null() || object.is_undefined() {
             return Err(self.type_error(
                 p,

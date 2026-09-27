@@ -1,7 +1,13 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+const PRIVATE_NAME_PREFIX: &str = "\0rqj:private:";
+
 impl<H: Host> Vm<H> {
+    pub(super) fn is_private_name(&self, atom: Atom) -> bool {
+        self.atom_name(atom).starts_with(PRIVATE_NAME_PREFIX)
+    }
+
     #[inline(always)]
     pub(super) fn shape_slot(&self, shape: u32, atom: Atom) -> Option<usize> {
         self.property_shape_slot(shape, PropertyKey::string(atom))
@@ -341,9 +347,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        if self.atom_name(atom).starts_with("\0rqj:private:")
-            && matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
-        {
+        if self.is_private_name(atom) && matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
             return self.get_private_proxy_field(p, object, atom);
         }
         if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
@@ -490,7 +494,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
-        if self.atom_name(atom).starts_with("\0rqj:private:") {
+        if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
         }
         if let Some(Cell::Proxy {
@@ -760,7 +764,7 @@ impl<H: Host> Vm<H> {
             target, handler, ..
         }) = self.heap.get(object).cloned()
         {
-            if self.atom_name(atom).starts_with("\0rqj:private:") {
+            if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() {
                     let extensible = self.object_is_extensible(p, &[object])?;
                     if !self.truthy(extensible) {
@@ -780,7 +784,7 @@ impl<H: Host> Vm<H> {
             };
         }
         if !self.is_object_like(object) {
-            if self.atom_name(atom).starts_with("\0rqj:private:") {
+            if self.is_private_name(atom) {
                 self.check_private_brand(p, object, atom)?;
             }
             let boxed = self.box_primitive_object(object)?;
@@ -794,7 +798,7 @@ impl<H: Host> Vm<H> {
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
                 self.call_value(p, setter, object, &[value])?;
-            } else if strict || self.atom_name(atom).starts_with("\0rqj:private:") {
+            } else if strict || self.is_private_name(atom) {
                 return Err(self.type_error(p, "property has no setter".into()));
             }
             return Ok(());
@@ -805,14 +809,14 @@ impl<H: Host> Vm<H> {
                 .property_attributes(object, PropertyKey::string(atom))
                 .is_some_and(|attributes| !attributes.writable)
         {
-            return if strict || self.atom_name(atom).starts_with("\0rqj:private:") {
+            return if strict || self.is_private_name(atom) {
                 Err(self.type_error(p, "cannot write non-writable property".into()))
             } else {
                 Ok(())
             };
         }
         if !own && self.inherited_write_blocked(object, atom) {
-            return if strict || self.atom_name(atom).starts_with("\0rqj:private:") {
+            return if strict || self.is_private_name(atom) {
                 Err(self.type_error(p, "cannot write inherited non-writable property".into()))
             } else {
                 Ok(())
@@ -841,6 +845,10 @@ impl<H: Host> Vm<H> {
             } else {
                 Err(self.type_error(p, "cannot delete non-configurable array element".into()))
             };
+        }
+        if self.is_private_name(atom) {
+            self.set_property(object, atom, value)?;
+            return Ok(());
         }
         if !self.specialized {
             return self.set_property_with_program(p, object, atom, value);
@@ -933,7 +941,7 @@ impl<H: Host> Vm<H> {
             ));
         }
         if !self.is_object_like(object) {
-            if self.atom_name(atom).starts_with("\0rqj:private:") {
+            if self.is_private_name(atom) {
                 self.check_private_brand(p, object, atom)?;
             }
             let boxed = self.box_primitive_object(object)?;

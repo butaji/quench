@@ -164,7 +164,6 @@ impl<H: Host> Vm<H> {
         }
         self.heap.property_set(target, slot, Value::DELETED);
         self.delete_shape_property(target, PropertyKey::string(atom));
-        self.invalidate_method_caches();
         Ok(Value::TRUE)
     }
 
@@ -323,8 +322,6 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(target)
             .expect("object validated")
             .proto = proto;
-        self.invalidate_field_caches();
-        self.invalidate_method_caches();
         Ok(target)
     }
 
