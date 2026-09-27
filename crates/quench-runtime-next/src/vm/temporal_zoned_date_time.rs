@@ -2622,6 +2622,17 @@ pub(super) fn zoned_local_epoch_with_disambiguation(
 }
 
 pub(super) fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]> {
+    if let Some(offset) = fixed_time_zone_offset_nanoseconds(zone) {
+        let local = epoch.checked_add(offset)?;
+        let date_days = i64::try_from(local.div_euclid(NANOSECONDS_PER_DAY)).ok()?;
+        let date = quench_temporal::civil_from_days(date_days)?;
+        let date = super::temporal_date::checked_iso_date(
+            date.year,
+            date.month as i32,
+            date.day as i32,
+        )?;
+        return zoned_fields_from_date_and_time(date, local.rem_euclid(NANOSECONDS_PER_DAY));
+    }
     let seconds = epoch.div_euclid(NANOSECONDS_PER_SECOND);
     let nanoseconds = epoch.rem_euclid(NANOSECONDS_PER_SECOND) as u32;
     let utc = Utc
@@ -2640,17 +2651,42 @@ pub(super) fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]
         .naive_utc()
         .checked_add_signed(Duration::seconds(i64::from(offset)))?;
     let subsecond = local.and_utc().timestamp_subsec_nanos();
-    Some([
+    let date = super::temporal_date::checked_iso_date(
         local.year(),
         i32::try_from(local.month()).ok()?,
         i32::try_from(local.day()).ok()?,
-        i32::try_from(local.hour()).ok()?,
-        i32::try_from(local.minute()).ok()?,
-        i32::try_from(local.second()).ok()?,
-        i32::try_from(subsecond / NANOSECONDS_PER_MILLISECOND).ok()?,
-        i32::try_from(subsecond / NANOSECONDS_PER_MICROSECOND % MICROSECONDS_PER_MILLISECOND)
-            .ok()?,
-        i32::try_from(subsecond % NANOSECONDS_PER_MICROSECOND).ok()?,
+    )?;
+    let time = i128::from(local.hour()) * NANOSECONDS_PER_HOUR
+        + i128::from(local.minute()) * NANOSECONDS_PER_MINUTE
+        + i128::from(local.second()) * NANOSECONDS_PER_SECOND
+        + i128::from(subsecond);
+    zoned_fields_from_date_and_time(date, time)
+}
+
+fn zoned_fields_from_date_and_time(
+    date: super::temporal_date::IsoDate,
+    mut time: i128,
+) -> Option<[i32; 9]> {
+    let hour = time / NANOSECONDS_PER_HOUR;
+    time %= NANOSECONDS_PER_HOUR;
+    let minute = time / NANOSECONDS_PER_MINUTE;
+    time %= NANOSECONDS_PER_MINUTE;
+    let second = time / NANOSECONDS_PER_SECOND;
+    time %= NANOSECONDS_PER_SECOND;
+    let millisecond = time / i128::from(NANOSECONDS_PER_MILLISECOND);
+    time %= i128::from(NANOSECONDS_PER_MILLISECOND);
+    let microsecond = time / i128::from(NANOSECONDS_PER_MICROSECOND);
+    let nanosecond = time % i128::from(NANOSECONDS_PER_MICROSECOND);
+    Some([
+        date.year,
+        date.month as i32,
+        date.day as i32,
+        i32::try_from(hour).ok()?,
+        i32::try_from(minute).ok()?,
+        i32::try_from(second).ok()?,
+        i32::try_from(millisecond).ok()?,
+        i32::try_from(microsecond).ok()?,
+        i32::try_from(nanosecond).ok()?,
     ])
 }
 
