@@ -1,6 +1,6 @@
 use crate::bytecode::{
     ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Operand, Register, ResultLayout, Superinstruction,
+    ImmediateRole, Instr, InstructionField, Operand, Register, Superinstruction,
 };
 
 pub(super) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -168,7 +168,7 @@ fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite])
 }
 
 fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
-    let result = if instruction.op().result_layout() != ResultLayout::NoResult
+    let result = if instruction.op().has_result_register()
         && !instruction.returns_from_frame()
         && !instruction.writes_numeric_local()
     {

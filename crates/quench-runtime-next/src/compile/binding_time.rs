@@ -1,6 +1,6 @@
 use oxc_ast::ast::Expression;
 
-use crate::bytecode::{Constant, Function, Instr, Op, ResultLayout};
+use crate::bytecode::{Constant, Function, Instr, Op};
 
 #[derive(Clone, Copy)]
 pub(super) enum BindingTime<T> {
@@ -97,7 +97,7 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
             | Op::JumpBinaryFalse
             | Op::Return
             | Op::Throw => {}
-            _ if instruction.op().result_layout() != ResultLayout::NoResult => {
+            _ if instruction.op().has_result_register() => {
                 let result = instruction.result_register();
                 if result < root.registers {
                     registers[result as usize] = BindingTime::Dynamic;
@@ -178,7 +178,7 @@ fn materialize_calls(functions: &mut [Function], bindings: &[BindingTime<StaticV
                     ),
                 );
             }
-            if instruction.op().result_layout() != ResultLayout::NoResult {
+            if instruction.op().has_result_register() {
                 let output = instruction.result_register();
                 if output >= function.registers {
                     continue;

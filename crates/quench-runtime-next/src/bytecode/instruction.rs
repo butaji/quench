@@ -87,7 +87,6 @@ macro_rules! layout_accessors {
             }
 
             pub(crate) fn result_flags(self) -> Register {
-                debug_assert_ne!(self.op().result_layout(), ResultLayout::NoResult);
                 self.a() & !REGISTER_MASK
             }
 
