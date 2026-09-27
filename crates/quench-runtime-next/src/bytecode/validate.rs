@@ -1,7 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
-    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
-    REGISTER_MASK, Register, ResidualProgram,
+    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, REGISTER_MASK,
+    Register, ResidualProgram,
 };
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
@@ -298,7 +298,7 @@ impl ResidualProgram {
                 let Some(instruction) = instruction_at(function, *packed) else {
                     return Err(format!("function {index} wide instruction is invalid"));
                 };
-                if instruction.op() == Op::Wide {
+                if instruction.op().is_wide_marker() {
                     return Err(format!("function {index} contains nested wide instruction"));
                 }
                 if !instruction.result_flags_valid() {
@@ -397,7 +397,7 @@ impl ResidualProgram {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, ResidualProgram};
+    use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
 
     fn function(code: Vec<Instr>, registers: u16, root: u32) -> Function {
         Function {

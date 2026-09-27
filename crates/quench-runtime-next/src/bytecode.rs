@@ -366,6 +366,10 @@ macro_rules! opcodes {
                 Self::IMMEDIATE_ROLES[self as usize]
             }
 
+            pub(crate) const fn is_wide_marker(self) -> bool {
+                matches!(self.immediate_role(), ImmediateRole::WideInstructionIndex)
+            }
+
             pub(crate) const fn from_index(index: usize) -> Option<Self> {
                 if index < Self::COUNT {
                     // SAFETY: `opcodes!` emits a contiguous repr(u16) enum.

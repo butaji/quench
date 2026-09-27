@@ -685,7 +685,7 @@ impl Instr {
         let index = u64::try_from(index).ok()?;
         let payload_bits = u64::BITS - Self::OP_BITS;
         let max = (1_u64 << payload_bits) - 1;
-        (Op::Wide.immediate_role() == ImmediateRole::WideInstructionIndex && index <= max)
+        (Op::Wide.is_wide_marker() && index <= max)
             .then_some(Self(Op::Wide as u64 | (index << Self::OP_BITS)))
     }
 
@@ -701,7 +701,7 @@ impl Instr {
     }
 
     pub(crate) const fn is_wide(self) -> bool {
-        matches!(self.op(), Op::Wide)
+        self.op().is_wide_marker()
     }
 
     pub(crate) const fn wide_index(self) -> usize {
@@ -752,7 +752,7 @@ impl Instr {
 
     pub(crate) fn set_op(&mut self, value: Op) {
         if self.is_wide() {
-            assert_eq!(value, Op::Wide, "wide instruction reference is immutable");
+            assert_eq!(value, self.op(), "wide instruction reference is immutable");
             return;
         }
         *self = Self::new(value, self.a(), self.b(), self.c(), self.imm());

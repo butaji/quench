@@ -420,7 +420,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             let b = input.u16()?;
             let c = input.u16()?;
             let imm = input.u32()?;
-            if op == Op::Wide {
+            if op.is_wide_marker() {
                 Instr::wide_from_fields(a, b, c, imm)
                     .ok_or_else(|| String::from("residual wide index exceeds domain"))
             } else {
@@ -431,7 +431,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let wide = input.list(|input| {
             let opcode = input.u8()?;
             let op = Op::from_index(usize::from(opcode))
-                .filter(|op| *op != Op::Wide)
+                .filter(|op| !op.is_wide_marker())
                 .ok_or_else(|| String::from("invalid residual wide opcode"))?;
             Ok(WideInstruction::new(
                 op,
