@@ -161,7 +161,7 @@ enum NumericArguments<'a> {
         values: &'a [Register],
     },
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
     atom: Atom,
@@ -190,6 +190,7 @@ struct MethodCache {
     shape: u32,
     atom: Atom,
     proto: Value,
+    guard: FieldCache,
     target: Option<CallTarget>,
 }
 const METHOD_MEGAMORPHIC_LIMIT: usize = 8;
@@ -273,6 +274,7 @@ const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     shape: u32::MAX,
     atom: u32::MAX,
     proto: Value::UNDEFINED,
+    guard: EMPTY_CACHE,
     target: None,
 };
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -51,7 +51,6 @@ impl<H: Host> Vm<H> {
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
-            self.invalidate_method_caches_for_key(key);
             return;
         }
         self.descriptors.insert((object, key), attributes);
@@ -72,7 +71,6 @@ impl<H: Host> Vm<H> {
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
-            self.invalidate_method_caches_for_key(key);
             return;
         }
         if self.descriptors.remove(&(object, key)).is_some() {
