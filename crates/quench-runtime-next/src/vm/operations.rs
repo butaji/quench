@@ -676,6 +676,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeFrom
             | Native::TemporalZonedDateTimeCompare
             | Native::TemporalZonedDateTimeEquals
+            | Native::TemporalZonedDateTimeWith
             | Native::TemporalZonedDateTimeWithTimeZone
             | Native::TemporalZonedDateTimeToInstant
             | Native::TemporalZonedDateTimeToPlainDate
@@ -696,6 +697,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeCalendarIdGetter
             | Native::TemporalZonedDateTimeYearGetter
             | Native::TemporalZonedDateTimeMonthGetter
+            | Native::TemporalZonedDateTimeMonthCodeGetter
             | Native::TemporalZonedDateTimeDayGetter
             | Native::TemporalZonedDateTimeHourGetter
             | Native::TemporalZonedDateTimeMinuteGetter

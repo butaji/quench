@@ -1110,7 +1110,7 @@ impl<H: Host> Vm<H> {
         self.make_zoned_date_time_from_local(p, date, time, calendar, timezone, disambiguation)
     }
 
-    fn make_zoned_date_time_from_local(
+    pub(super) fn make_zoned_date_time_from_local(
         &mut self,
         p: &ResidualProgram,
         date: super::temporal_date::IsoDate,
@@ -1142,12 +1142,18 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.range_error(p, "Invalid instant".into()));
         }
-        let arguments = [
-            self.heap.alloc(Cell::BigInt(epoch.to_string())),
-            self.heap.alloc(Cell::String(timezone.into())),
-            self.heap.alloc(Cell::String(calendar.into())),
-        ];
-        let constructor = self.native_value(Native::TemporalZonedDateTime);
-        self.temporal_zoned_date_time_construct(p, &arguments, constructor)
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_atom)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            super::temporal_zoned_date_time::ZonedDateTimeRecord {
+                epoch_nanoseconds: epoch,
+                time_zone: timezone,
+                calendar,
+            },
+        )
     }
 }
