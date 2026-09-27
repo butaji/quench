@@ -545,6 +545,20 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainDateUntil | Native::TemporalPlainDateSince => {
                 self.temporal_plain_date_difference(p, native, this, args)
             }
+            Native::TemporalPlainDateTime
+            | Native::TemporalPlainDateTimeCalendarIdGetter
+            | Native::TemporalPlainDateTimeYearGetter
+            | Native::TemporalPlainDateTimeMonthGetter
+            | Native::TemporalPlainDateTimeMonthCodeGetter
+            | Native::TemporalPlainDateTimeDayGetter
+            | Native::TemporalPlainDateTimeHourGetter
+            | Native::TemporalPlainDateTimeMinuteGetter
+            | Native::TemporalPlainDateTimeSecondGetter
+            | Native::TemporalPlainDateTimeMillisecondGetter
+            | Native::TemporalPlainDateTimeMicrosecondGetter
+            | Native::TemporalPlainDateTimeNanosecondGetter => {
+                self.temporal_plain_date_time_native(p, native, this)
+            }
             Native::Object
             | Native::Array
             | Native::Map

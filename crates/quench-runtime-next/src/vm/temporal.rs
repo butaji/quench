@@ -134,6 +134,7 @@ impl<H: Host> Vm<H> {
         }
         self.set_builtin_value_named(temporal, "Duration", duration)?;
         self.install_temporal_plain_date(p, temporal)?;
+        self.install_temporal_plain_date_time(temporal)?;
         self.set_builtin_value_named(self.realm.globals, "Temporal", temporal)
     }
 
