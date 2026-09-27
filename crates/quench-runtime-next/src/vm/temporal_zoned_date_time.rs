@@ -99,9 +99,11 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 9] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 11] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
+    ("add", Native::TemporalZonedDateTimeAdd),
+    ("subtract", Native::TemporalZonedDateTimeSubtract),
     ("toInstant", Native::TemporalZonedDateTimeToInstant),
     ("toPlainDate", Native::TemporalZonedDateTimeToPlainDate),
     ("toPlainDateTime", Native::TemporalZonedDateTimeToPlainDateTime),
@@ -292,6 +294,12 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if matches!(
+            native,
+            Native::TemporalZonedDateTimeAdd | Native::TemporalZonedDateTimeSubtract
+        ) {
+            return self.temporal_zoned_date_time_arithmetic(p, native, this, args);
+        }
         if native == Native::TemporalZonedDateTimeFrom {
             let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
             let input = self.temporal_zoned_date_time_record(
@@ -497,6 +505,106 @@ impl<H: Host> Vm<H> {
                 Ok(Value::number(f64::from(value)))
             }
         }
+    }
+
+    fn temporal_zoned_date_time_arithmetic(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            calendar,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(
+                p,
+                "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+            ));
+        };
+        let epoch_nanoseconds = *epoch_nanoseconds;
+        let time_zone = time_zone.clone();
+        let calendar = calendar.clone();
+        let mut duration = self.duration_record(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+        )?;
+        self.validate_duration_fields(p, &duration)?;
+        if native == Native::TemporalZonedDateTimeSubtract {
+            duration.iter_mut().for_each(|field| *field = -*field);
+        }
+        let fields = zoned_date_time_fields(epoch_nanoseconds, &time_zone)
+            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        let date_time_constructor = self.temporal_plain_date_time_constructor(p)?;
+        let date_time_args = [
+            Value::number(f64::from(fields[0])),
+            Value::number(f64::from(fields[1])),
+            Value::number(f64::from(fields[2])),
+            Value::number(f64::from(fields[3])),
+            Value::number(f64::from(fields[4])),
+            Value::number(f64::from(fields[5])),
+            Value::number(f64::from(fields[6])),
+            Value::number(f64::from(fields[7])),
+            Value::number(f64::from(fields[8])),
+            self.heap.alloc(Cell::String(calendar.clone().into())),
+        ];
+        let local_date_time = self.temporal_plain_date_time_construct(
+            p,
+            &date_time_args,
+            date_time_constructor,
+        )?;
+        let mut date_duration = duration;
+        date_duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..].fill(0.0);
+        let date_duration_args = date_duration.map(Value::number);
+        let date_duration = self.temporal_duration_construct(p, &date_duration_args)?;
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let local_date_time = self.temporal_plain_date_time_arithmetic(
+            p,
+            Native::TemporalPlainDateTimeAdd,
+            local_date_time,
+            &[date_duration, options],
+        )?;
+        let (date, time, _) = self.temporal_plain_date_time_slots(p, local_date_time)?;
+        let local_date = chrono::NaiveDate::from_ymd_opt(
+            date.year,
+            date.month,
+            date.day,
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime date".into()))?;
+        let nanosecond = time[3] * 1_000_000 + time[4] * 1_000 + time[5];
+        let local = local_date
+            .and_hms_nano_opt(
+                time[0],
+                time[1],
+                time[2],
+                nanosecond as u32,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime time".into()))?;
+        let date_epoch = zoned_local_epoch_with_disambiguation(local, &time_zone, "compatible")
+            .ok_or_else(|| self.range_error(p, "Invalid local date-time".into()))?;
+        let time_delta = duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..]
+            .iter()
+            .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+            .map(|(value, scale)| *value as i128 * scale)
+            .sum::<i128>();
+        let epoch_nanoseconds = date_epoch + time_delta;
+        let temporal_key = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_key)?;
+        let constructor_key = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_key)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            ZonedDateTimeRecord {
+                epoch_nanoseconds,
+                time_zone,
+                calendar,
+            },
+        )
     }
 
     fn temporal_zoned_date_time_record(
