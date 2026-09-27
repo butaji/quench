@@ -440,6 +440,9 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainYearMonthAdd | Native::TemporalPlainYearMonthSubtract => {
                 self.temporal_plain_year_month_add(p, native, args, year, month, calendar)
             }
+            Native::TemporalPlainYearMonthWith => {
+                self.temporal_plain_year_month_with(p, args, year, month, calendar, reference_day)
+            }
             Native::TemporalPlainYearMonthToPlainDate => {
                 let item = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if !self.is_object_like(item) {
@@ -505,6 +508,100 @@ impl<H: Host> Vm<H> {
             calendar,
             reference_iso_day: DEFAULT_REFERENCE_ISO_DAY,
         }))
+    }
+
+    fn temporal_plain_year_month_with(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        year: i32,
+        month: u32,
+        calendar: String,
+        reference_day: u32,
+    ) -> Result<Value, JsError> {
+        let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let (changed_year, changed_month, changed_code) =
+            self.temporal_plain_year_month_change_fields(p, changes)?;
+        if changed_month.is_some_and(|month| month <= 0) {
+            return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
+        }
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let constrain = self.plain_date_overflow(p, options)?;
+        if changed_year.is_none() && changed_month.is_none() && changed_code.is_none() {
+            return Err(self.type_error(p, "Invalid fields".into()));
+        }
+        let year = changed_year.unwrap_or(year);
+        let changed_code = changed_code
+            .map(|code| self.heap.alloc(Cell::String(code.into())))
+            .map(|code| self.plain_date_month_code(p, code))
+            .transpose()?;
+        let month = match (changed_month, changed_code) {
+            (Some(month), Some(code)) if month != code => {
+                return Err(self.range_error(p, "Conflicting month fields".into()));
+            }
+            (Some(month), _) => month,
+            (None, Some(code)) => code,
+            (None, None) => month as i32,
+        };
+        let month = if constrain {
+            month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR)
+        } else {
+            month
+        };
+        let constructor = self.native_value(Native::TemporalPlainYearMonth);
+        self.make_plain_year_month(p, constructor, year, month as u32, calendar, reference_day)
+    }
+
+    fn temporal_plain_year_month_change_fields(
+        &mut self,
+        p: &ResidualProgram,
+        changes: Value,
+    ) -> Result<(Option<i32>, Option<i32>, Option<String>), JsError> {
+        self.validate_plain_year_month_changes(p, changes)?;
+        let month_atom = self.intern_atom("month");
+        let month_value = self.get_property(p, changes, month_atom)?;
+        let month = self.plain_date_optional_integer(p, month_value)?;
+        let month_code_atom = self.intern_atom("monthCode");
+        let month_code = self.get_property(p, changes, month_code_atom)?;
+        let month_code = if month_code.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, month_code)?.to_string())
+        };
+        let year_atom = self.intern_atom("year");
+        let year_value = self.get_property(p, changes, year_atom)?;
+        let year = self.plain_date_optional_integer(p, year_value)?;
+        Ok((year, month, month_code))
+    }
+
+    fn validate_plain_year_month_changes(
+        &mut self,
+        p: &ResidualProgram,
+        changes: Value,
+    ) -> Result<(), JsError> {
+        if !self.is_object_like(changes)
+            || matches!(
+                self.heap.get(changes),
+                Some(
+                    Cell::Array { .. }
+                        | Cell::TemporalPlainDate { .. }
+                        | Cell::TemporalPlainDateTime { .. }
+                        | Cell::TemporalPlainMonthDay { .. }
+                        | Cell::TemporalPlainYearMonth { .. }
+                        | Cell::TemporalZonedDateTime { .. }
+                )
+            )
+        {
+            return Err(self.type_error(p, "Invalid fields".into()));
+        }
+        let calendar_atom = self.intern_atom("calendar");
+        let calendar = self.get_property(p, changes, calendar_atom)?;
+        let time_zone_atom = self.intern_atom("timeZone");
+        let time_zone = self.get_property(p, changes, time_zone_atom)?;
+        if !calendar.is_undefined() || !time_zone.is_undefined() {
+            return Err(self.type_error(p, "Invalid fields".into()));
+        }
+        Ok(())
     }
 
     fn temporal_calendar_projection_from(
