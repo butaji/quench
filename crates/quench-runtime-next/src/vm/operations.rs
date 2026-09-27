@@ -531,7 +531,17 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateMonthGetter
             | Native::TemporalPlainDateMonthCodeGetter
             | Native::TemporalPlainDateDayGetter
+            | Native::TemporalPlainDateEraGetter
+            | Native::TemporalPlainDateEraYearGetter
+            | Native::TemporalPlainDateDayOfWeekGetter
+            | Native::TemporalPlainDateDayOfYearGetter
+            | Native::TemporalPlainDateWeekOfYearGetter
+            | Native::TemporalPlainDateYearOfWeekGetter
+            | Native::TemporalPlainDateDaysInWeekGetter
             | Native::TemporalPlainDateDaysInMonthGetter
+            | Native::TemporalPlainDateDaysInYearGetter
+            | Native::TemporalPlainDateMonthsInYearGetter
+            | Native::TemporalPlainDateInLeapYearGetter
             | Native::TemporalPlainDateToString
             | Native::TemporalPlainDateToJSON
             | Native::TemporalPlainDateToLocaleString
