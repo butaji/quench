@@ -79,10 +79,11 @@ pub(crate) enum CellKind {
     TemporalDuration,
     TemporalPlainDate,
     TemporalPlainDateTime,
+    TemporalZonedDateTime,
 }
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
-    pub(crate) const COUNT: usize = Self::TemporalPlainDateTime as usize + 1;
+    pub(crate) const COUNT: usize = Self::TemporalZonedDateTime as usize + 1;
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
         "array",
@@ -104,6 +105,7 @@ impl CellKind {
         "temporal_duration",
         "temporal_plain_date",
         "temporal_plain_date_time",
+        "temporal_zoned_date_time",
     ];
 }
 #[derive(Default)]
@@ -651,7 +653,8 @@ impl Heap {
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
             | Cell::TemporalPlainDate { object: value, .. }
-            | Cell::TemporalPlainDateTime { object: value, .. } => object(value),
+            | Cell::TemporalPlainDateTime { object: value, .. }
+            | Cell::TemporalZonedDateTime { object: value, .. } => object(value),
             Cell::String(_) | Cell::BigInt(_) | Cell::Symbol(_) | Cell::Error(_) => {}
             _ => unreachable!("typed array backing handled above"),
         }
@@ -685,6 +688,7 @@ impl Heap {
             Cell::TemporalDuration { .. } => CellKind::TemporalDuration,
             Cell::TemporalPlainDate { .. } => CellKind::TemporalPlainDate,
             Cell::TemporalPlainDateTime { .. } => CellKind::TemporalPlainDateTime,
+            Cell::TemporalZonedDateTime { .. } => CellKind::TemporalZonedDateTime,
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
@@ -700,6 +704,11 @@ impl Heap {
             Cell::TemporalDuration { .. } => 0,
             Cell::TemporalPlainDate { calendar, .. }
             | Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
+            Cell::TemporalZonedDateTime {
+                time_zone,
+                calendar,
+                ..
+            } => time_zone.capacity() + calendar.capacity(),
             Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),

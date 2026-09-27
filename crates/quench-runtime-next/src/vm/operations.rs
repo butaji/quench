@@ -559,6 +559,21 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateTimeNanosecondGetter => {
                 self.temporal_plain_date_time_native(p, native, this)
             }
+            Native::TemporalZonedDateTime
+            | Native::TemporalZonedDateTimeEpochNanosecondsGetter
+            | Native::TemporalZonedDateTimeTimeZoneIdGetter
+            | Native::TemporalZonedDateTimeCalendarIdGetter
+            | Native::TemporalZonedDateTimeYearGetter
+            | Native::TemporalZonedDateTimeMonthGetter
+            | Native::TemporalZonedDateTimeDayGetter
+            | Native::TemporalZonedDateTimeHourGetter
+            | Native::TemporalZonedDateTimeMinuteGetter
+            | Native::TemporalZonedDateTimeSecondGetter
+            | Native::TemporalZonedDateTimeMillisecondGetter
+            | Native::TemporalZonedDateTimeMicrosecondGetter
+            | Native::TemporalZonedDateTimeNanosecondGetter => {
+                self.temporal_zoned_date_time_native(p, native, this)
+            }
             Native::Object
             | Native::Array
             | Native::Map

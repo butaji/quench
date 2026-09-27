@@ -467,7 +467,8 @@ impl<H: Host> Vm<H> {
                 }
                 Some(Cell::Date { object: x, .. })
                 | Some(Cell::TemporalDuration { object: x, .. })
-                | Some(Cell::TemporalPlainDate { object: x, .. }) => object = x.proto,
+                | Some(Cell::TemporalPlainDate { object: x, .. })
+                | Some(Cell::TemporalZonedDateTime { object: x, .. }) => object = x.proto,
                 Some(Cell::Object(x))
                 | Some(Cell::Array { object: x, .. })
                 | Some(Cell::ShadowRealm { object: x, .. })
