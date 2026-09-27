@@ -34,8 +34,9 @@ pub(super) fn is_bounded(function: &Function) -> bool {
                 work.push(pc + 1);
             }
             ControlFlowLayout::Terminal => {}
-            ControlFlowLayout::Fallthrough if instruction.returns_from_frame() => {}
-            ControlFlowLayout::Fallthrough => work.push(pc + 1),
+            ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
+                if instruction.returns_from_frame() => {}
+            ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => work.push(pc + 1),
         }
     }
     true
