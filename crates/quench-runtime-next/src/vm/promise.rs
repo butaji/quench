@@ -643,11 +643,6 @@ pub(super) struct PromiseRecord {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct PromiseResolvingFunctions {
-    pub(super) promise: Value,
-    pub(super) already_resolved: bool,
-}
-#[derive(Clone, Copy, Debug)]
 pub(super) struct PromiseJob {
     pub(super) handler: Value,
     pub(super) next: Value,
@@ -762,7 +757,6 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) reaction_capabilities: FxHashMap<Value, (Value, Value)>,
-    pub(super) resolving_functions: FxHashMap<Value, PromiseResolvingFunctions>,
     pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
@@ -786,7 +780,6 @@ impl Default for PromiseRuntime {
             aggregates: FxHashMap::default(),
             aggregate_jobs: FxHashMap::default(),
             reaction_capabilities: FxHashMap::default(),
-            resolving_functions: FxHashMap::default(),
             async_resume_jobs: FxHashMap::default(),
             modules: FxHashMap::default(),
             dynamic_import_jobs: Vec::new(),
@@ -1020,20 +1013,33 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn promise_resolving_functions(&mut self, promise: Value) -> (Value, Value) {
-        let state = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        self.promise.resolving_functions.insert(
-            state,
-            PromiseResolvingFunctions {
-                promise,
-                already_resolved: false,
-            },
-        );
+        let state = self.heap.alloc(Cell::PromiseResolvingState {
+            promise,
+            already_resolved: false,
+        });
         (
             self.native_with_env(Native::PromiseResolve, state),
             self.native_with_env(Native::PromiseReject, state),
         )
+    }
+
+    fn take_promise_resolving_promise(
+        &mut self,
+        p: &ResidualProgram,
+        state: Value,
+    ) -> Result<Option<Value>, JsError> {
+        let Some(Cell::PromiseResolvingState {
+            promise,
+            already_resolved,
+        }) = self.heap.get_mut(state)
+        else {
+            return Err(self.type_error(p, "invalid Promise resolver state".into()));
+        };
+        if *already_resolved {
+            return Ok(None);
+        }
+        *already_resolved = true;
+        Ok(Some(*promise))
     }
 
     fn promise_with_resolvers(
@@ -1128,14 +1134,9 @@ impl<H: Host> Vm<H> {
             Native::PromiseSpeciesGetter => Ok(this),
             Native::PromiseResolve => {
                 if let Some(state) = self.active_native_env() {
-                    let Some(resolving) = self.promise.resolving_functions.get_mut(&state) else {
-                        return Err(self.type_error(p, "invalid Promise resolver state".into()));
-                    };
-                    if resolving.already_resolved {
+                    let Some(promise) = self.take_promise_resolving_promise(p, state)? else {
                         return Ok(Value::UNDEFINED);
-                    }
-                    resolving.already_resolved = true;
-                    let promise = resolving.promise;
+                    };
                     self.promise_resolve_value(
                         p,
                         promise,
@@ -1169,14 +1170,9 @@ impl<H: Host> Vm<H> {
             }
             Native::PromiseReject => {
                 if let Some(state) = self.active_native_env() {
-                    let Some(resolving) = self.promise.resolving_functions.get_mut(&state) else {
-                        return Err(self.type_error(p, "invalid Promise resolver state".into()));
-                    };
-                    if resolving.already_resolved {
+                    let Some(promise) = self.take_promise_resolving_promise(p, state)? else {
                         return Ok(Value::UNDEFINED);
-                    }
-                    resolving.already_resolved = true;
-                    let promise = resolving.promise;
+                    };
                     self.promise_settle(
                         p,
                         promise,
