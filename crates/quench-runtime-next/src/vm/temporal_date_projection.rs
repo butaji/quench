@@ -927,8 +927,11 @@ impl<H: Host> Vm<H> {
             Some(month) => month,
             None => return Err(self.type_error(p, "Missing month".into())),
         };
+        if month <= 0 {
+            return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
+        }
         let month = if constrain {
-            month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR)
+            month.min(super::temporal_date::ISO_MONTHS_PER_YEAR)
         } else {
             month
         };
