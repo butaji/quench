@@ -415,6 +415,7 @@ impl<H: Host> Vm<H> {
             .map(|shape| shape.storage_len)
             .collect::<Vec<_>>();
         self.heap.remap_live_object_shapes(&mapping, &lengths);
+        self.heap.compact_property_arena();
         self.shapes = shapes;
         self.transitions = transitions;
         self.object_shapes.fill(u32::MAX);
