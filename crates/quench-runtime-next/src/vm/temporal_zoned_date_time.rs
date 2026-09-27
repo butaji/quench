@@ -929,15 +929,13 @@ pub(super) fn parse_iso_zoned_base(value: &str) -> Option<(chrono::NaiveDateTime
             clock.get(..ISO_TIME_FIELD_DIGITS)?.parse().ok()?,
             clock
                 .get(ISO_TIME_FIELD_DIGITS..ISO_TIME_FIELD_DIGITS * 2)
-                .filter(|_| clock.len() >= ISO_TIME_FIELD_DIGITS * 2)?
-                .parse()
-                .ok()
+                .filter(|_| clock.len() >= ISO_TIME_FIELD_DIGITS * 2)
+                .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
             clock
                 .get(ISO_TIME_FIELD_DIGITS * 2..ISO_TIME_FIELD_DIGITS * 3)
-                .filter(|_| clock.len() == ISO_TIME_FIELD_DIGITS * 3)?
-                .parse()
-                .ok()
+                .filter(|_| clock.len() == ISO_TIME_FIELD_DIGITS * 3)
+                .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
         ]
     };
