@@ -173,6 +173,7 @@ fn cell_bytes(cell: &Cell) -> usize {
         | Cell::ShadowRealm { .. }
         | Cell::PromiseResolvingState { .. }
         | Cell::TemporalDuration { .. } => 0,
+        Cell::TemporalInstant { .. } => 0,
         Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
         Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
         Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
