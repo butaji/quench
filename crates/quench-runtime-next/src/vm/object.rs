@@ -36,7 +36,11 @@ impl<H: Host> Vm<H> {
         }
         None
     }
-    fn object_property_slot(&self, object: Value, key: PropertyKey) -> Option<(u32, usize)> {
+    pub(super) fn object_property_slot(
+        &self,
+        object: Value,
+        key: PropertyKey,
+    ) -> Option<(u32, usize)> {
         let shape = self.object_data(object)?.shape();
         Some((shape, self.property_shape_slot(shape, key)?))
     }
