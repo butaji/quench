@@ -1119,20 +1119,9 @@ impl<H: Host> Vm<H> {
         timezone: String,
         disambiguation: &str,
     ) -> Result<Value, JsError> {
-        let local = chrono::NaiveDate::from_ymd_opt(date.year, date.month, date.day)
-            .and_then(|date| {
-                let subsecond = time[MILLISECOND_FIELD]
-                    * super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
-                        [MILLISECOND_FIELD] as u32
-                    + time[MICROSECOND_FIELD]
-                        * super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
-                            [MICROSECOND_FIELD] as u32
-                    + time[NANOSECOND_FIELD];
-                date.and_hms_nano_opt(time[0], time[1], time[2], subsecond)
-            })
-            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-        let epoch = super::temporal_zoned_date_time::zoned_local_epoch_with_disambiguation(
-            local,
+        let epoch = super::temporal_zoned_date_time::zoned_local_epoch_from_iso_fields(
+            date,
+            time,
             &timezone,
             disambiguation,
         )

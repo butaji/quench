@@ -1531,45 +1531,27 @@ pub(super) fn to_zoned_date_time<H: Host>(
     } else {
         super::temporal_plain_date_time_conversion::to_time(vm, p, time_value)?
     };
-    let iso_date = super::temporal_date::IsoDate { year, month, day };
-    let local_midnight = i128::from(super::temporal_date::days_from_iso_date(iso_date))
-        * super::temporal_zoned_date_time::NANOSECONDS_PER_DAY;
-    let local_time = time
-        .iter()
-        .zip(TIME_NANOSECONDS)
-        .map(|(field, scale)| i128::from(*field) * scale)
-        .sum::<i128>();
-    let local_epoch = local_midnight + local_time;
-    let offset =
-        super::temporal_zoned_date_time::timezone_offset_nanoseconds(&time_zone, local_epoch)
-            .ok_or_else(|| vm.range_error(p, "Invalid time zone".into()))?;
-    let epoch_nanoseconds = local_epoch - offset;
-    if epoch_nanoseconds.unsigned_abs()
-        > super::temporal_zoned_date_time::MAX_EPOCH_NANOSECONDS as u128
-    {
-        return Err(vm.range_error(p, "Invalid instant".into()));
-    }
-    let temporal_atom = vm.intern_atom("Temporal");
-    let temporal = vm.get_property(p, vm.realm.globals, temporal_atom)?;
-    let constructor_atom = vm.intern_atom("ZonedDateTime");
-    let constructor = vm.get_property(p, temporal, constructor_atom)?;
-    let args = [
-        vm.heap.alloc(Cell::BigInt(epoch_nanoseconds.to_string())),
-        vm.heap.alloc(Cell::String(time_zone.into())),
-        vm.heap.alloc(Cell::String(calendar.into())),
+    let [hour, minute, second, millisecond, microsecond, nanosecond] = time;
+    let mut to_unsigned = |field| {
+        u32::try_from(field).map_err(|_| vm.range_error(p, "Invalid PlainTime".into()))
+    };
+    let time = [
+        to_unsigned(hour)?,
+        to_unsigned(minute)?,
+        to_unsigned(second)?,
+        to_unsigned(millisecond)?,
+        to_unsigned(microsecond)?,
+        to_unsigned(nanosecond)?,
     ];
-    let result = vm.temporal_zoned_date_time_construct(p, &args, constructor)?;
-    Ok(result)
+    vm.make_zoned_date_time_from_local(
+        p,
+        super::temporal_date::IsoDate { year, month, day },
+        time,
+        calendar,
+        time_zone,
+        "compatible",
+    )
 }
-
-const TIME_NANOSECONDS: [i128; 6] = [
-    3_600_000_000_000,
-    60_000_000_000,
-    1_000_000_000,
-    1_000_000,
-    1_000,
-    1,
-];
 
 pub(super) fn native<H: Host>(
     vm: &mut Vm<H>,
