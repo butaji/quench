@@ -327,6 +327,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalInstantEpochNanosecondsGetter, Native::TemporalInstantEpochMillisecondsGetter,
     Native::TemporalInstantToString, Native::TemporalInstantToJSON, Native::TemporalInstantValueOf,
     Native::TemporalInstantEquals, Native::TemporalInstantAdd, Native::TemporalInstantSubtract,
+    Native::TemporalInstantRound,
     Native::Error, Native::ErrorToString, Native::ErrorIsError, Native::ErrorStackGetter, Native::ErrorStackSetter,
     Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,

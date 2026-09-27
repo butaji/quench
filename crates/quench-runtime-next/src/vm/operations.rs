@@ -592,7 +592,8 @@ impl<H: Host> Vm<H> {
             | Native::TemporalInstantValueOf
             | Native::TemporalInstantEquals
             | Native::TemporalInstantAdd
-            | Native::TemporalInstantSubtract => {
+            | Native::TemporalInstantSubtract
+            | Native::TemporalInstantRound => {
                 self.temporal_instant_native(p, native, this, args)
             }
             Native::Object

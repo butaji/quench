@@ -98,6 +98,7 @@ mod string_extra;
 mod temporal;
 mod temporal_instant;
 mod temporal_instant_format;
+mod temporal_instant_round;
 mod temporal_date;
 mod temporal_date_arithmetic;
 mod temporal_date_difference;

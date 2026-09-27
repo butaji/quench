@@ -344,7 +344,7 @@ pub(crate) enum Native {
     TemporalInstantFromEpochMilliseconds, TemporalInstantFromEpochNanoseconds,
     TemporalInstantEpochNanosecondsGetter, TemporalInstantEpochMillisecondsGetter,
     TemporalInstantToString, TemporalInstantToJSON, TemporalInstantValueOf,
-    TemporalInstantEquals, TemporalInstantAdd, TemporalInstantSubtract,
+    TemporalInstantEquals, TemporalInstantAdd, TemporalInstantSubtract, TemporalInstantRound,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
     MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, MathAcos, MathAsin, MathAtan, MathCos, MathExp, MathSin, MathTan, MathAtan2, NumberString, NumberToLocaleString, Number, NumberValueOf,
     MathAcosh, MathAsinh, MathAtanh, MathCbrt, MathCosh, MathExpm1, MathFround,
