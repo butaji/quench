@@ -1,7 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
     FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
-    REGISTER_MASK, Register, ResidualProgram, ResultLayout,
+    REGISTER_MASK, Register, ResidualProgram,
 };
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
@@ -82,14 +82,11 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
         (InstructionField::B, instruction.b()),
         (InstructionField::C, instruction.c()),
     ];
-    if instruction.op().result_layout() != ResultLayout::NoResult
-        && !register_in_bounds(instruction.result_register(), bounds.registers, 0)
-    {
-        return false;
-    }
-
     fields.into_iter().all(
         |(field, value)| match instruction.op().field_layout(field) {
+            FieldLayout::ResultRegister => {
+                register_in_bounds(instruction.result_register(), bounds.registers, 0)
+            }
             FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
                 register_in_bounds(value, bounds.registers, 0)
             }
