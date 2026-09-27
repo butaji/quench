@@ -106,64 +106,47 @@ impl<H: Host> Vm<H> {
             return Err(JsError("delete target is not an object".into()));
         }
         let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-            if self.symbol_property(target, key_value).is_none() {
-                return Ok(Value::TRUE);
-            }
-            let property_key = PropertyKey::symbol(key_value);
-            let Some(slot) = self
-                .object_data(target)
-                .and_then(|data| self.property_shape_slot(data.shape(), property_key))
-                .filter(|slot| {
-                    self.heap
-                        .property_get(self.object_data(target).unwrap(), *slot)
-                        .is_some()
-                })
-            else {
-                return Ok(Value::TRUE);
-            };
-            if self
-                .property_attributes(target, property_key)
-                .is_some_and(|attributes| !attributes.configurable)
+        let property_key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+            PropertyKey::symbol(key_value)
+        } else {
+            let key = self.coerce_js_string(p, key_value)?;
+            let atom = self.intern_js_atom(&key);
+            self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
+            if key.host_string() == "length"
+                && matches!(self.heap.get(target), Some(Cell::Array { .. }))
+                && !self
+                    .object_data(target)
+                    .is_some_and(Object::is_arguments_object)
             {
                 return Ok(Value::FALSE);
             }
-            self.heap.property_set(target, slot, Value::DELETED);
-            self.delete_shape_property(target, property_key);
-            return Ok(Value::TRUE);
-        }
-        let key = self.coerce_js_string(p, key_value)?;
-        let atom = self.intern_js_atom(&key);
-        self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
-        if key.host_string() == "length"
-            && matches!(self.heap.get(target), Some(Cell::Array { .. }))
-            && !self
-                .object_data(target)
-                .is_some_and(Object::is_arguments_object)
-        {
-            return Ok(Value::FALSE);
-        }
-        if let Some(index) =
-            super::object_static::array_index(key.host_string()).map(|index| index as usize)
-            && matches!(self.heap.get(target), Some(Cell::Array { .. }))
-        {
-            return Ok(self.delete_array_index(target, index));
-        }
-        let Some(slot) = self
-            .shape_slot(self.object_data(target).unwrap().shape(), atom)
-            .filter(|_| self.own_property(target, atom).is_some())
+            if let Some(index) =
+                super::object_static::array_index(key.host_string()).map(|index| index as usize)
+                && matches!(self.heap.get(target), Some(Cell::Array { .. }))
+            {
+                return Ok(self.delete_array_index(target, index));
+            }
+            PropertyKey::string(atom)
+        };
+        let Some((_, slot)) =
+            self.object_property_slot(target, property_key)
+                .filter(|(_, slot)| {
+                    self.object_data(target)
+                        .and_then(|object| self.heap.property_get(object, *slot))
+                        .is_some()
+                })
         else {
             return Ok(Value::TRUE);
         };
         if !self
-            .property_attributes(target, PropertyKey::string(atom))
+            .property_attributes(target, property_key)
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
             .configurable
         {
             return Ok(Value::FALSE);
         }
         self.heap.property_set(target, slot, Value::DELETED);
-        self.delete_shape_property(target, PropertyKey::string(atom));
+        self.delete_shape_property(target, property_key);
         Ok(Value::TRUE)
     }
 
