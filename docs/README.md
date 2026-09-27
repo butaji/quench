@@ -20,19 +20,11 @@ semantics remain in `quench-runtime`; OXC owns syntax. The final conformance
 gates are the pinned Test262, Wasm, and tracked Node-compat inventories named
 in the queue.
 
-The complete Test262 gate is deterministic and uncapped:
-
-```sh
-TEST262_TEST_TIMEOUT_MS=30000 \
-TEST262_REPORT=target/test262-report.json \
-  cargo run --release -p quench-test262 --bin run-all
-```
-
-The rewrite gate must use the v2-derived runtime explicitly. The current
-conformance phase proceeds through the requested sequential `run-stages-next`
-prefixes (0, 0–1, 0–2, 0–3), without a whole-inventory run; see task 20. Every
-case has its own mandatory timeout. `run-stages-next` reports and executes
-deterministic batches capped at 100 cases.
+The rewrite gate must use the v2-derived runtime explicitly. Test262 progress
+is stage-ordered with `run-stages-next`; never replace that ratchet with a
+whole-inventory run. Every case has its own mandatory timeout, and the runner
+reports and executes deterministic batches capped at 100 cases. Task 20 owns
+the current stage and cumulative coverage record.
 
 The default `dev` profile is incremental and uses no optimization for the
 shortest Rust edit/compile cycle. For conformance iterations, use the
@@ -68,12 +60,7 @@ reports, and keep stage batches capped at 100. The fixture comparison scripts
 `tools/diff-next.mjs` and `tools/run-all-next.mjs` require positive
 `DIFF_TIMEOUT_MS` values.
 
-For long runs, execute deterministic file batches sequentially:
-
-```sh
-for i in $(seq 0 53); do
-  TEST262_TEST_TIMEOUT_MS=30000 TEST262_BATCH_SIZE=1000 TEST262_BATCH_INDEX="$i" \
-    TEST262_REPORT="target/test262-batches/file-${i}.json" \
-    target/release/run-all || exit $?
-done
-```
+For long runs, advance one stage at a time with `run-stages-next`; it divides
+large stages into deterministic batches of at most 100 cases and preserves
+discovery order. Do not use the legacy `run-all` batch wrapper for the current
+next-runtime ratchet.
