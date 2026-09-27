@@ -304,6 +304,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalPlainDateToJSON, Native::TemporalPlainDateToLocaleString,
     Native::TemporalPlainDateEquals, Native::TemporalPlainDateValueOf,
     Native::TemporalPlainDateAdd, Native::TemporalPlainDateSubtract,
+    Native::TemporalPlainDateUntil, Native::TemporalPlainDateSince,
     Native::Error, Native::ErrorToString, Native::ErrorIsError, Native::ErrorStackGetter, Native::ErrorStackSetter,
     Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,

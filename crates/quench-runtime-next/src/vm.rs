@@ -98,6 +98,7 @@ mod string_extra;
 mod temporal;
 mod temporal_date;
 mod temporal_date_arithmetic;
+mod temporal_date_difference;
 mod superinstruction;
 mod symbol;
 mod type_predicates;

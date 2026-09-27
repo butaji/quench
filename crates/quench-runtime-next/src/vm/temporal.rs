@@ -388,7 +388,7 @@ impl<H: Host> Vm<H> {
         Ok(fields)
     }
 
-    fn make_temporal_duration(
+    pub(super) fn make_temporal_duration(
         &mut self,
         p: &ResidualProgram,
         fields: [f64; 10],
