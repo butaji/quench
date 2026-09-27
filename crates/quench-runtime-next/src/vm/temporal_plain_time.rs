@@ -41,6 +41,7 @@ impl<H: Host> Vm<H> {
             ("add", Native::TemporalPlainTimeAdd),
             ("subtract", Native::TemporalPlainTimeSubtract),
             ("equals", Native::TemporalPlainTimeEquals),
+            ("round", Native::TemporalPlainTimeRound),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -75,6 +76,7 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainTimeAdd
                 | Native::TemporalPlainTimeSubtract
                 | Native::TemporalPlainTimeEquals
+                | Native::TemporalPlainTimeRound
         ) && !self.temporal_plain_time_has_brand(this)
         {
             return Err(self.type_error(p, "Not a PlainTime".into()));
@@ -147,6 +149,50 @@ impl<H: Host> Vm<H> {
                 args.first().copied().unwrap_or(Value::UNDEFINED),
             )?;
             return Ok(if time == other { Value::TRUE } else { Value::FALSE });
+        }
+        if native == Native::TemporalPlainTimeRound {
+            let options = args.first().copied().unwrap_or(Value::UNDEFINED);
+            let parsed = super::temporal_instant_round::read_options(self, p, options)?;
+            let (unit, scale) = super::temporal_instant_round::parse_unit(
+                self,
+                p,
+                parsed.smallest_unit.as_deref(),
+            )?;
+            if unit == "day" {
+                return Err(self.range_error(p, "Invalid PlainTime rounding unit".into()));
+            }
+            let increment = super::temporal_instant_round::validate_increment(
+                self,
+                p,
+                parsed.increment,
+                scale,
+            )?;
+            let mode = super::temporal_instant_round::validate_mode(
+                self,
+                p,
+                parsed.rounding_mode.as_deref(),
+            )?;
+            let time = super::temporal_plain_date_time_conversion::to_time(self, p, this)?;
+            let total = time
+                .iter()
+                .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+                .map(|(value, scale)| i128::from(*value) * scale)
+                .sum::<i128>();
+            let quantum = scale * increment;
+            let rounded = (super::temporal_zoned_date_time::round_temporal_nanoseconds(
+                total, quantum, mode,
+            ) * quantum)
+                .rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
+            let mut time = [0_i32; 6];
+            let mut remainder = rounded;
+            for (index, scale) in super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
+                .into_iter()
+                .enumerate()
+            {
+                time[index] = (remainder / scale) as i32;
+                remainder %= scale;
+            }
+            return self.temporal_plain_time_object(time);
         }
         if native == Native::TemporalPlainTimeFrom {
             let value = args.first().copied().unwrap_or(Value::UNDEFINED);

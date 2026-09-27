@@ -6,7 +6,10 @@ const NANOSECONDS_PER_MINUTE: i128 = 60_000_000_000;
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: i128 = 1_000;
-const MAX_ROUNDING_INCREMENT: f64 = 1_000_000_000.0;
+const DAY_ROUNDING_INCREMENT_LIMIT: f64 = 1.0;
+const HOUR_ROUNDING_INCREMENT_LIMIT: f64 = 24.0;
+const SEXAGESIMAL_ROUNDING_INCREMENT_LIMIT: f64 = 60.0;
+const SUBSECOND_ROUNDING_INCREMENT_LIMIT: f64 = 1_000.0;
 const UNITS: [(&str, i128); 7] = [
     ("day", NANOSECONDS_PER_DAY),
     ("hour", NANOSECONDS_PER_HOUR),
@@ -143,11 +146,22 @@ pub(super) fn validate_increment<H: Host>(
     scale: i128,
 ) -> Result<i128, JsError> {
     let increment = increment.unwrap_or(1.0);
-    let limit = (NANOSECONDS_PER_DAY / scale) as f64;
+    let limit = match scale {
+        NANOSECONDS_PER_DAY => DAY_ROUNDING_INCREMENT_LIMIT,
+        NANOSECONDS_PER_HOUR => HOUR_ROUNDING_INCREMENT_LIMIT,
+        NANOSECONDS_PER_MINUTE | NANOSECONDS_PER_SECOND => SEXAGESIMAL_ROUNDING_INCREMENT_LIMIT,
+        NANOSECONDS_PER_MILLISECOND | NANOSECONDS_PER_MICROSECOND | 1 => {
+            SUBSECOND_ROUNDING_INCREMENT_LIMIT
+        }
+        _ => return Err(vm.range_error(p, "Invalid rounding unit".into())),
+    };
     let increment = increment.trunc();
+    let at_or_above_exclusive_limit =
+        scale != NANOSECONDS_PER_DAY && increment >= limit;
     if !increment.is_finite()
         || increment < 1.0
-        || increment > limit.min(MAX_ROUNDING_INCREMENT)
+        || increment > limit
+        || at_or_above_exclusive_limit
         || limit % increment != 0.0
     {
         return Err(vm.range_error(p, "Invalid roundingIncrement".into()));
