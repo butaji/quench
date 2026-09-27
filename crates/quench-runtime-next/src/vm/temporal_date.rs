@@ -76,6 +76,7 @@ impl<H: Host> Vm<H> {
             ("toString", Native::TemporalPlainDateToString),
             ("toJSON", Native::TemporalPlainDateToJSON),
             ("toLocaleString", Native::TemporalPlainDateToLocaleString),
+            ("toPlainDateTime", Native::TemporalPlainDateToPlainDateTime),
             ("equals", Native::TemporalPlainDateEquals),
             ("valueOf", Native::TemporalPlainDateValueOf),
             ("add", Native::TemporalPlainDateAdd),
@@ -202,6 +203,9 @@ impl<H: Host> Vm<H> {
                 Ok(self
                     .heap
                     .alloc(Cell::String(format_iso_date(year, month, day).into())))
+            }
+            Native::TemporalPlainDateToPlainDateTime => {
+                super::temporal_plain_date_time_conversion::convert(self, p, this, args)
             }
             Native::TemporalPlainDateCalendarIdGetter
             | Native::TemporalPlainDateYearGetter

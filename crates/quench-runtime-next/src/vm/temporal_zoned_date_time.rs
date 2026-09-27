@@ -1288,7 +1288,7 @@ fn zoned_local_epoch(local: chrono::NaiveDateTime, zone: &str) -> Option<i128> {
     (instant.unsigned_abs() <= MAX_EPOCH_NANOSECONDS as u128).then_some(instant)
 }
 
-fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]> {
+pub(super) fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]> {
     let seconds = epoch.div_euclid(NANOSECONDS_PER_SECOND);
     let nanoseconds = epoch.rem_euclid(NANOSECONDS_PER_SECOND) as u32;
     let utc = Utc
