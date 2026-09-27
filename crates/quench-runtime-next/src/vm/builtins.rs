@@ -329,6 +329,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalInstantEquals, Native::TemporalInstantAdd, Native::TemporalInstantSubtract,
     Native::TemporalInstantRound,
     Native::TemporalInstantSince, Native::TemporalInstantUntil,
+    Native::TemporalInstantToZonedDateTimeISO,
     Native::Error, Native::ErrorToString, Native::ErrorIsError, Native::ErrorStackGetter, Native::ErrorStackSetter,
     Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,

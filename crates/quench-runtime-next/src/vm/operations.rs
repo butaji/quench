@@ -595,7 +595,10 @@ impl<H: Host> Vm<H> {
             | Native::TemporalInstantSubtract
             | Native::TemporalInstantRound
             | Native::TemporalInstantSince
-            | Native::TemporalInstantUntil => self.temporal_instant_native(p, native, this, args),
+            | Native::TemporalInstantUntil
+            | Native::TemporalInstantToZonedDateTimeISO => {
+                self.temporal_instant_native(p, native, this, args)
+            }
             Native::Object
             | Native::Array
             | Native::Map

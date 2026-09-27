@@ -403,6 +403,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalInstantRound
         | Native::TemporalInstantSince
         | Native::TemporalInstantUntil => 1.0,
+        Native::TemporalInstantToZonedDateTimeISO => 1.0,
         Native::Symbol => 0.0,
         Native::SymbolFor | Native::SymbolKeyFor => 1.0,
         Native::SymbolToString | Native::SymbolValueOf => 0.0,
