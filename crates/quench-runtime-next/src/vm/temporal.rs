@@ -94,6 +94,7 @@ impl<H: Host> Vm<H> {
         }
         for (name, native) in [
             ("toString", Native::TemporalDurationToString),
+            ("toLocaleString", Native::TemporalToLocaleString),
             ("toJSON", Native::TemporalDurationToJSON),
             ("valueOf", Native::TemporalDurationValueOf),
             ("add", Native::TemporalDurationAdd),

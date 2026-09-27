@@ -118,6 +118,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         for (name, native) in [
             ("toString", Native::TemporalInstantToString),
+            ("toLocaleString", Native::TemporalToLocaleString),
             ("toJSON", Native::TemporalInstantToJSON),
             ("valueOf", Native::TemporalInstantValueOf),
             ("equals", Native::TemporalInstantEquals),

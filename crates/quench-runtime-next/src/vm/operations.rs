@@ -498,6 +498,23 @@ impl<H: Host> Vm<H> {
                 self.call_symbol_value_native(p, native, this)
             }
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
+            Native::TemporalToLocaleString => match self.heap.get(this) {
+                Some(Cell::TemporalDuration { .. }) => {
+                    self.temporal_duration_native(p, Native::TemporalDurationToString, this, &[])
+                }
+                Some(Cell::TemporalInstant { .. }) => {
+                    self.temporal_instant_native(p, Native::TemporalInstantToString, this, &[])
+                }
+                Some(Cell::TemporalPlainDateTime { .. }) => self.temporal_plain_date_time_native(
+                    p,
+                    Native::TemporalPlainDateTimeToString,
+                    this,
+                    &[],
+                ),
+                _ => {
+                    self.temporal_plain_time_native(p, Native::TemporalPlainTimeToString, this, &[])
+                }
+            },
             Native::TemporalDuration
             | Native::TemporalDurationFrom
             | Native::TemporalDurationCompare
