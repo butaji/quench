@@ -312,6 +312,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalPlainDateTimeSecondGetter, Native::TemporalPlainDateTimeMillisecondGetter,
     Native::TemporalPlainDateTimeMicrosecondGetter, Native::TemporalPlainDateTimeNanosecondGetter,
     Native::TemporalZonedDateTime, Native::TemporalZonedDateTimeEpochNanosecondsGetter,
+    Native::TemporalZonedDateTimeFrom, Native::TemporalZonedDateTimeCompare,
     Native::TemporalZonedDateTimeTimeZoneIdGetter, Native::TemporalZonedDateTimeCalendarIdGetter,
     Native::TemporalZonedDateTimeYearGetter, Native::TemporalZonedDateTimeMonthGetter,
     Native::TemporalZonedDateTimeDayGetter, Native::TemporalZonedDateTimeHourGetter,
