@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
         transition: ShapeTransition,
         storage_len: usize,
     ) -> u32 {
-        let next = self.shapes.len() as u32;
+        let next = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
         self.shapes
             .push(Shape::child(Some(parent), transition, storage_len));
         self.heap.register_property_shape(next, storage_len);
@@ -1102,8 +1102,12 @@ impl<H: Host> Vm<H> {
         }
         self.profile.shape_transition(false);
         let storage_len = self.shapes[shape as usize].storage_len;
+        let next_storage_len = storage_len
+            .checked_add(1)
+            .filter(|length| u32::try_from(*length).is_ok())
+            .expect("object property storage exhausted");
         let slot = u32::try_from(storage_len).expect("object property index exceeds u32");
-        let next = self.append_shape(shape, ShapeTransition::Add { key, slot }, storage_len + 1);
+        let next = self.append_shape(shape, ShapeTransition::Add { key, slot }, next_storage_len);
         self.transitions.insert((shape, key), next);
         next
     }
