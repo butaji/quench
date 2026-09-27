@@ -1,5 +1,15 @@
 use super::*;
 pub(super) const ISO_MONTHS_PER_YEAR: i32 = 12;
+const ISO_DAYS_PER_WEEK: i64 = 7;
+const ISO_WEEK_NUMBER_ADJUSTMENT: i64 = 10;
+const ISO_UNIX_EPOCH_WEEKDAY: i64 = 4;
+const ISO_COMMON_WEEKS_PER_YEAR: i64 = 52;
+const ISO_LONG_WEEKS_PER_YEAR: i64 = 53;
+const ISO_THURSDAY: i64 = 4;
+const ISO_WEDNESDAY: i64 = 3;
+const ISO_JANUARY: u32 = 1;
+const ISO_FEBRUARY: i32 = 2;
+const ISO_JANUARY_FIRST: u32 = 1;
 const MIN_ISO_YEAR: i32 = -271_821;
 const MAX_ISO_YEAR: i32 = 275_760;
 const MAX_BASIC_ISO_YEAR: i32 = 9_999;
@@ -54,7 +64,17 @@ impl<H: Host> Vm<H> {
             ("month", Native::TemporalPlainDateMonthGetter),
             ("monthCode", Native::TemporalPlainDateMonthCodeGetter),
             ("day", Native::TemporalPlainDateDayGetter),
+            ("era", Native::TemporalPlainDateEraGetter),
+            ("eraYear", Native::TemporalPlainDateEraYearGetter),
+            ("dayOfWeek", Native::TemporalPlainDateDayOfWeekGetter),
+            ("dayOfYear", Native::TemporalPlainDateDayOfYearGetter),
+            ("weekOfYear", Native::TemporalPlainDateWeekOfYearGetter),
+            ("yearOfWeek", Native::TemporalPlainDateYearOfWeekGetter),
+            ("daysInWeek", Native::TemporalPlainDateDaysInWeekGetter),
             ("daysInMonth", Native::TemporalPlainDateDaysInMonthGetter),
+            ("daysInYear", Native::TemporalPlainDateDaysInYearGetter),
+            ("monthsInYear", Native::TemporalPlainDateMonthsInYearGetter),
+            ("inLeapYear", Native::TemporalPlainDateInLeapYearGetter),
         ] {
             let getter = self.native_value(native);
             self.set_builtin_function_name(getter, &format!("get {name}"))?;
@@ -236,7 +256,17 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateMonthGetter
             | Native::TemporalPlainDateMonthCodeGetter
             | Native::TemporalPlainDateDayGetter
-            | Native::TemporalPlainDateDaysInMonthGetter => {
+            | Native::TemporalPlainDateEraGetter
+            | Native::TemporalPlainDateEraYearGetter
+            | Native::TemporalPlainDateDayOfWeekGetter
+            | Native::TemporalPlainDateDayOfYearGetter
+            | Native::TemporalPlainDateWeekOfYearGetter
+            | Native::TemporalPlainDateYearOfWeekGetter
+            | Native::TemporalPlainDateDaysInWeekGetter
+            | Native::TemporalPlainDateDaysInMonthGetter
+            | Native::TemporalPlainDateDaysInYearGetter
+            | Native::TemporalPlainDateMonthsInYearGetter
+            | Native::TemporalPlainDateInLeapYearGetter => {
                 let (year, month, day, calendar) = self.temporal_plain_date_slots(p, this)?;
                 Ok(match native {
                     Native::TemporalPlainDateCalendarIdGetter => {
@@ -247,9 +277,44 @@ impl<H: Host> Vm<H> {
                     Native::TemporalPlainDateMonthCodeGetter => self.heap.alloc(Cell::String(
                         format!("M{month:0width$}", width = ISO_MONTH_DAY_DIGITS).into(),
                     )),
+                    Native::TemporalPlainDateEraGetter | Native::TemporalPlainDateEraYearGetter => {
+                        Value::UNDEFINED
+                    }
                     Native::TemporalPlainDateDaysInMonthGetter => Value::number(f64::from(
                         iso_days_in_month(year, month as i32).unwrap_or(31),
                     )),
+                    Native::TemporalPlainDateDayOfWeekGetter => {
+                        Value::number(f64::from(iso_day_of_week(IsoDate { year, month, day })))
+                    }
+                    Native::TemporalPlainDateDayOfYearGetter => {
+                        Value::number(f64::from(iso_day_of_year(IsoDate { year, month, day })))
+                    }
+                    Native::TemporalPlainDateWeekOfYearGetter => {
+                        temporal_iso_week(IsoDate { year, month, day }, &calendar)
+                            .map_or(Value::UNDEFINED, |(week, _)| Value::number(f64::from(week)))
+                    }
+                    Native::TemporalPlainDateYearOfWeekGetter => {
+                        temporal_iso_week(IsoDate { year, month, day }, &calendar)
+                            .map_or(Value::UNDEFINED, |(_, week_year)| {
+                                Value::number(f64::from(week_year))
+                            })
+                    }
+                    Native::TemporalPlainDateDaysInWeekGetter => {
+                        Value::number(ISO_DAYS_PER_WEEK as f64)
+                    }
+                    Native::TemporalPlainDateDaysInYearGetter => {
+                        Value::number(f64::from(iso_days_in_year(year)))
+                    }
+                    Native::TemporalPlainDateMonthsInYearGetter => {
+                        Value::number(f64::from(ISO_MONTHS_PER_YEAR))
+                    }
+                    Native::TemporalPlainDateInLeapYearGetter => {
+                        if iso_is_leap_year(year) {
+                            Value::TRUE
+                        } else {
+                            Value::FALSE
+                        }
+                    }
                     _ => Value::number(f64::from(day)),
                 })
             }
@@ -650,6 +715,62 @@ impl<H: Host> Vm<H> {
                 "Temporal.PlainDate method called on incompatible receiver".into(),
             )),
         }
+    }
+}
+
+fn iso_day_of_week(date: IsoDate) -> u32 {
+    let weekday =
+        (days_from_iso_date(date) + ISO_UNIX_EPOCH_WEEKDAY - 1).rem_euclid(ISO_DAYS_PER_WEEK) + 1;
+    weekday as u32
+}
+
+fn iso_day_of_year(date: IsoDate) -> u32 {
+    (ISO_JANUARY..date.month)
+        .filter_map(|month| iso_days_in_month(date.year, month as i32))
+        .sum::<i32>() as u32
+        + date.day
+}
+
+fn iso_days_in_year(year: i32) -> u32 {
+    (ISO_JANUARY..=ISO_MONTHS_PER_YEAR as u32)
+        .filter_map(|month| iso_days_in_month(year, month as i32))
+        .sum::<i32>() as u32
+}
+
+fn iso_is_leap_year(year: i32) -> bool {
+    iso_days_in_month(year, ISO_FEBRUARY) == Some(29)
+}
+
+fn iso_weeks_in_year(year: i32) -> i64 {
+    let january_first = IsoDate {
+        year,
+        month: ISO_JANUARY,
+        day: ISO_JANUARY_FIRST,
+    };
+    let weekday = i64::from(iso_day_of_week(january_first));
+    if weekday == ISO_THURSDAY || (weekday == ISO_WEDNESDAY && iso_is_leap_year(year)) {
+        ISO_LONG_WEEKS_PER_YEAR
+    } else {
+        ISO_COMMON_WEEKS_PER_YEAR
+    }
+}
+
+fn temporal_iso_week(date: IsoDate, calendar: &str) -> Option<(i32, i32)> {
+    if calendar != "iso8601" {
+        return None;
+    }
+    let week = (i64::from(iso_day_of_year(date)) - i64::from(iso_day_of_week(date))
+        + ISO_WEEK_NUMBER_ADJUSTMENT)
+        / ISO_DAYS_PER_WEEK;
+    if week < 1 {
+        Some((
+            (week + iso_weeks_in_year(date.year - 1)) as i32,
+            date.year - 1,
+        ))
+    } else if week > iso_weeks_in_year(date.year) {
+        Some((1, date.year + 1))
+    } else {
+        Some((week as i32, date.year))
     }
 }
 
