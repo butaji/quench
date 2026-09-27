@@ -462,7 +462,12 @@ impl<H: Host> Vm<H> {
                 }
                 let year_atom = self.intern_atom("year");
                 let year = self.get_property(p, item, year_atom)?;
+                if year.is_undefined() {
+                    return Err(self.type_error(p, "Missing year".into()));
+                }
                 let year = self.plain_date_integer(p, year)?;
+                let day =
+                    day.min(iso_days_in_month(year, month as i32).unwrap_or(day as i32) as u32);
                 let date = checked_iso_date(year, month as i32, day as i32)
                     .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
                 Ok(self.heap.alloc(Cell::TemporalPlainDate {
@@ -982,15 +987,11 @@ impl<H: Host> Vm<H> {
         let month_code = if month_code.is_undefined() {
             None
         } else {
-            Some(self.plain_date_month_code(p, month_code)?)
-        };
-        let month = match (month, month_code) {
-            (Some(month), Some(code)) if month != code => {
-                return Err(self.range_error(p, "month and monthCode must agree".into()));
-            }
-            (Some(month), _) => month,
-            (None, Some(code)) => code,
-            (None, None) => return Err(self.type_error(p, "Missing month".into())),
+            let text = self.to_string(p, month_code)?.to_string();
+            Some(
+                super::temporal_date::parse_iso_month_code_syntax(&text)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?,
+            )
         };
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, bag, year_atom)?;
@@ -1000,6 +1001,22 @@ impl<H: Host> Vm<H> {
             self.plain_date_integer(p, year_value)?
         };
         let constrain = self.plain_date_overflow(p, options)?;
+        let month_code = month_code
+            .map(|month| {
+                (1..=super::temporal_date::ISO_MONTHS_PER_YEAR)
+                    .contains(&month)
+                    .then_some(month)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+            })
+            .transpose()?;
+        let month = match (month, month_code) {
+            (Some(month), Some(code)) if month != code => {
+                return Err(self.range_error(p, "month and monthCode must agree".into()));
+            }
+            (Some(month), _) => month,
+            (None, Some(code)) => code,
+            (None, None) => return Err(self.type_error(p, "Missing month".into())),
+        };
         if month < 1 || day < 1 {
             return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
         }
@@ -1010,8 +1027,9 @@ impl<H: Host> Vm<H> {
         };
         let max_day = iso_days_in_month(year, month).unwrap_or(31);
         let day = if constrain { day.min(max_day) } else { day };
-        checked_iso_date(year, month, day)
-            .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+        if day > max_day {
+            return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+        }
         self.make_plain_month_day(
             p,
             constructor,
