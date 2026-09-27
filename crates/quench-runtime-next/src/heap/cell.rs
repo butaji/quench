@@ -341,6 +341,7 @@ pub(crate) enum Native {
     TemporalPlainYearMonth, TemporalPlainYearMonthFrom, TemporalPlainYearMonthCompare,
     TemporalPlainYearMonthCalendarIdGetter, TemporalPlainYearMonthYearGetter,
     TemporalPlainYearMonthMonthGetter, TemporalPlainYearMonthMonthCodeGetter,
+    TemporalPlainYearMonthEraGetter, TemporalPlainYearMonthEraYearGetter,
     TemporalPlainYearMonthReferenceISODayGetter, TemporalPlainYearMonthDaysInMonthGetter,
     TemporalPlainYearMonthDaysInYearGetter, TemporalPlainYearMonthMonthsInYearGetter,
     TemporalPlainYearMonthInLeapYearGetter, TemporalPlainYearMonthEquals,

@@ -23,6 +23,8 @@ const PLAIN_YEAR_MONTH_GETTERS: &[(&str, Native)] = &[
     ("year", Native::TemporalPlainYearMonthYearGetter),
     ("month", Native::TemporalPlainYearMonthMonthGetter),
     ("monthCode", Native::TemporalPlainYearMonthMonthCodeGetter),
+    ("era", Native::TemporalPlainYearMonthEraGetter),
+    ("eraYear", Native::TemporalPlainYearMonthEraYearGetter),
     (
         "referenceISODay",
         Native::TemporalPlainYearMonthReferenceISODayGetter,
@@ -499,6 +501,8 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainYearMonthMonthCodeGetter => Ok(self.heap.alloc(Cell::String(
                 format!("M{month:0width$}", width = ISO_MONTH_CODE_DIGITS).into(),
             ))),
+            Native::TemporalPlainYearMonthEraGetter
+            | Native::TemporalPlainYearMonthEraYearGetter => Ok(Value::UNDEFINED),
             Native::TemporalPlainYearMonthReferenceISODayGetter => {
                 Ok(Value::number(f64::from(reference_day)))
             }
@@ -1042,6 +1046,8 @@ fn is_plain_year_month_native(native: Native) -> bool {
             | Native::TemporalPlainYearMonthYearGetter
             | Native::TemporalPlainYearMonthMonthGetter
             | Native::TemporalPlainYearMonthMonthCodeGetter
+            | Native::TemporalPlainYearMonthEraGetter
+            | Native::TemporalPlainYearMonthEraYearGetter
             | Native::TemporalPlainYearMonthReferenceISODayGetter
             | Native::TemporalPlainYearMonthDaysInMonthGetter
             | Native::TemporalPlainYearMonthDaysInYearGetter

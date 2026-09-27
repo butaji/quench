@@ -597,6 +597,8 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainYearMonthYearGetter
             | Native::TemporalPlainYearMonthMonthGetter
             | Native::TemporalPlainYearMonthMonthCodeGetter
+            | Native::TemporalPlainYearMonthEraGetter
+            | Native::TemporalPlainYearMonthEraYearGetter
             | Native::TemporalPlainYearMonthReferenceISODayGetter
             | Native::TemporalPlainYearMonthDaysInMonthGetter
             | Native::TemporalPlainYearMonthDaysInYearGetter

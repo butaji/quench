@@ -372,6 +372,8 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalPlainYearMonthYearGetter
         | Native::TemporalPlainYearMonthMonthGetter
         | Native::TemporalPlainYearMonthMonthCodeGetter
+        | Native::TemporalPlainYearMonthEraGetter
+        | Native::TemporalPlainYearMonthEraYearGetter
         | Native::TemporalPlainYearMonthReferenceISODayGetter
         | Native::TemporalPlainYearMonthDaysInMonthGetter
         | Native::TemporalPlainYearMonthDaysInYearGetter
