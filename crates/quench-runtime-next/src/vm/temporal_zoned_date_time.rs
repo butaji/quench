@@ -11,6 +11,7 @@ const SECONDS_PER_HOUR: i32 = 3_600;
 const SECONDS_PER_MINUTE: i32 = 60;
 const ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_YEAR_DIGITS: usize = 6;
+const MAX_BASIC_ISO_YEAR: i32 = 9_999;
 const ISO_MONTH_DIGITS: usize = 2;
 const ISO_DAY_DIGITS: usize = 2;
 const MAX_FRACTION_DIGITS: usize = 9;
@@ -19,6 +20,58 @@ const ISO_HOUR_LIMIT: u32 = 23;
 const ISO_MINUTE_LIMIT: u32 = 59;
 const ISO_SECOND_LIMIT: u32 = 59;
 const ISO_LEAP_SECOND: u32 = ISO_SECOND_LIMIT + 1;
+const NANOSECONDS_PER_MINUTE: i128 = SECONDS_PER_MINUTE as i128 * NANOSECONDS_PER_SECOND;
+const NANOSECONDS_PER_HOUR: i128 = SECONDS_PER_HOUR as i128 * NANOSECONDS_PER_SECOND;
+const HOURS_PER_DAY: i128 = 24;
+const NANOSECONDS_PER_DAY: i128 = HOURS_PER_DAY * NANOSECONDS_PER_HOUR;
+const FRACTIONAL_MILLISECOND_DIGITS: usize = 3;
+const FRACTIONAL_MICROSECOND_DIGITS: usize = 6;
+const SMALLEST_UNITS: [&str; 5] = [
+    "minute",
+    "second",
+    "millisecond",
+    "microsecond",
+    "nanosecond",
+];
+const ROUNDING_MODES: [&str; 9] = [
+    "ceil",
+    "floor",
+    "expand",
+    "trunc",
+    "halfCeil",
+    "halfFloor",
+    "halfExpand",
+    "halfTrunc",
+    "halfEven",
+];
+const CALENDAR_NAME_OPTIONS: [&str; 4] = ["auto", "always", "never", "critical"];
+const OFFSET_DISPLAY_OPTIONS: [&str; 2] = ["auto", "never"];
+const TIME_ZONE_NAME_OPTIONS: [&str; 3] = ["auto", "never", "critical"];
+const ROUNDING_TIE_FACTOR: i128 = 2;
+const DECIMAL_RADIX: u32 = 10;
+const DECIMAL_RADIX_I128: i128 = 10;
+
+struct ZonedDateTimeStringOptions {
+    calendar_name: String,
+    fractional_second_digits: Option<usize>,
+    offset: String,
+    rounding_mode: String,
+    smallest_unit: Option<String>,
+    time_zone_name: String,
+}
+
+impl Default for ZonedDateTimeStringOptions {
+    fn default() -> Self {
+        Self {
+            calendar_name: "auto".into(),
+            fractional_second_digits: None,
+            offset: "auto".into(),
+            rounding_mode: "trunc".into(),
+            smallest_unit: None,
+            time_zone_name: "auto".into(),
+        }
+    }
+}
 const DISAMBIGUATION_OPTIONS: [&str; 4] = ["compatible", "earlier", "later", "reject"];
 const OFFSET_OPTIONS: [&str; 4] = ["prefer", "use", "ignore", "reject"];
 const OVERFLOW_OPTIONS: [&str; 2] = ["constrain", "reject"];
@@ -46,9 +99,11 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 2] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 4] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
+    ("toString", Native::TemporalZonedDateTimeToString),
+    ("toJSON", Native::TemporalZonedDateTimeToJSON),
 ];
 
 impl<H: Host> Vm<H> {
@@ -296,6 +351,20 @@ impl<H: Host> Vm<H> {
                 calendar,
             }));
         }
+        if matches!(
+            native,
+            Native::TemporalZonedDateTimeToString | Native::TemporalZonedDateTimeToJSON
+        ) {
+            let options = if native == Native::TemporalZonedDateTimeToJSON {
+                ZonedDateTimeStringOptions::default()
+            } else {
+                self.temporal_zoned_date_time_string_options(
+                    p,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                )?
+            };
+            return self.temporal_zoned_date_time_to_string(p, this, options);
+        }
         if native == Native::TemporalZonedDateTime {
             return Err(self.type_error(p, "Temporal.ZonedDateTime requires new".into()));
         }
@@ -407,6 +476,172 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(constrain)
+    }
+
+    fn temporal_zoned_date_time_to_string(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        options: ZonedDateTimeStringOptions,
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            calendar,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(
+                p,
+                "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+            ));
+        };
+        let epoch = *epoch_nanoseconds;
+        let time_zone = time_zone.clone();
+        let calendar = calendar.clone();
+        let epoch = round_zoned_date_time_epoch(epoch, &time_zone, &options)
+            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        let fields = zoned_date_time_fields(epoch, &time_zone)
+            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        let offset = timezone_offset_nanoseconds(&time_zone, epoch)
+            .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))?;
+        let fractional = fields[6] * NANOSECONDS_PER_MILLISECOND as i32
+            + fields[7] * NANOSECONDS_PER_MICROSECOND as i32
+            + fields[8];
+        let fraction = if let Some(unit) = options.smallest_unit.as_deref() {
+            match unit {
+                "hour" | "minute" | "second" => String::new(),
+                "millisecond" => format_fraction(fractional, FRACTIONAL_MILLISECOND_DIGITS),
+                "microsecond" => format_fraction(fractional, FRACTIONAL_MICROSECOND_DIGITS),
+                "nanosecond" => format_fraction(fractional, MAX_FRACTION_DIGITS),
+                _ => String::new(),
+            }
+        } else if let Some(digits) = options.fractional_second_digits {
+            format_fraction(fractional, digits)
+        } else if fractional == 0 {
+            String::new()
+        } else {
+            let digits = format!("{fractional:09}");
+            format!(".{}", digits.trim_end_matches('0'))
+        };
+        let calendar_annotation = format_calendar_annotation(&calendar, &options.calendar_name);
+        let zone_annotation = format_time_zone_annotation(&time_zone, &options.time_zone_name);
+        let time = format_zoned_time(&fields, &fraction, options.smallest_unit.as_deref());
+        let offset = if options.offset == "never" {
+            String::new()
+        } else {
+            format_offset_nanoseconds(offset)
+        };
+        let result = format!(
+            "{}-{:02}-{:02}T{time}{offset}{zone_annotation}{calendar_annotation}",
+            format_iso_year(fields[0]),
+            fields[1],
+            fields[2],
+        );
+        Ok(self.heap.alloc(Cell::String(result.into())))
+    }
+
+    fn temporal_zoned_date_time_string_options(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<ZonedDateTimeStringOptions, JsError> {
+        if value.is_undefined() {
+            return Ok(ZonedDateTimeStringOptions::default());
+        }
+        if !self.is_object_like(value) {
+            return Err(self.type_error(p, "Options must be an object".into()));
+        }
+        let calendar_name = self.temporal_option_string(p, value, "calendarName")?;
+        let fractional_value = self.get_option_property(p, value, "fractionalSecondDigits")?;
+        let fractional_is_number = fractional_value.as_number().is_some();
+        let fractional_text = if fractional_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, fractional_value)?.to_string())
+        };
+        let offset = self.temporal_option_string(p, value, "offset")?;
+        let rounding_mode = self.temporal_option_string(p, value, "roundingMode")?;
+        let smallest_unit = self
+            .temporal_option_string(p, value, "smallestUnit")?
+            .map(|unit| normalize_smallest_unit(&unit).to_owned());
+        let time_zone_name = self.temporal_option_string(p, value, "timeZoneName")?;
+        let fractional = self.parse_fractional_second_digits(
+            p,
+            fractional_text.as_deref(),
+            fractional_is_number,
+        )?;
+        let options = ZonedDateTimeStringOptions {
+            calendar_name: calendar_name.unwrap_or_else(|| "auto".into()),
+            fractional_second_digits: fractional,
+            offset: offset.unwrap_or_else(|| "auto".into()),
+            rounding_mode: rounding_mode.unwrap_or_else(|| "trunc".into()),
+            smallest_unit,
+            time_zone_name: time_zone_name.unwrap_or_else(|| "auto".into()),
+        };
+        if !CALENDAR_NAME_OPTIONS.contains(&options.calendar_name.as_str())
+            || !OFFSET_DISPLAY_OPTIONS.contains(&options.offset.as_str())
+            || !ROUNDING_MODES.contains(&options.rounding_mode.as_str())
+            || options
+                .smallest_unit
+                .as_deref()
+                .is_some_and(|unit| !SMALLEST_UNITS.contains(&unit))
+            || !TIME_ZONE_NAME_OPTIONS.contains(&options.time_zone_name.as_str())
+        {
+            return Err(self.range_error(p, "Invalid ZonedDateTime string option".into()));
+        }
+        Ok(options)
+    }
+
+    fn temporal_option_string(
+        &mut self,
+        p: &ResidualProgram,
+        options: Value,
+        name: &str,
+    ) -> Result<Option<String>, JsError> {
+        let value = self.get_option_property(p, options, name)?;
+        if value.is_undefined() {
+            Ok(None)
+        } else {
+            self.to_string(p, value)
+                .map(|value| Some(value.to_string()))
+        }
+    }
+
+    fn parse_fractional_second_digits(
+        &mut self,
+        p: &ResidualProgram,
+        value: Option<&str>,
+        is_number: bool,
+    ) -> Result<Option<usize>, JsError> {
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        if !is_number {
+            if value == "auto" {
+                return Ok(None);
+            }
+            return Err(self.range_error(p, "Invalid fractionalSecondDigits".into()));
+        }
+        let digits = value
+            .parse::<f64>()
+            .ok()
+            .map(f64::floor)
+            .filter(|digits| {
+                digits.is_finite() && (0.0..=MAX_FRACTION_DIGITS as f64).contains(digits)
+            })
+            .ok_or_else(|| self.range_error(p, "Invalid fractionalSecondDigits".into()))?;
+        Ok(Some(digits as usize))
+    }
+
+    fn get_option_property(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let atom = self.intern_atom(name);
+        self.get_property(p, object, atom)
     }
 
     fn temporal_zoned_date_time_property_bag(
@@ -800,6 +1035,151 @@ fn timezone_offset_nanoseconds(zone: &str, epoch: i128) -> Option<i128> {
         .fix()
         .local_minus_utc();
     Some(i128::from(offset) * NANOSECONDS_PER_SECOND)
+}
+
+fn zoned_date_time_rounding_quantum(options: &ZonedDateTimeStringOptions) -> Option<i128> {
+    if let Some(unit) = options.smallest_unit.as_deref() {
+        return match unit {
+            "hour" => Some(NANOSECONDS_PER_HOUR),
+            "minute" => Some(NANOSECONDS_PER_MINUTE),
+            "second" => Some(NANOSECONDS_PER_SECOND),
+            "millisecond" => Some(NANOSECONDS_PER_MILLISECOND as i128),
+            "microsecond" => Some(NANOSECONDS_PER_MICROSECOND as i128),
+            "nanosecond" => Some(1),
+            _ => None,
+        };
+    }
+    options
+        .fractional_second_digits
+        .map(|digits| DECIMAL_RADIX_I128.pow((MAX_FRACTION_DIGITS - digits) as u32))
+}
+
+fn round_zoned_date_time_epoch(
+    epoch: i128,
+    time_zone: &str,
+    options: &ZonedDateTimeStringOptions,
+) -> Option<i128> {
+    let Some(quantum) = zoned_date_time_rounding_quantum(options) else {
+        return Some(epoch);
+    };
+    let fields = zoned_date_time_fields(epoch, time_zone)?;
+    let date = chrono::NaiveDate::from_ymd_opt(fields[0], fields[1] as u32, fields[2] as u32)?;
+    let nanoseconds = i128::from(fields[3]) * NANOSECONDS_PER_HOUR
+        + i128::from(fields[4]) * NANOSECONDS_PER_MINUTE
+        + i128::from(fields[5]) * NANOSECONDS_PER_SECOND
+        + i128::from(fields[6]) * i128::from(NANOSECONDS_PER_MILLISECOND)
+        + i128::from(fields[7]) * i128::from(NANOSECONDS_PER_MICROSECOND)
+        + i128::from(fields[8]);
+    let rounded = round_temporal_nanoseconds(nanoseconds, quantum, &options.rounding_mode) * quantum;
+    let date = if rounded >= NANOSECONDS_PER_DAY {
+        date.succ_opt()?
+    } else {
+        date
+    };
+    let nanoseconds = rounded % NANOSECONDS_PER_DAY;
+    let hour = nanoseconds / NANOSECONDS_PER_HOUR;
+    let minute = nanoseconds / NANOSECONDS_PER_MINUTE % i128::from(SECONDS_PER_MINUTE);
+    let second = nanoseconds / NANOSECONDS_PER_SECOND % i128::from(SECONDS_PER_MINUTE);
+    let subsecond = nanoseconds % NANOSECONDS_PER_SECOND;
+    let local = date.and_hms_nano_opt(
+        u32::try_from(hour).ok()?,
+        u32::try_from(minute).ok()?,
+        u32::try_from(second).ok()?,
+        u32::try_from(subsecond).ok()?,
+    )?;
+    zoned_local_epoch(local, time_zone)
+}
+
+fn normalize_smallest_unit(unit: &str) -> &str {
+    unit.strip_suffix('s')
+        .filter(|singular| SMALLEST_UNITS.contains(singular))
+        .unwrap_or(unit)
+}
+
+fn round_temporal_nanoseconds(value: i128, quantum: i128, mode: &str) -> i128 {
+    let quotient = value / quantum;
+    let remainder = value % quantum;
+    if remainder == 0 {
+        return quotient;
+    }
+    let sign = value.signum();
+    let distance = remainder.abs();
+    let tie = distance * ROUNDING_TIE_FACTOR == quantum;
+    let above_tie = distance * ROUNDING_TIE_FACTOR > quantum;
+    let adjust = match mode {
+        "trunc" => false,
+        "floor" => sign < 0,
+        "ceil" => sign > 0,
+        "expand" => true,
+        "halfTrunc" => above_tie,
+        "halfExpand" => above_tie || tie,
+        "halfFloor" => above_tie || tie && sign < 0,
+        "halfCeil" => above_tie || tie && sign > 0,
+        "halfEven" => above_tie || tie && quotient % ROUNDING_TIE_FACTOR != 0,
+        _ => false,
+    };
+    quotient + if adjust { sign } else { 0 }
+}
+
+fn format_fraction(nanoseconds: i32, digits: usize) -> String {
+    if digits == 0 {
+        return String::new();
+    }
+    let scale = DECIMAL_RADIX.pow((MAX_FRACTION_DIGITS - digits) as u32);
+    format!(".{:0digits$}", nanoseconds as u32 / scale)
+}
+
+fn format_zoned_time(fields: &[i32; 9], fraction: &str, smallest_unit: Option<&str>) -> String {
+    let hour = format!("{:02}", fields[3]);
+    match smallest_unit {
+        Some("hour") => hour,
+        Some("minute") => format!("{hour}:{:02}", fields[4]),
+        _ => format!("{hour}:{:02}:{:02}{fraction}", fields[4], fields[5]),
+    }
+}
+
+fn format_calendar_annotation(calendar: &str, calendar_name: &str) -> String {
+    match calendar_name {
+        "never" => String::new(),
+        "auto" if calendar == "iso8601" => String::new(),
+        "critical" => format!("[!u-ca={calendar}]"),
+        _ => format!("[u-ca={calendar}]"),
+    }
+}
+
+fn format_time_zone_annotation(time_zone: &str, time_zone_name: &str) -> String {
+    match time_zone_name {
+        "never" => String::new(),
+        "critical" => format!("[!{time_zone}]"),
+        _ => format!("[{time_zone}]"),
+    }
+}
+
+fn format_iso_year(year: i32) -> String {
+    if (0..=MAX_BASIC_ISO_YEAR).contains(&year) {
+        format!("{year:0width$}", width = ISO_YEAR_DIGITS)
+    } else if year < 0 {
+        format!(
+            "-{year_abs:0width$}",
+            year_abs = year.unsigned_abs(),
+            width = EXTENDED_YEAR_DIGITS
+        )
+    } else {
+        format!("+{year:0width$}", width = EXTENDED_YEAR_DIGITS)
+    }
+}
+
+fn format_offset_nanoseconds(offset: i128) -> String {
+    let sign = if offset < 0 { '-' } else { '+' };
+    let seconds = offset.unsigned_abs() / NANOSECONDS_PER_SECOND as u128;
+    let hours = seconds / SECONDS_PER_HOUR as u128;
+    let minutes = seconds / SECONDS_PER_MINUTE as u128 % SECONDS_PER_MINUTE as u128;
+    let seconds = seconds % SECONDS_PER_MINUTE as u128;
+    if seconds == 0 {
+        format!("{sign}{hours:02}:{minutes:02}")
+    } else {
+        format!("{sign}{hours:02}:{minutes:02}:{seconds:02}")
+    }
 }
 
 fn canonical_time_zone(value: &str) -> Option<String> {
