@@ -303,6 +303,7 @@ pub(crate) enum Native {
     DecodeUri, DecodeUriComponent,
     StringFromCharCode, StringFromCodePoint, StringRaw, StringIsWellFormed,
     StringToWellFormed, ParseInt,
+    TemporalToLocaleString,
     TemporalDuration, TemporalDurationFrom, TemporalDurationCompare,
     TemporalDurationAdd, TemporalDurationSubtract, TemporalDurationWith,
     TemporalDurationAbs, TemporalDurationNegated, TemporalDurationTotal,
