@@ -374,6 +374,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalPlainTimeMillisecondGetter
         | Native::TemporalPlainTimeMicrosecondGetter
         | Native::TemporalPlainTimeNanosecondGetter => 0.0,
+        Native::TemporalPlainTimeValueOf => 0.0,
         Native::TemporalPlainTimeRound => 1.0,
         Native::TemporalPlainTimeUntil | Native::TemporalPlainTimeSince => 1.0,
         Native::TemporalPlainTimeToString | Native::TemporalPlainTimeToJSON => 0.0,
