@@ -1,6 +1,5 @@
 use crate::bytecode::{
-    Function, Instr, NUMERIC_LOCAL_TARGET, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK,
-    specialized_numeric_op,
+    Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, specialized_numeric_op,
 };
 
 use super::rewrite::{protected_positions, relocate};
@@ -126,7 +125,7 @@ fn binary_local_target(mut binary: Instr, store: Instr, live_after: u64) -> Opti
         && store.local_slot() <= usize::from(REGISTER_MASK)
         && live_after & (1 << binary.result_register()) == 0)
         .then(|| {
-            binary.set_a(NUMERIC_LOCAL_TARGET | store.local_slot() as u16);
+            binary.set_result_local_target(store.local_slot() as u16);
             binary
         })
 }
@@ -152,6 +151,7 @@ fn local_inc_store(code: &[Instr]) -> Option<NumericLocalStoreTarget> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::NUMERIC_LOCAL_TARGET;
 
     #[test]
     fn local_update_fusion_is_a_data_rule() {

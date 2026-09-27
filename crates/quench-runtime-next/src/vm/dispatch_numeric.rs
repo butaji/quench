@@ -74,8 +74,8 @@ macro_rules! execute_specialized_numeric {
         if $ins.returns_from_frame() {
             return Ok(StepResult::Return(value));
         }
-        if $ins.writes_numeric_local() {
-            $vm.frames[$frame].locals[$ins.result_register() as usize] = value;
+        if let Some(local) = $ins.numeric_local_target() {
+            $vm.frames[$frame].locals[local as usize] = value;
             $vm.profile.virtual_opcode(Op::StoreLocal as usize);
         } else {
             $vm.write($frame, $ins.result_register(), value);
@@ -266,8 +266,8 @@ impl<H: Host> Vm<H> {
                         if ins.returns_from_frame() {
                             return Ok(StepResult::Return(value));
                         }
-                        if ins.writes_numeric_local() {
-                            self.frames[frame].locals[ins.result_register() as usize] = value;
+                        if let Some(local) = ins.numeric_local_target() {
+                            self.frames[frame].locals[local as usize] = value;
                             self.profile.virtual_opcode(Op::StoreLocal as usize);
                         } else {
                             self.write(frame, ins.result_register(), value);
