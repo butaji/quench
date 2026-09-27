@@ -5,6 +5,8 @@ use super::*;
 
 const DEFAULT_REFERENCE_ISO_YEAR: i32 = 1972;
 const DEFAULT_REFERENCE_ISO_DAY: u32 = 1;
+const MIN_SUPPORTED_ISO_MONTH: i32 = 4;
+const MAX_SUPPORTED_ISO_MONTH: i32 = 9;
 const BASIC_ISO_YEAR_MONTH_LENGTH: usize = 6;
 const BASIC_ISO_DATE_LENGTH: usize = BASIC_ISO_YEAR_MONTH_LENGTH + 2;
 const SIGNED_COMPACT_YEAR_MONTH_LENGTH: usize = 9;
@@ -228,13 +230,12 @@ impl<H: Host> Vm<H> {
         let calendar =
             self.calendar_argument(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
         let reference_value = args.get(3).copied().unwrap_or(Value::UNDEFINED);
-        let default_reference = reference_value.is_undefined();
-        let reference = if default_reference {
+        let reference = if reference_value.is_undefined() {
             DEFAULT_REFERENCE_ISO_DAY
         } else {
             self.plain_date_integer(p, reference_value)? as u32
         };
-        self.validate_plain_year_month_range(p, year, month, reference, default_reference)?;
+        self.validate_plain_year_month_range(p, year, month, reference)?;
         let prototype =
             self.constructor_prototype(p, new_target, self.temporal_plain_year_month_proto)?;
         Ok(self.heap.alloc(Cell::TemporalPlainYearMonth {
@@ -252,16 +253,17 @@ impl<H: Host> Vm<H> {
         year: i32,
         month: i32,
         day: u32,
-        default_reference: bool,
     ) -> Result<(), JsError> {
         let in_year_range = (super::temporal_date::MIN_ISO_YEAR
             ..=super::temporal_date::MAX_ISO_YEAR)
             .contains(&year);
         let in_month_range = (1..=super::temporal_date::ISO_MONTHS_PER_YEAR).contains(&month);
-        let implicit_lower_boundary =
-            default_reference && year == super::temporal_date::MIN_ISO_YEAR && month == 4;
-        let valid_iso_range = checked_iso_date(year, month, day as i32).is_some();
-        if !in_year_range || !in_month_range || !valid_iso_range && !implicit_lower_boundary {
+        let in_year_month_range = (year, month)
+            >= (super::temporal_date::MIN_ISO_YEAR, MIN_SUPPORTED_ISO_MONTH)
+            && (year, month) <= (super::temporal_date::MAX_ISO_YEAR, MAX_SUPPORTED_ISO_MONTH);
+        let valid_reference_day = iso_days_in_month(year, month)
+            .is_some_and(|days| (1..=days as u32).contains(&day));
+        if !in_year_range || !in_month_range || !in_year_month_range || !valid_reference_day {
             return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
         }
         Ok(())
