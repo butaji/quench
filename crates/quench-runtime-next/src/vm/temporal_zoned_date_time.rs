@@ -397,6 +397,16 @@ impl<H: Host> Vm<H> {
             .map_err(|_| self.range_error(p, "Invalid time zone".into()))
     }
 
+    fn temporal_zoned_date_time_intrinsic_constructor(
+        &mut self,
+        p: &ResidualProgram,
+    ) -> Result<Value, JsError> {
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        self.get_property(p, temporal, constructor_atom)
+    }
+
     pub(super) fn temporal_zoned_date_time_native(
         &mut self,
         p: &ResidualProgram,
@@ -499,7 +509,6 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTimeWithTimeZone {
             let Some(Cell::TemporalZonedDateTime {
-                object,
                 epoch_nanoseconds,
                 calendar,
                 ..
@@ -512,15 +521,18 @@ impl<H: Host> Vm<H> {
             };
             let epoch_nanoseconds = *epoch_nanoseconds;
             let calendar = calendar.clone();
-            let prototype = object.proto;
             let zone = args.first().copied().unwrap_or(Value::UNDEFINED);
             let time_zone = self.temporal_timezone_id(p, zone)?;
-            return Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
-                object: Box::new(Self::empty_object(prototype)),
+            let constructor = self.temporal_zoned_date_time_intrinsic_constructor(p)?;
+            return self.make_temporal_zoned_date_time(
+                p,
+                constructor,
+                ZonedDateTimeRecord {
                 epoch_nanoseconds,
                 time_zone,
                 calendar,
-            }));
+                },
+            );
         }
         if native == Native::TemporalZonedDateTimeToLocaleString {
             return self.temporal_zoned_date_time_to_string(
