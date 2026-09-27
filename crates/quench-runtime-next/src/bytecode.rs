@@ -314,7 +314,7 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr $(; layout $layout:ident)? $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(, @ $result:ident)? $(, @ fields($a:ident, $b:ident, $c:ident))?),+ $(,)?) => {
+    ($($name:ident => $effect:expr $(; layout $layout:ident)? $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -325,7 +325,7 @@ macro_rules! opcodes {
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             const EFFECTS: [Effect; Self::COUNT] = [$($effect),+];
             const RESULT_LAYOUTS: [ResultLayout; Self::COUNT] = [$(
-                opcodes!(@result $($result)?)),+
+                opcodes!(@result $result)),+
             ];
             const CONTROL_FLOW_LAYOUTS: [ControlFlowLayout; Self::COUNT] = [$(
                 opcodes!(@flow $($flow)?)),+
@@ -335,7 +335,7 @@ macro_rules! opcodes {
             ];
 
             const OPERAND_LAYOUTS: [OperandLayout; Self::COUNT] = [$(
-                opcodes!(@fields $($a, $b, $c)?)),+
+                opcodes!(@fields $a, $b, $c)),+
             ];
             const IMMEDIATE_ROLES: [ImmediateRole; Self::COUNT] = [$(
                 opcodes!(@immediate $($immediate_role)?; $($layout)?)),+
@@ -378,7 +378,6 @@ macro_rules! opcodes {
     (@layout $layout:ident) => { ImmediateLayout::$layout };
     (@layout) => { ImmediateLayout::Scalar };
     (@result $result:ident) => { ResultLayout::$result };
-    (@result) => { ResultLayout::Register };
     (@flow $flow:ident) => { ControlFlowLayout::$flow };
     (@flow) => { ControlFlowLayout::Fallthrough };
     (@fields $a:ident, $b:ident, $c:ident) => {
