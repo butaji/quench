@@ -98,13 +98,15 @@ impl<H: Host> Vm<H> {
         self.set_property(result, proxy_atom, proxy)?;
         self.set_property(result, revoke_atom, revoke)?;
         self.set_property(result, state_atom, proxy)?;
-        if let Some(attributes) = self
-            .descriptors
-            .get_mut(&(result, PropertyKey::string(state_atom)))
-        {
-            attributes.enumerable = false;
-            attributes.configurable = false;
-        }
+        self.set_property_attributes(
+            result,
+            PropertyKey::string(state_atom),
+            PropertyAttributes {
+                enumerable: false,
+                configurable: false,
+                ..DEFAULT_PROPERTY_ATTRIBUTES
+            },
+        );
         Ok(result)
     }
 
