@@ -20,6 +20,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "PlainTime")?;
         let prototype = self.object();
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        self.set_builtin_named(p, constructor, "compare", Native::TemporalPlainTimeCompare)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
             constructor,
@@ -60,6 +61,25 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if native == Native::TemporalPlainTimeCompare {
+            let values = [
+                args.first().copied().unwrap_or(Value::UNDEFINED),
+                args.get(1).copied().unwrap_or(Value::UNDEFINED),
+            ];
+            if values.iter().any(|value| value.is_undefined()) {
+                return Err(self.type_error(p, "Invalid PlainTime".into()));
+            }
+            let left =
+                super::temporal_plain_date_time_conversion::to_time(self, p, values[0])?;
+            let right =
+                super::temporal_plain_date_time_conversion::to_time(self, p, values[1])?;
+            let ordering = left.cmp(&right);
+            return Ok(Value::number(match ordering {
+                std::cmp::Ordering::Less => -1.0,
+                std::cmp::Ordering::Equal => 0.0,
+                std::cmp::Ordering::Greater => 1.0,
+            }));
+        }
         if native == Native::TemporalPlainTime {
             return Err(self.type_error(p, "Temporal.PlainTime requires new".into()));
         }
