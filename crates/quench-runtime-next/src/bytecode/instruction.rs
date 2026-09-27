@@ -13,7 +13,10 @@ const PACKED_PAIR_HIGH_MASK: u32 = (1 << PACKED_PAIR_HIGH_BITS) - 1;
 const fn is_register_field(layout: FieldLayout) -> bool {
     matches!(
         layout,
-        FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister
+        FieldLayout::ResultRegister
+            | FieldLayout::Register
+            | FieldLayout::WriteRegister
+            | FieldLayout::ReadWriteRegister
     )
 }
 

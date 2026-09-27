@@ -1,7 +1,7 @@
 use super::ResidualProgram;
 use super::instruction::WideInstruction;
 use super::{
-    FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Operand, OperandKind, Register,
+    FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Operand, OperandKind,
     ResultLayout,
 };
 use std::fmt::{self, Write};
@@ -82,11 +82,12 @@ fn write_field(
     field: InstructionField,
 ) -> fmt::Result {
     let layout = instruction.op().field_layout(field);
-    if skip_field(instruction, field, layout) {
+    if skip_field(layout) {
         return Ok(());
     }
     match layout {
         FieldLayout::Register
+        | FieldLayout::ResultRegister
         | FieldLayout::WriteRegister
         | FieldLayout::ReadWriteRegister
         | FieldLayout::OptionalRegister
@@ -108,12 +109,6 @@ fn write_field(
                 instruction.numeric_local_store_target()
             )
         }
-        FieldLayout::Undeclared => write!(
-            output,
-            " {:?}={}",
-            field_name(field),
-            field_value(instruction, field)
-        ),
         FieldLayout::Unused
         | FieldLayout::NumericLocalStoreMarker
         | FieldLayout::ConstructArguments
@@ -122,15 +117,14 @@ fn write_field(
     }
 }
 
-fn skip_field(instruction: WideInstruction, field: InstructionField, layout: FieldLayout) -> bool {
+fn skip_field(layout: FieldLayout) -> bool {
     matches!(
         layout,
         FieldLayout::Unused
             | FieldLayout::NumericLocalStoreMarker
             | FieldLayout::FieldBase
             | FieldLayout::FieldLookupCacheSiteIndex
-    ) || (field == InstructionField::A
-        && instruction.op().result_layout() != ResultLayout::NoResult)
+    ) || layout == FieldLayout::ResultRegister
 }
 
 fn write_scalar_field(
@@ -142,7 +136,10 @@ fn write_scalar_field(
     match (field, layout) {
         (
             InstructionField::A,
-            FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister,
+            FieldLayout::ResultRegister
+            | FieldLayout::Register
+            | FieldLayout::WriteRegister
+            | FieldLayout::ReadWriteRegister,
         ) => {
             write!(output, " a={}", instruction.register_a())
         }
@@ -323,14 +320,6 @@ fn field_name(field: InstructionField) -> &'static str {
         InstructionField::A => "a",
         InstructionField::B => "b",
         InstructionField::C => "c",
-    }
-}
-
-fn field_value(instruction: WideInstruction, field: InstructionField) -> Register {
-    match field {
-        InstructionField::A => instruction.a(),
-        InstructionField::B => instruction.b(),
-        InstructionField::C => instruction.c(),
     }
 }
 
