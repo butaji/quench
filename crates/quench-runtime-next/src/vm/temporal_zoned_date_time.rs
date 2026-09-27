@@ -107,6 +107,28 @@ const ZONED_DATE_TIME_METHODS: [(&str, Native); 4] = [
 ];
 
 impl<H: Host> Vm<H> {
+    pub(super) fn temporal_instant_to_zoned_date_time_iso(
+        &mut self,
+        p: &ResidualProgram,
+        epoch_nanoseconds: i128,
+        time_zone_value: Value,
+    ) -> Result<Value, JsError> {
+        let time_zone = self.temporal_timezone_id(p, time_zone_value)?;
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_atom)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            ZonedDateTimeRecord {
+                epoch_nanoseconds,
+                time_zone,
+                calendar: "iso8601".into(),
+            },
+        )
+    }
+
     pub(super) fn install_temporal_zoned_date_time(
         &mut self,
         p: &ResidualProgram,
