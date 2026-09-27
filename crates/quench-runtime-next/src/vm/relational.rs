@@ -81,10 +81,23 @@ impl<H: Host> Vm<H> {
             return Err(JsError("right-hand side of 'in' is not an object".into()));
         }
         let key = self.to_property_key(p, key)?;
+        let key_atom = match self.heap.get(key).cloned() {
+            Some(Cell::String(name)) => Some(self.intern_js_atom(&name)),
+            _ => None,
+        };
         let mut current = object;
         loop {
             if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
                 return self.has_property(p, current, key);
+            }
+            if let Some(atom) = key_atom
+                && self
+                    .object_data(current)
+                    .is_some_and(Object::is_module_namespace)
+                && (self.module_binding_value(current, atom).is_some()
+                    || self.own_property(current, atom).is_some())
+            {
+                return Ok(true);
             }
             let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
             if !descriptor.is_undefined() {
