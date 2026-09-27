@@ -1,4 +1,4 @@
-use super::{Function, Instr, Op, WideInstruction};
+use super::{ControlFlowLayout, Function, Instr, WideInstruction};
 
 pub(super) fn instruction_at(function: &Function, packed: Instr) -> Option<WideInstruction> {
     if packed.is_wide() {
@@ -27,15 +27,15 @@ pub(super) fn is_bounded(function: &Function) -> bool {
         let Some(instruction) = instruction_at(function, code[pc]) else {
             return false;
         };
-        match instruction.op() {
-            Op::Return | Op::Throw => {}
-            Op::Jump => work.push(instruction.jump_target() as usize),
-            Op::JumpFalse | Op::JumpBinaryFalse => {
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump => work.push(instruction.jump_target() as usize),
+            ControlFlowLayout::ConditionalJump => {
                 work.push(instruction.jump_target() as usize);
                 work.push(pc + 1);
             }
-            _ if instruction.returns_from_frame() => {}
-            _ => work.push(pc + 1),
+            ControlFlowLayout::Terminal => {}
+            ControlFlowLayout::Fallthrough if instruction.returns_from_frame() => {}
+            ControlFlowLayout::Fallthrough => work.push(pc + 1),
         }
     }
     true
