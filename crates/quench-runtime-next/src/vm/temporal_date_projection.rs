@@ -1423,9 +1423,13 @@ pub(super) fn native<H: Host>(
         } else {
             date.len()
         };
-        return Ok(vm.heap.alloc(Cell::String(
-            format!("{}{annotation}", &date[..month_end]).into(),
-        )));
+        let date = &date[..month_end];
+        let text = if annotation.is_empty() {
+            date.to_owned()
+        } else {
+            format!("{date}[{annotation}")
+        };
+        return Ok(vm.heap.alloc(Cell::String(text.into())));
     }
     Err(vm.type_error(p, "Invalid Temporal calendar object".into()))
 }
