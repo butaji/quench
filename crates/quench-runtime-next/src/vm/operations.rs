@@ -562,6 +562,8 @@ impl<H: Host> Vm<H> {
             Native::TemporalZonedDateTime
             | Native::TemporalZonedDateTimeFrom
             | Native::TemporalZonedDateTimeCompare
+            | Native::TemporalZonedDateTimeEquals
+            | Native::TemporalZonedDateTimeWithTimeZone
             | Native::TemporalZonedDateTimeEpochNanosecondsGetter
             | Native::TemporalZonedDateTimeTimeZoneIdGetter
             | Native::TemporalZonedDateTimeCalendarIdGetter
