@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 
 pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
+const NANOSECOND: i128 = 1;
 const NANOSECONDS_PER_MILLISECOND: u32 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
 const MICROSECONDS_PER_MILLISECOND: u32 = 1_000;
@@ -23,6 +24,7 @@ const ISO_LEAP_SECOND: u32 = ISO_SECOND_LIMIT + 1;
 const NANOSECONDS_PER_MINUTE: i128 = SECONDS_PER_MINUTE as i128 * NANOSECONDS_PER_SECOND;
 const NANOSECONDS_PER_HOUR: i128 = SECONDS_PER_HOUR as i128 * NANOSECONDS_PER_SECOND;
 const HOURS_PER_DAY: i128 = 24;
+const TIME_ZONE_TRANSITION_SEARCH_LIMIT: usize = 200_000;
 pub(super) const NANOSECONDS_PER_DAY: i128 = HOURS_PER_DAY * NANOSECONDS_PER_HOUR;
 const FRACTIONAL_MILLISECOND_DIGITS: usize = 3;
 const FRACTIONAL_MICROSECOND_DIGITS: usize = 6;
@@ -99,11 +101,15 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 11] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 12] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
     ("add", Native::TemporalZonedDateTimeAdd),
     ("subtract", Native::TemporalZonedDateTimeSubtract),
+    (
+        "getTimeZoneTransition",
+        Native::TemporalZonedDateTimeGetTimeZoneTransition,
+    ),
     ("toInstant", Native::TemporalZonedDateTimeToInstant),
     ("toPlainDate", Native::TemporalZonedDateTimeToPlainDate),
     ("toPlainDateTime", Native::TemporalZonedDateTimeToPlainDateTime),
@@ -299,6 +305,9 @@ impl<H: Host> Vm<H> {
             Native::TemporalZonedDateTimeAdd | Native::TemporalZonedDateTimeSubtract
         ) {
             return self.temporal_zoned_date_time_arithmetic(p, native, this, args);
+        }
+        if native == Native::TemporalZonedDateTimeGetTimeZoneTransition {
+            return self.temporal_zoned_date_time_transition(p, this, args);
         }
         if native == Native::TemporalZonedDateTimeFrom {
             let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -601,6 +610,68 @@ impl<H: Host> Vm<H> {
             constructor,
             ZonedDateTimeRecord {
                 epoch_nanoseconds,
+                time_zone,
+                calendar,
+            },
+        )
+    }
+
+    fn temporal_zoned_date_time_transition(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            calendar,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(
+                p,
+                "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+            ));
+        };
+        let epoch_nanoseconds = *epoch_nanoseconds;
+        let time_zone = time_zone.clone();
+        let calendar = calendar.clone();
+        let options = args.first().copied().ok_or_else(|| {
+            self.type_error(p, "Missing options".into())
+        })?;
+        if matches!(self.heap.get(options), Some(Cell::Symbol(_))) {
+            return Err(self.type_error(p, "Invalid options".into()));
+        }
+        let direction = if let Some(Cell::String(value)) = self.heap.get(options) {
+            value.to_string()
+        } else {
+            if !self.is_object_like(options) {
+                return Err(self.type_error(p, "Invalid options".into()));
+            }
+            let direction_atom = self.intern_atom("direction");
+            let direction = self.get_property(p, options, direction_atom)?;
+            if matches!(self.heap.get(direction), Some(Cell::Symbol(_))) {
+                return Err(self.type_error(p, "Invalid direction".into()));
+            }
+            self.to_string(p, direction)?.to_string()
+        };
+        if direction != "next" && direction != "previous" {
+            return Err(self.range_error(p, "Invalid direction".into()));
+        }
+        let Some(transition) = find_time_zone_transition(&time_zone, epoch_nanoseconds, &direction)
+        else {
+            return Ok(Value::NULL);
+        };
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_atom)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            ZonedDateTimeRecord {
+                epoch_nanoseconds: transition,
                 time_zone,
                 calendar,
             },
@@ -1521,4 +1592,70 @@ pub(super) fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]
             .ok()?,
         i32::try_from(subsecond % NANOSECONDS_PER_MICROSECOND).ok()?,
     ])
+}
+
+fn find_time_zone_transition(time_zone: &str, epoch: i128, direction: &str) -> Option<i128> {
+    if time_zone.starts_with(['+', '-']) || time_zone.eq_ignore_ascii_case("utc") {
+        return None;
+    }
+    let zone = time_zone.parse::<chrono_tz::Tz>().ok()?;
+    let offset_at = |instant: i128| -> Option<i32> {
+        let seconds = i64::try_from(instant.div_euclid(NANOSECONDS_PER_SECOND)).ok()?;
+        let nanoseconds = u32::try_from(instant.rem_euclid(NANOSECONDS_PER_SECOND)).ok()?;
+        zone.timestamp_opt(seconds, nanoseconds)
+            .single()
+            .map(|date| date.offset().fix().local_minus_utc())
+    };
+    let current_offset = offset_at(epoch)?;
+    let base_offset = if direction == "previous" {
+        let previous_instant = epoch.checked_sub(NANOSECOND)?;
+        let previous_offset = offset_at(previous_instant)?;
+        if previous_offset != current_offset {
+            previous_offset
+        } else {
+            current_offset
+        }
+    } else {
+        current_offset
+    };
+    let mut previous = epoch;
+    for _ in 0..TIME_ZONE_TRANSITION_SEARCH_LIMIT {
+        let candidate = if direction == "next" {
+            previous.checked_add(NANOSECONDS_PER_DAY)?
+        } else {
+            previous.checked_sub(NANOSECONDS_PER_DAY)?
+        };
+        if candidate.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
+            return None;
+        }
+        if offset_at(candidate)? != base_offset {
+            let (mut low, mut high) = if direction == "next" {
+                (previous, candidate)
+            } else {
+                (candidate, previous)
+            };
+            if direction == "next" {
+                while high - low > NANOSECOND {
+                    let middle = low + (high - low) / 2;
+                    if offset_at(middle)? == base_offset {
+                        low = middle;
+                    } else {
+                        high = middle;
+                    }
+                }
+                return Some(high);
+            }
+            while high - low > NANOSECOND {
+                let middle = low + (high - low) / 2;
+                if offset_at(middle)? == base_offset {
+                    high = middle;
+                } else {
+                    low = middle;
+                }
+            }
+            return Some(high);
+        }
+        previous = candidate;
+    }
+    None
 }

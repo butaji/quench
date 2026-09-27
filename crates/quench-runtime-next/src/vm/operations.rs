@@ -664,6 +664,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeValueOf
             | Native::TemporalZonedDateTimeAdd
             | Native::TemporalZonedDateTimeSubtract
+            | Native::TemporalZonedDateTimeGetTimeZoneTransition
             | Native::TemporalZonedDateTimeToString
             | Native::TemporalZonedDateTimeToJSON
             | Native::TemporalZonedDateTimeEpochNanosecondsGetter
