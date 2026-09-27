@@ -536,6 +536,8 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateToJSON
             | Native::TemporalPlainDateToLocaleString
             | Native::TemporalPlainDateToPlainDateTime
+            | Native::TemporalPlainDateToPlainMonthDay
+            | Native::TemporalPlainDateToPlainYearMonth
             | Native::TemporalPlainDateEquals
             | Native::TemporalPlainDateValueOf => {
                 self.temporal_plain_date_native(p, native, this, args)
@@ -564,6 +566,12 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainTime | Native::TemporalPlainTimeFrom => {
                 self.temporal_plain_time_native(p, native, args)
+            }
+            Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => {
+                Err(self.type_error(p, "Temporal calendar projection requires conversion".into()))
+            }
+            Native::TemporalPlainMonthDayToString | Native::TemporalPlainYearMonthToString => {
+                super::temporal_date_projection::native(self, p, native, this)
             }
             Native::TemporalZonedDateTime
             | Native::TemporalZonedDateTimeFrom
