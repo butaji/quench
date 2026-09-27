@@ -1099,7 +1099,7 @@ fn normalize_smallest_unit(unit: &str) -> &str {
         .unwrap_or(unit)
 }
 
-fn round_temporal_nanoseconds(value: i128, quantum: i128, mode: &str) -> i128 {
+pub(super) fn round_temporal_nanoseconds(value: i128, quantum: i128, mode: &str) -> i128 {
     let quotient = value / quantum;
     let remainder = value % quantum;
     if remainder == 0 {
