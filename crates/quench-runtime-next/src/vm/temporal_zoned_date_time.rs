@@ -784,22 +784,7 @@ impl<H: Host> Vm<H> {
             &[date_duration, options],
         )?;
         let (date, time, _) = self.temporal_plain_date_time_slots(p, local_date_time)?;
-        let local_date = chrono::NaiveDate::from_ymd_opt(
-            date.year,
-            date.month,
-            date.day,
-        )
-        .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime date".into()))?;
-        let nanosecond = time[3] * 1_000_000 + time[4] * 1_000 + time[5];
-        let local = local_date
-            .and_hms_nano_opt(
-                time[0],
-                time[1],
-                time[2],
-                nanosecond as u32,
-            )
-            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime time".into()))?;
-        let date_epoch = zoned_local_epoch_with_disambiguation(local, &time_zone, "compatible")
+        let date_epoch = zoned_local_epoch_from_iso_fields(date, time, &time_zone, "compatible")
             .ok_or_else(|| self.range_error(p, "Invalid local date-time".into()))?;
         let time_delta = duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..]
             .iter()
@@ -1968,28 +1953,25 @@ impl<H: Host> Vm<H> {
         };
         let date = super::temporal_date::checked_iso_date(year, month, day)
             .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
-        let local_date = chrono::NaiveDate::from_ymd_opt(date.year, date.month, date.day)
-            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
-        let local = local_date
-            .and_hms_nano_opt(
+        let time = [
                 hour.unwrap_or(0) as u32,
                 minute.unwrap_or(0) as u32,
                 second.unwrap_or(0) as u32,
-                millisecond.unwrap_or(0) as u32 * NANOSECONDS_PER_MILLISECOND
-                    + microsecond.unwrap_or(0) as u32 * NANOSECONDS_PER_MICROSECOND
-                    + nanosecond.unwrap_or(0) as u32,
-            )
-            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
-        let epoch_nanoseconds = zoned_local_epoch(local, &timezone)
+            millisecond.unwrap_or(0) as u32,
+            microsecond.unwrap_or(0) as u32,
+            nanosecond.unwrap_or(0) as u32,
+        ];
+        let local_epoch = local_epoch_from_iso_fields(date, time);
+        let epoch_nanoseconds =
+            zoned_local_epoch_from_iso_fields(date, time, &timezone, "compatible")
             .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
         if let Some(offset) = offset {
             if !quench_temporal::valid_timezone_offset(&offset) {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
-            let offset_seconds = quench_temporal::offset_seconds(&offset);
-            let offset_epoch = i128::from(local.and_utc().timestamp()) * NANOSECONDS_PER_SECOND
-                + i128::from(local.and_utc().timestamp_subsec_nanos())
-                - i128::from(offset_seconds) * NANOSECONDS_PER_SECOND;
+            let offset_epoch = local_epoch
+                - parse_offset_nanoseconds(&offset)
+                    .ok_or_else(|| self.range_error(p, "Invalid offset".into()))?;
             if offset_epoch != epoch_nanoseconds {
                 return Err(self.range_error(p, "Offset does not match time zone".into()));
             }
@@ -2616,6 +2598,46 @@ pub(super) fn zoned_local_epoch_with_disambiguation(
             + i128::from(instant.timestamp_subsec_nanos())
     };
     (instant.unsigned_abs() <= MAX_EPOCH_NANOSECONDS as u128).then_some(instant)
+}
+
+pub(super) fn zoned_local_epoch_from_iso_fields(
+    date: super::temporal_date::IsoDate,
+    time: [u32; 6],
+    zone: &str,
+    disambiguation: &str,
+) -> Option<i128> {
+    if time
+        .iter()
+        .zip(ZONED_DATE_TIME_TIME_FIELD_LIMITS)
+        .any(|(field, limit)| *field > limit as u32)
+    {
+        return None;
+    }
+    let local_epoch = local_epoch_from_iso_fields(date, time);
+    if let Some(offset) = fixed_time_zone_offset_nanoseconds(zone) {
+        return local_epoch.checked_sub(offset);
+    }
+    let [hour, minute, second, millisecond, microsecond, nanosecond] = time;
+    let [_, _, _, millisecond_scale, microsecond_scale, nanosecond_scale] =
+        super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES;
+    let subsecond = millisecond * millisecond_scale as u32
+        + microsecond * microsecond_scale as u32
+        + nanosecond * nanosecond_scale as u32;
+    let local = chrono::NaiveDate::from_ymd_opt(date.year, date.month, date.day)?
+        .and_hms_nano_opt(hour, minute, second, subsecond)?;
+    zoned_local_epoch_with_disambiguation(local, zone, disambiguation)
+}
+
+pub(super) fn local_epoch_from_iso_fields(
+    date: super::temporal_date::IsoDate,
+    time: [u32; 6],
+) -> i128 {
+    i128::from(super::temporal_date::days_from_iso_date(date)) * NANOSECONDS_PER_DAY
+        + time
+            .iter()
+            .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+            .map(|(field, scale)| i128::from(*field) * scale)
+            .sum::<i128>()
 }
 
 pub(super) fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]> {
