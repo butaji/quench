@@ -556,7 +556,7 @@ impl<H: Host> Vm<H> {
         }
         let symbols = self
             .object_data(target)
-            .map(|data| self.shape_keys(data.shape()).as_ref().clone())
+            .map(|data| self.shape_keys(data.shape()))
             .unwrap_or_default()
             .into_iter()
             .filter(|key| matches!(key, PropertyKey::Symbol(_)))
