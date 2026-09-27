@@ -1,3 +1,4 @@
+use super::object_descriptors::DescriptorConflict;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -941,23 +942,17 @@ impl<H: Host> Vm<H> {
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let is_new = existing.is_none();
         let attributes = descriptor.fold_attributes(current, is_new);
-        if !is_new
-            && !current.configurable
-            && (attributes.configurable != current.configurable
-                || attributes.enumerable != current.enumerable
-                || attributes.writable && !current.writable)
-        {
-            return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
-        }
         let descriptor_value = descriptor.value;
         let descriptor_accessor = descriptor.has_accessor_fields();
         let descriptor_data = descriptor.has_data_fields();
-        if !is_new
-            && !current.configurable
-            && descriptor_accessor != current.accessor
-            && (descriptor_accessor || descriptor_data)
-        {
-            return Err(self.type_error(p, "cannot change non-configurable property kind".into()));
+        if !is_new {
+            if let Some(conflict) = descriptor.non_configurable_conflict(current, attributes) {
+                let message = match conflict {
+                    DescriptorConflict::Attributes => "cannot redefine non-configurable property",
+                    DescriptorConflict::Kind => "cannot change non-configurable property kind",
+                };
+                return Err(self.type_error(p, message.into()));
+            }
         }
         let accessor = descriptor_accessor;
         if accessor {

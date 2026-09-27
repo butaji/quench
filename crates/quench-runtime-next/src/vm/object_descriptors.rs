@@ -66,6 +66,31 @@ impl PropertyDescriptorRecord {
         }
         next
     }
+
+    pub(super) fn non_configurable_conflict(
+        self,
+        current: PropertyAttributes,
+        next: PropertyAttributes,
+    ) -> Option<DescriptorConflict> {
+        if current.configurable {
+            return None;
+        }
+        if next.configurable != current.configurable
+            || next.enumerable != current.enumerable
+            || next.writable && !current.writable
+        {
+            return Some(DescriptorConflict::Attributes);
+        }
+        let changes_kind = (self.has_accessor_fields() || self.has_data_fields())
+            && self.has_accessor_fields() != current.accessor;
+        changes_kind.then_some(DescriptorConflict::Kind)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum DescriptorConflict {
+    Attributes,
+    Kind,
 }
 
 impl<H: Host> Vm<H> {
