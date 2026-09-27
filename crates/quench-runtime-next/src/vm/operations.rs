@@ -585,6 +585,17 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateTimeMonthGetter
             | Native::TemporalPlainDateTimeMonthCodeGetter
             | Native::TemporalPlainDateTimeDayGetter
+            | Native::TemporalPlainDateTimeEraGetter
+            | Native::TemporalPlainDateTimeEraYearGetter
+            | Native::TemporalPlainDateTimeDayOfWeekGetter
+            | Native::TemporalPlainDateTimeDayOfYearGetter
+            | Native::TemporalPlainDateTimeWeekOfYearGetter
+            | Native::TemporalPlainDateTimeYearOfWeekGetter
+            | Native::TemporalPlainDateTimeDaysInWeekGetter
+            | Native::TemporalPlainDateTimeDaysInMonthGetter
+            | Native::TemporalPlainDateTimeDaysInYearGetter
+            | Native::TemporalPlainDateTimeMonthsInYearGetter
+            | Native::TemporalPlainDateTimeInLeapYearGetter
             | Native::TemporalPlainDateTimeHourGetter
             | Native::TemporalPlainDateTimeMinuteGetter
             | Native::TemporalPlainDateTimeSecondGetter
