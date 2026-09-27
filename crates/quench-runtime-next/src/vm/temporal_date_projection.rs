@@ -27,6 +27,16 @@ const PLAIN_YEAR_MONTH_GETTERS: &[(&str, Native)] = &[
         "referenceISODay",
         Native::TemporalPlainYearMonthReferenceISODayGetter,
     ),
+    ("daysInMonth", Native::TemporalPlainYearMonthDaysInMonthGetter),
+    ("daysInYear", Native::TemporalPlainYearMonthDaysInYearGetter),
+    (
+        "monthsInYear",
+        Native::TemporalPlainYearMonthMonthsInYearGetter,
+    ),
+    (
+        "inLeapYear",
+        Native::TemporalPlainYearMonthInLeapYearGetter,
+    ),
 ];
 const PLAIN_MONTH_DAY_METHODS: &[(&str, Native)] = &[
     ("toString", Native::TemporalPlainMonthDayToString),
