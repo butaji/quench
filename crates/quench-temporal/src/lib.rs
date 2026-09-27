@@ -1,8 +1,10 @@
 //! Runtime-independent calendrical algorithms shared by both Quench engines.
 
 mod duration;
+mod duration_total;
 
 pub use duration::parse_duration;
+pub use duration_total::total_duration;
 
 const DAYS_PER_400_YEAR_CYCLE: i64 = 146_097;
 const YEARS_PER_GREGORIAN_CYCLE: i64 = 400;
