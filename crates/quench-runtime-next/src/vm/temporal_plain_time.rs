@@ -279,7 +279,7 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_time_object(time)
     }
 
-    fn temporal_plain_time_object(&mut self, time: [i32; 6]) -> Result<Value, JsError> {
+    pub(super) fn temporal_plain_time_object(&mut self, time: [i32; 6]) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::Object(Self::empty_object(
             self.temporal_plain_time_proto,
         )));
