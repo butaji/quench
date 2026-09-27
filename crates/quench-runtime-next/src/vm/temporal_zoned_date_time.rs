@@ -1398,10 +1398,9 @@ impl<H: Host> Vm<H> {
             time_zone: left_time_zone.clone(),
             calendar: left_calendar.clone(),
         };
-        let other = self.temporal_zoned_date_time_record(
+        let other = self.temporal_zoned_date_time_compare_record(
             p,
             args.first().copied().unwrap_or(Value::UNDEFINED),
-            Value::UNDEFINED,
         )?;
         let options = self.temporal_zoned_date_time_difference_options(
             p,
@@ -1410,7 +1409,7 @@ impl<H: Host> Vm<H> {
         if left.calendar != other.calendar {
             return Err(self.range_error(p, "ZonedDateTime calendars do not match".into()));
         }
-        if left.time_zone != other.time_zone {
+        if !zoned_time_zones_equivalent(&left.time_zone, &other.time_zone) {
             return Err(self.range_error(p, "ZonedDateTime time zones do not match".into()));
         }
         if zoned_date_time_unit_rank(options.largest) >= zoned_date_time_unit_rank("hour") {
@@ -2354,6 +2353,15 @@ fn fixed_time_zone_offset_nanoseconds(zone: &str) -> Option<i128> {
         return Some(0);
     }
     parse_offset_nanoseconds(zone)
+}
+
+fn zoned_time_zones_equivalent(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let left_is_fixed = left.starts_with(['+', '-']) || left.eq_ignore_ascii_case("utc");
+    let right_is_fixed = right.starts_with(['+', '-']) || right.eq_ignore_ascii_case("utc");
+    left_is_fixed && right_is_fixed
 }
 
 fn zoned_date_time_rounding_quantum(options: &ZonedDateTimeStringOptions) -> Option<i128> {
