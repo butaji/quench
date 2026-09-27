@@ -465,7 +465,8 @@ impl<H: Host> Vm<H> {
                         .primitive_prototype(object)
                         .unwrap_or(self.object_proto)
                 }
-                Some(Cell::Date { object: x, .. }) => object = x.proto,
+                Some(Cell::Date { object: x, .. })
+                | Some(Cell::TemporalDuration { object: x, .. }) => object = x.proto,
                 Some(Cell::Object(x))
                 | Some(Cell::Array { object: x, .. })
                 | Some(Cell::ShadowRealm { object: x, .. })

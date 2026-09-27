@@ -499,6 +499,11 @@ impl<H: Host> Vm<H> {
             Native::TemporalDuration
             | Native::TemporalDurationFrom
             | Native::TemporalDurationCompare
+            | Native::TemporalDurationAdd
+            | Native::TemporalDurationSubtract
+            | Native::TemporalDurationWith
+            | Native::TemporalDurationAbs
+            | Native::TemporalDurationNegated
             | Native::TemporalDurationToString
             | Native::TemporalDurationToJSON
             | Native::TemporalDurationValueOf
