@@ -28,6 +28,7 @@ impl Cell {
             Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             Self::TemporalDuration { object, .. } => Some(object),
+            Self::TemporalPlainDate { object, .. } => Some(object),
             _ => None,
         }
     }
@@ -52,6 +53,7 @@ impl Cell {
             Self::Proxy { object, .. } => Some(object),
             Self::Function { object, .. } => Some(object),
             Self::TemporalDuration { object, .. } => Some(object),
+            Self::TemporalPlainDate { object, .. } => Some(object),
             _ => None,
         }
     }

@@ -314,6 +314,12 @@ pub(crate) enum Native {
     TemporalDurationSecondsGetter, TemporalDurationMillisecondsGetter,
     TemporalDurationMicrosecondsGetter, TemporalDurationNanosecondsGetter,
     TemporalDurationSignGetter, TemporalDurationBlankGetter,
+    TemporalPlainDate, TemporalPlainDateFrom, TemporalPlainDateCompare,
+    TemporalPlainDateCalendarIdGetter, TemporalPlainDateYearGetter,
+    TemporalPlainDateMonthGetter, TemporalPlainDateMonthCodeGetter,
+    TemporalPlainDateDayGetter, TemporalPlainDateToString,
+    TemporalPlainDateToJSON, TemporalPlainDateToLocaleString,
+    TemporalPlainDateEquals, TemporalPlainDateValueOf,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
     MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, MathAcos, MathAsin, MathAtan, MathCos, MathExp, MathSin, MathTan, MathAtan2, NumberString, NumberToLocaleString, Number, NumberValueOf,
     MathAcosh, MathAsinh, MathAtanh, MathCbrt, MathCosh, MathExpm1, MathFround,
@@ -818,5 +824,12 @@ pub(crate) enum Cell {
     TemporalDuration {
         object: Box<Object>,
         fields: [f64; 10],
+    },
+    TemporalPlainDate {
+        object: Box<Object>,
+        year: i32,
+        month: u32,
+        day: u32,
+        calendar: String,
     },
 }

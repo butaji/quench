@@ -523,6 +523,21 @@ impl<H: Host> Vm<H> {
             | Native::TemporalDurationBlankGetter => {
                 self.temporal_duration_native(p, native, this, args)
             }
+            Native::TemporalPlainDate
+            | Native::TemporalPlainDateFrom
+            | Native::TemporalPlainDateCompare
+            | Native::TemporalPlainDateCalendarIdGetter
+            | Native::TemporalPlainDateYearGetter
+            | Native::TemporalPlainDateMonthGetter
+            | Native::TemporalPlainDateMonthCodeGetter
+            | Native::TemporalPlainDateDayGetter
+            | Native::TemporalPlainDateToString
+            | Native::TemporalPlainDateToJSON
+            | Native::TemporalPlainDateToLocaleString
+            | Native::TemporalPlainDateEquals
+            | Native::TemporalPlainDateValueOf => {
+                self.temporal_plain_date_native(p, native, this, args)
+            }
             Native::Object
             | Native::Array
             | Native::Map
