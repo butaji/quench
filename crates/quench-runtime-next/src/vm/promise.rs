@@ -366,6 +366,8 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalPlainTime => 6.0,
         Native::TemporalPlainTimeFrom => 1.0,
         Native::TemporalPlainTimeCompare => 2.0,
+        Native::TemporalPlainTimeAdd | Native::TemporalPlainTimeSubtract => 1.0,
+        Native::TemporalPlainTimeEquals => 1.0,
         Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => 2.0,
         Native::TemporalPlainMonthDayFrom | Native::TemporalPlainYearMonthFrom => 1.0,
         Native::TemporalPlainMonthDayCompare | Native::TemporalPlainYearMonthCompare => 2.0,

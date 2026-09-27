@@ -34,6 +34,15 @@ pub(super) fn to_time<H: Host>(
     p: &ResidualProgram,
     value: Value,
 ) -> Result<[i32; 6], JsError> {
+    to_time_with_options(vm, p, value, Value::UNDEFINED)
+}
+
+pub(super) fn to_time_with_options<H: Host>(
+    vm: &mut Vm<H>,
+    p: &ResidualProgram,
+    value: Value,
+    options: Value,
+) -> Result<[i32; 6], JsError> {
     if value.is_undefined() {
         return Ok([0; 6]);
     }
@@ -55,12 +64,19 @@ pub(super) fn to_time<H: Host>(
         return Ok([local[3], local[4], local[5], local[6], local[7], local[8]]);
     }
     if vm.is_string(value) {
+        let _ = vm.plain_date_overflow(p, options)?;
         return parse_time_string(vm, p, value);
     }
     if !vm.is_object_like(value) {
         return Err(vm.type_error(p, "Invalid time".into()));
     }
-    read_time_bag(vm, p, value, true, None)
+    read_time_bag(
+        vm,
+        p,
+        value,
+        true,
+        (!options.is_undefined()).then_some(options),
+    )
 }
 
 pub(super) fn to_date_time<H: Host>(

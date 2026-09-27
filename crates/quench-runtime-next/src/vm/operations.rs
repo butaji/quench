@@ -594,8 +594,11 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainTime
             | Native::TemporalPlainTimeFrom
-            | Native::TemporalPlainTimeCompare => {
-                self.temporal_plain_time_native(p, native, args)
+            | Native::TemporalPlainTimeCompare
+            | Native::TemporalPlainTimeAdd
+            | Native::TemporalPlainTimeSubtract
+            | Native::TemporalPlainTimeEquals => {
+                self.temporal_plain_time_native(p, native, this, args)
             }
             Native::TemporalPlainMonthDay
             | Native::TemporalPlainMonthDayFrom
