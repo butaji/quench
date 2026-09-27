@@ -18,6 +18,7 @@ const DURATION_TOTAL_TIME_LIMIT_NANOS: i128 =
     9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
 const DURATION_TOTAL_DECIMAL_DIGITS: usize = 32;
 const DURATION_ROUNDING_INCREMENT_LIMIT: f64 = 1_000_000_000.0;
+const DURATION_DAYS_PER_WEEK: i128 = 7;
 const DURATION_ROUNDING_MODE_NAMES: [&str; 9] = [
     "ceil",
     "floor",
@@ -796,19 +797,33 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(smallest)
                 .min(smallest)
         });
+        let relative_date = if relative_to.is_undefined() {
+            None
+        } else {
+            Some(self.temporal_relative_date(p, relative_to)?)
+        };
         if largest > smallest {
             return Err(self.range_error(
                 p,
                 "largestUnit must not be smaller than smallestUnit".into(),
             ));
         }
-        if (smallest <= 2 || largest <= 2 || fields[..3].iter().any(|value| *value != 0.0))
-            && relative_to.is_undefined()
-        {
+        let needs_relative_date = smallest <= 2
+            || largest <= 2
+            || fields[..3].iter().any(|value| *value != 0.0);
+        if needs_relative_date && relative_date.is_none() {
             return Err(self.range_error(p, "relativeTo required for calendar units".into()));
         }
-        if smallest <= 2 || largest <= 2 || fields[..3].iter().any(|value| *value != 0.0) {
-            return Err(self.range_error(p, "relativeTo required for calendar rounding".into()));
+        if needs_relative_date {
+            return self.temporal_duration_round_relative_date(
+                p,
+                fields,
+                largest,
+                smallest,
+                increment,
+                &mode,
+                relative_date.expect("relative date checked above"),
+            );
         }
         let nanos = self.duration_time_nanos(&fields);
         let quantum = DURATION_TIME_NANOSECOND_SCALES[smallest - 3] * increment as i128;
@@ -827,6 +842,100 @@ impl<H: Host> Vm<H> {
                 *value = 0.0;
             }
         });
+        self.validate_duration_fields(p, &result)?;
+        self.make_temporal_duration(p, result)
+    }
+
+    fn temporal_duration_round_relative_date(
+        &mut self,
+        p: &ResidualProgram,
+        fields: [f64; 10],
+        largest: usize,
+        smallest: usize,
+        increment: i128,
+        mode: &str,
+        relative_date: quench_temporal::IsoDate,
+    ) -> Result<Value, JsError> {
+        let fields_i128 = std::array::from_fn(|index| fields[index] as i128);
+        let (target_date, time_remainder) = if smallest <= 1 {
+            let total = quench_temporal::total_duration(relative_date, fields_i128, smallest)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            let rounded_units = round_duration_number(total / increment as f64, mode)
+                * increment as f64;
+            let months = if smallest == 0 {
+                (rounded_units * f64::from(super::temporal_date::ISO_MONTHS_PER_YEAR)) as i128
+            } else {
+                rounded_units as i128
+            };
+            let target = super::temporal_date::shift_iso_months(relative_date.into(), months)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            (target, 0_i128)
+        } else {
+            let total = quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            let quantum = duration_round_unit_nanoseconds(smallest)
+                .checked_mul(increment)
+                .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
+            let rounded = round_duration_integer(total, quantum, mode)
+                .checked_mul(quantum)
+                .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+            let whole_days = rounded / super::temporal_date_arithmetic::NANOS_PER_DAY;
+            let days = i64::try_from(whole_days)
+                .map_err(|_| self.range_error(p, "Invalid relativeTo".into()))?;
+            let target = super::temporal_date::shift_iso_days(relative_date.into(), days)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            (
+                target,
+                rounded % super::temporal_date_arithmetic::NANOS_PER_DAY,
+            )
+        };
+        if largest >= 4 {
+            let total = quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            let quantum = duration_round_unit_nanoseconds(smallest)
+                .checked_mul(increment)
+                .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
+            let rounded = round_duration_integer(total, quantum, mode)
+                .checked_mul(quantum)
+                .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+            let mut result = [0.0; 10];
+            balance_duration_time_units(rounded, largest, &mut result);
+            self.validate_duration_fields(p, &result)?;
+            return self.make_temporal_duration(p, result);
+        }
+        let constructor = self.temporal_plain_date_constructor(p)?;
+        let start_args = [
+            Value::number(f64::from(relative_date.year)),
+            Value::number(f64::from(relative_date.month)),
+            Value::number(f64::from(relative_date.day)),
+        ];
+        let start = self.temporal_plain_date_construct(p, &start_args, constructor)?;
+        let end_args = [
+            Value::number(f64::from(target_date.year)),
+            Value::number(f64::from(target_date.month)),
+            Value::number(f64::from(target_date.day)),
+        ];
+        let end = self.temporal_plain_date_construct(p, &end_args, constructor)?;
+        let internal_options = self.object();
+        for (name, value) in [
+            ("largestUnit", DURATION_FIELDS[largest]),
+            ("smallestUnit", "day"),
+            ("roundingMode", "trunc"),
+        ] {
+            let atom = self.intern_atom(name);
+            let value = self.heap.alloc(Cell::String(value.into()));
+            self.set_property(internal_options, atom, value)?;
+        }
+        let date_difference = self.temporal_plain_date_difference(
+            p,
+            Native::TemporalPlainDateUntil,
+            start,
+            &[end, internal_options],
+        )?;
+        let mut result = self.duration_fields(p, date_difference)?;
+        if time_remainder != 0 {
+            balance_duration_time_units_into(time_remainder, &mut result);
+        }
         self.validate_duration_fields(p, &result)?;
         self.make_temporal_duration(p, result)
     }
@@ -1042,6 +1151,56 @@ fn round_duration_integer(value: i128, quantum: i128, mode: &str) -> i128 {
         units += 1;
     }
     units as i128 * sign
+}
+
+fn duration_round_unit_nanoseconds(unit: usize) -> i128 {
+    match unit {
+        2 => DURATION_TIME_NANOSECOND_SCALES[0] * DURATION_DAYS_PER_WEEK,
+        3..=9 => DURATION_TIME_NANOSECOND_SCALES[unit - 3],
+        _ => 0,
+    }
+}
+
+fn balance_duration_time_units(nanoseconds: i128, largest: usize, fields: &mut [f64; 10]) {
+    let sign = nanoseconds.signum();
+    let mut remainder = nanoseconds.unsigned_abs();
+    for unit in largest.max(4)..=9 {
+        let scale = DURATION_TIME_NANOSECOND_SCALES[unit - 3] as u128;
+        fields[unit] = (remainder / scale) as f64 * sign as f64;
+        remainder %= scale;
+    }
+}
+
+fn balance_duration_time_units_into(nanoseconds: i128, fields: &mut [f64; 10]) {
+    let sign = nanoseconds.signum();
+    let mut remainder = nanoseconds.unsigned_abs();
+    for unit in 4..=9 {
+        let scale = DURATION_TIME_NANOSECOND_SCALES[unit - 3] as u128;
+        fields[unit] += (remainder / scale) as f64 * sign as f64;
+        remainder %= scale;
+    }
+}
+
+fn round_duration_number(value: f64, mode: &str) -> f64 {
+    let truncated = value.trunc();
+    let remainder = value - truncated;
+    let absolute_remainder = remainder.abs();
+    let increment = match mode {
+        "ceil" => remainder > 0.0,
+        "floor" => remainder < 0.0,
+        "expand" => remainder != 0.0,
+        "trunc" => false,
+        "halfCeil" => absolute_remainder > 0.5 || absolute_remainder == 0.5 && value > 0.0,
+        "halfFloor" => absolute_remainder > 0.5 || absolute_remainder == 0.5 && value < 0.0,
+        "halfTrunc" => absolute_remainder > 0.5,
+        "halfEven" => absolute_remainder > 0.5 || absolute_remainder == 0.5 && truncated % 2.0 != 0.0,
+        _ => absolute_remainder >= 0.5,
+    };
+    if increment {
+        truncated + value.signum()
+    } else {
+        truncated
+    }
 }
 
 fn format_duration(fields: &[f64; 10]) -> String {
