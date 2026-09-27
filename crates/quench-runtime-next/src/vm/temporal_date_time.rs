@@ -659,11 +659,13 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let left = self.temporal_plain_date_time_slots(p, this)?;
-        let other = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let right = match self.temporal_plain_date_time_slots(p, other) {
-            Ok(right) => right,
-            Err(_) => return Ok(Value::FALSE),
-        };
+        let constructor = self.temporal_plain_date_time_constructor(p)?;
+        let other = self.temporal_plain_date_time_from(
+            p,
+            constructor,
+            &[args.first().copied().unwrap_or(Value::UNDEFINED)],
+        )?;
+        let right = self.temporal_plain_date_time_slots(p, other)?;
         Ok(if left == right {
             Value::TRUE
         } else {

@@ -1,4 +1,5 @@
 use super::*;
+const MAX_ISO_TIME_ZONE_OFFSET_DIGITS: usize = 5;
 
 const MIN_PLAIN_DATE_TIME_DATE: (i32, u32, u32) = (-271_821, 4, 19);
 pub(super) const TIME_FIELDS: [&str; 6] = [
@@ -315,38 +316,60 @@ pub(super) fn validate_annotations<H: Host>(
     p: &ResidualProgram,
     text: &str,
 ) -> Result<(), JsError> {
-    let annotations = text
-        .split('[')
-        .skip(1)
-        .map(|annotation| annotation.strip_suffix(']').unwrap_or(annotation))
-        .collect::<Vec<_>>();
-    let calendar_count = annotations
-        .iter()
-        .filter(|annotation| annotation.trim_start_matches('!').starts_with("u-ca="))
-        .count();
-    let zone_count = annotations
-        .iter()
-        .filter(|annotation| !annotation.contains('=') || annotation.starts_with(['+', '-']))
-        .count();
-    let invalid = annotations.iter().any(|annotation| {
-        let key = annotation
-            .trim_start_matches('!')
-            .split('=')
-            .next()
-            .unwrap_or("");
-        annotation.contains('=') && key.bytes().any(|byte| byte.is_ascii_uppercase())
-            || annotation.starts_with('!')
-                && !annotation.starts_with("!u-ca=")
-                && annotation.contains('=')
-    }) || calendar_count > 1
-        && annotations
-            .iter()
-            .any(|annotation| annotation.starts_with("!u-ca="))
-        || zone_count > 1;
-    if invalid {
+    if !iso_annotations_are_valid(text) {
         return Err(vm.range_error(p, "Invalid time annotation".into()));
     }
     Ok(())
+}
+
+fn iso_annotations_are_valid(text: &str) -> bool {
+    let Some((_, mut rest)) = text.split_once('[') else {
+        return true;
+    };
+    let (mut calendars, mut critical_calendar, mut zones) = (0, false, 0);
+    while let Some((annotation, tail)) = rest.split_once(']') {
+        if annotation.is_empty() {
+            return false;
+        }
+        let (critical, body) = annotation
+            .strip_prefix('!')
+            .map_or((false, annotation), |body| (true, body));
+        if body.is_empty() {
+            return false;
+        }
+        if let Some((key, value)) = body.split_once('=') {
+            if key.is_empty()
+                || value.is_empty()
+                || key.bytes().any(|byte| byte.is_ascii_uppercase())
+            {
+                return false;
+            }
+            if key == "u-ca" {
+                calendars += 1;
+                critical_calendar |= critical;
+            } else if critical {
+                return false;
+            }
+        } else if body.starts_with(['+', '-']) {
+            let compact = body.replace(':', "");
+            if compact.split_once('.').is_some()
+                || compact.chars().count() > MAX_ISO_TIME_ZONE_OFFSET_DIGITS
+            {
+                return false;
+            }
+            zones += 1;
+        } else if body.eq_ignore_ascii_case("utc") || body.contains('/') {
+            zones += 1;
+        }
+        if tail.is_empty() {
+            return zones <= 1 && (calendars <= 1 || !critical_calendar);
+        }
+        let Some(next) = tail.strip_prefix('[') else {
+            return false;
+        };
+        rest = next;
+    }
+    false
 }
 
 pub(super) fn validate_bounds<H: Host>(
