@@ -370,6 +370,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalZonedDateTimeAdd, Native::TemporalZonedDateTimeSubtract,
     Native::TemporalZonedDateTimeGetTimeZoneTransition,
     Native::TemporalZonedDateTimeRound,
+    Native::TemporalZonedDateTimeUntil, Native::TemporalZonedDateTimeSince,
     Native::TemporalZonedDateTimeToString, Native::TemporalZonedDateTimeToJSON,
     Native::TemporalZonedDateTimeTimeZoneIdGetter, Native::TemporalZonedDateTimeCalendarIdGetter,
     Native::TemporalZonedDateTimeYearGetter, Native::TemporalZonedDateTimeMonthGetter,
