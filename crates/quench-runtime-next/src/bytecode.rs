@@ -115,7 +115,7 @@ pub(crate) enum InstructionField {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImmediateRole {
-    Undeclared,
+    LayoutEncoded,
     Unused,
     ConstantIndex,
     ClosureFunctionIndex,
@@ -338,7 +338,7 @@ macro_rules! opcodes {
                 opcodes!(@fields $($a, $b, $c)?)),+
             ];
             const IMMEDIATE_ROLES: [ImmediateRole; Self::COUNT] = [$(
-                opcodes!(@immediate $($immediate_role)?)),+
+                opcodes!(@immediate $($immediate_role)?; $($layout)?)),+
             ];
 
             pub(crate) const fn effect(self) -> Effect {
@@ -384,8 +384,10 @@ macro_rules! opcodes {
     (@fields $a:ident, $b:ident, $c:ident) => {
         OperandLayout { a: FieldLayout::$a, b: FieldLayout::$b, c: FieldLayout::$c }
     };
-    (@immediate $role:ident) => { ImmediateRole::$role };
-    (@immediate) => { ImmediateRole::Undeclared };
+    (@immediate $role:ident; $layout:ident) => { ImmediateRole::$role };
+    (@immediate $role:ident;) => { ImmediateRole::$role };
+    (@immediate; $layout:ident) => { ImmediateRole::LayoutEncoded };
+    (@immediate;) => { compile_error!("opcode must declare an immediate role or layout") };
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
@@ -470,6 +472,18 @@ opcodes!(
     DefineField => WRITE_THROW; meaning AtomIndex, @ NoResult, @ fields(Register, Register, Unused),
     ValidateClassHeritage => READ_THROW; meaning Unused, @ NoResult, @ fields(Register, Unused, Unused),
 );
+
+const _: () = {
+    let mut index = 0;
+    while index < Op::COUNT {
+        assert!(!matches!(
+            (Op::IMMEDIATE_ROLES[index], Op::IMMEDIATE_LAYOUTS[index]),
+            (ImmediateRole::LayoutEncoded, ImmediateLayout::Scalar)
+        ));
+        index += 1;
+    }
+};
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
