@@ -256,29 +256,126 @@ impl<H: Host> Vm<H> {
                 months = months.rem_euclid(MONTHS_PER_YEAR);
             }
         }
+        let mut weeks = 0_i128;
         if largest == "week" {
             let days_per_week = i64::try_from(super::temporal_date_arithmetic::DAYS_PER_WEEK)
                 .expect("days per week fits i64");
-            fields[2] = (days / days_per_week * sign as i64) as f64;
+            weeks = i128::from(days / days_per_week);
             days %= days_per_week;
+        }
+        let nanos_per_day = super::temporal_date_arithmetic::NANOS_PER_DAY;
+        let subday = time_nanos(end.1) - time_nanos(start.1);
+        let rounded_calendar_unit = match options.smallest {
+            "year" => {
+                let anchor = shift_months_clamped(start.0, years * MONTHS_PER_YEAR)
+                    .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+                let year_days = i128::from(temporal_date::iso_days_in_year(anchor.year));
+                let residual_days = temporal_date::days_from_iso_date(end.0)
+                    - temporal_date::days_from_iso_date(anchor);
+                Some((
+                    (years * year_days + i128::from(residual_days)) * nanos_per_day + subday,
+                    year_days * nanos_per_day,
+                ))
+            }
+            "month" => {
+                let total_months = years * MONTHS_PER_YEAR + months;
+                let anchor = shift_months_clamped(start.0, total_months)
+                    .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+                let month_days = i128::from(
+                    temporal_date::iso_days_in_month(anchor.year, anchor.month as i32)
+                        .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?,
+                );
+                let residual_days = temporal_date::days_from_iso_date(end.0)
+                    - temporal_date::days_from_iso_date(anchor);
+                Some((
+                    (total_months * month_days + i128::from(residual_days)) * nanos_per_day
+                        + subday,
+                    month_days * nanos_per_day,
+                ))
+            }
+            "week" => {
+                let days_per_week = super::temporal_date_arithmetic::DAYS_PER_WEEK;
+                Some((
+                    (weeks * days_per_week + i128::from(days)) * nanos_per_day + subday,
+                    days_per_week * nanos_per_day,
+                ))
+            }
+            _ => None,
+        };
+        if let Some((value, unit_nanos)) = rounded_calendar_unit {
+            let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+                value * sign,
+                unit_nanos * options.increment,
+                &options.rounding_mode,
+            )
+            .abs()
+                * options.increment;
+            years = 0;
+            months = 0;
+            weeks = 0;
+            days = 0;
+            time = 0;
+            match options.smallest {
+                "year" => years = rounded,
+                "month" if largest == "month" => months = rounded,
+                "month" => {
+                    years = rounded.div_euclid(MONTHS_PER_YEAR);
+                    months = rounded.rem_euclid(MONTHS_PER_YEAR);
+                }
+                "week" if largest == "week" => weeks = rounded,
+                "week" => {
+                    days = i64::try_from(
+                        rounded * super::temporal_date_arithmetic::DAYS_PER_WEEK,
+                    )
+                    .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
+                }
+                _ => {}
+            }
+        }
+        if largest == "year"
+            && !matches!(options.smallest, "year" | "month" | "week" | "day")
+        {
+            let anchor = shift_months_clamped(start.0, years * MONTHS_PER_YEAR)
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+            let year_days = i128::from(temporal_date::iso_days_in_year(anchor.year));
+            let residual_days = temporal_date::days_from_iso_date(end.0)
+                - temporal_date::days_from_iso_date(anchor);
+            let residual = i128::from(residual_days) * nanos_per_day + subday;
+            let quantum = unit_nanos(options.smallest) * options.increment;
+            let rounded_residual = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+                residual * sign,
+                quantum,
+                &options.rounding_mode,
+            )
+            .abs()
+                * quantum;
+            if rounded_residual >= year_days * nanos_per_day {
+                years += 1;
+                months = 0;
+                weeks = 0;
+                days = 0;
+                time = 0;
+            }
         }
         if options.smallest == "day" {
             let day = super::temporal_date_arithmetic::NANOS_PER_DAY;
             let quantity = days as f64 + time as f64 / day as f64;
             let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
-                (quantity * day as f64) as i128,
+                (quantity * day as f64) as i128 * sign,
                 day * options.increment,
                 &options.rounding_mode,
-            );
-            days = (rounded / day) as i64;
+            )
+            .abs();
+            days = rounded as i64;
             time = 0;
         } else if options.smallest != "nanosecond" {
             let quantum = unit_nanos(options.smallest) * options.increment;
             time = super::temporal_zoned_date_time::round_temporal_nanoseconds(
-                time,
+                time * sign,
                 quantum,
                 &options.rounding_mode,
             ) * quantum;
+            time = time.abs();
             if time >= super::temporal_date_arithmetic::NANOS_PER_DAY {
                 days += 1;
                 time -= super::temporal_date_arithmetic::NANOS_PER_DAY;
@@ -286,6 +383,7 @@ impl<H: Host> Vm<H> {
         }
         fields[0] = (years * sign) as f64;
         fields[1] = (months * sign) as f64;
+        fields[2] = (weeks * sign) as f64;
         fields[3] = (i128::from(days) * sign) as f64;
         let mut remainder = time;
         for (index, scale) in super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
