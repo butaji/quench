@@ -7,15 +7,6 @@ const BASIC_ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_ISO_YEAR_DIGITS: usize = 6;
 const ISO_MONTH_DAY_DIGITS: usize = 2;
 const MONTHS_BEFORE_ISO_YEAR: i32 = 1;
-const DAYS_PER_400_YEAR_CYCLE: i64 = 146_097;
-const YEARS_PER_GREGORIAN_CYCLE: i64 = 400;
-const ISO_EPOCH_OFFSET_DAYS: i64 = 719_468;
-const DAYS_PER_COMMON_YEAR: i64 = 365;
-const DAYS_PER_4_YEAR_CYCLE: i64 = 1_460;
-const DAYS_PER_CENTURY: i64 = 36_524;
-const DAYS_BEFORE_LAST_400_YEAR_DAY: i64 = 146_096;
-const DAYS_PER_MONTH_TRANSFORM_CYCLE: i64 = 153;
-const MONTH_TRANSFORM_DIVISOR: i64 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct IsoDate {
@@ -497,13 +488,7 @@ pub(super) fn checked_iso_date(year: i32, month: i32, day: i32) -> Option<IsoDat
 }
 
 pub(super) fn iso_days_in_month(year: i32, month: i32) -> Option<i32> {
-    Some(match month {
-        2 if is_leap_year(year) => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        _ => return None,
-    })
+    quench_temporal::days_in_month(year, u32::try_from(month).ok()?).map(|days| days as i32)
 }
 
 pub(super) fn shift_iso_months(date: IsoDate, delta: i128) -> Option<IsoDate> {
@@ -522,49 +507,37 @@ pub(super) fn shift_iso_days(date: IsoDate, days: i64) -> Option<IsoDate> {
     iso_date_in_range(shifted).then_some(shifted)
 }
 
-fn is_leap_year(year: i32) -> bool {
-    year.rem_euclid(4) == 0 && (year.rem_euclid(100) != 0 || year.rem_euclid(400) == 0)
-}
-
 fn iso_date_in_range(date: IsoDate) -> bool {
     (date.year, date.month, date.day) >= (MIN_ISO_YEAR, 4, 19)
         && (date.year, date.month, date.day) <= (MAX_ISO_YEAR, 9, 13)
 }
 
 pub(super) fn days_from_iso_date(date: IsoDate) -> i64 {
-    let year = i64::from(date.year) - i64::from(date.month <= 2);
-    let era = year.div_euclid(YEARS_PER_GREGORIAN_CYCLE);
-    let year_of_era = year - era * YEARS_PER_GREGORIAN_CYCLE;
-    let adjusted_month = i64::from(date.month) + if date.month > 2 { -3 } else { 9 };
-    let day_of_year = (DAYS_PER_MONTH_TRANSFORM_CYCLE * adjusted_month + 2)
-        / MONTH_TRANSFORM_DIVISOR
-        + i64::from(date.day)
-        - 1;
-    let day_of_era =
-        year_of_era * DAYS_PER_COMMON_YEAR + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * DAYS_PER_400_YEAR_CYCLE + day_of_era - ISO_EPOCH_OFFSET_DAYS
+    quench_temporal::days_from_civil(date.into())
 }
 
 fn iso_date_from_days(days: i64) -> Option<IsoDate> {
-    let adjusted_days = days.checked_add(ISO_EPOCH_OFFSET_DAYS)?;
-    let era = adjusted_days.div_euclid(DAYS_PER_400_YEAR_CYCLE);
-    let day_of_era = adjusted_days - era * DAYS_PER_400_YEAR_CYCLE;
-    let year_of_era = (day_of_era - day_of_era / DAYS_PER_4_YEAR_CYCLE
-        + day_of_era / DAYS_PER_CENTURY
-        - day_of_era / DAYS_BEFORE_LAST_400_YEAR_DAY)
-        / DAYS_PER_COMMON_YEAR;
-    let year = i32::try_from(year_of_era + era * YEARS_PER_GREGORIAN_CYCLE).ok()?;
-    let day_of_year =
-        day_of_era - (DAYS_PER_COMMON_YEAR * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_part = (MONTH_TRANSFORM_DIVISOR * day_of_year + 2) / DAYS_PER_MONTH_TRANSFORM_CYCLE;
-    let day = u32::try_from(
-        day_of_year - (DAYS_PER_MONTH_TRANSFORM_CYCLE * month_part + 2) / MONTH_TRANSFORM_DIVISOR
-            + 1,
-    )
-    .ok()?;
-    let month = u32::try_from(month_part + if month_part < 10 { 3 } else { -9 }).ok()?;
-    let year = year + i32::from(month <= 2);
-    Some(IsoDate { year, month, day })
+    quench_temporal::civil_from_days(days).map(Into::into)
+}
+
+impl From<IsoDate> for quench_temporal::IsoDate {
+    fn from(date: IsoDate) -> Self {
+        Self {
+            year: date.year,
+            month: date.month,
+            day: date.day,
+        }
+    }
+}
+
+impl From<quench_temporal::IsoDate> for IsoDate {
+    fn from(date: quench_temporal::IsoDate) -> Self {
+        Self {
+            year: date.year,
+            month: date.month,
+            day: date.day,
+        }
+    }
 }
 
 fn format_iso_date(year: i32, month: u32, day: u32) -> String {

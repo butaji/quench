@@ -1,0 +1,8 @@
+[package]
+name = "quench-temporal"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared pure calendrical algorithms for Quench runtimes"
+
+[dependencies]

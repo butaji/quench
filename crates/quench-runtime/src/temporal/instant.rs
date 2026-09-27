@@ -873,36 +873,20 @@ fn parse_iso_date(date: &str) -> Result<(i32, u32, u32), VmError> {
     {
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let month_days = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    if !(1..=12).contains(&month) || day == 0 || day > month_days[month as usize - 1] {
+    if !quench_temporal::days_in_month(year, month)
+        .is_some_and(|last_day| (1..=last_day).contains(&day))
+    {
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
     Ok((year, month, day))
 }
 
 fn days_from_civil(year: i32, month: u32, day: u32) -> i128 {
-    let year = i128::from(year) - i128::from(month <= 2);
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let month = i128::from(month);
-    let day_of_year =
-        (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + i128::from(day) - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
+    i128::from(quench_temporal::days_from_civil(quench_temporal::IsoDate {
+        year,
+        month,
+        day,
+    }))
 }
 
 fn parse_offset(offset: &str) -> Result<i128, VmError> {
