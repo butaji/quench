@@ -944,75 +944,24 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "cannot assign property on primitive value".into()))
             };
         }
-        self.evaluate_deferred_namespace_for_key(p, object, Some(PropertyKey::string(atom)))?;
         if atom == self.length_atom
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
             && !self
                 .object_data(object)
                 .is_some_and(Object::is_arguments_object)
         {
+            self.evaluate_deferred_namespace_for_key(p, object, Some(PropertyKey::string(atom)))?;
             if !self.set_array_length(p, object, value)? && strict {
                 return Err(self.type_error(p, "cannot set array length".into()));
             }
             return Ok(());
         }
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(object).cloned()
-        {
-            if !self.proxy_set(p, target, handler, object, atom, value)? {
-                return Err(self.type_error(p, "cannot assign property through proxy".into()));
-            }
-            return Ok(());
+        let written = self.set_property_with_receiver(p, object, atom, value, object)?;
+        if written || !strict {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "cannot assign property".into()))
         }
-        if self.prototype_chain_contains_proxy(object) {
-            let written = self.set_property_with_receiver(p, object, atom, value, object)?;
-            return if written || !strict {
-                Ok(())
-            } else {
-                Err(self.type_error(p, "cannot assign property through proxy".into()))
-            };
-        }
-        if let Some(attributes) = self.property_accessor(object, atom) {
-            if let Some(setter) = attributes.setter {
-                self.call_value(p, setter, object, &[value])?;
-            } else if strict {
-                return Err(self.type_error(p, "cannot set property without a setter".into()));
-            }
-            return Ok(());
-        }
-        let own = self.own_property(object, atom).is_some();
-        if own
-            && self
-                .property_attributes(object, PropertyKey::string(atom))
-                .is_some_and(|attributes| !attributes.writable)
-        {
-            return if strict {
-                Err(self.type_error(p, "cannot write non-writable property".into()))
-            } else {
-                Ok(())
-            };
-        }
-        if !own && self.inherited_write_blocked(object, atom) {
-            return Err(JsError(
-                "cannot write inherited non-writable property".into(),
-            ));
-        }
-        if matches!(self.heap.get(object), Some(Cell::Array { .. }))
-            && let Some(index) = super::object_static::array_index(self.atom_name(atom))
-        {
-            let writable = self
-                .array_descriptor(object, index as usize)
-                .is_none_or(|attributes| attributes.writable);
-            let written = writable && self.set_array_element(object, index as usize, value);
-            if !written && strict {
-                return Err(self.type_error(p, "cannot write array index".into()));
-            }
-            return Ok(());
-        }
-        self.set_property(object, atom, value)?;
-        self.mirror_global_var_property_write(p, object, atom, value);
-        Ok(())
     }
 
     pub(super) fn prototype_chain_contains_proxy(&self, object: Value) -> bool {
