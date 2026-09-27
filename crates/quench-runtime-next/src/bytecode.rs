@@ -143,6 +143,10 @@ pub(crate) enum InstructionField {
     C,
 }
 
+impl InstructionField {
+    pub(crate) const ALL: &'static [Self] = &[Self::A, Self::B, Self::C];
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImmediateRole {
     LayoutEncoded,

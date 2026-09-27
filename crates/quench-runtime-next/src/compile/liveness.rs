@@ -103,15 +103,12 @@ pub(super) fn uses(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> u64 {
-    let field_reads = [
-        InstructionField::A,
-        InstructionField::B,
-        InstructionField::C,
-    ]
-    .into_iter()
-    .fold(0, |mask, field| {
-        mask | field_uses(instruction, field, fields)
-    });
+    let field_reads = InstructionField::ALL
+        .iter()
+        .copied()
+        .fold(0, |mask, field| {
+            mask | field_uses(instruction, field, fields)
+        });
     let result = if instruction.op().result_layout().reads_result_register() {
         bit(instruction.result_register())
     } else {
@@ -176,15 +173,12 @@ fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u6
     } else {
         0
     };
-    let field_writes = [
-        InstructionField::A,
-        InstructionField::B,
-        InstructionField::C,
-    ]
-    .into_iter()
-    .fold(0, |mask, field| {
-        mask | field_definitions(instruction, field)
-    });
+    let field_writes = InstructionField::ALL
+        .iter()
+        .copied()
+        .fold(0, |mask, field| {
+            mask | field_definitions(instruction, field)
+        });
     let packed_definitions = match instruction.op().immediate_layout() {
         ImmediateLayout::RegisterPair => {
             let (first, second) = instruction.register_pair();
