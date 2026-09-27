@@ -63,6 +63,7 @@ impl<H: Host> Vm<H> {
             ("toPlainDate", Native::TemporalPlainDateTimeToPlainDate),
             ("toPlainTime", Native::TemporalPlainDateTimeToPlainTime),
             ("toZonedDateTime", Native::TemporalPlainDateTimeToZonedDateTime),
+            ("with", Native::TemporalPlainDateTimeWith),
             ("valueOf", Native::TemporalPlainDateTimeValueOf),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
@@ -262,6 +263,9 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalPlainDateTimeToZonedDateTime {
             return self.temporal_plain_date_time_to_zoned_date_time(p, this, args);
+        }
+        if native == Native::TemporalPlainDateTimeWith {
+            return self.temporal_plain_date_time_with(p, this, args);
         }
         if native == Native::TemporalPlainDateTime {
             return Err(self.type_error(p, "Temporal.PlainDateTime requires new".into()));
@@ -763,6 +767,178 @@ impl<H: Host> Vm<H> {
             time[index] = i32::try_from(remainder / scale)
                 .map_err(|_| self.range_error(p, "Invalid PlainDateTime time".into()))?;
             remainder %= scale;
+        }
+        let constructor = self.temporal_plain_date_time_constructor(p)?;
+        self.make_plain_date_time(
+            p,
+            constructor,
+            date.year,
+            date.month,
+            date.day,
+            calendar,
+            time,
+        )
+    }
+
+    fn temporal_plain_date_time_with(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
+        let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_object_like(changes)
+            || matches!(self.heap.get(changes), Some(Cell::Array { .. }))
+            || matches!(
+                self.heap.get(changes),
+                Some(
+                    Cell::TemporalPlainDate { .. }
+                        | Cell::TemporalPlainDateTime { .. }
+                        | Cell::TemporalPlainMonthDay { .. }
+                        | Cell::TemporalPlainYearMonth { .. }
+                        | Cell::TemporalZonedDateTime { .. }
+                )
+            )
+        {
+            return Err(self.type_error(p, "Invalid date-time".into()));
+        }
+
+        for name in ["calendar", "timeZone"] {
+            let atom = self.intern_atom(name);
+            if !self.get_property(p, changes, atom)?.is_undefined() {
+                return Err(self.type_error(p, format!("Invalid {name}")));
+            }
+        }
+
+        let mut year = date.year;
+        let mut month = date.month as i32;
+        let mut month_code = None;
+        let mut day = date.day as i32;
+        let mut time = time.map(|value| value as i32);
+        let names = if calendar == "iso8601" {
+            &[
+                "day",
+                "hour",
+                "microsecond",
+                "millisecond",
+                "minute",
+                "month",
+                "monthCode",
+                "nanosecond",
+                "second",
+                "year",
+            ][..]
+        } else {
+            &[
+                "day",
+                "hour",
+                "microsecond",
+                "millisecond",
+                "minute",
+                "month",
+                "monthCode",
+                "nanosecond",
+                "second",
+                "year",
+                "era",
+                "eraYear",
+            ][..]
+        };
+        let mut recognized = false;
+        let mut month_was_provided = false;
+        let mut year_was_provided = false;
+        let mut era_was_provided = false;
+        let mut era_year_was_provided = false;
+        for name in names {
+            let atom = self.intern_atom(name);
+            let value = self.get_property(p, changes, atom)?;
+            if value.is_undefined() {
+                continue;
+            }
+            recognized = true;
+            match *name {
+                "day" => day = self.plain_date_integer(p, value)?,
+                "hour" => time[0] = self.plain_date_integer(p, value)?,
+                "microsecond" => time[MICROSECOND_FIELD] = self.plain_date_integer(p, value)?,
+                "millisecond" => time[MILLISECOND_FIELD] = self.plain_date_integer(p, value)?,
+                "minute" => time[1] = self.plain_date_integer(p, value)?,
+                "month" => {
+                    month = self.plain_date_integer(p, value)?;
+                    month_was_provided = true;
+                }
+                "monthCode" => month_code = Some(self.plain_date_month_code(p, value)?),
+                "nanosecond" => time[NANOSECOND_FIELD] = self.plain_date_integer(p, value)?,
+                "second" => time[2] = self.plain_date_integer(p, value)?,
+                "year" => {
+                    year = self.plain_date_integer(p, value)?;
+                    year_was_provided = true;
+                }
+                "era" => era_was_provided = true,
+                "eraYear" => era_year_was_provided = true,
+                _ => unreachable!(),
+            }
+        }
+        if era_was_provided != era_year_was_provided && !year_was_provided {
+            return Err(self.type_error(p, "era and eraYear must be provided together".into()));
+        }
+        if era_was_provided && !year_was_provided {
+            return Err(self.type_error(p, "Unsupported calendar era fields".into()));
+        }
+        if !recognized {
+            return Err(self.type_error(p, "Insufficient date-time data".into()));
+        }
+        if let Some(code_month) = month_code {
+            if !(1..=super::temporal_date::ISO_MONTHS_PER_YEAR).contains(&code_month) {
+                return Err(self.range_error(p, "Invalid monthCode".into()));
+            }
+            if month_was_provided && month != code_month {
+                return Err(self.range_error(p, "Month mismatch".into()));
+            }
+            if !month_was_provided {
+                month = code_month;
+            }
+        }
+
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let options_primitive = !options.is_undefined() && !self.is_object_like(options);
+        let overflow = if options.is_undefined() || options_primitive {
+            "constrain".to_owned()
+        } else {
+            let atom = self.intern_atom("overflow");
+            let value = self.get_property(p, options, atom)?;
+            if value.is_undefined() {
+                "constrain".to_owned()
+            } else {
+                self.to_string(p, value)?.to_string()
+            }
+        };
+        if !matches!(overflow.as_str(), "constrain" | "reject") {
+            return Err(self.range_error(p, "Invalid overflow".into()));
+        }
+        let constrain = overflow == "constrain";
+        let month = if constrain {
+            month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR)
+        } else {
+            month
+        };
+        let max_day = super::temporal_date::iso_days_in_month(year, month).unwrap_or(31);
+        if constrain {
+            day = day.min(max_day);
+        }
+        let date = checked_iso_date(year, month, day)
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        for (value, limit) in time.iter_mut().zip([HOUR_LIMIT, MINUTE_SECOND_LIMIT, MINUTE_SECOND_LIMIT, SUBSECOND_LIMIT, SUBSECOND_LIMIT, SUBSECOND_LIMIT]) {
+            if constrain {
+                *value = (*value).clamp(0, limit);
+            }
+        }
+        self.validate_plain_date_time_time(p, &time)?;
+        super::temporal_plain_date_time_conversion::validate_bounds(
+            self, p, date.year, date.month, date.day, time,
+        )?;
+        if options_primitive {
+            return Err(self.type_error(p, "Invalid options".into()));
         }
         let constructor = self.temporal_plain_date_time_constructor(p)?;
         self.make_plain_date_time(
