@@ -2710,7 +2710,7 @@ impl<H: Host> Vm<H> {
         });
         let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
         let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
-        self.promise_then(p, value_promise, fulfilled, rejected)
+        self.promise_then_intrinsic(p, value_promise, fulfilled, rejected)
     }
 
     pub(super) fn async_from_sync_value(&mut self, args: &[Value]) -> Result<Value, JsError> {
