@@ -46,11 +46,7 @@ impl ResidualProgram {
 fn write_instruction(output: &mut String, instruction: WideInstruction) -> fmt::Result {
     write!(output, "{:?}", instruction.op())?;
     write_result(output, instruction)?;
-    for field in [
-        InstructionField::A,
-        InstructionField::B,
-        InstructionField::C,
-    ] {
+    for &field in InstructionField::ALL {
         write_field(output, instruction, field)?;
     }
     write_immediate(output, instruction)

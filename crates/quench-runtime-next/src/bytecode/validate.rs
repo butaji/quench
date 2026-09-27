@@ -77,13 +77,13 @@ struct ValidationBounds {
 }
 
 fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: ValidationBounds) -> bool {
-    let fields = [
-        (InstructionField::A, instruction.a()),
-        (InstructionField::B, instruction.b()),
-        (InstructionField::C, instruction.c()),
-    ];
-    fields.into_iter().all(
-        |(field, value)| match instruction.op().field_layout(field) {
+    InstructionField::ALL.iter().copied().all(|field| {
+        let value = match field {
+            InstructionField::A => instruction.a(),
+            InstructionField::B => instruction.b(),
+            InstructionField::C => instruction.c(),
+        };
+        match instruction.op().field_layout(field) {
             FieldLayout::ResultRegister => {
                 register_in_bounds(instruction.result_register(), bounds.registers, 0)
             }
@@ -137,8 +137,8 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             | FieldLayout::NumericLocalStoreMarker
             | FieldLayout::ConstructArguments
             | FieldLayout::WideIndexChunk => true,
-        },
-    )
+        }
+    })
 }
 
 fn immediate_domains_in_bounds(

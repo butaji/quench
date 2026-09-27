@@ -343,13 +343,7 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn unused_fields_are_zero(self) -> bool {
-                [
-                    InstructionField::A,
-                    InstructionField::B,
-                    InstructionField::C,
-                ]
-                .into_iter()
-                .all(|field| {
+                InstructionField::ALL.iter().copied().all(|field| {
                     self.op().field_layout(field) != FieldLayout::Unused
                         || self.unused_field_is_zero(field)
                 })
