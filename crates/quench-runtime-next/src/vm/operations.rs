@@ -580,6 +580,21 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeNanosecondGetter => {
                 self.temporal_zoned_date_time_native(p, native, this, args)
             }
+            Native::TemporalInstant
+            | Native::TemporalInstantFrom
+            | Native::TemporalInstantCompare
+            | Native::TemporalInstantFromEpochMilliseconds
+            | Native::TemporalInstantFromEpochNanoseconds
+            | Native::TemporalInstantEpochNanosecondsGetter
+            | Native::TemporalInstantEpochMillisecondsGetter
+            | Native::TemporalInstantToString
+            | Native::TemporalInstantToJSON
+            | Native::TemporalInstantValueOf
+            | Native::TemporalInstantEquals
+            | Native::TemporalInstantAdd
+            | Native::TemporalInstantSubtract => {
+                self.temporal_instant_native(p, native, this, args)
+            }
             Native::Object
             | Native::Array
             | Native::Map

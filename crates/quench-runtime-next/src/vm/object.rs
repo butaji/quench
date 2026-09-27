@@ -326,6 +326,7 @@ impl<H: Host> Vm<H> {
                     | Cell::TemporalDuration { .. }
                     | Cell::TemporalPlainDate { .. }
                     | Cell::TemporalZonedDateTime { .. }
+                    | Cell::TemporalInstant { .. }
                     | Cell::RegExp { .. }
                     | Cell::Error(_)
             )

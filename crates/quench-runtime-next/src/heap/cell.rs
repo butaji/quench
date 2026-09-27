@@ -340,6 +340,11 @@ pub(crate) enum Native {
     TemporalZonedDateTimeMinuteGetter, TemporalZonedDateTimeSecondGetter,
     TemporalZonedDateTimeMillisecondGetter, TemporalZonedDateTimeMicrosecondGetter,
     TemporalZonedDateTimeNanosecondGetter,
+    TemporalInstant, TemporalInstantFrom, TemporalInstantCompare,
+    TemporalInstantFromEpochMilliseconds, TemporalInstantFromEpochNanoseconds,
+    TemporalInstantEpochNanosecondsGetter, TemporalInstantEpochMillisecondsGetter,
+    TemporalInstantToString, TemporalInstantToJSON, TemporalInstantValueOf,
+    TemporalInstantEquals, TemporalInstantAdd, TemporalInstantSubtract,
     MathLog, MathPow, MathFloor, MathMin, MathMax, MathRandom,
     MathAbs, MathCeil, MathRound, MathTrunc, MathSqrt, MathSign, MathAcos, MathAsin, MathAtan, MathCos, MathExp, MathSin, MathTan, MathAtan2, NumberString, NumberToLocaleString, Number, NumberValueOf,
     MathAcosh, MathAsinh, MathAtanh, MathCbrt, MathCosh, MathExpm1, MathFround,
@@ -867,5 +872,9 @@ pub(crate) enum Cell {
         epoch_nanoseconds: i128,
         time_zone: String,
         calendar: String,
+    },
+    TemporalInstant {
+        object: Box<Object>,
+        epoch_nanoseconds: i128,
     },
 }

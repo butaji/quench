@@ -850,7 +850,7 @@ fn parse_zoned_date_time_string(text: &str) -> Option<ZonedDateTimeRecord> {
     })
 }
 
-fn parse_iso_zoned_base(value: &str) -> Option<(chrono::NaiveDateTime, Option<i128>, bool)> {
+pub(super) fn parse_iso_zoned_base(value: &str) -> Option<(chrono::NaiveDateTime, Option<i128>, bool)> {
     let Some((date, time)) = value.split_once(['T', 't', ' ']) else {
         if value.ends_with(['Z', 'z']) {
             return None;
@@ -949,6 +949,9 @@ fn parse_iso_zoned_date(value: &str) -> Option<chrono::NaiveDate> {
         );
     } else if value.contains('-') {
         let (year, remainder) = value.split_once('-')?;
+        if year.len() != ISO_YEAR_DIGITS || !year.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
         let (month, day) = parse_extended_month_day(remainder)?;
         (year, month, day)
     } else {

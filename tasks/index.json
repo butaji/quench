@@ -59,7 +59,7 @@
     {"id":"12","file":"12.md","title":"Port object, Reflect, Proxy, and Symbol semantics","lane":"semantics","status":"pending","depends_on":["08","10","11","44","46"]},
     {"id":"13","file":"13.md","title":"Port arrays, buffers, typed arrays, and Atomics","lane":"semantics","status":"pending","depends_on":["07","08","10","11","46"]},
     {"id":"14","file":"14.md","title":"Port strings, RegExp, JSON, and URI semantics","lane":"semantics","status":"pending","depends_on":["06","08","10","11","45","46"]},
-    {"id":"15","file":"15.md","title":"Port numeric, Date, Intl, and Temporal semantics","lane":"semantics","status":"pending","depends_on":["06","07","08","10","11","45","46"]},
+    {"id":"15","file":"15.md","title":"Port numeric, Date, Intl, and Temporal semantics","lane":"semantics","status":"in_progress","depends_on":["06","07","08","10","11","45","46"]},
     {"id":"16","file":"16.md","title":"Port collections, iterators, and weak lifecycles","lane":"semantics","status":"pending","depends_on":["07","08","10","11","46"]},
     {"id":"17","file":"17.md","title":"Port promises, generators, async execution, and disposal","lane":"semantics","status":"pending","depends_on":["07","09","10","11","16","44","46"]},
     {"id":"18","file":"18.md","title":"Port modules, dynamic compilation, and realm semantics","lane":"semantics","status":"in_progress","depends_on":["09","10","11","17"]},
