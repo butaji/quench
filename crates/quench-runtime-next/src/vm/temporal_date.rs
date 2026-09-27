@@ -1,6 +1,6 @@
 use super::*;
 pub(super) const ISO_MONTHS_PER_YEAR: i32 = 12;
-const ISO_DAYS_PER_WEEK: i64 = 7;
+pub(super) const ISO_DAYS_PER_WEEK: i64 = 7;
 const ISO_WEEK_NUMBER_ADJUSTMENT: i64 = 10;
 const ISO_UNIX_EPOCH_WEEKDAY: i64 = 4;
 const ISO_COMMON_WEEKS_PER_YEAR: i64 = 52;
@@ -236,7 +236,10 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainDate => {
                 Err(self.type_error(p, "Temporal.PlainDate requires new".into()))
             }
-            Native::TemporalPlainDateFrom => self.temporal_plain_date_from(p, this, args),
+            Native::TemporalPlainDateFrom => {
+                let constructor = self.temporal_plain_date_constructor(p)?;
+                self.temporal_plain_date_from(p, constructor, args)
+            }
             Native::TemporalPlainDateCompare => self.temporal_plain_date_compare(p, args),
             Native::TemporalPlainDateEquals => self.temporal_plain_date_equals(p, this, args),
             Native::TemporalPlainDateValueOf => Err(self.type_error(
@@ -779,13 +782,13 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn iso_day_of_week(date: IsoDate) -> u32 {
+pub(super) fn iso_day_of_week(date: IsoDate) -> u32 {
     let weekday =
         (days_from_iso_date(date) + ISO_UNIX_EPOCH_WEEKDAY - 1).rem_euclid(ISO_DAYS_PER_WEEK) + 1;
     weekday as u32
 }
 
-fn iso_day_of_year(date: IsoDate) -> u32 {
+pub(super) fn iso_day_of_year(date: IsoDate) -> u32 {
     (ISO_JANUARY..date.month)
         .filter_map(|month| iso_days_in_month(date.year, month as i32))
         .sum::<i32>() as u32
@@ -816,7 +819,7 @@ fn iso_weeks_in_year(year: i32) -> i64 {
     }
 }
 
-fn temporal_iso_week(date: IsoDate, calendar: &str) -> Option<(i32, i32)> {
+pub(super) fn temporal_iso_week(date: IsoDate, calendar: &str) -> Option<(i32, i32)> {
     if calendar != "iso8601" {
         return None;
     }

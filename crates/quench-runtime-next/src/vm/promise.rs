@@ -433,7 +433,18 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalPlainDateTimeSecondGetter
         | Native::TemporalPlainDateTimeMillisecondGetter
         | Native::TemporalPlainDateTimeMicrosecondGetter
-        | Native::TemporalPlainDateTimeNanosecondGetter => 0.0,
+        | Native::TemporalPlainDateTimeNanosecondGetter
+        | Native::TemporalPlainDateTimeEraGetter
+        | Native::TemporalPlainDateTimeEraYearGetter
+        | Native::TemporalPlainDateTimeDayOfWeekGetter
+        | Native::TemporalPlainDateTimeDayOfYearGetter
+        | Native::TemporalPlainDateTimeWeekOfYearGetter
+        | Native::TemporalPlainDateTimeYearOfWeekGetter
+        | Native::TemporalPlainDateTimeDaysInWeekGetter
+        | Native::TemporalPlainDateTimeDaysInMonthGetter
+        | Native::TemporalPlainDateTimeDaysInYearGetter
+        | Native::TemporalPlainDateTimeMonthsInYearGetter
+        | Native::TemporalPlainDateTimeInLeapYearGetter => 0.0,
         Native::TemporalPlainDateTimeEquals => 1.0,
         Native::TemporalPlainDateCalendarIdGetter
         | Native::TemporalPlainDateYearGetter

@@ -76,6 +76,17 @@ impl<H: Host> Vm<H> {
             ("month", Native::TemporalPlainDateTimeMonthGetter),
             ("monthCode", Native::TemporalPlainDateTimeMonthCodeGetter),
             ("day", Native::TemporalPlainDateTimeDayGetter),
+            ("era", Native::TemporalPlainDateTimeEraGetter),
+            ("eraYear", Native::TemporalPlainDateTimeEraYearGetter),
+            ("dayOfWeek", Native::TemporalPlainDateTimeDayOfWeekGetter),
+            ("dayOfYear", Native::TemporalPlainDateTimeDayOfYearGetter),
+            ("weekOfYear", Native::TemporalPlainDateTimeWeekOfYearGetter),
+            ("yearOfWeek", Native::TemporalPlainDateTimeYearOfWeekGetter),
+            ("daysInWeek", Native::TemporalPlainDateTimeDaysInWeekGetter),
+            ("daysInMonth", Native::TemporalPlainDateTimeDaysInMonthGetter),
+            ("daysInYear", Native::TemporalPlainDateTimeDaysInYearGetter),
+            ("monthsInYear", Native::TemporalPlainDateTimeMonthsInYearGetter),
+            ("inLeapYear", Native::TemporalPlainDateTimeInLeapYearGetter),
             ("hour", Native::TemporalPlainDateTimeHourGetter),
             ("minute", Native::TemporalPlainDateTimeMinuteGetter),
             ("second", Native::TemporalPlainDateTimeSecondGetter),
@@ -297,6 +308,43 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainDateTimeMillisecondGetter => i64::from(time[3]),
             Native::TemporalPlainDateTimeMicrosecondGetter => i64::from(time[4]),
             Native::TemporalPlainDateTimeNanosecondGetter => i64::from(time[5]),
+            Native::TemporalPlainDateTimeEraGetter | Native::TemporalPlainDateTimeEraYearGetter => {
+                return Ok(Value::UNDEFINED);
+            }
+            Native::TemporalPlainDateTimeDayOfWeekGetter => {
+                i64::from(super::temporal_date::iso_day_of_week(date))
+            }
+            Native::TemporalPlainDateTimeDayOfYearGetter => {
+                i64::from(super::temporal_date::iso_day_of_year(date))
+            }
+            Native::TemporalPlainDateTimeWeekOfYearGetter => {
+                return Ok(super::temporal_date::temporal_iso_week(date, &calendar)
+                    .map_or(Value::UNDEFINED, |(week, _)| Value::number(f64::from(week))));
+            }
+            Native::TemporalPlainDateTimeYearOfWeekGetter => {
+                return Ok(super::temporal_date::temporal_iso_week(date, &calendar)
+                    .map_or(Value::UNDEFINED, |(_, year)| Value::number(f64::from(year))));
+            }
+            Native::TemporalPlainDateTimeDaysInWeekGetter => {
+                super::temporal_date::ISO_DAYS_PER_WEEK
+            }
+            Native::TemporalPlainDateTimeDaysInMonthGetter => i64::from(
+                super::temporal_date::iso_days_in_month(date.year, date.month as i32)
+                    .unwrap_or(31),
+            ),
+            Native::TemporalPlainDateTimeDaysInYearGetter => {
+                i64::from(super::temporal_date::iso_days_in_year(date.year))
+            }
+            Native::TemporalPlainDateTimeMonthsInYearGetter => {
+                i64::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+            }
+            Native::TemporalPlainDateTimeInLeapYearGetter => {
+                return Ok(if super::temporal_date::iso_is_leap_year(date.year) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                });
+            }
             _ => unreachable!("not a Temporal.PlainDateTime native"),
         };
         Ok(Value::number(value as f64))
