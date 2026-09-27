@@ -530,10 +530,12 @@ impl<H: Host> Vm<H> {
                         year: other_year,
                         month: other_month,
                         calendar: other_calendar,
+                        reference_iso_day: other_reference_day,
                         ..
                     }) if *other_year == year
                         && *other_month == month
-                        && *other_calendar == calendar =>
+                        && *other_calendar == calendar
+                        && *other_reference_day == reference_day =>
                     {
                         Value::TRUE
                     }
