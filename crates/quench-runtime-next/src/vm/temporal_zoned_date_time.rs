@@ -5,6 +5,8 @@ use std::cmp::Ordering;
 pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const NANOSECOND: i128 = 1;
+const MIN_ROUNDING_INCREMENT: i128 = NANOSECOND;
+const MAX_SUBSECOND_ROUNDING_INCREMENT: i128 = 1_000;
 const NANOSECONDS_PER_MILLISECOND: u32 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
 const MICROSECONDS_PER_MILLISECOND: u32 = 1_000;
@@ -25,6 +27,31 @@ const NANOSECONDS_PER_MINUTE: i128 = SECONDS_PER_MINUTE as i128 * NANOSECONDS_PE
 const NANOSECONDS_PER_HOUR: i128 = SECONDS_PER_HOUR as i128 * NANOSECONDS_PER_SECOND;
 const HOURS_PER_DAY: i128 = 24;
 const TIME_ZONE_TRANSITION_SEARCH_LIMIT: usize = 200_000;
+const ZONED_DATE_TIME_ROUND_UNITS: [(&str, i128, i128); 7] = [
+    ("day", NANOSECONDS_PER_DAY, MIN_ROUNDING_INCREMENT),
+    ("hour", NANOSECONDS_PER_HOUR, HOURS_PER_DAY),
+    ("minute", NANOSECONDS_PER_MINUTE, SECONDS_PER_MINUTE as i128),
+    (
+        "second",
+        NANOSECONDS_PER_SECOND,
+        SECONDS_PER_MINUTE as i128,
+    ),
+    (
+        "millisecond",
+        NANOSECONDS_PER_MILLISECOND as i128,
+        MAX_SUBSECOND_ROUNDING_INCREMENT,
+    ),
+    (
+        "microsecond",
+        NANOSECONDS_PER_MICROSECOND as i128,
+        MAX_SUBSECOND_ROUNDING_INCREMENT,
+    ),
+    (
+        "nanosecond",
+        NANOSECOND,
+        MAX_SUBSECOND_ROUNDING_INCREMENT,
+    ),
+];
 pub(super) const NANOSECONDS_PER_DAY: i128 = HOURS_PER_DAY * NANOSECONDS_PER_HOUR;
 const FRACTIONAL_MILLISECOND_DIGITS: usize = 3;
 const FRACTIONAL_MICROSECOND_DIGITS: usize = 6;
@@ -101,7 +128,7 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 12] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 13] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
     ("add", Native::TemporalZonedDateTimeAdd),
@@ -110,6 +137,7 @@ const ZONED_DATE_TIME_METHODS: [(&str, Native); 12] = [
         "getTimeZoneTransition",
         Native::TemporalZonedDateTimeGetTimeZoneTransition,
     ),
+    ("round", Native::TemporalZonedDateTimeRound),
     ("toInstant", Native::TemporalZonedDateTimeToInstant),
     ("toPlainDate", Native::TemporalZonedDateTimeToPlainDate),
     ("toPlainDateTime", Native::TemporalZonedDateTimeToPlainDateTime),
@@ -308,6 +336,9 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTimeGetTimeZoneTransition {
             return self.temporal_zoned_date_time_transition(p, this, args);
+        }
+        if native == Native::TemporalZonedDateTimeRound {
+            return self.temporal_zoned_date_time_round(p, this, args);
         }
         if native == Native::TemporalZonedDateTimeFrom {
             let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -672,6 +703,119 @@ impl<H: Host> Vm<H> {
             constructor,
             ZonedDateTimeRecord {
                 epoch_nanoseconds: transition,
+                time_zone,
+                calendar,
+            },
+        )
+    }
+
+    fn temporal_zoned_date_time_round(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TemporalZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            calendar,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(
+                p,
+                "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+            ));
+        };
+        let epoch_nanoseconds = *epoch_nanoseconds;
+        let time_zone = time_zone.clone();
+        let calendar = calendar.clone();
+        let options = args.first().copied().ok_or_else(|| {
+            self.type_error(p, "Missing rounding options".into())
+        })?;
+        if options.is_null() || matches!(self.heap.get(options), Some(Cell::Symbol(_))) {
+            return Err(self.type_error(p, "Invalid rounding options".into()));
+        }
+        let (smallest_unit, increment, rounding_mode) =
+            if let Some(Cell::String(value)) = self.heap.get(options) {
+                (
+                    value.to_string(),
+                    MIN_ROUNDING_INCREMENT,
+                    "halfExpand".to_owned(),
+                )
+            } else {
+                if !self.is_object_like(options) {
+                    return Err(self.type_error(p, "Invalid rounding options".into()));
+                }
+                let increment_value = self.get_option_property(p, options, "roundingIncrement")?;
+                let increment = if increment_value.is_undefined() {
+                    MIN_ROUNDING_INCREMENT
+                } else {
+                    let increment = self.to_number(p, increment_value)?;
+                    if !increment.is_finite() || increment <= 0.0 {
+                        return Err(self.range_error(p, "Invalid roundingIncrement".into()));
+                    }
+                    increment as i128
+                };
+                let mode_value = self.get_option_property(p, options, "roundingMode")?;
+                let rounding_mode = if mode_value.is_undefined() {
+                    "halfExpand".to_owned()
+                } else {
+                    self.to_string(p, mode_value)?.to_string()
+                };
+                let unit = self.get_option_property(p, options, "smallestUnit")?;
+                if unit.is_undefined() {
+                    return Err(self.range_error(p, "smallestUnit required".into()));
+                }
+                (self.to_string(p, unit)?.to_string(), increment, rounding_mode)
+            };
+        let smallest_unit = smallest_unit
+            .strip_suffix('s')
+            .unwrap_or(&smallest_unit);
+        let Some((_, unit_nanoseconds, increment_limit)) = ZONED_DATE_TIME_ROUND_UNITS
+            .iter()
+            .find(|(unit, _, _)| *unit == smallest_unit)
+        else {
+            return Err(self.range_error(p, "Invalid smallestUnit".into()));
+        };
+        if increment < MIN_ROUNDING_INCREMENT
+            || (*increment_limit > MIN_ROUNDING_INCREMENT
+                && (increment >= *increment_limit || *increment_limit % increment != 0))
+            || (*increment_limit == MIN_ROUNDING_INCREMENT
+                && increment != MIN_ROUNDING_INCREMENT)
+        {
+            return Err(self.range_error(p, "Invalid roundingIncrement".into()));
+        }
+        if smallest_unit == "day"
+            && epoch_nanoseconds.unsigned_abs() >= MAX_EPOCH_NANOSECONDS as u128
+        {
+            return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
+        }
+        let quantum = unit_nanoseconds
+            .checked_mul(increment)
+            .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
+        let rounded = if smallest_unit == "day" {
+            round_zoned_date_time_day(epoch_nanoseconds, &time_zone, &rounding_mode)
+        } else {
+            let offset = timezone_offset_nanoseconds(&time_zone, epoch_nanoseconds)
+                .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))?;
+            round_zoned_local_nanoseconds(
+                epoch_nanoseconds,
+                offset,
+                quantum,
+                &rounding_mode,
+            )
+        }
+        .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        let temporal_atom = self.intern_atom("Temporal");
+        let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+        let constructor_atom = self.intern_atom("ZonedDateTime");
+        let constructor = self.get_property(p, temporal, constructor_atom)?;
+        self.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            ZonedDateTimeRecord {
+                epoch_nanoseconds: rounded,
                 time_zone,
                 calendar,
             },
@@ -1658,4 +1802,57 @@ fn find_time_zone_transition(time_zone: &str, epoch: i128, direction: &str) -> O
         previous = candidate;
     }
     None
+}
+
+fn round_zoned_local_nanoseconds(
+    epoch_nanoseconds: i128,
+    offset_nanoseconds: i128,
+    quantum: i128,
+    rounding_mode: &str,
+) -> Option<i128> {
+    let local_nanoseconds = epoch_nanoseconds.checked_add(offset_nanoseconds)?;
+    let quotient = local_nanoseconds.div_euclid(quantum);
+    let remainder = local_nanoseconds.rem_euclid(quantum);
+    let tie = remainder * ROUNDING_TIE_FACTOR == quantum;
+    let above_tie = remainder * ROUNDING_TIE_FACTOR > quantum;
+    let round_up = match rounding_mode {
+        "trunc" | "floor" => false,
+        "ceil" | "expand" => remainder != 0,
+        "halfExpand" | "halfCeil" => remainder * ROUNDING_TIE_FACTOR >= quantum,
+        "halfFloor" => above_tie,
+        "halfTrunc" => above_tie || tie && local_nanoseconds < 0,
+        "halfEven" => above_tie || tie && quotient % ROUNDING_TIE_FACTOR != 0,
+        _ => return None,
+    };
+    quotient
+        .checked_add(i128::from(round_up))?
+        .checked_mul(quantum)?
+        .checked_sub(offset_nanoseconds)
+}
+
+fn round_zoned_date_time_day(
+    epoch_nanoseconds: i128,
+    time_zone: &str,
+    rounding_mode: &str,
+) -> Option<i128> {
+    let fields = zoned_date_time_fields(epoch_nanoseconds, time_zone)?;
+    let date = chrono::NaiveDate::from_ymd_opt(
+        fields[0],
+        u32::try_from(fields[1]).ok()?,
+        u32::try_from(fields[2]).ok()?,
+    )?;
+    let start = zoned_local_epoch(date.and_hms_nano_opt(0, 0, 0, 0)?, time_zone)?;
+    let next_date = date.succ_opt()?;
+    let next = zoned_local_epoch(next_date.and_hms_nano_opt(0, 0, 0, 0)?, time_zone)?;
+    let day_length = next.checked_sub(start)?.max(NANOSECOND);
+    let elapsed = epoch_nanoseconds.saturating_sub(start).clamp(0, day_length);
+    let elapsed_twice = elapsed.checked_mul(ROUNDING_TIE_FACTOR)?;
+    let round_up = match rounding_mode {
+        "trunc" | "floor" => false,
+        "ceil" | "expand" => elapsed != 0,
+        "halfExpand" | "halfCeil" => elapsed_twice >= day_length,
+        "halfFloor" | "halfTrunc" | "halfEven" => elapsed_twice > day_length,
+        _ => return None,
+    };
+    Some(if round_up { next } else { start })
 }
