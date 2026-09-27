@@ -1,9 +1,6 @@
 use super::ResidualProgram;
 use super::instruction::WideInstruction;
-use super::{
-    FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Operand, OperandKind,
-    ResultLayout,
-};
+use super::{FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Operand, OperandKind};
 use std::fmt::{self, Write};
 
 impl ResidualProgram {
@@ -60,7 +57,7 @@ fn write_instruction(output: &mut String, instruction: WideInstruction) -> fmt::
 }
 
 fn write_result(output: &mut String, instruction: WideInstruction) -> fmt::Result {
-    if instruction.op().result_layout() == ResultLayout::NoResult {
+    if !instruction.op().has_result_register() {
         return Ok(());
     }
     write!(output, " result={}", instruction.result_register())?;
