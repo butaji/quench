@@ -33,6 +33,14 @@ register allocation, SIMD or additional optimization tiers. Compilation/cache
 budgets need a documented cost or correctness purpose and safe exhaustion behavior.
 Do not force recursion, event sourcing or abstractions into ordinary Rust.
 
+Apply this discipline repository-wide to production code, tools, and task
+automation. Before finishing a change, do a reduction pass: identify the single
+authoritative representation for each fact, route equivalent behavior through
+the shared domain operation, derive projections instead of storing copies, and
+remove redundant branches or one-use wrappers that add no domain meaning.
+Keep similar-looking rules separate when their semantics differ. Treat these as
+review requirements, not optional style preferences.
+
 ## Work and evidence
 
 [The task queue](tasks/index.json) owns status, dependencies and lane order;
