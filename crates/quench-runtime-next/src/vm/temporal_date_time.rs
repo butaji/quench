@@ -491,7 +491,7 @@ impl<H: Host> Vm<H> {
         self.plain_date_optional_integer(p, value)
     }
 
-    fn plain_date_time_month_code_field(
+    pub(super) fn plain_date_time_month_code_field(
         &mut self,
         p: &ResidualProgram,
         bag: Value,
