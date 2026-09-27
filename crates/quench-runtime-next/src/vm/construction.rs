@@ -175,6 +175,7 @@ impl<H: Host> Vm<H> {
                         | Native::TemporalDuration
                         | Native::TemporalPlainDate
                         | Native::TemporalPlainDateTime
+                        | Native::TemporalZonedDateTime
                 ),
             },
             _ => false,
@@ -870,6 +871,9 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainDateTime => {
                 self.temporal_plain_date_time_construct(p, args, new_target)
+            }
+            Native::TemporalZonedDateTime => {
+                self.temporal_zoned_date_time_construct(p, args, new_target)
             }
             Native::AggregateError => self.construct_aggregate_error(p, args, new_target),
             Native::Symbol => Err(self.type_error(p, "Symbol is not a constructor".into())),
