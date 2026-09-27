@@ -558,8 +558,15 @@ impl<H: Host> Vm<H> {
                     return Err(self.type_error(p, "Invalid PlainDate fields".into()));
                 }
                 let day_atom = self.intern_atom("day");
-                let day = self.get_property(p, item, day_atom)?;
-                let day = self.plain_date_integer(p, day)?;
+                let day_value = self.get_property(p, item, day_atom)?;
+                if day_value.is_undefined() {
+                    return Err(self.type_error(p, "Missing day".into()));
+                }
+                let day = self.plain_date_integer(p, day_value)?;
+                if day < 1 {
+                    return Err(self.range_error(p, "Invalid PlainDate".into()));
+                }
+                let day = day.min(iso_days_in_month(year, month as i32).unwrap_or(31));
                 let date = checked_iso_date(year, month as i32, day)
                     .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
                 Ok(self.heap.alloc(Cell::TemporalPlainDate {
