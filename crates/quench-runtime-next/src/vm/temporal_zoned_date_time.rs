@@ -2274,6 +2274,18 @@ pub(super) fn parse_iso_zoned_base(
     Some((local, parsed.offset_nanoseconds, parsed.leap_second))
 }
 
+pub(super) fn parse_iso_instant_epoch_nanoseconds(value: &str) -> Option<i128> {
+    let base = value.split_once('[').map_or(value, |(base, _)| base);
+    let parsed = parse_iso_zoned_base_fields(base)?;
+    let offset = parsed.offset_nanoseconds?;
+    let epoch = local_epoch_from_iso_fields(parsed.date, parsed.time).checked_sub(offset)?;
+    epoch.checked_add(if parsed.leap_second {
+        NANOSECONDS_PER_SECOND
+    } else {
+        0
+    })
+}
+
 fn parse_iso_zoned_base_fields(value: &str) -> Option<IsoZonedDateTimeBase> {
     let Some((date, time)) = value.split_once(['T', 't', ' ']) else {
         if value.ends_with(['Z', 'z']) {
