@@ -15,7 +15,6 @@ use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
-use std::sync::{Arc, OnceLock};
 
 const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
 pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
@@ -227,9 +226,6 @@ struct Shape {
     parent: Option<u32>,
     transition: ShapeTransition,
     storage_len: usize,
-    keys: OnceLock<Arc<Vec<property_key::PropertyKey>>>,
-    slots: OnceLock<Arc<FxHashMap<property_key::PropertyKey, u32>>>,
-    descriptors: OnceLock<Arc<Vec<PropertyAttributes>>>,
 }
 impl Shape {
     fn root() -> Self {
@@ -241,9 +237,6 @@ impl Shape {
             parent,
             transition,
             storage_len,
-            keys: OnceLock::new(),
-            slots: OnceLock::new(),
-            descriptors: OnceLock::new(),
         }
     }
 }
@@ -712,22 +705,7 @@ impl<H: Host> Vm<H> {
             property_capacity,
             property_free,
         ) = self.heap.memory_stats();
-        let shape_bytes: usize = self
-            .shapes
-            .iter()
-            .map(|shape| {
-                size_of::<Shape>()
-                    + shape.keys.get().map_or(0, |keys| {
-                        keys.capacity() * size_of::<property_key::PropertyKey>()
-                    })
-                    + shape.slots.get().map_or(0, |slots| {
-                        slots.capacity() * size_of::<(property_key::PropertyKey, u32)>()
-                    })
-                    + shape.descriptors.get().map_or(0, |descriptors| {
-                        descriptors.capacity() * size_of::<PropertyAttributes>()
-                    })
-            })
-            .sum();
+        let shape_bytes = self.shapes.capacity() * size_of::<Shape>();
         let max_shape_width = self
             .shapes
             .iter()
