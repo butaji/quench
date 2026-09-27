@@ -507,14 +507,68 @@ opcodes!(
 const _: () = {
     let mut index = 0;
     while index < Op::COUNT {
+        let fields = Op::OPERAND_LAYOUTS[index];
+        let immediate_role = Op::IMMEDIATE_ROLES[index];
+        let immediate_layout = Op::IMMEDIATE_LAYOUTS[index];
         assert!(!matches!(
-            (Op::IMMEDIATE_ROLES[index], Op::IMMEDIATE_LAYOUTS[index]),
+            (immediate_role, immediate_layout),
             (ImmediateRole::LayoutEncoded, ImmediateLayout::Scalar)
         ));
         assert!(
             matches!(Op::RESULT_LAYOUTS[index], ResultLayout::Register)
-                || matches!(Op::OPERAND_LAYOUTS[index].a, FieldLayout::ResultRegister)
+                || matches!(fields.a, FieldLayout::ResultRegister)
         );
+        if matches!(fields.a, FieldLayout::NumericLocalStoreMarker)
+            || matches!(fields.b, FieldLayout::NumericLocalStoreMarker)
+            || matches!(fields.c, FieldLayout::NumericLocalStoreMarker)
+        {
+            assert!(matches!(
+                (fields.b, fields.c),
+                (
+                    FieldLayout::NumericLocalTarget,
+                    FieldLayout::NumericLocalStoreMarker
+                )
+            ));
+        }
+        if matches!(fields.a, FieldLayout::ConstructArguments)
+            || matches!(fields.b, FieldLayout::ConstructArguments)
+            || matches!(fields.c, FieldLayout::ConstructArguments)
+        {
+            assert!(matches!(
+                (fields.c, immediate_layout),
+                (
+                    FieldLayout::ConstructArguments,
+                    ImmediateLayout::ConstructCountAndFlags
+                )
+            ));
+        }
+        if matches!(fields.a, FieldLayout::FieldLookupCacheSiteIndex)
+            || matches!(fields.b, FieldLayout::FieldLookupCacheSiteIndex)
+            || matches!(fields.c, FieldLayout::FieldLookupCacheSiteIndex)
+        {
+            assert!(matches!(
+                (fields.b, fields.c, immediate_role),
+                (
+                    FieldLayout::FieldBase,
+                    FieldLayout::FieldLookupCacheSiteIndex,
+                    ImmediateRole::FieldLookup
+                )
+            ));
+        }
+        if matches!(fields.a, FieldLayout::WideIndexChunk)
+            || matches!(fields.b, FieldLayout::WideIndexChunk)
+            || matches!(fields.c, FieldLayout::WideIndexChunk)
+        {
+            assert!(matches!(
+                (fields.a, fields.b, fields.c, immediate_role),
+                (
+                    FieldLayout::WideIndexChunk,
+                    FieldLayout::WideIndexChunk,
+                    FieldLayout::WideIndexChunk,
+                    ImmediateRole::WideInstructionIndex
+                )
+            ));
+        }
         index += 1;
     }
 };
