@@ -1,6 +1,8 @@
 use super::temporal_date::{self, IsoDate};
 use super::*;
 
+pub(super) const MAX_CALENDAR_DIFFERENCE_ROUNDING_INCREMENT: i128 = 100_000_000;
+
 const MONTHS_PER_YEAR: i128 = 12;
 const UNITS: [&str; 10] = [
     "year",
@@ -120,19 +122,7 @@ impl<H: Host> Vm<H> {
         if unit_rank(smallest) < unit_rank(largest) {
             return Err(self.range_error(p, "smallestUnit larger than largestUnit".into()));
         }
-        let increment_limit = match smallest {
-            "year" | "week" | "day" => 1.0,
-            "month" => 12.0,
-            "hour" => 24.0,
-            "minute" | "second" => 60.0,
-            _ => 1_000.0,
-        };
-        if !increment.is_finite()
-            || increment < 1.0
-            || increment >= increment_limit && smallest != "year" && smallest != "week" && smallest != "day"
-            || increment > increment_limit
-            || increment_limit % increment != 0.0
-        {
+        if !difference_increment_is_valid(increment, smallest) {
             return Err(self.range_error(p, "Invalid roundingIncrement".into()));
         }
         Ok(DifferenceOptions {
@@ -366,7 +356,8 @@ impl<H: Host> Vm<H> {
                 &options.rounding_mode,
             )
             .abs();
-            days = rounded as i64;
+            days = i64::try_from(rounded * options.increment)
+                .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
             time = 0;
         } else if options.smallest != "nanosecond" {
             let quantum = unit_nanos(options.smallest) * options.increment;
@@ -395,6 +386,22 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
+}
+
+pub(super) fn difference_increment_is_valid(increment: f64, smallest: &str) -> bool {
+    if !increment.is_finite() || increment < 1.0 {
+        return false;
+    }
+    let maximum = match smallest {
+        "year" | "week" | "day" => {
+            return increment <= MAX_CALENDAR_DIFFERENCE_ROUNDING_INCREMENT as f64;
+        }
+        "month" => 12.0,
+        "hour" => 24.0,
+        "minute" | "second" => 60.0,
+        _ => 1_000.0,
+    };
+    increment < maximum && maximum % increment == 0.0
 }
 
 impl DifferenceOptions {
