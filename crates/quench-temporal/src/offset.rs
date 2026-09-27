@@ -139,28 +139,47 @@ fn valid_offset(value: &str) -> bool {
     let parts = value.split(':').collect::<Vec<_>>();
     match parts.as_slice() {
         [compact] => {
-            compact.len() == OFFSET_HOUR_DIGITS + OFFSET_MINUTE_DIGITS
+            compact.len() == COMPACT_MINUTE_DIGITS
                 && compact.bytes().all(|byte| byte.is_ascii_digit())
+                && valid_hour_minute(
+                    &compact[..OFFSET_HOUR_DIGITS],
+                    &compact[OFFSET_HOUR_DIGITS..],
+                )
         }
         [hour, minute] => {
             hour.len() == OFFSET_HOUR_DIGITS
                 && minute.len() == OFFSET_MINUTE_DIGITS
                 && hour.bytes().all(|byte| byte.is_ascii_digit())
                 && minute.bytes().all(|byte| byte.is_ascii_digit())
+                && valid_hour_minute(hour, minute)
         }
         [hour, minute, second] => {
+            let (seconds, fraction) = second
+                .split_once('.')
+                .map_or((*second, None), |(seconds, fraction)| {
+                    (seconds, Some(fraction))
+                });
             hour.len() == OFFSET_HOUR_DIGITS
                 && minute.len() == OFFSET_MINUTE_DIGITS
                 && hour.bytes().all(|byte| byte.is_ascii_digit())
                 && minute.bytes().all(|byte| byte.is_ascii_digit())
-                && second
-                    .split_once('.')
-                    .map_or(*second == "00", |(second, fraction)| {
-                        second == "00"
-                            && !fraction.is_empty()
-                            && fraction.bytes().all(|byte| byte == b'0')
-                    })
+                && valid_hour_minute(hour, minute)
+                && seconds.len() == OFFSET_SECOND_DIGITS
+                && seconds.bytes().all(|byte| byte.is_ascii_digit())
+                && seconds
+                    .parse::<u8>()
+                    .is_ok_and(|second| second <= OFFSET_MAX_SECOND)
+                && fraction.is_none_or(|fraction| {
+                    !fraction.is_empty() && fraction.bytes().all(|byte| byte == b'0')
+                })
         }
         _ => false,
     }
+}
+
+fn valid_hour_minute(hour: &str, minute: &str) -> bool {
+    hour.parse::<u8>().is_ok_and(|hour| hour <= OFFSET_MAX_HOUR)
+        && minute
+            .parse::<u8>()
+            .is_ok_and(|minute| minute <= OFFSET_MAX_MINUTE)
 }
