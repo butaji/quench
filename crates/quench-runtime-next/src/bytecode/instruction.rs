@@ -78,6 +78,14 @@ impl WideInstruction {
 macro_rules! layout_accessors {
     ($instruction:ty) => {
         impl $instruction {
+            pub(crate) fn field_value(self, field: InstructionField) -> u16 {
+                match field {
+                    InstructionField::A => self.a(),
+                    InstructionField::B => self.b(),
+                    InstructionField::C => self.c(),
+                }
+            }
+
             pub(crate) fn result_register(self) -> Register {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::A),
@@ -319,12 +327,7 @@ macro_rules! layout_accessors {
             #[allow(dead_code)]
             pub(crate) fn boolean_field(self, field: InstructionField) -> Option<bool> {
                 debug_assert_eq!(self.op().field_layout(field), FieldLayout::BooleanFlag);
-                let value = match field {
-                    InstructionField::A => self.a(),
-                    InstructionField::B => self.b(),
-                    InstructionField::C => self.c(),
-                };
-                match value {
+                match self.field_value(field) {
                     0 => Some(false),
                     1 => Some(true),
                     _ => None,
@@ -334,11 +337,7 @@ macro_rules! layout_accessors {
             #[allow(dead_code)]
             pub(crate) fn unused_field_is_zero(self, field: InstructionField) -> bool {
                 debug_assert_eq!(self.op().field_layout(field), FieldLayout::Unused);
-                match field {
-                    InstructionField::A => self.a() == 0,
-                    InstructionField::B => self.b() == 0,
-                    InstructionField::C => self.c() == 0,
-                }
+                self.field_value(field) == 0
             }
 
             #[allow(dead_code)]

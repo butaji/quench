@@ -78,11 +78,7 @@ struct ValidationBounds {
 
 fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: ValidationBounds) -> bool {
     InstructionField::ALL.iter().copied().all(|field| {
-        let value = match field {
-            InstructionField::A => instruction.a(),
-            InstructionField::B => instruction.b(),
-            InstructionField::C => instruction.c(),
-        };
+        let value = instruction.field_value(field);
         match instruction.op().field_layout(field) {
             FieldLayout::ResultRegister => {
                 register_in_bounds(instruction.result_register(), bounds.registers, 0)
