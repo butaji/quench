@@ -16,7 +16,7 @@ const MAX_BASIC_ISO_YEAR: i32 = 9_999;
 const BASIC_ISO_YEAR_DIGITS: usize = 4;
 const EXTENDED_ISO_YEAR_DIGITS: usize = 6;
 const ISO_MONTH_DAY_DIGITS: usize = 2;
-const ISO_MONTH_CODE_DIGITS: usize = 2;
+pub(super) const ISO_MONTH_CODE_DIGITS: usize = 2;
 const MONTHS_BEFORE_ISO_YEAR: i32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -336,8 +336,10 @@ impl<H: Host> Vm<H> {
             || matches!(
                 self.heap.get(changes),
                 Some(
-                    Cell::TemporalPlainDate { .. }
+                        Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
+                        | Cell::TemporalPlainMonthDay { .. }
+                        | Cell::TemporalPlainYearMonth { .. }
                         | Cell::TemporalZonedDateTime { .. }
                 )
             )
@@ -451,7 +453,9 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }
             Some(Cell::TemporalPlainDate { calendar, .. })
-            | Some(Cell::TemporalPlainDateTime { calendar, .. }) => calendar.clone(),
+            | Some(Cell::TemporalPlainDateTime { calendar, .. })
+            | Some(Cell::TemporalPlainMonthDay { calendar, .. })
+            | Some(Cell::TemporalPlainYearMonth { calendar, .. }) => calendar.clone(),
             Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.clone(),
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
@@ -551,7 +555,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn temporal_plain_date_to_string(
+    pub(super) fn temporal_plain_date_to_string(
         &mut self,
         p: &ResidualProgram,
         year: i32,
@@ -611,7 +615,9 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }
             Some(Cell::TemporalPlainDate { calendar, .. })
-            | Some(Cell::TemporalPlainDateTime { calendar, .. }) => calendar.clone(),
+            | Some(Cell::TemporalPlainDateTime { calendar, .. })
+            | Some(Cell::TemporalPlainMonthDay { calendar, .. })
+            | Some(Cell::TemporalPlainYearMonth { calendar, .. }) => calendar.clone(),
             Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.clone(),
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
@@ -753,13 +759,13 @@ fn iso_day_of_year(date: IsoDate) -> u32 {
         + date.day
 }
 
-fn iso_days_in_year(year: i32) -> u32 {
+pub(super) fn iso_days_in_year(year: i32) -> u32 {
     (ISO_JANUARY..=ISO_MONTHS_PER_YEAR as u32)
         .filter_map(|month| iso_days_in_month(year, month as i32))
         .sum::<i32>() as u32
 }
 
-fn iso_is_leap_year(year: i32) -> bool {
+pub(super) fn iso_is_leap_year(year: i32) -> bool {
     iso_days_in_month(year, ISO_FEBRUARY) == Some(29)
 }
 

@@ -1,8 +1,53 @@
+use super::temporal_date::{
+    ISO_MONTH_CODE_DIGITS, checked_iso_date, iso_days_in_month, iso_days_in_year, iso_is_leap_year,
+};
 use super::*;
 
-const ISO_MONTH_CODE_DIGITS: usize = 2;
 const DEFAULT_REFERENCE_ISO_YEAR: i32 = 1972;
 const DEFAULT_REFERENCE_ISO_DAY: u32 = 1;
+const PLAIN_MONTH_DAY_GETTERS: &[(&str, Native)] = &[
+    ("calendarId", Native::TemporalPlainMonthDayCalendarIdGetter),
+    ("day", Native::TemporalPlainMonthDayDayGetter),
+    ("monthCode", Native::TemporalPlainMonthDayMonthCodeGetter),
+];
+const PLAIN_YEAR_MONTH_GETTERS: &[(&str, Native)] = &[
+    ("calendarId", Native::TemporalPlainYearMonthCalendarIdGetter),
+    ("year", Native::TemporalPlainYearMonthYearGetter),
+    ("month", Native::TemporalPlainYearMonthMonthGetter),
+    ("monthCode", Native::TemporalPlainYearMonthMonthCodeGetter),
+    (
+        "referenceISODay",
+        Native::TemporalPlainYearMonthReferenceISODayGetter,
+    ),
+];
+const PLAIN_MONTH_DAY_METHODS: &[(&str, Native)] = &[
+    ("toString", Native::TemporalPlainMonthDayToString),
+    ("toJSON", Native::TemporalPlainMonthDayToJSON),
+    (
+        "toLocaleString",
+        Native::TemporalPlainMonthDayToLocaleString,
+    ),
+    ("toPlainDate", Native::TemporalPlainMonthDayToPlainDate),
+    ("with", Native::TemporalPlainMonthDayWith),
+    ("equals", Native::TemporalPlainMonthDayEquals),
+    ("valueOf", Native::TemporalPlainMonthDayValueOf),
+];
+const PLAIN_YEAR_MONTH_METHODS: &[(&str, Native)] = &[
+    ("toString", Native::TemporalPlainYearMonthToString),
+    ("toJSON", Native::TemporalPlainYearMonthToJSON),
+    (
+        "toLocaleString",
+        Native::TemporalPlainYearMonthToLocaleString,
+    ),
+    ("add", Native::TemporalPlainYearMonthAdd),
+    ("subtract", Native::TemporalPlainYearMonthSubtract),
+    ("until", Native::TemporalPlainYearMonthUntil),
+    ("since", Native::TemporalPlainYearMonthSince),
+    ("with", Native::TemporalPlainYearMonthWith),
+    ("equals", Native::TemporalPlainYearMonthEquals),
+    ("valueOf", Native::TemporalPlainYearMonthValueOf),
+    ("toPlainDate", Native::TemporalPlainYearMonthToPlainDate),
+];
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal_calendar_projections(
@@ -10,21 +55,34 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         temporal: Value,
     ) -> Result<(), JsError> {
-        for (name, native, to_string) in [
+        for (name, native, from, compare, getters, methods, is_month_day) in [
             (
                 "PlainMonthDay",
                 Native::TemporalPlainMonthDay,
-                Native::TemporalPlainMonthDayToString,
+                Native::TemporalPlainMonthDayFrom,
+                Native::TemporalPlainMonthDayCompare,
+                PLAIN_MONTH_DAY_GETTERS,
+                PLAIN_MONTH_DAY_METHODS,
+                true,
             ),
             (
                 "PlainYearMonth",
                 Native::TemporalPlainYearMonth,
-                Native::TemporalPlainYearMonthToString,
+                Native::TemporalPlainYearMonthFrom,
+                Native::TemporalPlainYearMonthCompare,
+                PLAIN_YEAR_MONTH_GETTERS,
+                PLAIN_YEAR_MONTH_METHODS,
+                false,
             ),
         ] {
             let constructor = self.native_with_realm(native, temporal, self.realm.globals);
             self.set_builtin_function_name(constructor, name)?;
             let prototype = self.object();
+            if is_month_day {
+                self.temporal_plain_month_day_proto = prototype;
+            } else {
+                self.temporal_plain_year_month_proto = prototype;
+            }
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             let prototype_atom = self.intern_atom("prototype");
             self.set_property_attributes(
@@ -40,11 +98,610 @@ impl<H: Host> Vm<H> {
                 },
             );
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
-            self.set_builtin_named(p, prototype, "toString", to_string)?;
+            self.set_builtin_named(p, constructor, "from", from)?;
+            self.set_builtin_named(p, constructor, "compare", compare)?;
+            for (property, getter) in getters {
+                let getter_value = self.native_value(*getter);
+                self.set_builtin_function_name(getter_value, &format!("get {property}"))?;
+                let atom = self.intern_atom(property);
+                self.set_property(prototype, atom, Value::UNDEFINED)?;
+                self.set_property_attributes(
+                    prototype,
+                    PropertyKey::string(atom),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                        accessor: true,
+                        getter: Some(getter_value),
+                        setter: None,
+                    },
+                );
+            }
+            for (method, native) in methods {
+                self.set_builtin_named(p, prototype, method, *native)?;
+            }
+            if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
+                let tag = self
+                    .heap
+                    .alloc(Cell::String(format!("Temporal.{name}").into()));
+                self.set_symbol_property(prototype, symbol, tag)?;
+                self.set_property_attributes(
+                    prototype,
+                    PropertyKey::symbol(symbol),
+                    PropertyAttributes {
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    },
+                );
+            }
             self.set_builtin_value_named(temporal, name, constructor)?;
         }
         Ok(())
     }
+
+    pub(super) fn temporal_calendar_projection_construct(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        match native {
+            Native::TemporalPlainMonthDay => {
+                self.temporal_plain_month_day_construct(p, args, new_target)
+            }
+            Native::TemporalPlainYearMonth => {
+                self.temporal_plain_year_month_construct(p, args, new_target)
+            }
+            _ => unreachable!("not a Temporal calendar projection constructor"),
+        }
+    }
+
+    fn temporal_plain_month_day_construct(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        let month =
+            self.plain_date_integer(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let day = self.plain_date_integer(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        let calendar =
+            self.calendar_argument(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+        let year_value = args.get(3).copied().unwrap_or(Value::UNDEFINED);
+        let year = if year_value.is_undefined() {
+            DEFAULT_REFERENCE_ISO_YEAR
+        } else {
+            self.plain_date_integer(p, year_value)?
+        };
+        let year = if checked_iso_date(year, month, day).is_some() {
+            year
+        } else if calendar == "iso8601" && !(-271_821..=275_760).contains(&year) {
+            DEFAULT_REFERENCE_ISO_YEAR
+        } else {
+            return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+        };
+        let prototype =
+            self.constructor_prototype(p, new_target, self.temporal_plain_month_day_proto)?;
+        Ok(self.heap.alloc(Cell::TemporalPlainMonthDay {
+            object: Box::new(Self::empty_object(prototype)),
+            month: month as u32,
+            day: day as u32,
+            calendar,
+            reference_iso_year: year,
+        }))
+    }
+
+    fn temporal_plain_year_month_construct(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        let year = self.plain_date_integer(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let month = self.plain_date_integer(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        let calendar =
+            self.calendar_argument(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+        let reference = args.get(3).copied().unwrap_or(Value::UNDEFINED);
+        let reference = if reference.is_undefined() {
+            DEFAULT_REFERENCE_ISO_DAY
+        } else {
+            self.plain_date_integer(p, reference)? as u32
+        };
+        checked_iso_date(year, month, reference as i32)
+            .ok_or_else(|| self.range_error(p, "Invalid PlainYearMonth".into()))?;
+        let prototype =
+            self.constructor_prototype(p, new_target, self.temporal_plain_year_month_proto)?;
+        Ok(self.heap.alloc(Cell::TemporalPlainYearMonth {
+            object: Box::new(Self::empty_object(prototype)),
+            year,
+            month: month as u32,
+            calendar,
+            reference_iso_day: reference,
+        }))
+    }
+
+    fn calendar_argument(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
+        if value.is_undefined() {
+            return Ok("iso8601".to_owned());
+        }
+        if !matches!(self.heap.get(value), Some(Cell::String(_))) {
+            return Err(self.type_error(p, "Invalid calendar".into()));
+        }
+        let text = self.to_string(p, value)?.to_string();
+        temporal_date_parse::parse_calendar_identifier(&text)
+            .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))
+    }
+
+    fn constructor_prototype(
+        &mut self,
+        p: &ResidualProgram,
+        new_target: Value,
+        default: Value,
+    ) -> Result<Value, JsError> {
+        let atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, new_target, atom)?;
+        Ok(if self.is_object_like(prototype) {
+            prototype
+        } else {
+            default
+        })
+    }
+
+    pub(super) fn temporal_calendar_projection_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        match self.heap.get(this) {
+            Some(Cell::TemporalPlainMonthDay {
+                month,
+                day,
+                calendar,
+                reference_iso_year,
+                ..
+            }) if is_plain_month_day_native(native) => {
+                let (month, day, calendar, reference_iso_year) =
+                    (*month, *day, calendar.clone(), *reference_iso_year);
+                return self.temporal_plain_month_day_native(
+                    p,
+                    native,
+                    args,
+                    (month, day, calendar, reference_iso_year),
+                );
+            }
+            Some(Cell::TemporalPlainYearMonth {
+                year,
+                month,
+                calendar,
+                reference_iso_day,
+                ..
+            }) if is_plain_year_month_native(native) => {
+                let (year, month, calendar, reference_iso_day) =
+                    (*year, *month, calendar.clone(), *reference_iso_day);
+                return self.temporal_plain_year_month_native(
+                    p,
+                    native,
+                    args,
+                    (year, month, calendar, reference_iso_day),
+                );
+            }
+            _ => {}
+        }
+        if matches!(
+            native,
+            Native::TemporalPlainMonthDayFrom | Native::TemporalPlainYearMonthFrom
+        ) {
+            return self.temporal_calendar_projection_from(p, native, this, args);
+        }
+        Err(self.type_error(
+            p,
+            "Temporal calendar method called on incompatible receiver".into(),
+        ))
+    }
+
+    fn temporal_plain_month_day_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+        (month, day, calendar, _reference_year): (u32, u32, String, i32),
+    ) -> Result<Value, JsError> {
+        match native {
+            Native::TemporalPlainMonthDayCalendarIdGetter => {
+                Ok(self.heap.alloc(Cell::String(calendar.into())))
+            }
+            Native::TemporalPlainMonthDayDayGetter => Ok(Value::number(f64::from(day))),
+            Native::TemporalPlainMonthDayMonthCodeGetter => Ok(self.heap.alloc(Cell::String(
+                format!("M{month:0width$}", width = ISO_MONTH_CODE_DIGITS).into(),
+            ))),
+            Native::TemporalPlainMonthDayEquals => {
+                let constructor = self.native_value(Native::TemporalPlainMonthDay);
+                let other = self.temporal_plain_month_day_from(p, constructor, args)?;
+                Ok(match self.heap.get(other) {
+                    Some(Cell::TemporalPlainMonthDay {
+                        month: other_month,
+                        day: other_day,
+                        calendar: other_calendar,
+                        ..
+                    }) if *other_month == month
+                        && *other_day == day
+                        && *other_calendar == calendar =>
+                    {
+                        Value::TRUE
+                    }
+                    _ => Value::FALSE,
+                })
+            }
+            Native::TemporalPlainMonthDayToPlainDate => {
+                let item = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if !self.is_object_like(item) {
+                    return Err(self.type_error(p, "Invalid PlainDate fields".into()));
+                }
+                let year_atom = self.intern_atom("year");
+                let year = self.get_property(p, item, year_atom)?;
+                let year = self.plain_date_integer(p, year)?;
+                let date = checked_iso_date(year, month as i32, day as i32)
+                    .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+                Ok(self.heap.alloc(Cell::TemporalPlainDate {
+                    object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
+                    year: date.year,
+                    month: date.month,
+                    day: date.day,
+                    calendar,
+                }))
+            }
+            Native::TemporalPlainMonthDayValueOf => {
+                Err(self.type_error(p, "Cannot convert PlainMonthDay to a number".into()))
+            }
+            _ => Err(self.type_error(p, "Temporal.PlainMonthDay method not implemented".into())),
+        }
+    }
+
+    fn temporal_plain_year_month_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+        (year, month, calendar, reference_day): (i32, u32, String, u32),
+    ) -> Result<Value, JsError> {
+        match native {
+            Native::TemporalPlainYearMonthCalendarIdGetter => {
+                Ok(self.heap.alloc(Cell::String(calendar.into())))
+            }
+            Native::TemporalPlainYearMonthYearGetter => Ok(Value::number(f64::from(year))),
+            Native::TemporalPlainYearMonthMonthGetter => Ok(Value::number(f64::from(month))),
+            Native::TemporalPlainYearMonthMonthCodeGetter => Ok(self.heap.alloc(Cell::String(
+                format!("M{month:0width$}", width = ISO_MONTH_CODE_DIGITS).into(),
+            ))),
+            Native::TemporalPlainYearMonthReferenceISODayGetter => {
+                Ok(Value::number(f64::from(reference_day)))
+            }
+            Native::TemporalPlainYearMonthDaysInMonthGetter => Ok(Value::number(f64::from(
+                iso_days_in_month(year, month as i32).unwrap_or(31),
+            ))),
+            Native::TemporalPlainYearMonthDaysInYearGetter => {
+                Ok(Value::number(f64::from(iso_days_in_year(year))))
+            }
+            Native::TemporalPlainYearMonthMonthsInYearGetter => Ok(Value::number(f64::from(
+                super::temporal_date::ISO_MONTHS_PER_YEAR,
+            ))),
+            Native::TemporalPlainYearMonthInLeapYearGetter => Ok(if iso_is_leap_year(year) {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            }),
+            Native::TemporalPlainYearMonthEquals => {
+                let constructor = self.native_value(Native::TemporalPlainYearMonth);
+                let other = self.temporal_plain_year_month_from(p, constructor, args)?;
+                Ok(match self.heap.get(other) {
+                    Some(Cell::TemporalPlainYearMonth {
+                        year: other_year,
+                        month: other_month,
+                        calendar: other_calendar,
+                        ..
+                    }) if *other_year == year
+                        && *other_month == month
+                        && *other_calendar == calendar =>
+                    {
+                        Value::TRUE
+                    }
+                    _ => Value::FALSE,
+                })
+            }
+            Native::TemporalPlainYearMonthToPlainDate => {
+                let item = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if !self.is_object_like(item) {
+                    return Err(self.type_error(p, "Invalid PlainDate fields".into()));
+                }
+                let day_atom = self.intern_atom("day");
+                let day = self.get_property(p, item, day_atom)?;
+                let day = self.plain_date_integer(p, day)?;
+                let date = checked_iso_date(year, month as i32, day)
+                    .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+                Ok(self.heap.alloc(Cell::TemporalPlainDate {
+                    object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
+                    year: date.year,
+                    month: date.month,
+                    day: date.day,
+                    calendar,
+                }))
+            }
+            Native::TemporalPlainYearMonthValueOf => {
+                Err(self.type_error(p, "Cannot convert PlainYearMonth to a number".into()))
+            }
+            _ => Err(self.type_error(p, "Temporal.PlainYearMonth method not implemented".into())),
+        }
+    }
+
+    fn temporal_calendar_projection_from(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        constructor: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        match native {
+            Native::TemporalPlainMonthDayFrom => {
+                self.temporal_plain_month_day_from(p, constructor, args)
+            }
+            Native::TemporalPlainYearMonthFrom => {
+                self.temporal_plain_year_month_from(p, constructor, args)
+            }
+            _ => unreachable!("not a calendar projection from method"),
+        }
+    }
+
+    fn temporal_plain_month_day_from(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::TemporalPlainMonthDay {
+            month,
+            day,
+            calendar,
+            ..
+        }) = self.heap.get(value)
+        {
+            let (month, day, calendar) = (*month, *day, calendar.clone());
+            let _ = self.plain_date_overflow(p, options)?;
+            return self.make_plain_month_day(p, constructor, month, day, calendar);
+        }
+        if let Some(Cell::String(text)) = self.heap.get(value) {
+            let text = text.host_string().to_owned();
+            let (date, calendar) = parse_plain_month_day_string(self, p, &text)?;
+            let _ = self.plain_date_overflow(p, options)?;
+            return self.make_plain_month_day(p, constructor, date.month, date.day, calendar);
+        }
+        if !self.is_object_like(value) {
+            return Err(self.type_error(p, "Invalid PlainMonthDay".into()));
+        }
+        if matches!(
+            self.heap.get(value),
+            Some(
+                Cell::TemporalPlainDate { .. }
+                    | Cell::TemporalPlainDateTime { .. }
+                    | Cell::TemporalZonedDateTime { .. }
+            )
+        ) {
+            let plain_date_constructor = self.native_value(Native::TemporalPlainDate);
+            let date =
+                self.temporal_plain_date_from(p, plain_date_constructor, &[value, options])?;
+            let (year, month, day, calendar) = self.temporal_plain_date_slots(p, date)?;
+            let _ = year;
+            return self.make_plain_month_day(p, constructor, month, day, calendar);
+        }
+        self.temporal_plain_month_day_from_bag(p, constructor, value, options)
+    }
+
+    fn temporal_plain_month_day_from_bag(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        bag: Value,
+        options: Value,
+    ) -> Result<Value, JsError> {
+        let calendar_atom = self.intern_atom("calendar");
+        let calendar_value = self.get_property(p, bag, calendar_atom)?;
+        let calendar = self.temporal_calendar_property(p, calendar_value)?;
+        let day_atom = self.intern_atom("day");
+        let day = self.get_property(p, bag, day_atom)?;
+        if day.is_undefined() {
+            return Err(self.type_error(p, "Missing day".into()));
+        }
+        let day = self.plain_date_integer(p, day)?;
+        let month_atom = self.intern_atom("month");
+        let month_value = self.get_property(p, bag, month_atom)?;
+        let month = self.plain_date_optional_integer(p, month_value)?;
+        let month_code_atom = self.intern_atom("monthCode");
+        let month_code = self.get_property(p, bag, month_code_atom)?;
+        let month_code = if month_code.is_undefined() {
+            None
+        } else {
+            Some(self.plain_date_month_code(p, month_code)?)
+        };
+        let month = match (month, month_code) {
+            (Some(month), Some(code)) if month != code => {
+                return Err(self.range_error(p, "month and monthCode must agree".into()));
+            }
+            (Some(month), _) => month,
+            (None, Some(code)) => code,
+            (None, None) => return Err(self.type_error(p, "Missing month".into())),
+        };
+        let year_atom = self.intern_atom("year");
+        let year_value = self.get_property(p, bag, year_atom)?;
+        let year = if year_value.is_undefined() {
+            DEFAULT_REFERENCE_ISO_YEAR
+        } else {
+            self.plain_date_integer(p, year_value)?
+        };
+        let constrain = self.plain_date_overflow(p, options)?;
+        if month < 1 || day < 1 {
+            return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+        }
+        let month = if constrain {
+            month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR)
+        } else {
+            month
+        };
+        let max_day = iso_days_in_month(year, month).unwrap_or(31);
+        let day = if constrain { day.min(max_day) } else { day };
+        checked_iso_date(year, month, day)
+            .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+        self.make_plain_month_day(p, constructor, month as u32, day as u32, calendar)
+    }
+
+    fn temporal_plain_year_month_from(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        if let Some(Cell::TemporalPlainYearMonth {
+            year,
+            month,
+            calendar,
+            reference_iso_day,
+            ..
+        }) = self.heap.get(value)
+        {
+            let (year, month, calendar, day) =
+                (*year, *month, calendar.clone(), *reference_iso_day);
+            let _ = self.plain_date_overflow(p, options)?;
+            return self.make_plain_year_month(p, constructor, year, month, calendar, day);
+        }
+        let plain_date_constructor = self.native_value(Native::TemporalPlainDate);
+        let plain_date =
+            self.temporal_plain_date_from(p, plain_date_constructor, &[value, options])?;
+        let (year, month, day, calendar) = self.temporal_plain_date_slots(p, plain_date)?;
+        self.make_plain_year_month(p, constructor, year, month, calendar, day)
+    }
+
+    fn make_plain_month_day(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        month: u32,
+        day: u32,
+        calendar: String,
+    ) -> Result<Value, JsError> {
+        let args = [
+            Value::number(f64::from(month)),
+            Value::number(f64::from(day)),
+            self.heap.alloc(Cell::String(calendar.into())),
+            Value::number(f64::from(DEFAULT_REFERENCE_ISO_YEAR)),
+        ];
+        self.temporal_plain_month_day_construct(p, &args, constructor)
+    }
+
+    fn make_plain_year_month(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        year: i32,
+        month: u32,
+        calendar: String,
+        day: u32,
+    ) -> Result<Value, JsError> {
+        let args = [
+            Value::number(f64::from(year)),
+            Value::number(f64::from(month)),
+            self.heap.alloc(Cell::String(calendar.into())),
+            Value::number(f64::from(day)),
+        ];
+        self.temporal_plain_year_month_construct(p, &args, constructor)
+    }
+
+    fn temporal_calendar_property(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<String, JsError> {
+        match self.heap.get(value) {
+            None if value.is_undefined() => Ok("iso8601".into()),
+            Some(Cell::String(_)) => {
+                let text = self.to_string(p, value)?.to_string();
+                temporal_date_parse::parse_calendar_identifier(&text)
+                    .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))
+            }
+            Some(Cell::TemporalPlainDate { calendar, .. })
+            | Some(Cell::TemporalPlainDateTime { calendar, .. })
+            | Some(Cell::TemporalPlainMonthDay { calendar, .. })
+            | Some(Cell::TemporalPlainYearMonth { calendar, .. })
+            | Some(Cell::TemporalZonedDateTime { calendar, .. }) => Ok(calendar.clone()),
+            _ => Err(self.type_error(p, "Invalid calendar".into())),
+        }
+    }
+}
+
+fn is_plain_month_day_native(native: Native) -> bool {
+    matches!(
+        native,
+        Native::TemporalPlainMonthDayCalendarIdGetter
+            | Native::TemporalPlainMonthDayDayGetter
+            | Native::TemporalPlainMonthDayMonthCodeGetter
+            | Native::TemporalPlainMonthDayEquals
+            | Native::TemporalPlainMonthDayToPlainDate
+            | Native::TemporalPlainMonthDayWith
+            | Native::TemporalPlainMonthDayValueOf
+    )
+}
+
+fn is_plain_year_month_native(native: Native) -> bool {
+    matches!(
+        native,
+        Native::TemporalPlainYearMonthCalendarIdGetter
+            | Native::TemporalPlainYearMonthYearGetter
+            | Native::TemporalPlainYearMonthMonthGetter
+            | Native::TemporalPlainYearMonthMonthCodeGetter
+            | Native::TemporalPlainYearMonthReferenceISODayGetter
+            | Native::TemporalPlainYearMonthDaysInMonthGetter
+            | Native::TemporalPlainYearMonthDaysInYearGetter
+            | Native::TemporalPlainYearMonthMonthsInYearGetter
+            | Native::TemporalPlainYearMonthInLeapYearGetter
+            | Native::TemporalPlainYearMonthEquals
+            | Native::TemporalPlainYearMonthAdd
+            | Native::TemporalPlainYearMonthSubtract
+            | Native::TemporalPlainYearMonthUntil
+            | Native::TemporalPlainYearMonthSince
+            | Native::TemporalPlainYearMonthWith
+            | Native::TemporalPlainYearMonthValueOf
+            | Native::TemporalPlainYearMonthToPlainDate
+    )
+}
+
+fn parse_plain_month_day_string<H: Host>(
+    vm: &mut Vm<H>,
+    p: &ResidualProgram,
+    text: &str,
+) -> Result<(super::temporal_date::IsoDate, String), JsError> {
+    if text.contains(['\u{2212}', 'Z', 'z']) || text.starts_with("-000000") {
+        return Err(vm.range_error(p, "Invalid PlainMonthDay".into()));
+    }
+    if let Some(date) = temporal_date_parse::parse_plain_date_string(text) {
+        return Ok(date);
+    }
+    let (local, _, _) = super::temporal_zoned_date_time::parse_iso_zoned_base(text)
+        .ok_or_else(|| vm.range_error(p, "Invalid PlainMonthDay".into()))?;
+    use chrono::Datelike;
+    let date = checked_iso_date(local.year(), local.month() as i32, local.day() as i32)
+        .ok_or_else(|| vm.range_error(p, "Invalid PlainMonthDay".into()))?;
+    let calendar = temporal_date_parse::parse_calendar_identifier(text)
+        .ok_or_else(|| vm.range_error(p, "Invalid calendar".into()))?;
+    Ok((date, calendar))
 }
 
 pub(super) fn to_plain_month_day<H: Host>(
@@ -53,19 +710,13 @@ pub(super) fn to_plain_month_day<H: Host>(
     this: Value,
 ) -> Result<Value, JsError> {
     let (_year, month, day, calendar) = vm.temporal_plain_date_slots(p, this)?;
-    let value = projection_object(vm, p, "PlainMonthDay")?;
-    let code = month_code(vm, month);
-    set_field(vm, value, "monthCode", code)?;
-    set_field(vm, value, "day", Value::number(f64::from(day)))?;
-    let calendar = string(vm, calendar);
-    set_field(vm, value, "calendarId", calendar)?;
-    set_field(
-        vm,
-        value,
-        "referenceISODay",
-        Value::number(f64::from(DEFAULT_REFERENCE_ISO_YEAR)),
-    )?;
-    Ok(value)
+    Ok(vm.heap.alloc(Cell::TemporalPlainMonthDay {
+        object: Box::new(Vm::<H>::empty_object(vm.temporal_plain_month_day_proto)),
+        month,
+        day,
+        calendar,
+        reference_iso_year: DEFAULT_REFERENCE_ISO_YEAR,
+    }))
 }
 
 pub(super) fn to_plain_year_month<H: Host>(
@@ -74,20 +725,13 @@ pub(super) fn to_plain_year_month<H: Host>(
     this: Value,
 ) -> Result<Value, JsError> {
     let (year, month, _day, calendar) = vm.temporal_plain_date_slots(p, this)?;
-    let value = projection_object(vm, p, "PlainYearMonth")?;
-    set_field(vm, value, "year", Value::number(f64::from(year)))?;
-    set_field(vm, value, "month", Value::number(f64::from(month)))?;
-    let code = month_code(vm, month);
-    set_field(vm, value, "monthCode", code)?;
-    let calendar = string(vm, calendar);
-    set_field(vm, value, "calendarId", calendar)?;
-    set_field(
-        vm,
-        value,
-        "referenceISODay",
-        Value::number(f64::from(DEFAULT_REFERENCE_ISO_DAY)),
-    )?;
-    Ok(value)
+    Ok(vm.heap.alloc(Cell::TemporalPlainYearMonth {
+        object: Box::new(Vm::<H>::empty_object(vm.temporal_plain_year_month_proto)),
+        year,
+        month,
+        calendar,
+        reference_iso_day: DEFAULT_REFERENCE_ISO_DAY,
+    }))
 }
 
 pub(super) fn to_zoned_date_time<H: Host>(
@@ -120,20 +764,17 @@ pub(super) fn to_zoned_date_time<H: Host>(
         super::temporal_plain_date_time_conversion::to_time(vm, p, time_value)?
     };
     let iso_date = super::temporal_date::IsoDate { year, month, day };
-    let local_midnight =
-        i128::from(super::temporal_date::days_from_iso_date(iso_date))
-            * super::temporal_zoned_date_time::NANOSECONDS_PER_DAY;
+    let local_midnight = i128::from(super::temporal_date::days_from_iso_date(iso_date))
+        * super::temporal_zoned_date_time::NANOSECONDS_PER_DAY;
     let local_time = time
         .iter()
         .zip(TIME_NANOSECONDS)
         .map(|(field, scale)| i128::from(*field) * scale)
         .sum::<i128>();
     let local_epoch = local_midnight + local_time;
-    let offset = super::temporal_zoned_date_time::timezone_offset_nanoseconds(
-        &time_zone,
-        local_epoch,
-    )
-    .ok_or_else(|| vm.range_error(p, "Invalid time zone".into()))?;
+    let offset =
+        super::temporal_zoned_date_time::timezone_offset_nanoseconds(&time_zone, local_epoch)
+            .ok_or_else(|| vm.range_error(p, "Invalid time zone".into()))?;
     let epoch_nanoseconds = local_epoch - offset;
     if epoch_nanoseconds.unsigned_abs()
         > super::temporal_zoned_date_time::MAX_EPOCH_NANOSECONDS as u128
@@ -167,92 +808,50 @@ pub(super) fn native<H: Host>(
     p: &ResidualProgram,
     native: Native,
     this: Value,
+    args: &[Value],
 ) -> Result<Value, JsError> {
-    let calendar_atom = vm.intern_atom("calendarId");
-    let calendar_value = vm.get_property(p, this, calendar_atom)?;
-    let calendar = vm.to_string(p, calendar_value)?;
-    let (year, month, day) = match native {
-        Native::TemporalPlainMonthDayToString => {
-            let reference_year = read_field(vm, p, this, "referenceISODay")?;
-            let month_code = read_field(vm, p, this, "monthCode")?;
-            let day = read_field(vm, p, this, "day")?;
-            let month_code = vm.to_string(p, month_code)?;
-            let month = month_code
-                .trim_start_matches('M')
-                .trim_end_matches('L')
-                .parse::<u32>()
-                .map_err(|_| vm.range_error(p, "Invalid PlainMonthDay".into()))?;
-            (
-                vm.to_number(p, reference_year)? as i32,
-                month,
-                vm.to_number(p, day)? as u32,
-            )
+    let options = match native {
+        Native::TemporalPlainMonthDayToString | Native::TemporalPlainYearMonthToString => {
+            args.first().copied().unwrap_or(Value::UNDEFINED)
         }
-        Native::TemporalPlainYearMonthToString => {
-            let year = read_field(vm, p, this, "year")?;
-            let month = read_field(vm, p, this, "month")?;
-            let day = read_field(vm, p, this, "referenceISODay")?;
-            (
-                vm.to_number(p, year)? as i32,
-                vm.to_number(p, month)? as u32,
-                vm.to_number(p, day)? as u32,
-            )
+        Native::TemporalPlainMonthDayToLocaleString
+        | Native::TemporalPlainYearMonthToLocaleString => {
+            args.get(1).copied().unwrap_or(Value::UNDEFINED)
         }
-        _ => unreachable!("not a Temporal calendar projection native"),
+        _ => Value::UNDEFINED,
     };
-    let iso = super::temporal_date::format_iso_date(year, month, day);
-    Ok(vm
-        .heap
-        .alloc(Cell::String(format!("{iso}[u-ca={calendar}]").into())))
-}
-
-fn read_field<H: Host>(
-    vm: &mut Vm<H>,
-    p: &ResidualProgram,
-    object: Value,
-    name: &str,
-) -> Result<Value, JsError> {
-    let atom = vm.intern_atom(name);
-    vm.get_property(p, object, atom)
-}
-
-fn projection_object<H: Host>(
-    vm: &mut Vm<H>,
-    p: &ResidualProgram,
-    name: &str,
-) -> Result<Value, JsError> {
-    let temporal_atom = vm.intern_atom("Temporal");
-    let temporal = vm.get_property(p, vm.realm.globals, temporal_atom)?;
-    let constructor_atom = vm.intern_atom(name);
-    let constructor = vm.get_property(p, temporal, constructor_atom)?;
-    let prototype_atom = vm.intern_atom("prototype");
-    let prototype = vm.get_property(p, constructor, prototype_atom)?;
-    let prototype = if vm.is_object_like(prototype) {
-        prototype
-    } else {
-        vm.object_proto
-    };
-    Ok(vm
-        .heap
-        .alloc(Cell::Object(Vm::<H>::empty_object(prototype))))
-}
-
-fn set_field<H: Host>(
-    vm: &mut Vm<H>,
-    object: Value,
-    name: &str,
-    value: Value,
-) -> Result<(), JsError> {
-    let atom = vm.intern_atom(name);
-    vm.set_property(object, atom, value)
-}
-
-fn month_code<H: Host>(vm: &mut Vm<H>, month: u32) -> Value {
-    vm.heap.alloc(Cell::String(
-        format!("M{:0width$}", month, width = ISO_MONTH_CODE_DIGITS).into(),
-    ))
-}
-
-fn string<H: Host>(vm: &mut Vm<H>, value: String) -> Value {
-    vm.heap.alloc(Cell::String(value.into()))
+    if let Some(Cell::TemporalPlainMonthDay {
+        month,
+        day,
+        calendar,
+        reference_iso_year,
+        ..
+    }) = vm.heap.get(this)
+    {
+        let (month, day, calendar, year) = (*month, *day, calendar.clone(), *reference_iso_year);
+        let text = vm.temporal_plain_date_to_string(p, year, month, day, &calendar, options)?;
+        let text = if calendar == "iso8601" && !text.contains('[') {
+            format!("{month:02}-{day:02}")
+        } else {
+            text
+        };
+        return Ok(vm.heap.alloc(Cell::String(text.into())));
+    }
+    if let Some(Cell::TemporalPlainYearMonth {
+        year,
+        month,
+        calendar,
+        reference_iso_day,
+        ..
+    }) = vm.heap.get(this)
+    {
+        let (year, month, calendar, day) = (*year, *month, calendar.clone(), *reference_iso_day);
+        let text = vm.temporal_plain_date_to_string(p, year, month, day, &calendar, options)?;
+        let (date, annotation) = text.split_once('[').unwrap_or((&text, ""));
+        let month_end = date.rfind('-').unwrap_or(date.len());
+        return Ok(vm.heap.alloc(Cell::String(
+            format!("{}{annotation}", &date[..month_end]).into(),
+        )));
+    }
+    Err(vm.type_error(p, "Invalid Temporal calendar object".into()))
 }

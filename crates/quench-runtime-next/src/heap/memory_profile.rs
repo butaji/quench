@@ -176,6 +176,8 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::TemporalInstant { .. } => 0,
         Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
         Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
+        Cell::TemporalPlainMonthDay { calendar, .. }
+        | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
         Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
         Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
         Cell::TypedArray { .. } => 0,

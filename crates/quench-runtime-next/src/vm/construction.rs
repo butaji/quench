@@ -178,6 +178,8 @@ impl<H: Host> Vm<H> {
                         | Native::TemporalPlainDate
                         | Native::TemporalPlainDateTime
                         | Native::TemporalZonedDateTime
+                        | Native::TemporalPlainMonthDay
+                        | Native::TemporalPlainYearMonth
                 ),
             },
             _ => false,
@@ -874,6 +876,9 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainDateTime => {
                 self.temporal_plain_date_time_construct(p, args, new_target)
+            }
+            Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => {
+                self.temporal_calendar_projection_construct(p, native, args, new_target)
             }
             Native::TemporalZonedDateTime => {
                 self.temporal_zoned_date_time_construct(p, args, new_target)

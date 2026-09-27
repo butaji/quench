@@ -354,7 +354,37 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalPlainTime => 6.0,
         Native::TemporalPlainTimeFrom => 1.0,
         Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => 2.0,
-        Native::TemporalPlainMonthDayToString | Native::TemporalPlainYearMonthToString => 0.0,
+        Native::TemporalPlainMonthDayFrom | Native::TemporalPlainYearMonthFrom => 1.0,
+        Native::TemporalPlainMonthDayCompare | Native::TemporalPlainYearMonthCompare => 2.0,
+        Native::TemporalPlainMonthDayEquals | Native::TemporalPlainMonthDayToPlainDate => 1.0,
+        Native::TemporalPlainMonthDayWith => 1.0,
+        Native::TemporalPlainYearMonthEquals
+        | Native::TemporalPlainYearMonthAdd
+        | Native::TemporalPlainYearMonthSubtract
+        | Native::TemporalPlainYearMonthUntil
+        | Native::TemporalPlainYearMonthSince
+        | Native::TemporalPlainYearMonthWith
+        | Native::TemporalPlainYearMonthToPlainDate => 1.0,
+        Native::TemporalPlainMonthDayCalendarIdGetter
+        | Native::TemporalPlainMonthDayDayGetter
+        | Native::TemporalPlainMonthDayMonthCodeGetter
+        | Native::TemporalPlainYearMonthCalendarIdGetter
+        | Native::TemporalPlainYearMonthYearGetter
+        | Native::TemporalPlainYearMonthMonthGetter
+        | Native::TemporalPlainYearMonthMonthCodeGetter
+        | Native::TemporalPlainYearMonthReferenceISODayGetter
+        | Native::TemporalPlainYearMonthDaysInMonthGetter
+        | Native::TemporalPlainYearMonthDaysInYearGetter
+        | Native::TemporalPlainYearMonthMonthsInYearGetter
+        | Native::TemporalPlainYearMonthInLeapYearGetter
+        | Native::TemporalPlainMonthDayToString
+        | Native::TemporalPlainMonthDayToJSON
+        | Native::TemporalPlainMonthDayValueOf
+        | Native::TemporalPlainYearMonthToString
+        | Native::TemporalPlainYearMonthToJSON
+        | Native::TemporalPlainYearMonthValueOf => 0.0,
+        Native::TemporalPlainMonthDayToLocaleString
+        | Native::TemporalPlainYearMonthToLocaleString => 0.0,
         Native::TemporalPlainDateTimeCalendarIdGetter
         | Native::TemporalPlainDateTimeYearGetter
         | Native::TemporalPlainDateTimeMonthGetter

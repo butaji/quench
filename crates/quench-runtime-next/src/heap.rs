@@ -79,6 +79,8 @@ pub(crate) enum CellKind {
     TemporalDuration,
     TemporalPlainDate,
     TemporalPlainDateTime,
+    TemporalPlainMonthDay,
+    TemporalPlainYearMonth,
     TemporalZonedDateTime,
 }
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
@@ -105,6 +107,8 @@ impl CellKind {
         "temporal_duration",
         "temporal_plain_date",
         "temporal_plain_date_time",
+        "temporal_plain_month_day",
+        "temporal_plain_year_month",
         "temporal_zoned_date_time",
     ];
 }
@@ -654,6 +658,8 @@ impl Heap {
             | Cell::TemporalDuration { object: value, .. }
             | Cell::TemporalPlainDate { object: value, .. }
             | Cell::TemporalPlainDateTime { object: value, .. }
+            | Cell::TemporalPlainMonthDay { object: value, .. }
+            | Cell::TemporalPlainYearMonth { object: value, .. }
             | Cell::TemporalZonedDateTime { object: value, .. }
             | Cell::TemporalInstant { object: value, .. } => object(value),
             Cell::String(_) | Cell::BigInt(_) | Cell::Symbol(_) | Cell::Error(_) => {}
@@ -689,6 +695,8 @@ impl Heap {
             Cell::TemporalDuration { .. } => CellKind::TemporalDuration,
             Cell::TemporalPlainDate { .. } => CellKind::TemporalPlainDate,
             Cell::TemporalPlainDateTime { .. } => CellKind::TemporalPlainDateTime,
+            Cell::TemporalPlainMonthDay { .. } => CellKind::TemporalPlainMonthDay,
+            Cell::TemporalPlainYearMonth { .. } => CellKind::TemporalPlainYearMonth,
             Cell::TemporalZonedDateTime { .. } => CellKind::TemporalZonedDateTime,
         }
     }
@@ -704,7 +712,9 @@ impl Heap {
             | Cell::PromiseResolvingState { .. } => 0,
             Cell::TemporalDuration { .. } => 0,
             Cell::TemporalPlainDate { calendar, .. }
-            | Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
+            | Cell::TemporalPlainDateTime { calendar, .. }
+            | Cell::TemporalPlainMonthDay { calendar, .. }
+            | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
             Cell::TemporalZonedDateTime {
                 time_zone,
                 calendar,
