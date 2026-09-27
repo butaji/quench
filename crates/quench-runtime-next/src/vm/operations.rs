@@ -541,6 +541,7 @@ impl<H: Host> Vm<H> {
             | Native::TemporalPlainDateToZonedDateTime
             | Native::TemporalPlainDateEquals
             | Native::TemporalPlainDateWith
+            | Native::TemporalPlainDateWithCalendar
             | Native::TemporalPlainDateValueOf => {
                 self.temporal_plain_date_native(p, native, this, args)
             }

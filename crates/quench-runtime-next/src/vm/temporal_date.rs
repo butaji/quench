@@ -85,6 +85,7 @@ impl<H: Host> Vm<H> {
             ),
             ("toZonedDateTime", Native::TemporalPlainDateToZonedDateTime),
             ("with", Native::TemporalPlainDateWith),
+            ("withCalendar", Native::TemporalPlainDateWithCalendar),
             ("equals", Native::TemporalPlainDateEquals),
             ("valueOf", Native::TemporalPlainDateValueOf),
             ("add", Native::TemporalPlainDateAdd),
@@ -185,6 +186,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if native == Native::TemporalPlainDateWith {
             return self.temporal_plain_date_with(p, this, args);
+        }
+        if native == Native::TemporalPlainDateWithCalendar {
+            return self.temporal_plain_date_with_calendar(p, this, args);
         }
         match native {
             Native::TemporalPlainDate => {
@@ -358,6 +362,36 @@ impl<H: Host> Vm<H> {
         if primitive_options {
             return Err(self.type_error(p, "Invalid options".into()));
         }
+        Ok(self.heap.alloc(Cell::TemporalPlainDate {
+            object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
+            year: date.year,
+            month: date.month,
+            day: date.day,
+            calendar,
+        }))
+    }
+
+    fn temporal_plain_date_with_calendar(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let (year, month, day, _) = self.temporal_plain_date_slots(p, this)?;
+        let calendar = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let calendar = match self.heap.get(calendar) {
+            Some(Cell::String(value)) => {
+                let text = value.host_string();
+                temporal_date_parse::calendar_identifier_from_string(text)
+                    .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
+            }
+            Some(Cell::TemporalPlainDate { calendar, .. })
+            | Some(Cell::TemporalPlainDateTime { calendar, .. }) => calendar.clone(),
+            Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.clone(),
+            _ => return Err(self.type_error(p, "Invalid calendar".into())),
+        };
+        let date = checked_iso_date(year, month as i32, day as i32)
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
         Ok(self.heap.alloc(Cell::TemporalPlainDate {
             object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
             year: date.year,
