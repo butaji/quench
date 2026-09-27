@@ -124,6 +124,8 @@ impl<H: Host> Vm<H> {
             ("add", Native::TemporalInstantAdd),
             ("subtract", Native::TemporalInstantSubtract),
             ("round", Native::TemporalInstantRound),
+            ("since", Native::TemporalInstantSince),
+            ("until", Native::TemporalInstantUntil),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }
@@ -212,6 +214,9 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalInstantRound => {
                 super::temporal_instant_round::round(self, p, this, args)
+            }
+            Native::TemporalInstantSince | Native::TemporalInstantUntil => {
+                super::temporal_instant_difference::difference(self, p, native, this, args)
             }
             _ => unreachable!("not a Temporal.Instant native"),
         }
@@ -400,7 +405,7 @@ impl<H: Host> Vm<H> {
         self.get_property(p, temporal, instant_atom)
     }
 
-    fn temporal_instant_input(
+    pub(super) fn temporal_instant_input(
         &mut self,
         p: &ResidualProgram,
         value: Value,
