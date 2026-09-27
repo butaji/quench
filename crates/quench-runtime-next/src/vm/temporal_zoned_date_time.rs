@@ -99,11 +99,16 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ),
     ("nanosecond", Native::TemporalZonedDateTimeNanosecondGetter),
 ];
-const ZONED_DATE_TIME_METHODS: [(&str, Native); 4] = [
+const ZONED_DATE_TIME_METHODS: [(&str, Native); 9] = [
     ("equals", Native::TemporalZonedDateTimeEquals),
     ("withTimeZone", Native::TemporalZonedDateTimeWithTimeZone),
+    ("toInstant", Native::TemporalZonedDateTimeToInstant),
+    ("toPlainDate", Native::TemporalZonedDateTimeToPlainDate),
+    ("toPlainDateTime", Native::TemporalZonedDateTimeToPlainDateTime),
+    ("toPlainTime", Native::TemporalZonedDateTimeToPlainTime),
     ("toString", Native::TemporalZonedDateTimeToString),
     ("toJSON", Native::TemporalZonedDateTimeToJSON),
+    ("valueOf", Native::TemporalZonedDateTimeValueOf),
 ];
 
 impl<H: Host> Vm<H> {
@@ -389,6 +394,67 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTime {
             return Err(self.type_error(p, "Temporal.ZonedDateTime requires new".into()));
+        }
+        if matches!(
+            native,
+            Native::TemporalZonedDateTimeToInstant
+                | Native::TemporalZonedDateTimeToPlainDate
+                | Native::TemporalZonedDateTimeToPlainDateTime
+                | Native::TemporalZonedDateTimeToPlainTime
+                | Native::TemporalZonedDateTimeValueOf
+        ) {
+            let Some(Cell::TemporalZonedDateTime {
+                epoch_nanoseconds,
+                time_zone,
+                calendar,
+                ..
+            }) = self.heap.get(this)
+            else {
+                return Err(self.type_error(
+                    p,
+                    "Temporal.ZonedDateTime method called on incompatible receiver".into(),
+                ));
+            };
+            let epoch_nanoseconds = *epoch_nanoseconds;
+            let time_zone = time_zone.clone();
+            let calendar = calendar.clone();
+            if native == Native::TemporalZonedDateTimeValueOf {
+                return Err(self.type_error(p, "Cannot convert ZonedDateTime to a number".into()));
+            }
+            if native == Native::TemporalZonedDateTimeToInstant {
+                let constructor = self.temporal_instant_constructor(p)?;
+                return self.make_temporal_instant(p, epoch_nanoseconds, constructor);
+            }
+            let fields = zoned_date_time_fields(epoch_nanoseconds, &time_zone)
+                .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+            if native == Native::TemporalZonedDateTimeToPlainDate {
+                let constructor = self.temporal_plain_date_constructor(p)?;
+                let date = super::temporal_date::checked_iso_date(
+                    fields[0],
+                    fields[1],
+                    fields[2],
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+                return self.make_temporal_plain_date(p, date, calendar, constructor);
+            }
+            if native == Native::TemporalZonedDateTimeToPlainTime {
+                let time = [fields[3], fields[4], fields[5], fields[6], fields[7], fields[8]];
+                return self.temporal_plain_time_object(time);
+            }
+            let constructor = self.temporal_plain_date_time_constructor(p)?;
+            let args = [
+                Value::number(f64::from(fields[0])),
+                Value::number(f64::from(fields[1])),
+                Value::number(f64::from(fields[2])),
+                Value::number(f64::from(fields[3])),
+                Value::number(f64::from(fields[4])),
+                Value::number(f64::from(fields[5])),
+                Value::number(f64::from(fields[6])),
+                Value::number(f64::from(fields[7])),
+                Value::number(f64::from(fields[8])),
+                self.heap.alloc(Cell::String(calendar.into())),
+            ];
+            return self.temporal_plain_date_time_construct(p, &args, constructor);
         }
         let Some(Cell::TemporalZonedDateTime {
             epoch_nanoseconds,

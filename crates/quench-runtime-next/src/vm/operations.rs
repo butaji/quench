@@ -657,6 +657,11 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeCompare
             | Native::TemporalZonedDateTimeEquals
             | Native::TemporalZonedDateTimeWithTimeZone
+            | Native::TemporalZonedDateTimeToInstant
+            | Native::TemporalZonedDateTimeToPlainDate
+            | Native::TemporalZonedDateTimeToPlainDateTime
+            | Native::TemporalZonedDateTimeToPlainTime
+            | Native::TemporalZonedDateTimeValueOf
             | Native::TemporalZonedDateTimeToString
             | Native::TemporalZonedDateTimeToJSON
             | Native::TemporalZonedDateTimeEpochNanosecondsGetter
