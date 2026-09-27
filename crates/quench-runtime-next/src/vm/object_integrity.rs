@@ -556,7 +556,7 @@ impl<H: Host> Vm<H> {
         }
         let symbols = self
             .object_data(target)
-            .map(|data| self.shapes[data.shape() as usize].keys.clone())
+            .map(|data| self.shape_keys(data.shape()).as_ref().clone())
             .unwrap_or_default()
             .into_iter()
             .filter(|key| matches!(key, PropertyKey::Symbol(_)))
@@ -631,8 +631,8 @@ impl<H: Host> Vm<H> {
                 !attributes.configurable && (!freeze || !attributes.writable)
             });
         let arrays_ok = self.array_is_integrity_level(target, freeze);
-        let symbols_ok = self.shapes[data.shape() as usize]
-            .keys
+        let shape_keys = self.shape_keys(data.shape());
+        let symbols_ok = shape_keys
             .iter()
             .filter(|key| matches!(key, PropertyKey::Symbol(_)))
             .all(|symbol| {

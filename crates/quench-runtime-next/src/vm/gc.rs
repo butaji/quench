@@ -210,7 +210,11 @@ impl<H: Host> Vm<H> {
                 .chain(
                     self.shapes
                         .iter()
-                        .flat_map(|shape| shape.keys.iter().filter_map(|key| key.symbol_value())),
+                        .filter_map(|shape| match shape.transition {
+                            ShapeTransition::Add { key, .. }
+                            | ShapeTransition::Delete { key, .. } => key.symbol_value(),
+                            ShapeTransition::Root | ShapeTransition::Descriptor { .. } => None,
+                        }),
                 )
                 .chain(
                     self.descriptors
@@ -221,9 +225,22 @@ impl<H: Host> Vm<H> {
                 .chain(
                     self.shapes
                         .iter()
-                        .flat_map(|shape| shape.descriptors.iter())
-                        .flat_map(|attributes| [attributes.getter, attributes.setter])
-                        .flatten(),
+                        .filter_map(|shape| match shape.transition {
+                            ShapeTransition::Descriptor { attributes, .. } => attributes.getter,
+                            ShapeTransition::Root
+                            | ShapeTransition::Add { .. }
+                            | ShapeTransition::Delete { .. } => None,
+                        }),
+                )
+                .chain(
+                    self.shapes
+                        .iter()
+                        .filter_map(|shape| match shape.transition {
+                            ShapeTransition::Descriptor { attributes, .. } => attributes.setter,
+                            ShapeTransition::Root
+                            | ShapeTransition::Add { .. }
+                            | ShapeTransition::Delete { .. } => None,
+                        }),
                 )
                 .chain(self.frames.iter().flat_map(|frame| {
                     [frame.env, frame.this]
