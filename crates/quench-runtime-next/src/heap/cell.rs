@@ -829,6 +829,10 @@ pub(crate) enum Cell {
         flags: String,
     },
     Error(String),
+    PromiseResolvingState {
+        promise: Value,
+        already_resolved: bool,
+    },
     TemporalDuration {
         object: Box<Object>,
         fields: [f64; 10],
