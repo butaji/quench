@@ -127,7 +127,7 @@ pub(super) const DISAMBIGUATION_OPTIONS: [&str; 4] = ["compatible", "earlier", "
 const OFFSET_OPTIONS: [&str; 4] = ["prefer", "use", "ignore", "reject"];
 const OVERFLOW_OPTIONS: [&str; 2] = ["constrain", "reject"];
 
-const ZONED_DATE_TIME_GETTERS: [(&str, Native); 26] = [
+const ZONED_DATE_TIME_GETTERS: [(&str, Native); 28] = [
     (
         "epochNanoseconds",
         Native::TemporalZonedDateTimeEpochNanosecondsGetter,
@@ -137,6 +137,11 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 26] = [
         Native::TemporalZonedDateTimeEpochMillisecondsGetter,
     ),
     ("timeZoneId", Native::TemporalZonedDateTimeTimeZoneIdGetter),
+    ("offset", Native::TemporalZonedDateTimeOffsetGetter),
+    (
+        "offsetNanoseconds",
+        Native::TemporalZonedDateTimeOffsetNanosecondsGetter,
+    ),
     ("calendarId", Native::TemporalZonedDateTimeCalendarIdGetter),
     ("year", Native::TemporalZonedDateTimeYearGetter),
     ("month", Native::TemporalZonedDateTimeMonthGetter),
@@ -603,6 +608,18 @@ impl<H: Host> Vm<H> {
                 Ok(Value::number(
                     (next_start - start) as f64 / NANOSECONDS_PER_HOUR as f64,
                 ))
+            }
+            Native::TemporalZonedDateTimeOffsetGetter
+            | Native::TemporalZonedDateTimeOffsetNanosecondsGetter => {
+                let offset = timezone_offset_nanoseconds(&zone, epoch)
+                    .ok_or_else(|| self.range_error(p, "Invalid time-zone offset".into()))?;
+                if native == Native::TemporalZonedDateTimeOffsetGetter {
+                    Ok(self
+                        .heap
+                        .alloc(Cell::String(format_offset_nanoseconds(offset).into())))
+                } else {
+                    Ok(Value::number(offset as f64))
+                }
             }
             Native::TemporalZonedDateTimeTimeZoneIdGetter => {
                 Ok(self.heap.alloc(Cell::String(zone.into())))

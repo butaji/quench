@@ -719,7 +719,9 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeMonthsInYearGetter
             | Native::TemporalZonedDateTimeInLeapYearGetter
             | Native::TemporalZonedDateTimeEpochMillisecondsGetter
-            | Native::TemporalZonedDateTimeHoursInDayGetter => {
+            | Native::TemporalZonedDateTimeHoursInDayGetter
+            | Native::TemporalZonedDateTimeOffsetGetter
+            | Native::TemporalZonedDateTimeOffsetNanosecondsGetter => {
                 self.temporal_zoned_date_time_native(p, native, this, args)
             }
             Native::TemporalInstant
