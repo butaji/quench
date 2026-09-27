@@ -702,7 +702,18 @@ impl<H: Host> Vm<H> {
             | Native::TemporalZonedDateTimeSecondGetter
             | Native::TemporalZonedDateTimeMillisecondGetter
             | Native::TemporalZonedDateTimeMicrosecondGetter
-            | Native::TemporalZonedDateTimeNanosecondGetter => {
+            | Native::TemporalZonedDateTimeNanosecondGetter
+            | Native::TemporalZonedDateTimeEraGetter
+            | Native::TemporalZonedDateTimeEraYearGetter
+            | Native::TemporalZonedDateTimeDayOfWeekGetter
+            | Native::TemporalZonedDateTimeDayOfYearGetter
+            | Native::TemporalZonedDateTimeWeekOfYearGetter
+            | Native::TemporalZonedDateTimeYearOfWeekGetter
+            | Native::TemporalZonedDateTimeDaysInWeekGetter
+            | Native::TemporalZonedDateTimeDaysInMonthGetter
+            | Native::TemporalZonedDateTimeDaysInYearGetter
+            | Native::TemporalZonedDateTimeMonthsInYearGetter
+            | Native::TemporalZonedDateTimeInLeapYearGetter => {
                 self.temporal_zoned_date_time_native(p, native, this, args)
             }
             Native::TemporalInstant

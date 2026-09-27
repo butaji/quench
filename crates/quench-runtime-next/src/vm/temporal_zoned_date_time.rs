@@ -126,7 +126,7 @@ pub(super) const DISAMBIGUATION_OPTIONS: [&str; 4] = ["compatible", "earlier", "
 const OFFSET_OPTIONS: [&str; 4] = ["prefer", "use", "ignore", "reject"];
 const OVERFLOW_OPTIONS: [&str; 2] = ["constrain", "reject"];
 
-const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
+const ZONED_DATE_TIME_GETTERS: [(&str, Native); 23] = [
     (
         "epochNanoseconds",
         Native::TemporalZonedDateTimeEpochNanosecondsGetter,
@@ -136,6 +136,17 @@ const ZONED_DATE_TIME_GETTERS: [(&str, Native); 12] = [
     ("year", Native::TemporalZonedDateTimeYearGetter),
     ("month", Native::TemporalZonedDateTimeMonthGetter),
     ("day", Native::TemporalZonedDateTimeDayGetter),
+    ("era", Native::TemporalZonedDateTimeEraGetter),
+    ("eraYear", Native::TemporalZonedDateTimeEraYearGetter),
+    ("dayOfWeek", Native::TemporalZonedDateTimeDayOfWeekGetter),
+    ("dayOfYear", Native::TemporalZonedDateTimeDayOfYearGetter),
+    ("weekOfYear", Native::TemporalZonedDateTimeWeekOfYearGetter),
+    ("yearOfWeek", Native::TemporalZonedDateTimeYearOfWeekGetter),
+    ("daysInWeek", Native::TemporalZonedDateTimeDaysInWeekGetter),
+    ("daysInMonth", Native::TemporalZonedDateTimeDaysInMonthGetter),
+    ("daysInYear", Native::TemporalZonedDateTimeDaysInYearGetter),
+    ("monthsInYear", Native::TemporalZonedDateTimeMonthsInYearGetter),
+    ("inLeapYear", Native::TemporalZonedDateTimeInLeapYearGetter),
     ("hour", Native::TemporalZonedDateTimeHourGetter),
     ("minute", Native::TemporalZonedDateTimeMinuteGetter),
     ("second", Native::TemporalZonedDateTimeSecondGetter),
@@ -380,7 +391,11 @@ impl<H: Host> Vm<H> {
                 args.first().copied().unwrap_or(Value::UNDEFINED),
                 options,
             )?;
-            return self.make_temporal_zoned_date_time(p, this, input);
+            let temporal_atom = self.intern_atom("Temporal");
+            let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
+            let constructor_atom = self.intern_atom("ZonedDateTime");
+            let constructor = self.get_property(p, temporal, constructor_atom)?;
+            return self.make_temporal_zoned_date_time(p, constructor, input);
         }
         if native == Native::TemporalZonedDateTimeCompare {
             let left = self.temporal_zoned_date_time_record(
@@ -573,6 +588,68 @@ impl<H: Host> Vm<H> {
                     Native::TemporalZonedDateTimeMillisecondGetter => fields[6],
                     Native::TemporalZonedDateTimeMicrosecondGetter => fields[7],
                     Native::TemporalZonedDateTimeNanosecondGetter => fields[8],
+                    Native::TemporalZonedDateTimeEraGetter
+                    | Native::TemporalZonedDateTimeEraYearGetter => {
+                        return Ok(Value::UNDEFINED);
+                    }
+                    Native::TemporalZonedDateTimeDayOfWeekGetter => i32::try_from(
+                        super::temporal_date::iso_day_of_week(super::temporal_date::IsoDate {
+                            year: fields[0],
+                            month: fields[1] as u32,
+                            day: fields[2] as u32,
+                        }),
+                    )
+                    .unwrap_or_default(),
+                    Native::TemporalZonedDateTimeDayOfYearGetter => i32::try_from(
+                        super::temporal_date::iso_day_of_year(super::temporal_date::IsoDate {
+                            year: fields[0],
+                            month: fields[1] as u32,
+                            day: fields[2] as u32,
+                        }),
+                    )
+                    .unwrap_or_default(),
+                    Native::TemporalZonedDateTimeWeekOfYearGetter => {
+                        return Ok(super::temporal_date::temporal_iso_week(
+                            super::temporal_date::IsoDate {
+                                year: fields[0],
+                                month: fields[1] as u32,
+                                day: fields[2] as u32,
+                            },
+                            &calendar,
+                        )
+                        .map_or(Value::UNDEFINED, |(week, _)| Value::number(f64::from(week))));
+                    }
+                    Native::TemporalZonedDateTimeYearOfWeekGetter => {
+                        return Ok(super::temporal_date::temporal_iso_week(
+                            super::temporal_date::IsoDate {
+                                year: fields[0],
+                                month: fields[1] as u32,
+                                day: fields[2] as u32,
+                            },
+                            &calendar,
+                        )
+                        .map_or(Value::UNDEFINED, |(_, year)| Value::number(f64::from(year))));
+                    }
+                    Native::TemporalZonedDateTimeDaysInWeekGetter => {
+                        super::temporal_date::ISO_DAYS_PER_WEEK as i32
+                    }
+                    Native::TemporalZonedDateTimeDaysInMonthGetter => {
+                        super::temporal_date::iso_days_in_month(fields[0], fields[1])
+                            .unwrap_or_default()
+                    }
+                    Native::TemporalZonedDateTimeDaysInYearGetter => {
+                        super::temporal_date::iso_days_in_year(fields[0]) as i32
+                    }
+                    Native::TemporalZonedDateTimeMonthsInYearGetter => {
+                        super::temporal_date::ISO_MONTHS_PER_YEAR
+                    }
+                    Native::TemporalZonedDateTimeInLeapYearGetter => {
+                        return Ok(if super::temporal_date::iso_is_leap_year(fields[0]) {
+                            Value::TRUE
+                        } else {
+                            Value::FALSE
+                        });
+                    }
                     _ => return Err(self.type_error(p, "Unsupported ZonedDateTime getter".into())),
                 };
                 Ok(Value::number(f64::from(value)))
