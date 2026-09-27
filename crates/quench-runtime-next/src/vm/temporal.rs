@@ -364,8 +364,8 @@ impl<H: Host> Vm<H> {
             return Ok(*fields);
         }
         if let Some(Cell::String(text)) = self.heap.get(value) {
-            return parse_duration_string(text.host_string())
-                .map_err(|()| self.range_error(p, "Invalid duration string".into()));
+            return quench_temporal::parse_duration(text.host_string())
+                .ok_or_else(|| self.range_error(p, "Invalid duration string".into()));
         }
         if !self.is_object_like(value) {
             return Err(self.type_error(p, "Duration-like value must be an object or string".into()));
@@ -989,105 +989,4 @@ fn round_duration_for_string(
 
 fn format_number(number: f64) -> String {
     if number.fract() == 0.0 { format!("{number:.0}") } else { number.to_string() }
-}
-
-fn parse_duration_string(text: &str) -> Result<[f64; 10], ()> {
-    let (negative, text) = match text.strip_prefix('-') {
-        Some(text) => (true, text),
-        None => (false, text.strip_prefix('+').unwrap_or(text)),
-    };
-    let body = text
-        .strip_prefix('P')
-        .or_else(|| text.strip_prefix('p'))
-        .ok_or(())?;
-    let (date, time) = body.split_once(['T', 't']).unwrap_or((body, ""));
-    let mut fields = [0.0; 10];
-    let date_seen = parse_duration_section(date, false, &mut fields)?;
-    let time_seen = parse_duration_section(time, true, &mut fields)?;
-    if !date_seen && !time_seen {
-        return Err(());
-    }
-    if negative {
-        fields.iter_mut().for_each(|value| {
-            *value = if *value == 0.0 { 0.0 } else { -*value };
-        });
-    }
-    Ok(fields)
-}
-
-fn parse_duration_section(section: &str, time: bool, fields: &mut [f64; 10]) -> Result<bool, ()> {
-    let mut rest = section;
-    let mut seen = false;
-    while !rest.is_empty() {
-        let end = rest
-            .char_indices()
-            .find_map(|(index, character)| character.is_ascii_alphabetic().then_some(index))
-            .ok_or(())?;
-        let (number, suffix) = rest.split_at(end);
-        let unit = suffix.chars().next().ok_or(())?;
-        validate_duration_number(number, suffix, time, unit)?;
-        let (whole, fraction) = parse_duration_number(number)?;
-        let index = match (time, unit.to_ascii_uppercase()) {
-            (false, 'Y') => 0,
-            (false, 'M') => 1,
-            (false, 'W') => 2,
-            (false, 'D') => 3,
-            (true, 'H') => 4,
-            (true, 'M') => 5,
-            (true, 'S') => 6,
-            _ => return Err(()),
-        };
-        fields[index] += whole;
-        if time && fraction != 0.0 {
-            add_fractional_time(fields, index, fraction);
-        }
-        seen = true;
-        rest = &suffix[unit.len_utf8()..];
-    }
-    Ok(seen)
-}
-
-fn validate_duration_number(number: &str, suffix: &str, time: bool, unit: char) -> Result<(), ()> {
-    let separators = number.matches(['.', ',']).count();
-    let digits = number.split(['.', ',']).collect::<Vec<_>>();
-    if number.is_empty()
-        || !number
-            .chars()
-            .all(|character| character.is_ascii_digit() || matches!(character, '.' | ','))
-        || separators > 1
-        || digits.first().is_some_and(|part| part.is_empty())
-        || digits.get(1).is_some_and(|part| part.is_empty())
-        || separators != 0 && (!time || !suffix[unit.len_utf8()..].is_empty())
-        || unit.eq_ignore_ascii_case(&'S') && digits.get(1).is_some_and(|part| part.len() > 9)
-    {
-        return Err(());
-    }
-    Ok(())
-}
-
-fn parse_duration_number(number: &str) -> Result<(f64, f64), ()> {
-    let (whole, fraction) = number.split_once(['.', ',']).unwrap_or((number, ""));
-    let whole = whole.parse::<f64>().map_err(|_| ())?;
-    let fraction = if fraction.is_empty() {
-        0.0
-    } else {
-        let scale = 10_f64.powi(fraction.len() as i32);
-        fraction.parse::<f64>().map_err(|_| ())? / scale
-    };
-    Ok((whole, fraction))
-}
-
-fn add_fractional_time(fields: &mut [f64; 10], index: usize, fraction: f64) {
-    const TIME_UNIT_NANOSECOND_SCALES: [f64; 3] = [3_600.0, 60.0, 1.0];
-    const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
-    let mut nanos = (fraction * TIME_UNIT_NANOSECOND_SCALES[index - 4] * NANOS_PER_SECOND).round() as i64;
-    if index == 4 {
-        fields[5] += (nanos / 60_000_000_000) as f64;
-        nanos %= 60_000_000_000;
-    }
-    fields[6] += (nanos / 1_000_000_000) as f64;
-    nanos %= 1_000_000_000;
-    fields[7] += (nanos / 1_000_000) as f64;
-    fields[8] += (nanos / 1_000 % 1_000) as f64;
-    fields[9] += (nanos % 1_000) as f64;
 }
