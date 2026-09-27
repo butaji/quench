@@ -28,7 +28,8 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(target), Some(Cell::Array { .. })) {
             return Err(self.type_error(p, "array receiver is not array".into()));
         }
-        let descriptor_value = self.descriptor_field(p, descriptor, "value")?;
+        let descriptor = self.to_property_descriptor(p, descriptor)?;
+        let descriptor_value = descriptor.value;
         let requested_len = if let Some(value) = descriptor_value {
             let uint32 = array_length_uint32(self.to_number(p, value)?);
             let number_len = self.to_number(p, value)?;
@@ -39,14 +40,9 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        if self.descriptor_field(p, descriptor, "get")?.is_some()
-            || self.descriptor_field(p, descriptor, "set")?.is_some()
-            || self
-                .descriptor_field(p, descriptor, "configurable")?
-                .is_some_and(|value| self.truthy(value))
-            || self
-                .descriptor_field(p, descriptor, "enumerable")?
-                .is_some_and(|value| self.truthy(value))
+        if descriptor.has_accessor_fields()
+            || descriptor.configurable.is_some_and(|value| value)
+            || descriptor.enumerable.is_some_and(|value| value)
         {
             return Ok(false);
         }
@@ -63,9 +59,7 @@ impl<H: Host> Vm<H> {
             _ => return Err(self.type_error(p, "array receiver is not array".into())),
         };
         let next_len = requested_len.unwrap_or(current_len);
-        let writable = self
-            .descriptor_field(p, descriptor, "writable")?
-            .map_or(current_writable, |value| self.truthy(value));
+        let writable = descriptor.writable.unwrap_or(current_writable);
         if !current_writable && (next_len != current_len || writable) {
             return Ok(false);
         }
@@ -272,6 +266,7 @@ impl<H: Host> Vm<H> {
         index: usize,
         descriptor: Value,
     ) -> Result<Value, JsError> {
+        let descriptor = self.to_property_descriptor(p, descriptor)?;
         let atom = self.intern_atom(&index.to_string());
         let existing = match self.heap.get(target) {
             Some(Cell::Array { elements, .. }) => elements
@@ -316,28 +311,7 @@ impl<H: Host> Vm<H> {
             .get(&(target, PropertyKey::string(atom)))
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-        let mut attributes = if is_new {
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            }
-        } else {
-            current
-        };
-        for (name, slot) in [
-            ("writable", &mut attributes.writable),
-            ("enumerable", &mut attributes.enumerable),
-            ("configurable", &mut attributes.configurable),
-        ] {
-            let field = self.intern_atom(name);
-            if let Some(value) = self.own_property(descriptor, field) {
-                *slot = self.truthy(value);
-            }
-        }
+        let attributes = descriptor.fold_attributes(current, is_new);
         if !is_new
             && !current.configurable
             && (attributes.configurable != current.configurable
@@ -348,42 +322,22 @@ impl<H: Host> Vm<H> {
                 "cannot redefine non-configurable array index".into(),
             ));
         }
-        let get = self.intern_atom("get");
-        let set = self.intern_atom("set");
-        let descriptor_getter = self.own_property(descriptor, get);
-        let descriptor_setter = self.own_property(descriptor, set);
-        let value_atom = self.intern_atom("value");
-        let writable_atom = self.intern_atom("writable");
-        let descriptor_value = self.own_property(descriptor, value_atom);
-        let descriptor_writable = self.own_property(descriptor, writable_atom);
-        let descriptor_accessor = descriptor_getter.is_some() || descriptor_setter.is_some();
-        let descriptor_data = descriptor_value.is_some() || descriptor_writable.is_some();
-        if descriptor_accessor && descriptor_data {
-            return Err(JsError(
-                "array descriptor mixes data and accessor fields".into(),
-            ));
-        }
+        let descriptor_value = descriptor.value;
+        let descriptor_accessor = descriptor.has_accessor_fields();
+        let descriptor_data = descriptor.has_data_fields();
         if descriptor_accessor {
-            let getter = descriptor_getter
-                .map(|value| (!value.is_undefined()).then_some(value))
-                .or_else(|| current.accessor.then_some(current.getter))
-                .flatten();
-            let setter = descriptor_setter
-                .map(|value| (!value.is_undefined()).then_some(value))
-                .or_else(|| current.accessor.then_some(current.setter))
-                .flatten();
             if !is_new
                 && current.accessor
                 && !current.configurable
-                && ((descriptor_getter.is_some()
-                    && descriptor_getter.is_some_and(|value| {
+                && ((descriptor.getter.is_some()
+                    && descriptor.getter.is_some_and(|value| {
                         !(value.is_undefined() && current.getter.is_none())
                             && !current
                                 .getter
                                 .is_some_and(|old| self.same_value(old, value))
                     }))
-                    || (descriptor_setter.is_some()
-                        && descriptor_setter.is_some_and(|value| {
+                    || (descriptor.setter.is_some()
+                        && descriptor.setter.is_some_and(|value| {
                             !(value.is_undefined() && current.setter.is_none())
                                 && !current
                                     .setter
@@ -394,11 +348,6 @@ impl<H: Host> Vm<H> {
                     self.type_error(p, "cannot change non-configurable array accessor".into())
                 );
             }
-            if getter.is_some_and(|value| !self.is_function(value))
-                || setter.is_some_and(|value| !self.is_function(value))
-            {
-                return Err(JsError("array index accessor is not callable".into()));
-            }
             if !is_new && !current.configurable && !current.accessor {
                 return Err(JsError(
                     "cannot change non-configurable array index kind".into(),
@@ -408,41 +357,22 @@ impl<H: Host> Vm<H> {
             if !self.set_array_element(target, index, Value::DELETED) {
                 return Err(JsError("cannot define array accessor".into()));
             }
-            self.descriptors.insert(
-                (target, PropertyKey::string(atom)),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: attributes.enumerable,
-                    configurable: attributes.configurable,
-                    accessor: true,
-                    getter,
-                    setter,
-                },
-            );
+            self.descriptors
+                .insert((target, PropertyKey::string(atom)), attributes);
             return Ok(target);
         }
-        if !is_new && current.accessor && !current.configurable {
+        if descriptor_data && !is_new && current.accessor && !current.configurable {
             return Err(JsError(
                 "cannot change array accessor to data property".into(),
             ));
         }
-        if descriptor_data {
-            attributes.accessor = false;
-            attributes.getter = None;
-            attributes.setter = None;
-        }
-        let next = self
-            .own_property(descriptor, value_atom)
-            .or(existing)
-            .unwrap_or(Value::UNDEFINED);
+        let next = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
         if !is_new
             && !current.configurable
             && !current.writable
-            && self
-                .own_property(descriptor, value_atom)
-                .is_some_and(|value| {
-                    existing.is_some_and(|current| !self.same_value(current, value))
-                })
+            && descriptor_value.is_some_and(|value| {
+                existing.is_some_and(|current| !self.same_value(current, value))
+            })
         {
             return Err(JsError("cannot write non-writable array index".into()));
         }
@@ -454,7 +384,6 @@ impl<H: Host> Vm<H> {
         if !attributes.writable {
             self.unmap_argument_index(target, index);
         }
-        let _ = p;
         Ok(target)
     }
 

@@ -1,7 +1,113 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(super) struct PropertyDescriptorRecord {
+    pub(super) value: Option<Value>,
+    pub(super) writable: Option<bool>,
+    pub(super) enumerable: Option<bool>,
+    pub(super) configurable: Option<bool>,
+    pub(super) getter: Option<Value>,
+    pub(super) setter: Option<Value>,
+}
+
+impl PropertyDescriptorRecord {
+    pub(super) fn has_accessor_fields(self) -> bool {
+        self.getter.is_some() || self.setter.is_some()
+    }
+
+    pub(super) fn has_data_fields(self) -> bool {
+        self.value.is_some() || self.writable.is_some()
+    }
+
+    pub(super) fn fold_attributes(
+        self,
+        current: PropertyAttributes,
+        is_new: bool,
+    ) -> PropertyAttributes {
+        let mut next = if is_new {
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            }
+        } else {
+            current
+        };
+        if let Some(writable) = self.writable {
+            next.writable = writable;
+        }
+        if let Some(enumerable) = self.enumerable {
+            next.enumerable = enumerable;
+        }
+        if let Some(configurable) = self.configurable {
+            next.configurable = configurable;
+        }
+        if self.has_accessor_fields() {
+            next.accessor = true;
+            next.writable = false;
+            next.getter = self
+                .getter
+                .map(|value| (!value.is_undefined()).then_some(value))
+                .or_else(|| current.accessor.then_some(current.getter))
+                .flatten();
+            next.setter = self
+                .setter
+                .map(|value| (!value.is_undefined()).then_some(value))
+                .or_else(|| current.accessor.then_some(current.setter))
+                .flatten();
+        } else if self.has_data_fields() {
+            next.accessor = false;
+            next.getter = None;
+            next.setter = None;
+        }
+        next
+    }
+}
+
 impl<H: Host> Vm<H> {
+    pub(super) fn to_property_descriptor(
+        &mut self,
+        p: &ResidualProgram,
+        descriptor: Value,
+    ) -> Result<PropertyDescriptorRecord, JsError> {
+        let getter = self.descriptor_field(p, descriptor, "get")?;
+        let setter = self.descriptor_field(p, descriptor, "set")?;
+        let value = self.descriptor_field(p, descriptor, "value")?;
+        let writable = self
+            .descriptor_field(p, descriptor, "writable")?
+            .map(|value| self.truthy(value));
+        let enumerable = self
+            .descriptor_field(p, descriptor, "enumerable")?
+            .map(|value| self.truthy(value));
+        let configurable = self
+            .descriptor_field(p, descriptor, "configurable")?
+            .map(|value| self.truthy(value));
+        for accessor in [getter, setter].into_iter().flatten() {
+            if !accessor.is_undefined() && !self.is_function(accessor) {
+                return Err(self.type_error(p, "Accessor descriptor must be callable".into()));
+            }
+        }
+        let record = PropertyDescriptorRecord {
+            value,
+            writable,
+            enumerable,
+            configurable,
+            getter,
+            setter,
+        };
+        if record.has_accessor_fields() && record.has_data_fields() {
+            return Err(self.type_error(
+                p,
+                "Property descriptor cannot mix accessor and data fields".into(),
+            ));
+        }
+        Ok(record)
+    }
+
     fn own_data_descriptor(
         &mut self,
         value: Value,
