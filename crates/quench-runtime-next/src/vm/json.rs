@@ -920,7 +920,8 @@ impl<H: Host> Vm<H> {
             | Some(Cell::TypedArray { .. })
             | Some(Cell::ArrayBuffer { .. })
             | Some(Cell::DataView { .. })
-            | Some(Cell::TemporalDuration { .. }) => {
+            | Some(Cell::TemporalDuration { .. })
+            | Some(Cell::TemporalPlainDate { .. }) => {
                 self.json_serialize_object(p, value, state).map(Some)
             }
             Some(Cell::Environment { .. })

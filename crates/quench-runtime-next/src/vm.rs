@@ -96,6 +96,7 @@ mod string;
 mod string_cache;
 mod string_extra;
 mod temporal;
+mod temporal_date;
 mod superinstruction;
 mod symbol;
 mod type_predicates;
