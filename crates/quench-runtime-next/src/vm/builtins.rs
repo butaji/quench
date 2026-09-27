@@ -325,6 +325,7 @@ const NATIVES: &[Native] = &[
     Native::TemporalPlainYearMonthCompare, Native::TemporalPlainYearMonthCalendarIdGetter,
     Native::TemporalPlainYearMonthYearGetter, Native::TemporalPlainYearMonthMonthGetter,
     Native::TemporalPlainYearMonthMonthCodeGetter,
+    Native::TemporalPlainYearMonthEraGetter, Native::TemporalPlainYearMonthEraYearGetter,
     Native::TemporalPlainYearMonthReferenceISODayGetter,
     Native::TemporalPlainYearMonthDaysInMonthGetter,
     Native::TemporalPlainYearMonthDaysInYearGetter,
