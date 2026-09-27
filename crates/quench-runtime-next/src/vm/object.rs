@@ -30,6 +30,10 @@ impl<H: Host> Vm<H> {
         }
         None
     }
+    fn object_property_slot(&self, object: Value, key: PropertyKey) -> Option<(u32, usize)> {
+        let shape = self.object_data(object)?.shape();
+        Some((shape, self.property_shape_slot(shape, key)?))
+    }
     fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
         let mut current = Some(shape);
         while let Some(id) = current {
@@ -111,8 +115,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: PropertyKey,
     ) -> Option<PropertyAttributes> {
-        if let Some(shape) = self.object_data(object).map(Object::shape)
-            && let Some(slot) = self.property_shape_slot(shape, key)
+        if let Some((shape, slot)) = self.object_property_slot(object, key)
             && let Some(attributes) = self.shape_attribute(shape, slot)
         {
             return Some(attributes);
@@ -125,9 +128,7 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         attributes: PropertyAttributes,
     ) {
-        if let Some(shape) = self.object_data(object).map(Object::shape)
-            && let Some(slot) = self.property_shape_slot(shape, key)
-        {
+        if let Some((shape, slot)) = self.object_property_slot(object, key) {
             if self.shape_attribute(shape, slot) == Some(attributes) {
                 return;
             }
@@ -150,9 +151,7 @@ impl<H: Host> Vm<H> {
         self.invalidate_method_caches_for_key(key);
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
-        if let Some(shape) = self.object_data(object).map(Object::shape)
-            && let Some(slot) = self.property_shape_slot(shape, key)
-        {
+        if let Some((shape, slot)) = self.object_property_slot(object, key) {
             let storage_len = self.shapes[shape as usize].storage_len;
             let next_id = self.append_shape(
                 shape,
