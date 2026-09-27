@@ -361,6 +361,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TemporalPlainDateTimeValueOf => 0.0,
         Native::TemporalPlainDateTimeToZonedDateTime => 1.0,
         Native::TemporalPlainDateTimeWith => 1.0,
+        Native::TemporalPlainDateTimeWithCalendar => 1.0,
         Native::TemporalPlainTime => 6.0,
         Native::TemporalPlainTimeFrom => 1.0,
         Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => 2.0,
