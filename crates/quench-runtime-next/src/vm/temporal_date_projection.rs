@@ -277,7 +277,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Invalid calendar".into()));
         }
         let text = self.to_string(p, value)?.to_string();
-        temporal_date_parse::parse_calendar_identifier(&text)
+        temporal_date_parse::parse_calendar_identifier_name(&text)
             .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))
     }
 
@@ -348,7 +348,7 @@ impl<H: Host> Vm<H> {
             native,
             Native::TemporalPlainMonthDayFrom | Native::TemporalPlainYearMonthFrom
         ) {
-            return self.temporal_calendar_projection_from(p, native, this, args);
+            return self.temporal_calendar_projection_from(p, native, args);
         }
         Err(self.type_error(
             p,
@@ -362,28 +362,19 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (constructor_native, from_native) = match native {
-            Native::TemporalPlainMonthDayCompare => (
-                Native::TemporalPlainMonthDay,
-                Native::TemporalPlainMonthDayFrom,
-            ),
-            Native::TemporalPlainYearMonthCompare => (
-                Native::TemporalPlainYearMonth,
-                Native::TemporalPlainYearMonthFrom,
-            ),
+        let from_native = match native {
+            Native::TemporalPlainMonthDayCompare => Native::TemporalPlainMonthDayFrom,
+            Native::TemporalPlainYearMonthCompare => Native::TemporalPlainYearMonthFrom,
             _ => unreachable!("not a Temporal calendar compare native"),
         };
-        let constructor = self.native_value(constructor_native);
         let left = self.temporal_calendar_projection_from(
             p,
             from_native,
-            constructor,
             &[args.first().copied().unwrap_or(Value::UNDEFINED)],
         )?;
         let right = self.temporal_calendar_projection_from(
             p,
             from_native,
-            constructor,
             &[args.get(1).copied().unwrap_or(Value::UNDEFINED)],
         )?;
         self.temporal_calendar_projection_order(left, right, native)
@@ -757,9 +748,13 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         native: Native,
-        constructor: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let constructor = self.native_value(match native {
+            Native::TemporalPlainMonthDayFrom => Native::TemporalPlainMonthDay,
+            Native::TemporalPlainYearMonthFrom => Native::TemporalPlainYearMonth,
+            _ => unreachable!("not a calendar projection from method"),
+        });
         match native {
             Native::TemporalPlainMonthDayFrom => {
                 self.temporal_plain_month_day_from(p, constructor, args)

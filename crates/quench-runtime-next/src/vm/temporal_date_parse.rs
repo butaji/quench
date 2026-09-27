@@ -26,6 +26,11 @@ pub(super) fn parse_calendar_identifier(text: &str) -> Option<String> {
     }
 }
 
+pub(super) fn parse_calendar_identifier_name(text: &str) -> Option<String> {
+    let calendar = text.to_ascii_lowercase();
+    matches!(calendar.as_str(), ISO_CALENDAR | GREGORIAN_CALENDAR).then_some(calendar)
+}
+
 pub(super) fn calendar_identifier_from_string(text: &str) -> Option<String> {
     if let Some(calendar) = parse_calendar_identifier(text) {
         return Some(calendar);
