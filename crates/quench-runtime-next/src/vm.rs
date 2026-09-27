@@ -377,6 +377,8 @@ pub struct Vm<H> {
     regexp_proto: Value,
     regexp_prototypes: FxHashMap<Value, Value>,
     temporal_plain_date_proto: Value,
+    temporal_plain_month_day_proto: Value,
+    temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
     frames: Vec<Frame>,
     frame_pool: Vec<Frame>,
@@ -812,6 +814,8 @@ impl<H: Host> Vm<H> {
         self.active_program = ProgramId::MAIN;
         self.finalization_registry_proto = Value::NULL;
         self.temporal_plain_date_proto = Value::NULL;
+        self.temporal_plain_month_day_proto = Value::NULL;
+        self.temporal_plain_year_month_proto = Value::NULL;
         self.random_state = DEFAULT_RANDOM_SEED;
         self.realm.globals = self
             .heap

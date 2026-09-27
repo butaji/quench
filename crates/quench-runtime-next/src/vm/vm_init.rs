@@ -56,6 +56,8 @@ impl<H: Host> Vm<H> {
             regexp_proto: Value::NULL,
             regexp_prototypes: FxHashMap::default(),
             temporal_plain_date_proto: Value::NULL,
+            temporal_plain_month_day_proto: Value::NULL,
+            temporal_plain_year_month_proto: Value::NULL,
             natives: vec![],
             frames: vec![],
             frame_pool: vec![],

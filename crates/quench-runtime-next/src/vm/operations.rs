@@ -580,11 +580,45 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainTime | Native::TemporalPlainTimeFrom => {
                 self.temporal_plain_time_native(p, native, args)
             }
-            Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => {
-                Err(self.type_error(p, "Temporal calendar projection requires conversion".into()))
+            Native::TemporalPlainMonthDay
+            | Native::TemporalPlainMonthDayFrom
+            | Native::TemporalPlainMonthDayCompare
+            | Native::TemporalPlainMonthDayCalendarIdGetter
+            | Native::TemporalPlainMonthDayDayGetter
+            | Native::TemporalPlainMonthDayMonthCodeGetter
+            | Native::TemporalPlainMonthDayEquals
+            | Native::TemporalPlainMonthDayToPlainDate
+            | Native::TemporalPlainMonthDayWith
+            | Native::TemporalPlainMonthDayValueOf
+            | Native::TemporalPlainYearMonth
+            | Native::TemporalPlainYearMonthFrom
+            | Native::TemporalPlainYearMonthCompare
+            | Native::TemporalPlainYearMonthCalendarIdGetter
+            | Native::TemporalPlainYearMonthYearGetter
+            | Native::TemporalPlainYearMonthMonthGetter
+            | Native::TemporalPlainYearMonthMonthCodeGetter
+            | Native::TemporalPlainYearMonthReferenceISODayGetter
+            | Native::TemporalPlainYearMonthDaysInMonthGetter
+            | Native::TemporalPlainYearMonthDaysInYearGetter
+            | Native::TemporalPlainYearMonthMonthsInYearGetter
+            | Native::TemporalPlainYearMonthInLeapYearGetter
+            | Native::TemporalPlainYearMonthEquals
+            | Native::TemporalPlainYearMonthAdd
+            | Native::TemporalPlainYearMonthSubtract
+            | Native::TemporalPlainYearMonthUntil
+            | Native::TemporalPlainYearMonthSince
+            | Native::TemporalPlainYearMonthWith
+            | Native::TemporalPlainYearMonthValueOf
+            | Native::TemporalPlainYearMonthToPlainDate => {
+                self.temporal_calendar_projection_native(p, native, this, args)
             }
-            Native::TemporalPlainMonthDayToString | Native::TemporalPlainYearMonthToString => {
-                super::temporal_date_projection::native(self, p, native, this)
+            Native::TemporalPlainMonthDayToString
+            | Native::TemporalPlainMonthDayToJSON
+            | Native::TemporalPlainMonthDayToLocaleString
+            | Native::TemporalPlainYearMonthToString
+            | Native::TemporalPlainYearMonthToJSON
+            | Native::TemporalPlainYearMonthToLocaleString => {
+                super::temporal_date_projection::native(self, p, native, this, args)
             }
             Native::TemporalZonedDateTime
             | Native::TemporalZonedDateTimeFrom
