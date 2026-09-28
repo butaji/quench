@@ -487,7 +487,7 @@ const NATIVES: &[Native] = &[
     Native::IntlDurationFormatFormat, Native::IntlDurationFormatFormatToParts,
     Native::IntlDurationFormatResolvedOptions, Native::IntlDurationFormatSupportedLocalesOf,
     Native::IntlListFormat, Native::IntlListFormatFormatGetter, Native::IntlListFormatFormat,
-    Native::IntlListFormatFormatToParts,
+    Native::IntlListFormatFormatToParts, Native::IntlListFormatResolvedOptions,
     Native::IntlListFormatSupportedLocalesOf,
     Native::IntlRelativeTimeFormat, Native::IntlRelativeTimeFormatResolvedOptions,
     Native::Symbol, Native::SymbolToString, Native::SymbolToPrimitive, Native::SymbolValueOf,

@@ -317,7 +317,7 @@ pub(crate) enum Native {
     IntlDurationFormatFormatToParts, IntlDurationFormatResolvedOptions,
     IntlDurationFormatSupportedLocalesOf,
     IntlListFormat, IntlListFormatFormatGetter, IntlListFormatFormat, IntlListFormatFormatToParts,
-    IntlListFormatSupportedLocalesOf,
+    IntlListFormatResolvedOptions, IntlListFormatSupportedLocalesOf,
     IntlRelativeTimeFormat, IntlRelativeTimeFormatResolvedOptions,
     SymbolFor,
     SymbolKeyFor,

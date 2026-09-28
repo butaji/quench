@@ -350,6 +350,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::IntlDurationFormatSupportedLocalesOf => 1.0,
         Native::IntlListFormat => 0.0,
         Native::IntlListFormatFormatGetter => 0.0,
+        Native::IntlListFormatResolvedOptions => 0.0,
         Native::IntlListFormatFormat | Native::IntlListFormatFormatToParts => 1.0,
         Native::IntlListFormatSupportedLocalesOf => 1.0,
         Native::Number => 1.0,
