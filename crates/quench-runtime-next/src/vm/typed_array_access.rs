@@ -263,7 +263,7 @@ impl<H: Host> Vm<H> {
             _ => return Ok(false),
         };
         if self.array_buffer_detached(buffer) {
-            return Err(JsError("typed array backing buffer is detached".into()));
+            return Ok(true);
         }
         let length = self.typed_array_length(object).unwrap_or(0);
         if index >= length {
