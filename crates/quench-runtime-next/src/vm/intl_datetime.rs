@@ -13,8 +13,14 @@ const DEFAULT_TIME_ZONE_LONG_NAME: &str = "Peru Standard Time";
 const DEFAULT_TIME_ZONE_LONG_OFFSET: &str = "GMT-05:00";
 const DEFAULT_TIME_ZONE: &str = "America/Lima";
 const NANOSECONDS_PER_MILLISECOND: f64 = 1_000_000.0;
+const MILLISECONDS_PER_SECOND: i64 = 1_000;
+const SECONDS_PER_HOUR: i64 = 3_600;
+const MILLISECONDS_PER_HOUR: i64 = SECONDS_PER_HOUR * MILLISECONDS_PER_SECOND;
+const HOURS_PER_DAY_I64: i64 = 24;
+const MILLISECONDS_PER_DAY: i64 = MILLISECONDS_PER_HOUR * HOURS_PER_DAY_I64;
 const SECONDS_PER_MINUTE: i32 = 60;
 const MINUTES_PER_HOUR: i32 = 60;
+const DEFAULT_TIME_ZONE_OFFSET_MINUTES: i32 = -300;
 const TIME_ZONE_SIGN_LENGTH: usize = 1;
 const TIME_ZONE_HOUR_DIGITS: usize = 2;
 const TIME_ZONE_MINUTE_DIGITS: usize = 2;
@@ -550,12 +556,18 @@ impl<H: Host> Vm<H> {
         ) {
             return Err(self.type_error(p, "Temporal.ZonedDateTime is not supported".into()));
         }
-        let milliseconds = match self.heap.get(value) {
-            Some(Cell::Date { milliseconds, .. }) => *milliseconds,
-            Some(Cell::TemporalInstant {
-                epoch_nanoseconds, ..
-            }) => (*epoch_nanoseconds as f64) / NANOSECONDS_PER_MILLISECOND,
-            _ => self.to_number(p, value)?,
+        let milliseconds = if value.is_undefined() {
+            HostContext::new(&mut self.host)
+                .invoke(CapabilityId::ClockMillis, None)
+                .trunc()
+        } else {
+            match self.heap.get(value) {
+                Some(Cell::Date { milliseconds, .. }) => *milliseconds,
+                Some(Cell::TemporalInstant {
+                    epoch_nanoseconds, ..
+                }) => (*epoch_nanoseconds as f64) / NANOSECONDS_PER_MILLISECOND,
+                _ => self.to_number(p, value)?,
+            }
         };
         if !milliseconds.is_finite() || milliseconds.abs() > super::date::DATE_TIME_CLIP_LIMIT_MS {
             return Err(self.range_error(p, "Invalid time value".into()));
@@ -566,10 +578,12 @@ impl<H: Host> Vm<H> {
         let zone = self
             .date_time_option(resolved, "timeZone")
             .and_then(|value| self.string_value(value));
-        let Some(date) = date_in_time_zone(milliseconds, zone.as_deref()) else {
+        let date = date_in_time_zone(milliseconds, zone.as_deref())
+            .map(|date| DateTimeFields::from_date(&date))
+            .or_else(|| date_time_fields_at_time_clip(milliseconds, zone.as_deref()));
+        let Some(mut fields) = date else {
             return Err(self.range_error(p, "Invalid time value".into()));
         };
-        let mut fields = DateTimeFields::from_date(&date);
         fields.has_date = self
             .date_time_slot(formatter, DATE_TIME_FORMAT_DATE_SLOT)
             .is_some_and(|value| value == Value::TRUE);
@@ -1261,6 +1275,34 @@ fn date_in_time_zone(
     Utc.timestamp_millis_opt(milliseconds.trunc() as i64)
         .single()
         .map(|instant| instant.with_timezone(&timezone).fixed_offset())
+}
+
+fn date_time_fields_at_time_clip(milliseconds: f64, zone: Option<&str>) -> Option<DateTimeFields> {
+    let offset_minutes = match zone {
+        None => DEFAULT_TIME_ZONE_OFFSET_MINUTES,
+        Some(zone) if zone.eq_ignore_ascii_case("utc") => 0,
+        Some(zone) => time_zone_offset_minutes(zone)?,
+    };
+    let offset_milliseconds = i64::from(offset_minutes)
+        .checked_mul(i64::from(SECONDS_PER_MINUTE))?
+        .checked_mul(MILLISECONDS_PER_SECOND)?;
+    let local_milliseconds = (milliseconds.trunc() as i64).checked_add(offset_milliseconds)?;
+    let days = local_milliseconds.div_euclid(MILLISECONDS_PER_DAY);
+    let within_day = local_milliseconds.rem_euclid(MILLISECONDS_PER_DAY);
+    let date: super::temporal_date::IsoDate = quench_temporal::civil_from_days(days)?.into();
+    let hour = within_day / MILLISECONDS_PER_HOUR;
+    let within_hour = within_day % MILLISECONDS_PER_HOUR;
+    let minute = within_hour / (i64::from(SECONDS_PER_MINUTE) * MILLISECONDS_PER_SECOND);
+    let within_minute = within_hour % (i64::from(SECONDS_PER_MINUTE) * MILLISECONDS_PER_SECOND);
+    Some(DateTimeFields::from_components(
+        date.year,
+        date.month,
+        date.day,
+        u32::try_from(hour).ok()?,
+        u32::try_from(minute).ok()?,
+        u32::try_from(within_minute / MILLISECONDS_PER_SECOND).ok()?,
+        u32::try_from(within_minute % MILLISECONDS_PER_SECOND).ok()?,
+    ))
 }
 
 fn time_zone_offset_minutes(zone: &str) -> Option<i32> {
