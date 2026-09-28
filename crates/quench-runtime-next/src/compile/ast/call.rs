@@ -255,6 +255,7 @@ impl FunctionCompiler<'_, '_> {
                         atom: *atom,
                         slot: *slot,
                         immutable: scope.immutable.contains(atom),
+                        catch_parameter: scope.catch_parameter,
                     });
                 }
             }

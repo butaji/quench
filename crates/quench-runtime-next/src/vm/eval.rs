@@ -232,7 +232,10 @@ impl<H: Host> Vm<H> {
                 .clone();
             for atom in &global_function_atoms {
                 if (!caller_scope && self.realm.global_lexical_declarations.contains(atom))
-                    || (direct_eval && self.direct_eval_lexical_binding(p, *atom).is_some())
+                    || (direct_eval
+                        && self
+                            .direct_eval_lexical_binding(p, *atom)
+                            .is_some_and(|binding| !binding.catch_parameter))
                 {
                     return self.syntax_error_result(
                         p,
@@ -263,7 +266,10 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 if (!caller_scope && self.realm.global_lexical_declarations.contains(&atom))
-                    || (direct_eval && self.direct_eval_lexical_binding(p, atom).is_some())
+                    || (direct_eval
+                        && self
+                            .direct_eval_lexical_binding(p, atom)
+                            .is_some_and(|binding| !binding.catch_parameter))
                 {
                     return self.syntax_error_result(
                         p,
@@ -354,7 +360,9 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_atom(&name);
             lexical_conflict |= check_lexical_conflicts
                 && (self.realm.global_lexical_declarations.contains(&atom)
-                    || self.direct_eval_lexical_binding(p, atom).is_some());
+                    || self
+                        .direct_eval_lexical_binding(p, atom)
+                        .is_some_and(|binding| !binding.catch_parameter));
             retained_var_bindings.push(atom);
         }
         let result = if lexical_conflict {

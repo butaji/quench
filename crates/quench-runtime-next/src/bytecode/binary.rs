@@ -168,6 +168,7 @@ pub(super) fn write_program(
                 out.u32(binding.atom);
                 out.u16(binding.slot);
                 out.u8(u8::from(binding.immutable));
+                out.u8(u8::from(binding.catch_parameter));
             }
         }
         out.u16(function.registers);
@@ -407,6 +408,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
                         0 => false,
                         1 => true,
                         _ => return Err("invalid eval binding mutability flag".into()),
+                    },
+                    catch_parameter: match input.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err("invalid eval binding catch flag".into()),
                     },
                 })
             })?;

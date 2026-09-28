@@ -331,7 +331,7 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    fn initializer_value(
+    pub(super) fn initializer_value(
         &mut self,
         initializer: &Expression<'_>,
         binding: &BindingPattern<'_>,

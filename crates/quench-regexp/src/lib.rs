@@ -191,7 +191,8 @@ enum ClassItem {
     String(Vec<u32>),
 }
 
-struct Lowering {
+struct Lowering<'a> {
+    source: &'a str,
     names: Vec<String>,
     next_capture: usize,
 }
@@ -256,6 +257,7 @@ impl Regex {
         let mut names = Vec::new();
         collect_names(&parsed.body, &mut names);
         let mut lowering = Lowering {
+            source: &normalized_source,
             names,
             next_capture: 0,
         };
@@ -799,7 +801,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
                 .map(|max| max.min(usize::MAX as u64) as usize),
             greedy: quantifier.greedy,
         },
-        ast::Term::Character(character) => Expr::Literal(character.value),
+        ast::Term::Character(character) => lower_character(character, &lowering.source),
         ast::Term::Dot(_) => Expr::Dot,
         ast::Term::CharacterClassEscape(escape) => Expr::Class(ClassExpr {
             negative: false,
@@ -815,7 +817,9 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
                 value: property.value.as_ref().map(ToString::to_string),
             }],
         }),
-        ast::Term::CharacterClass(class) => Expr::Class(lower_class(class)),
+        ast::Term::CharacterClass(class) => {
+            Expr::Class(lower_class(class, &lowering.source))
+        }
         ast::Term::CapturingGroup(group) => {
             let index = lowering.next_capture;
             lowering.next_capture += 1;
@@ -975,11 +979,42 @@ fn modifier_mode(
     }
 }
 
-fn lower_class(class: &ast::CharacterClass<'_>) -> ClassExpr {
-    let items = class
-        .body
-        .iter()
-        .flat_map(|item| match item {
+const CONTROL_CODE_MASK: u32 = 0x1F;
+const CONTROL_ESCAPE_PARTS: usize = 3;
+
+fn lower_character(character: &ast::Character, source: &str) -> Expr {
+    let legacy_octal_tail = (character.kind == ast::CharacterKind::Octal3)
+        .then(|| source.get(character.span.start as usize..character.span.end as usize))
+        .flatten()
+        .and_then(|escape| {
+            let mut digits = escape.chars().skip(1);
+            let first = digits.next()?;
+            let second = digits.next()?;
+            let third = digits.next()?;
+            (matches!(first, '4'..='7')
+                && second.is_ascii_digit()
+                && second <= '7'
+                && third.is_ascii_digit()
+                && third <= '7')
+                .then_some(u32::from(third))
+        });
+    if let Some(tail) = legacy_octal_tail {
+        Expr::Sequence(vec![Expr::Literal(character.value), Expr::Literal(tail)])
+    } else {
+        Expr::Literal(character.value)
+    }
+}
+
+fn lower_class(class: &ast::CharacterClass<'_>, source: &str) -> ClassExpr {
+    let mut items = Vec::new();
+    let mut index = 0;
+    while let Some(item) = class.body.get(index) {
+        if let Some(control) = legacy_class_control(&class.body[index..], source) {
+            items.push(ClassItem::Character(control));
+            index += CONTROL_ESCAPE_PARTS;
+            continue;
+        }
+        items.extend(match item {
             ast::CharacterClassContents::CharacterClassRange(range) => {
                 vec![ClassItem::Range(range.min.value, range.max.value)]
             }
@@ -994,10 +1029,15 @@ fn lower_class(class: &ast::CharacterClass<'_>) -> ClassExpr {
                 }]
             }
             ast::CharacterClassContents::Character(character) => {
-                vec![ClassItem::Character(character.value)]
+                let value = if character.kind == ast::CharacterKind::ControlLetter {
+                    character.value & CONTROL_CODE_MASK
+                } else {
+                    character.value
+                };
+                vec![ClassItem::Character(value)]
             }
             ast::CharacterClassContents::NestedCharacterClass(nested) => {
-                vec![ClassItem::Nested(lower_class(nested))]
+                vec![ClassItem::Nested(lower_class(nested, source))]
             }
             ast::CharacterClassContents::ClassStringDisjunction(strings) => {
                 vec![ClassItem::Nested(ClassExpr {
@@ -1018,8 +1058,9 @@ fn lower_class(class: &ast::CharacterClass<'_>) -> ClassExpr {
                         .collect(),
                 })]
             }
-        })
-        .collect();
+        });
+        index += 1;
+    }
     ClassExpr {
         negative: class.negative,
         kind: match class.kind {
@@ -1029,6 +1070,28 @@ fn lower_class(class: &ast::CharacterClass<'_>) -> ClassExpr {
         },
         items,
     }
+}
+
+fn legacy_class_control(contents: &[ast::CharacterClassContents<'_>], source: &str) -> Option<u32> {
+    let [
+        ast::CharacterClassContents::Character(backslash),
+        ast::CharacterClassContents::Character(control),
+        ast::CharacterClassContents::Character(letter),
+        ..,
+    ] = contents
+    else {
+        return None;
+    };
+    let spelling = |character: &ast::Character| {
+        source.get(character.span.start as usize..character.span.end as usize)
+    };
+    if spelling(backslash) != Some("\\")
+        || spelling(control) != Some("c")
+        || !char::from_u32(letter.value).is_some_and(|value| value.is_ascii_digit() || value == '_')
+    {
+        return None;
+    }
+    Some(letter.value & CONTROL_CODE_MASK)
 }
 
 fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option<State> {
