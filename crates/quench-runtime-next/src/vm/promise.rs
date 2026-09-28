@@ -330,6 +330,12 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::IntlRelativeTimeFormatSupportedLocalesOf => 1.0,
         Native::IntlRelativeTimeFormatFormat | Native::IntlRelativeTimeFormatFormatToParts => 2.0,
         Native::IntlRelativeTimeFormatResolvedOptions => 0.0,
+        Native::IntlSegmenter => 0.0,
+        Native::IntlSegmenterSupportedLocalesOf => 1.0,
+        Native::IntlSegmenterSegment => 1.0,
+        Native::IntlSegmenterResolvedOptions => 0.0,
+        Native::IntlSegmenterSegmentsIterator => 0.0,
+        Native::IntlSegmenterSegmentsContaining => 1.0,
         Native::IntlGetCanonicalLocales | Native::IntlSupportedValuesOf | Native::IntlLocale => 1.0,
         Native::IntlLocaleToString | Native::IntlLocaleMaximize | Native::IntlLocaleMinimize
         | Native::IntlLocaleGetCalendars | Native::IntlLocaleGetCollations

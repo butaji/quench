@@ -72,6 +72,8 @@ impl<H: Host> Vm<H> {
             intl_list_format_constructors: FxHashMap::default(),
             intl_list_format_prototypes: FxHashMap::default(),
             intl_relative_time_format_prototypes: FxHashMap::default(),
+            intl_segmenter_prototypes: FxHashMap::default(),
+            intl_segments_prototypes: FxHashMap::default(),
             intl_locale_prototypes: FxHashMap::default(),
             temporal_plain_date_proto: Value::NULL,
             temporal_plain_time_proto: Value::NULL,

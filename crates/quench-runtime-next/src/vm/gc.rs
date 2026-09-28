@@ -278,6 +278,16 @@ impl<H: Host> Vm<H> {
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
+                    self.intl_segmenter_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
+                .chain(
+                    self.intl_segments_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
+                .chain(
                     self.intl_locale_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),

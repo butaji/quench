@@ -180,6 +180,7 @@ impl<H: Host> Vm<H> {
                         | Native::IntlListFormat
                         | Native::IntlLocale
                         | Native::IntlRelativeTimeFormat
+                        | Native::IntlSegmenter
                         | Native::Promise
                         | Native::Symbol
                         | Native::TemporalDuration
@@ -906,6 +907,7 @@ impl<H: Host> Vm<H> {
             Native::IntlRelativeTimeFormat => {
                 self.intl_relative_time_format_construct(p, args, new_target)
             }
+            Native::IntlSegmenter => self.intl_segmenter_construct(p, args, new_target),
             Native::TemporalDuration => self.temporal_duration_construct(p, args),
             Native::TemporalPlainTime => self.temporal_plain_time_construct(p, args),
             Native::TemporalPlainDate => self.temporal_plain_date_construct(p, args, new_target),

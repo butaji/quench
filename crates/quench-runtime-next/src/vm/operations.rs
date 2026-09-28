@@ -235,6 +235,14 @@ impl<H: Host> Vm<H> {
             | Native::IntlRelativeTimeFormatFormatToParts => {
                 self.intl_relative_time_format_native(p, native, this, args)
             }
+            Native::IntlSegmenter => Err(self.type_error(p, "constructor requires new".into())),
+            Native::IntlSegmenterSupportedLocalesOf
+            | Native::IntlSegmenterSegment
+            | Native::IntlSegmenterResolvedOptions
+            | Native::IntlSegmenterSegmentsIterator
+            | Native::IntlSegmenterSegmentsContaining => {
+                self.intl_segmenter_native(p, native, this, args)
+            }
             Native::IntlCollator
             | Native::IntlCollatorSupportedLocalesOf
             | Native::IntlCollatorCompareGetter

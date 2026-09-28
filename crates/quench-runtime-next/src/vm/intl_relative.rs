@@ -270,7 +270,7 @@ impl<H: Host> Vm<H> {
         Ok(result)
     }
 
-    fn string_option(
+    pub(super) fn string_option(
         &mut self,
         p: &ResidualProgram,
         options: Value,
