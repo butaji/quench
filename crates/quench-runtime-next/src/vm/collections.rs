@@ -192,17 +192,32 @@ impl<H: Host> Vm<H> {
             }
         }
     }
-    pub(super) fn construct_weak_ref_native(&mut self, args: &[Value]) -> Result<Value, JsError> {
+    pub(super) fn construct_weak_ref_native(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        new_target: Value,
+    ) -> Result<Value, JsError> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if self.object_data(target).is_none() {
-            return Err(JsError("WeakRef target must be an object".into()));
+        if !self.is_weak_key_value(target) {
+            return Err(self.type_error(p, "WeakRef target must be an object".into()));
         }
         let target = self
             .heap
             .weak_handle(target)
-            .ok_or_else(|| JsError("WeakRef target is not a live object".into()))?;
+            .ok_or_else(|| self.type_error(p, "WeakRef target is not a live object".into()))?;
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = if self.object_data(prototype).is_some() {
+            prototype
+        } else {
+            let realm = self.function_realm(p, new_target)?;
+            let weak_ref_atom = self.intern_atom("WeakRef");
+            let constructor = self.get_property(p, realm, weak_ref_atom)?;
+            self.get_property(p, constructor, prototype_atom)?
+        };
         Ok(self.heap.alloc(Cell::WeakRef {
-            object: Self::empty_object(self.weak_ref_proto),
+            object: Self::empty_object(prototype),
             target: Some(target),
         }))
     }
@@ -235,14 +250,22 @@ impl<H: Host> Vm<H> {
         self.global(program, "WeakSet", weak_set)?;
         let weak_ref = self.native_value(Native::WeakRef);
         self.weak_ref_proto = self.object();
-        self.set_named(
-            program,
-            self.weak_ref_proto,
-            "deref",
-            self.native_value(Native::WeakRefDeref),
-        )?;
+        self.install_weak_ref_prototype(program, weak_ref, self.weak_ref_proto)?;
         self.set_named(program, weak_ref, "prototype", self.weak_ref_proto)?;
+        self.set_constructor_prototype_attributes(weak_ref);
+        self.set_builtin_function_name(weak_ref, "WeakRef")?;
         self.global(program, "WeakRef", weak_ref)
+    }
+
+    fn install_weak_ref_prototype(
+        &mut self,
+        program: &ResidualProgram,
+        constructor: Value,
+        prototype: Value,
+    ) -> Result<(), JsError> {
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        self.set_builtin_named(program, prototype, "deref", Native::WeakRefDeref)?;
+        Ok(())
     }
 
     fn install_weak_map_prototype(
@@ -311,7 +334,18 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(program, weak_set_prototype, name, native)?;
         }
         self.set_constructor_prototype_attributes(weak_set);
-        self.set_builtin_value_named(global, "WeakSet", weak_set)
+        self.set_builtin_value_named(global, "WeakSet", weak_set)?;
+
+        let weak_ref = self.native_with_realm(Native::WeakRef, Value::NULL, global);
+        self.set_builtin_function_name(weak_ref, "WeakRef")?;
+        let weak_ref_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.install_weak_ref_prototype(program, weak_ref, weak_ref_prototype)?;
+        self.install_builtin_to_string_tag(weak_ref_prototype, "WeakRef")?;
+        self.set_builtin_value_named(weak_ref, "prototype", weak_ref_prototype)?;
+        self.set_constructor_prototype_attributes(weak_ref);
+        self.set_builtin_value_named(global, "WeakRef", weak_ref)
     }
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
@@ -1188,7 +1222,7 @@ impl<H: Host> Vm<H> {
             }
             Native::WeakRefDeref => {
                 let Some(Cell::WeakRef { target, .. }) = self.heap.get(this) else {
-                    return Err(JsError("WeakRef method receiver is not a WeakRef".into()));
+                    return Err(self.type_error(p, "WeakRef.prototype.deref called on incompatible receiver".into()));
                 };
                 Ok(target
                     .and_then(|target| self.heap.weak_value(target))
