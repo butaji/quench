@@ -176,6 +176,21 @@ impl<H: Host> Vm<H> {
             Native::IntlNumberFormatFormat => {
                 self.intl_number_format_format(p, this, args)
             }
+            Native::IntlCollator
+            | Native::IntlCollatorSupportedLocalesOf
+            | Native::IntlCollatorCompareGetter
+            | Native::IntlCollatorCompare
+            | Native::IntlCollatorResolvedOptions => {
+                self.intl_collator_native(p, native, this, args)
+            }
+            Native::IntlDateTimeFormat => {
+                self.intl_date_time_format_call(p, args)
+            }
+            Native::IntlDateTimeFormatFormatGetter
+            | Native::IntlDateTimeFormatFormat
+            | Native::IntlDateTimeFormatResolvedOptions => {
+                self.intl_date_time_format_native(p, native, this, args)
+            }
             Native::DateNow => Ok(Value::number(
                 HostContext::new(&mut self.host)
                     .invoke(CapabilityId::ClockMillis, None)

@@ -1,6 +1,8 @@
 mod bigint;
+mod collator;
 
 pub use bigint::{format_bigint, BigIntFormatOptions};
+pub use collator::{compare_collator, CollatorOptions};
 
 pub const NUMBER_FORMAT_OPTION_KEYS: &[&str] = &[
     "localeMatcher",

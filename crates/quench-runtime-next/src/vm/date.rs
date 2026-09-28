@@ -285,6 +285,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if matches!(native, Native::DateToLocaleString | Native::DateToLocaleDateString | Native::DateToLocaleTimeString) {
+            return self.date_to_locale_string(p, native, this, args);
+        }
         if native == Native::DateToJSON {
             return self.date_to_json(p, this);
         }
@@ -700,7 +703,7 @@ fn date_utc(milliseconds: f64) -> Option<DateTime<Utc>> {
         .flatten()
 }
 
-fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
+pub(super) fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
     if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
         return None;
     }

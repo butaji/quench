@@ -62,6 +62,8 @@ mod method_cache;
 mod module;
 mod number;
 mod intl_number;
+mod intl_collator;
+mod intl_datetime;
 mod numeric_site;
 mod object;
 mod object_array;
@@ -397,6 +399,9 @@ pub struct Vm<H> {
     regexp_proto: Value,
     regexp_prototypes: FxHashMap<Value, Value>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
+    intl_collator_constructors: FxHashMap<Value, Value>,
+    intl_collator_prototypes: FxHashMap<Value, Value>,
+    intl_datetime_format_constructors: FxHashMap<Value, Value>,
     temporal_plain_date_proto: Value,
     temporal_plain_time_proto: Value,
     temporal_plain_month_day_proto: Value,

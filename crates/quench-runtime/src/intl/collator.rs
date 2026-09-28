@@ -3,10 +3,9 @@
 use crate::{execute::VmError, value::Value};
 
 use icu_collator::{
-    options::{AlternateHandling, CaseLevel, CollatorOptions as IcuOptions, Strength},
-    preferences::{CollationCaseFirst, CollationNumericOrdering, CollationType},
+    preferences::CollationType,
     provider::CollationTailoringV1,
-    Collator, CollatorPreferences,
+    CollatorPreferences,
 };
 use icu_provider::{
     marker::DataMarkerExt, DataIdentifierBorrowed, DataMarkerAttributes, DataProvider, DataRequest,
