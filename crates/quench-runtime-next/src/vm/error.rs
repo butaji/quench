@@ -920,7 +920,7 @@ impl<H: Host> Vm<H> {
         self.set_named(program, type_error_prototype, "name", type_error_name)?;
         self.set_named(program, global, "TypeError", type_error)?;
         let eval = self.native_with_realm(Native::Eval, global, global);
-        self.set_named(program, global, "eval", eval)?;
+        self.set_builtin_function_value_named(global, "eval", eval)?;
         let function = self.native_with_realm(Native::Function, global, global);
         self.set_named(program, global, "Function", function)?;
         let object_prototype = self
