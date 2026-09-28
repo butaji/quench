@@ -344,6 +344,7 @@ pub struct Vm<H> {
     array_buffer_proto: Value,
     shared_array_buffer_proto: Value,
     array_iterator_proto: Value,
+    typed_array_proto: Value,
     uint8_array_proto: Value,
     uint8_clamped_array_proto: Value,
     uint16_array_proto: Value,
@@ -814,6 +815,7 @@ impl<H: Host> Vm<H> {
         self.function_values.clear();
         self.programs.reset(program);
         self.active_program = ProgramId::MAIN;
+        self.typed_array_proto = Value::NULL;
         self.finalization_registry_proto = Value::NULL;
         self.temporal_plain_date_proto = Value::NULL;
         self.temporal_plain_time_proto = Value::NULL;

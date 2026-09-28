@@ -33,6 +33,36 @@ pub(super) const TYPED_ARRAY_INSTALLS: &[(TypedArrayKind, Native, &str)] = &[
     ),
 ];
 
+pub(super) const TYPED_ARRAY_CALLBACK_METHODS: &[(&str, Native, Native)] = &[
+    ("forEach", Native::TypedArrayForEach, Native::ArrayForEach),
+    ("map", Native::TypedArrayMap, Native::ArrayMap),
+    ("filter", Native::TypedArrayFilter, Native::ArrayFilter),
+    ("some", Native::TypedArraySome, Native::ArraySome),
+    ("every", Native::TypedArrayEvery, Native::ArrayEvery),
+    ("find", Native::TypedArrayFind, Native::ArrayFind),
+    (
+        "findIndex",
+        Native::TypedArrayFindIndex,
+        Native::ArrayFindIndex,
+    ),
+    (
+        "findLast",
+        Native::TypedArrayFindLast,
+        Native::ArrayFindLast,
+    ),
+    (
+        "findLastIndex",
+        Native::TypedArrayFindLastIndex,
+        Native::ArrayFindLastIndex,
+    ),
+    ("reduce", Native::TypedArrayReduce, Native::ArrayReduce),
+    (
+        "reduceRight",
+        Native::TypedArrayReduceRight,
+        Native::ArrayReduceRight,
+    ),
+];
+
 impl<H: Host> Vm<H> {
     pub(super) fn install_typed_array_kind(
         &mut self,
@@ -48,7 +78,7 @@ impl<H: Host> Vm<H> {
             .proto = typed_array;
         let proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.uint8_array_proto)));
+            .alloc(Cell::Object(Self::empty_object(self.typed_array_proto)));
         match kind {
             TypedArrayKind::Uint8Clamped => self.uint8_clamped_array_proto = proto,
             TypedArrayKind::Uint16 => self.uint16_array_proto = proto,

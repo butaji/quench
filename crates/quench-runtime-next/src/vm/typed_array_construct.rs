@@ -1,3 +1,4 @@
+use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -109,6 +110,74 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Float32 => self.float32_array_proto,
             TypedArrayKind::Float64 => self.float64_array_proto,
         }
+    }
+
+    pub(super) fn install_typed_array_species(
+        &mut self,
+        constructor: Value,
+    ) -> Result<(), JsError> {
+        let species = self.well_known_symbols.get("species").copied().unwrap();
+        let getter = self.native_value(Native::ArraySpecies);
+        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+        self.set_symbol_property(constructor, species, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::symbol(species),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+
+    pub(super) fn typed_array_species_create(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        length: usize,
+    ) -> Result<Value, JsError> {
+        let kind = self
+            .typed_array_kind(source)
+            .ok_or_else(|| self.type_error(p, "typed array species source is invalid".into()))?;
+        let constructor_atom = self.intern_atom("constructor");
+        let mut constructor = self.get_property(p, source, constructor_atom)?;
+        if self.is_object_like(constructor) {
+            let species = self.well_known_symbols.get("species").copied().unwrap();
+            constructor = self.get_index(p, constructor, species)?;
+            if constructor.is_null() {
+                constructor = Value::UNDEFINED;
+            }
+        }
+        if constructor.is_undefined() {
+            let native = TYPED_ARRAY_INSTALLS
+                .iter()
+                .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
+                .unwrap_or(Native::Uint8Array);
+            constructor = self.native_value(native);
+        }
+        if !self.is_constructable(p, constructor) {
+            return Err(self.type_error(p, "typed array species is not a constructor".into()));
+        }
+        let target = self.construct_value(p, constructor, &[Value::number(length as f64)])?;
+        let Some(target_kind) = self.typed_array_kind(target) else {
+            return Err(
+                self.type_error(p, "typed array species result is not a typed array".into())
+            );
+        };
+        if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
+            != matches!(
+                target_kind,
+                TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64
+            )
+        {
+            return Err(self.type_error(p, "typed array species content type differs".into()));
+        }
+        Ok(target)
     }
 
     fn typed_array_source_values(
