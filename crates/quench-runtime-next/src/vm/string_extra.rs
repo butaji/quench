@@ -1,30 +1,71 @@
-pub(super) fn encode_uri(value: &str, component: bool) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    const HEX_NIBBLE_MASK: u8 = 0x0f;
-    let mut output = String::with_capacity(value.len());
-    for byte in value.as_bytes() {
-        let unescaped = byte.is_ascii_alphanumeric()
-            || b"-_.!~*'()".contains(byte)
-            || (!component && b";/?:@&=+$,#".contains(byte));
-        if unescaped {
-            output.push(*byte as char);
+const LEADING_SURROGATE_BASE: u32 = 0xd800;
+const TRAILING_SURROGATE_BASE: u32 = 0xdc00;
+const SURROGATE_OFFSET_MASK: u32 = 0x3ff;
+const SURROGATE_OFFSET_BITS: u32 = 10;
+const SURROGATE_CODE_POINT_OFFSET: u32 = 0x10000;
+const LEADING_SURROGATES: std::ops::RangeInclusive<u16> =
+    LEADING_SURROGATE_BASE as u16..=(LEADING_SURROGATE_BASE + SURROGATE_OFFSET_MASK) as u16;
+const TRAILING_SURROGATES: std::ops::RangeInclusive<u16> =
+    TRAILING_SURROGATE_BASE as u16..=(TRAILING_SURROGATE_BASE + SURROGATE_OFFSET_MASK) as u16;
+const SURROGATE_CODE_POINTS: std::ops::RangeInclusive<u32> =
+    LEADING_SURROGATE_BASE..=(TRAILING_SURROGATE_BASE + SURROGATE_OFFSET_MASK);
+const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+const HEX_NIBBLE_MASK: u8 = 0x0f;
+const URI_RESERVED: &[u8] = b";/?:@&=+$,#";
+const URI_UNESCAPED: &[u8] = b"-_.!~*'()";
+
+pub(super) fn encode_uri(
+    value: &super::wtf16::JsString,
+    component: bool,
+) -> Result<String, &'static str> {
+    let units = value.units();
+    let mut output = String::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        let (code_point, width) = if LEADING_SURROGATES.contains(&unit) {
+            let Some(&trailing) = units.get(index + 1) else {
+                return Err("malformed URI sequence");
+            };
+            if !TRAILING_SURROGATES.contains(&trailing) {
+                return Err("malformed URI sequence");
+            }
+            (
+                SURROGATE_CODE_POINT_OFFSET
+                    + ((u32::from(unit) - LEADING_SURROGATE_BASE) << SURROGATE_OFFSET_BITS)
+                    + (u32::from(trailing) - TRAILING_SURROGATE_BASE),
+                2,
+            )
+        } else if TRAILING_SURROGATES.contains(&unit) {
+            return Err("malformed URI sequence");
         } else {
-            output.push('%');
-            output.push(HEX[(byte >> 4) as usize] as char);
-            output.push(HEX[(byte & HEX_NIBBLE_MASK) as usize] as char);
+            (u32::from(unit), 1)
+        };
+        let character = char::from_u32(code_point).ok_or("malformed URI sequence")?;
+        let mut utf8 = [0; 4];
+        for byte in character.encode_utf8(&mut utf8).as_bytes() {
+            let unescaped = byte.is_ascii_alphanumeric()
+                || URI_UNESCAPED.contains(byte)
+                || (!component && URI_RESERVED.contains(byte));
+            if unescaped {
+                output.push(*byte as char);
+            } else {
+                output.push('%');
+                output.push(HEX_DIGITS[(byte >> 4) as usize] as char);
+                output.push(HEX_DIGITS[(byte & HEX_NIBBLE_MASK) as usize] as char);
+            }
         }
+        index += width;
     }
-    output
+    Ok(output)
 }
 
 pub(super) fn decode_uri(
     value: &super::wtf16::JsString,
     component: bool,
 ) -> Result<super::wtf16::JsString, &'static str> {
-    const SURROGATE_CODE_POINTS: std::ops::RangeInclusive<u32> = 0xd800..=0xdfff;
     let units = value.units();
     let mut output = Vec::with_capacity(units.len());
-    let reserved = b";/?:@&=+$,#";
     let hex = |unit: u16| match unit {
         unit if (b'0' as u16..=b'9' as u16).contains(&unit) => Some((unit - b'0' as u16) as u8),
         unit if (b'a' as u16..=b'f' as u16).contains(&unit) => Some((unit - b'a' as u16 + 10) as u8),
@@ -50,7 +91,7 @@ pub(super) fn decode_uri(
             0xf0..=0xf4 => (4, u32::from(first & 0x07), 0x10000),
             _ => return Err("malformed URI sequence"),
         };
-        if width == 1 && !component && reserved.contains(&(first as u8)) {
+        if width == 1 && !component && URI_RESERVED.contains(&(first as u8)) {
             output.extend_from_slice(&units[index..index + 3]);
             index += 3;
             continue;
