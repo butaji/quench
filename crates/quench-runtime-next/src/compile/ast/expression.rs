@@ -282,11 +282,7 @@ impl FunctionCompiler<'_, '_> {
         value: Register,
         declaration_start: u32,
     ) {
-        let parameter_binding = self
-            .local_slots
-            .get(&atom)
-            .is_some_and(|slot| usize::from(*slot) < self.parameter_local_count);
-        if parameter_binding || self.annex_b_collisions.contains(&declaration_start) {
+        if !self.annex_b_outer_binding_allowed(atom, declaration_start) {
             return;
         }
         if let Some(slot) = self.local_slots.get(&atom).copied() {
@@ -296,6 +292,18 @@ impl FunctionCompiler<'_, '_> {
             let cache = self.owner.cache_site();
             self.emit(Op::StoreName, value, 0, cache, atom);
         }
+    }
+
+    pub(super) fn annex_b_outer_binding_allowed(
+        &self,
+        atom: Atom,
+        declaration_start: u32,
+    ) -> bool {
+        let parameter_binding = self
+            .local_slots
+            .get(&atom)
+            .is_some_and(|slot| usize::from(*slot) < self.parameter_local_count);
+        !parameter_binding && !self.annex_b_collisions.contains(&declaration_start)
     }
 
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {

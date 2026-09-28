@@ -153,6 +153,45 @@ impl<H: Host> Vm<H> {
             })
     }
 
+    pub(super) fn activation_binding_slot(&self, frame: usize, atom: Atom) -> Option<usize> {
+        let frame = self.frames.get(frame)?;
+        self.programs
+            .get(frame.program)?
+            .functions
+            .get(frame.function as usize)?
+            .local_atoms
+            .iter()
+            .position(|candidate| *candidate == atom)
+    }
+
+    pub(super) fn activation_binding_value(&self, frame: usize, atom: Atom) -> Option<Value> {
+        let slot = self.activation_binding_slot(frame, atom)?;
+        let frame = self.frames.get(frame)?;
+        if frame.captured {
+            let Cell::Environment { slots, .. } = self.heap.get(frame.env)? else {
+                return None;
+            };
+            slots.get(slot).copied()
+        } else {
+            frame.locals.get(slot).copied()
+        }
+    }
+
+    pub(super) fn direct_eval_var_binding(&self, frame: usize, slot: usize) -> Option<Value> {
+        let program_id = self.direct_eval_var_program?;
+        let eval = self.frames.get(frame)?;
+        if eval.program != program_id || eval.function != super::ROOT_FUNCTION_ID {
+            return None;
+        }
+        let program = self.programs.get(program_id)?;
+        let function = program.functions.get(super::ROOT_FUNCTION_ID as usize)?;
+        let atom = *function.local_atoms.get(slot)?;
+        if !function.global_var_atoms.contains(&atom) {
+            return None;
+        }
+        self.dynamic_binding(frame.checked_sub(1)?, atom)
+    }
+
     fn is_self_binding(&self, atom: Atom) -> bool {
         self.atom_name(atom).contains("\0rqj:self-binding:")
     }
@@ -1189,6 +1228,17 @@ impl<H: Host> Vm<H> {
                 .find(|(candidate, _)| *candidate == atom)
         {
             *binding = value;
+        }
+        if let Some(slot) = self.activation_binding_slot(caller_index, atom) {
+            if captured {
+                if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env)
+                    && let Some(binding) = slots.get_mut(slot)
+                {
+                    *binding = value;
+                }
+            } else {
+                self.frames[caller_index].locals[slot] = value;
+            }
         }
         true
     }

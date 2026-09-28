@@ -1479,25 +1479,22 @@ impl<H: Host> Vm<H> {
             return;
         };
         let frame = &self.frames[frame_index];
-        let has_activation_binding = |atom: &Atom| {
-            self.programs.get(frame.program).is_some_and(|program| {
-                program
-                    .functions
-                    .get(frame.function as usize)
-                    .is_some_and(|function| function.local_atoms.contains(atom))
-            })
-        };
         let mut additions = atoms
             .iter()
             .copied()
             .filter(|atom| {
-                !has_activation_binding(atom)
-                    && !frame
-                        .dynamic_bindings
-                        .iter()
-                        .any(|(candidate, _)| candidate == atom)
+                !frame
+                    .dynamic_bindings
+                    .iter()
+                    .any(|(candidate, _)| candidate == atom)
             })
-            .map(|atom| (atom, Value::UNDEFINED))
+            .map(|atom| {
+                (
+                    atom,
+                    self.activation_binding_value(frame_index, atom)
+                        .unwrap_or(Value::UNDEFINED),
+                )
+            })
             .collect::<Vec<_>>();
         self.frames[frame_index]
             .dynamic_bindings
