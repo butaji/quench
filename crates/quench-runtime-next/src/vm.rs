@@ -405,6 +405,7 @@ pub struct Vm<H> {
     regexp_proto: Value,
     regexp_prototypes: FxHashMap<Value, Value>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
+    intl_number_format_prototypes: FxHashMap<Value, Value>,
     intl_collator_constructors: FxHashMap<Value, Value>,
     intl_collator_prototypes: FxHashMap<Value, Value>,
     intl_datetime_format_constructors: FxHashMap<Value, Value>,
