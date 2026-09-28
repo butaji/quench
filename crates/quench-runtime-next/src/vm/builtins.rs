@@ -471,7 +471,8 @@ const NATIVES: &[Native] = &[
     Native::RegExpSource,
     Native::RegExpFlags,
     Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf, Native::BigIntToString, Native::BigIntToLocaleString, Native::BigIntAsIntN, Native::BigIntAsUintN,
-    Native::IntlNumberFormat, Native::IntlNumberFormatFormat, Native::IntlSupportedValuesOf,
+    Native::IntlNumberFormat, Native::IntlNumberFormatFormat,
+    Native::IntlNumberFormatFormatToParts, Native::IntlSupportedValuesOf,
     Native::IntlCollator, Native::IntlCollatorSupportedLocalesOf, Native::IntlCollatorCompareGetter, Native::IntlCollatorCompare,
     Native::IntlCollatorResolvedOptions,
     Native::IntlDateTimeFormat, Native::IntlDateTimeFormatFormatGetter,
@@ -480,6 +481,12 @@ const NATIVES: &[Native] = &[
     Native::IntlDateTimeFormatSupportedLocalesOf, Native::IntlDateTimeFormatResolvedOptions,
     Native::IntlDisplayNames, Native::IntlDisplayNamesOf,
     Native::IntlDisplayNamesResolvedOptions,
+    Native::IntlDurationFormat, Native::IntlDurationFormatFormatGetter,
+    Native::IntlDurationFormatFormat, Native::IntlDurationFormatFormatToParts,
+    Native::IntlDurationFormatResolvedOptions, Native::IntlDurationFormatSupportedLocalesOf,
+    Native::IntlListFormat, Native::IntlListFormatFormatGetter, Native::IntlListFormatFormat,
+    Native::IntlListFormatFormatToParts,
+    Native::IntlListFormatSupportedLocalesOf,
     Native::Symbol, Native::SymbolToString, Native::SymbolToPrimitive, Native::SymbolValueOf,
     Native::SymbolDescriptionGetter,
     Native::SymbolFor,
@@ -623,12 +630,7 @@ impl<H: Host> Vm<H> {
         let symbol = self.native_value(Native::Symbol);
         self.set_builtin_function_name(symbol, "Symbol")?;
         self.set_builtin_named(program, symbol, "for", Native::SymbolFor)?;
-        self.set_builtin_named(
-            program,
-            symbol,
-            "keyFor",
-            Native::SymbolKeyFor,
-        )?;
+        self.set_builtin_named(program, symbol, "keyFor", Native::SymbolKeyFor)?;
         for name in [
             "asyncDispose",
             "asyncIterator",

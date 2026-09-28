@@ -173,8 +173,9 @@ impl<H: Host> Vm<H> {
                 args,
                 self.native_value(Native::IntlNumberFormat),
             ),
-            Native::IntlNumberFormatFormat => {
-                self.intl_number_format_format(p, this, args)
+            Native::IntlNumberFormatFormat => self.intl_number_format_format(p, this, args),
+            Native::IntlNumberFormatFormatToParts => {
+                self.intl_number_format_format_to_parts(p, this, args)
             }
             Native::IntlSupportedValuesOf => self.intl_supported_values_of(p, args),
             Native::IntlCollator
@@ -184,12 +185,29 @@ impl<H: Host> Vm<H> {
             | Native::IntlCollatorResolvedOptions => {
                 self.intl_collator_native(p, native, this, args)
             }
-            Native::IntlDateTimeFormat => {
-                self.intl_date_time_format_call(p, this, args)
-            }
+            Native::IntlDateTimeFormat => self.intl_date_time_format_call(p, this, args),
             Native::IntlDisplayNames => Err(self.type_error(p, "constructor requires new".into())),
             Native::IntlDisplayNamesOf | Native::IntlDisplayNamesResolvedOptions => {
                 self.intl_display_names_native(p, native, this, args)
+            }
+            Native::IntlDurationFormat => {
+                Err(self.type_error(p, "constructor requires new".into()))
+            }
+            Native::IntlDurationFormatSupportedLocalesOf => {
+                self.duration_format_supported_locales_of(p, args)
+            }
+            Native::IntlDurationFormatFormatGetter
+            | Native::IntlDurationFormatFormat
+            | Native::IntlDurationFormatFormatToParts
+            | Native::IntlDurationFormatResolvedOptions => {
+                self.intl_duration_format_native(p, native, this, args)
+            }
+            Native::IntlListFormat => Err(self.type_error(p, "constructor requires new".into())),
+            Native::IntlListFormatFormatGetter
+            | Native::IntlListFormatFormat
+            | Native::IntlListFormatFormatToParts
+            | Native::IntlListFormatSupportedLocalesOf => {
+                self.intl_list_format_native(p, native, this, args)
             }
             Native::IntlDateTimeFormatFormatGetter
             | Native::IntlDateTimeFormatFormat
@@ -493,9 +511,7 @@ impl<H: Host> Vm<H> {
             | Native::ArrayFromAsync
             | Native::ArrayOf
             | Native::TypedArrayFrom
-            | Native::TypedArrayOf => {
-                self.array_modern_native(p, native, this, args)
-            }
+            | Native::TypedArrayOf => self.array_modern_native(p, native, this, args),
             Native::TypedArrayToStringTag => Ok(self.typed_array_to_string_tag_native(this)),
             Native::TypedArrayBufferGetter
             | Native::TypedArrayByteLengthGetter

@@ -16,6 +16,12 @@ pub struct CollatorOptions<'a> {
     pub case_first: &'a str,
 }
 
+pub fn canonical_locale_identifier(locale: &str) -> Option<String> {
+    icu_locale_core::Locale::try_from_str(locale)
+        .ok()
+        .map(|locale| locale.to_string())
+}
+
 pub fn compare_collator(
     left: &str,
     right: &str,
