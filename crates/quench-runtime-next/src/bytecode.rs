@@ -604,6 +604,7 @@ pub struct Function {
     pub global_lexical_atoms: Vec<Atom>,
     pub global_var_atoms: Vec<Atom>,
     pub global_function_atoms: Vec<Atom>,
+    pub global_annex_b_var_atoms: Vec<Atom>,
     pub global_immutable_atoms: Vec<Atom>,
     pub eval_sites: Vec<EvalSite>,
     pub code: Vec<Instr>,

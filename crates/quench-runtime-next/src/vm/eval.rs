@@ -214,11 +214,38 @@ impl<H: Host> Vm<H> {
         let active_program = std::mem::replace(&mut self.active_program, program_id);
         let direct_eval = std::mem::replace(&mut self.direct_eval, false);
         let result = (|| {
+            let global_function_atoms = residual.functions[super::ROOT_FUNCTION_ID as usize]
+                .global_function_atoms
+                .clone();
+            for atom in &global_function_atoms {
+                if self.realm.global_lexical_declarations.contains(atom)
+                    || (direct_eval && self.direct_eval_lexical_binding(p, *atom).is_some())
+                {
+                    return self.syntax_error_result(
+                        p,
+                        "eval function declaration conflicts with lexical binding",
+                    );
+                }
+                let globals = self.realm.globals;
+                let name = self.atom_name(*atom).to_owned();
+                self.check_global_eval_declaration(p, globals, &name, true)?;
+                let attributes = self.property_attributes(globals, PropertyKey::string(*atom));
+                if attributes.is_some_and(|attributes| attributes.configurable) {
+                    self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
+                } else if self.own_property(globals, *atom).is_some() {
+                    self.set_field_cached(p, globals, *atom, Value::UNDEFINED, 0, false)?;
+                } else {
+                    self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
+                }
+            }
             for atom in residual.functions[super::ROOT_FUNCTION_ID as usize]
                 .global_var_atoms
                 .iter()
                 .copied()
             {
+                if global_function_atoms.contains(&atom) {
+                    continue;
+                }
                 if self.realm.global_lexical_declarations.contains(&atom)
                     || (direct_eval && self.direct_eval_lexical_binding(p, atom).is_some())
                 {
@@ -238,7 +265,9 @@ impl<H: Host> Vm<H> {
                         PropertyAttributes {
                             writable: true,
                             enumerable: true,
-                            configurable: false,
+                            configurable: residual.functions[super::ROOT_FUNCTION_ID as usize]
+                                .global_annex_b_var_atoms
+                                .contains(&atom),
                             accessor: false,
                             getter: None,
                             setter: None,
