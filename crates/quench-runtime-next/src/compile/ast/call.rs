@@ -8,7 +8,8 @@ impl FunctionCompiler<'_, '_> {
         let input = if value.operator == UnaryOperator::Typeof {
             if let Expression::Identifier(identifier) = &value.argument {
                 let atom = self.owner.atom(identifier.name.as_str());
-                let bound = self.local_slots.contains_key(&atom)
+                let bound = self.function_scope.contains(&atom)
+                    || self.active_lexical_binding(atom).is_some()
                     || self.scopes.iter().any(|scope| scope.contains_key(&atom));
                 if bound {
                     self.expression(&value.argument)
@@ -22,7 +23,8 @@ impl FunctionCompiler<'_, '_> {
                 && let Expression::Identifier(identifier) = &parenthesized.expression
             {
                 let atom = self.owner.atom(identifier.name.as_str());
-                let bound = self.local_slots.contains_key(&atom)
+                let bound = self.function_scope.contains(&atom)
+                    || self.active_lexical_binding(atom).is_some()
                     || self.scopes.iter().any(|scope| scope.contains_key(&atom));
                 if bound {
                     self.expression(&value.argument)
