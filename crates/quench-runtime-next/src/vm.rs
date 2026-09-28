@@ -66,6 +66,7 @@ mod intl_namespace;
 mod intl_number;
 mod intl_plural_rules;
 mod intl_relative;
+mod intl_segmenter;
 mod iterators;
 mod json;
 mod method_cache;
@@ -421,6 +422,8 @@ pub struct Vm<H> {
     intl_list_format_constructors: FxHashMap<Value, Value>,
     intl_list_format_prototypes: FxHashMap<Value, Value>,
     intl_relative_time_format_prototypes: FxHashMap<Value, Value>,
+    intl_segmenter_prototypes: FxHashMap<Value, Value>,
+    intl_segments_prototypes: FxHashMap<Value, Value>,
     intl_locale_prototypes: FxHashMap<Value, Value>,
     temporal_plain_date_proto: Value,
     temporal_plain_time_proto: Value,

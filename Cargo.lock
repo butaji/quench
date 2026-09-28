@@ -2878,6 +2878,7 @@ dependencies = [
  "rustc-hash",
  "serde_json",
  "unicode-normalization",
+ "unicode-segmentation",
 ]
 
 [[package]]
