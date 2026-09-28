@@ -633,30 +633,26 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(value) {
             return Err(self.type_error(p, "Invalid relativeTo".into()));
         }
-        let constructor = self.temporal_plain_date_constructor(p)?;
-        let date = self.temporal_plain_date_from(p, constructor, &[value])?;
-        let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
-        let _ = super::temporal_plain_date_time_conversion::to_date_time(
-            self,
-            p,
-            value,
-            Value::UNDEFINED,
-        )?;
-        let timezone_atom = self.intern_atom("timeZone");
-        let timezone = self.get_property(p, value, timezone_atom)?;
-        if !timezone.is_undefined() {
-            if !matches!(self.heap.get(timezone), Some(Cell::String(_))) {
-                return Err(self.type_error(p, "Invalid time zone".into()));
-            }
+        if matches!(
+            self.heap.get(value),
+            Some(Cell::TemporalPlainDateTime { .. } | Cell::TemporalZonedDateTime { .. })
+        ) {
+            let constructor = self.temporal_plain_date_constructor(p)?;
+            let date = self.temporal_plain_date_from(p, constructor, &[value])?;
+            let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
+            return Ok(quench_temporal::IsoDate { year, month, day });
+        }
+        let fields = self.read_plain_date_time_fields(p, value, true)?;
+        let offset = fields.offset.clone();
+        let timezone = fields.time_zone.clone();
+        let validate_time_bounds = fields.has_zoned_time();
+        let (year, month, day, _, _) =
+            self.resolve_plain_date_time_fields(p, fields, true, validate_time_bounds)?;
+        if let Some(timezone) = timezone {
+            let timezone = self.heap.alloc(Cell::String(timezone.into()));
             self.temporal_timezone_id(p, timezone)?;
         }
-        let offset_atom = self.intern_atom("offset");
-        let offset = self.get_property(p, value, offset_atom)?;
-        if !offset.is_undefined() {
-            if !matches!(self.heap.get(offset), Some(Cell::String(_))) {
-                return Err(self.type_error(p, "Invalid offset".into()));
-            }
-            let offset = self.to_string(p, offset)?;
+        if let Some(offset) = offset {
             if !quench_temporal::valid_string_offset(&offset) {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
@@ -672,17 +668,22 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let fields = self.duration_fields(p, this)?;
         let options = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let (unit, relative_to) = match self.heap.get(options) {
-            Some(Cell::String(text)) => (text.to_string(), Value::UNDEFINED),
+        let (unit, relative_date) = match self.heap.get(options) {
+            Some(Cell::String(text)) => (text.to_string(), None),
             _ if self.is_object_like(options) => {
                 let relative_to_atom = self.intern_atom("relativeTo");
                 let relative_to = self.get_property(p, options, relative_to_atom)?;
+                let relative_date = if relative_to.is_undefined() {
+                    None
+                } else {
+                    Some(self.temporal_relative_date(p, relative_to)?)
+                };
                 let unit_atom = self.intern_atom("unit");
                 let unit = self.get_property(p, options, unit_atom)?;
                 if unit.is_undefined() {
                     return Err(self.range_error(p, "unit is required".into()));
                 }
-                (self.to_string(p, unit)?.to_string(), relative_to)
+                (self.to_string(p, unit)?.to_string(), relative_date)
             }
             _ => return Err(self.type_error(p, "Options must be an object or unit string".into())),
         };
@@ -692,18 +693,17 @@ impl<H: Host> Vm<H> {
             .position(|field| field.strip_suffix('s').unwrap_or(field) == unit)
             .ok_or_else(|| self.range_error(p, "Invalid unit".into()))?;
         if (index <= 2 || fields[..3].iter().any(|value| *value != 0.0))
-            && relative_to.is_undefined()
+            && relative_date.is_none()
         {
             return Err(self.range_error(p, "relativeTo required".into()));
         }
         if index <= 2 || fields[..3].iter().any(|value| *value != 0.0) {
-            return self.temporal_duration_total_relative_date(p, &fields, index, relative_to);
-        }
-        if !relative_to.is_undefined()
-            && !matches!(self.heap.get(relative_to), Some(Cell::String(_)))
-            && !self.is_object_like(relative_to)
-        {
-            return Err(self.type_error(p, "relativeTo must be a string or object".into()));
+            return self.temporal_duration_total_relative_date(
+                p,
+                &fields,
+                index,
+                relative_date.expect("relative date required above"),
+            );
         }
         let divisor = DURATION_TIME_NANOSECOND_SCALES[index - 3];
         Ok(Value::number(divide_duration_nanos(
@@ -717,16 +717,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         fields: &[f64; 10],
         unit: usize,
-        relative_to: Value,
+        start: quench_temporal::IsoDate,
     ) -> Result<Value, JsError> {
-        let start = self.temporal_relative_date(p, relative_to)?;
         let fields = std::array::from_fn(|index| fields[index] as i128);
-        let date = quench_temporal::IsoDate {
-            year: start.year,
-            month: start.month,
-            day: start.day,
-        };
-        let total = quench_temporal::total_duration(date, fields, unit)
+        let total = quench_temporal::total_duration(start, fields, unit)
             .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
         Ok(Value::number(total))
     }
@@ -825,7 +819,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let fields = self.duration_fields(p, this)?;
         let options = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let (smallest, largest, increment, mode, relative_to, explicit_unit) =
+        let (
+            smallest,
+            largest,
+            increment,
+            mode,
+            relative_to,
+            explicit_unit,
+            explicit_smallest_unit,
+        ) =
             self.duration_round_options(p, options)?;
         let smallest =
             smallest.ok_or_else(|| self.range_error(p, "smallestUnit is required".into()))?;
@@ -838,11 +840,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(smallest)
                 .min(smallest)
         });
-        let relative_date = if relative_to.is_undefined() {
-            None
-        } else {
-            Some(self.temporal_relative_date(p, relative_to)?)
-        };
+        let relative_date = relative_to;
         if largest > smallest {
             return Err(self.range_error(
                 p,
@@ -873,6 +871,7 @@ impl<H: Host> Vm<H> {
                 increment,
                 &mode,
                 relative_date.expect("relative date checked above"),
+                explicit_smallest_unit,
             );
         }
         let nanos = self.duration_time_nanos(&fields);
@@ -905,13 +904,26 @@ impl<H: Host> Vm<H> {
         increment: i128,
         mode: &str,
         relative_date: quench_temporal::IsoDate,
+        explicit_smallest_unit: bool,
     ) -> Result<Value, JsError> {
         let fields_i128 = std::array::from_fn(|index| fields[index] as i128);
-        let (target_date, time_remainder) = if smallest <= 1 {
+        let (target_date, time_remainder) = if !explicit_smallest_unit {
+            let total = quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            let whole_days = total / super::temporal_date_arithmetic::NANOS_PER_DAY;
+            let days = i64::try_from(whole_days)
+                .map_err(|_| self.range_error(p, "Invalid relativeTo".into()))?;
+            let target = super::temporal_date::shift_iso_days(relative_date.into(), days)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            (
+                target,
+                total % super::temporal_date_arithmetic::NANOS_PER_DAY,
+            )
+        } else if smallest <= 1 {
             let total = quench_temporal::total_duration(relative_date, fields_i128, smallest)
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-            let rounded_units = round_duration_number(total / increment as f64, mode)
-                * increment as f64;
+            let rounded_units =
+                round_duration_number(total / increment as f64, mode) * increment as f64;
             let months = if smallest == 0 {
                 (rounded_units * f64::from(super::temporal_date::ISO_MONTHS_PER_YEAR)) as i128
             } else {
@@ -995,7 +1007,9 @@ impl<H: Host> Vm<H> {
             &[end, internal_options],
         )?;
         let mut result = self.duration_fields(p, date_difference)?;
-        if smallest == super::temporal_date_arithmetic::DURATION_WEEKS_FIELD {
+        if explicit_smallest_unit
+            && smallest == super::temporal_date_arithmetic::DURATION_WEEKS_FIELD
+        {
             let months = i128::from(result[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64)
                 * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
                 + i128::from(result[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64);
@@ -1027,7 +1041,18 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         options: Value,
-    ) -> Result<(Option<usize>, Option<usize>, i128, String, Value, bool), JsError> {
+    ) -> Result<
+        (
+            Option<usize>,
+            Option<usize>,
+            i128,
+            String,
+            Option<quench_temporal::IsoDate>,
+            bool,
+            bool,
+        ),
+        JsError,
+    > {
         let is_string = matches!(self.heap.get(options), Some(Cell::String(_)));
         if !is_string && !self.is_object_like(options) {
             return Err(self.type_error(p, "Options must be an object or string".into()));
@@ -1036,7 +1061,7 @@ impl<H: Host> Vm<H> {
             (
                 Some(self.to_string(p, options)?.to_string()),
                 None,
-                Value::UNDEFINED,
+                None,
                 1.0,
                 "halfExpand".to_owned(),
             )
@@ -1050,6 +1075,11 @@ impl<H: Host> Vm<H> {
             };
             let relative_atom = self.intern_atom("relativeTo");
             let relative = self.get_property(p, options, relative_atom)?;
+            let relative = if relative.is_undefined() {
+                None
+            } else {
+                Some(self.temporal_relative_date(p, relative)?)
+            };
             let increment_atom = self.intern_atom("roundingIncrement");
             let increment = self.get_property(p, options, increment_atom)?;
             let increment = if increment.is_undefined() {
@@ -1081,6 +1111,7 @@ impl<H: Host> Vm<H> {
             ),
         };
         let explicit_unit = smallest_text.is_some() || largest_text.is_some();
+        let explicit_smallest_unit = smallest_text.is_some();
         let smallest = if let Some(text) = smallest_text.as_deref() {
             Some(
                 parse_duration_unit(text)
@@ -1106,12 +1137,6 @@ impl<H: Host> Vm<H> {
         if !DURATION_ROUNDING_MODE_NAMES.contains(&mode.as_str()) {
             return Err(self.range_error(p, "Invalid roundingMode".into()));
         }
-        if !relative_to.is_undefined()
-            && !matches!(self.heap.get(relative_to), Some(Cell::String(_)))
-            && !self.is_object_like(relative_to)
-        {
-            return Err(self.type_error(p, "relativeTo must be a string or object".into()));
-        }
         Ok((
             smallest,
             largest,
@@ -1119,6 +1144,7 @@ impl<H: Host> Vm<H> {
             mode,
             relative_to,
             explicit_unit,
+            explicit_smallest_unit,
         ))
     }
 }
