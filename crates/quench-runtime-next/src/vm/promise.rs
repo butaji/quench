@@ -326,7 +326,9 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::IntlNumberFormat | Native::IntlNumberFormatFormatGetter => 0.0,
         Native::IntlNumberFormatFormat | Native::IntlNumberFormatFormatToParts => 1.0,
         Native::IntlNumberFormatResolvedOptions => 0.0,
-        Native::IntlRelativeTimeFormat => 1.0,
+        Native::IntlRelativeTimeFormat => 0.0,
+        Native::IntlRelativeTimeFormatSupportedLocalesOf => 1.0,
+        Native::IntlRelativeTimeFormatFormat | Native::IntlRelativeTimeFormatFormatToParts => 2.0,
         Native::IntlRelativeTimeFormatResolvedOptions => 0.0,
         Native::IntlGetCanonicalLocales | Native::IntlSupportedValuesOf | Native::IntlLocale => 1.0,
         Native::IntlLocaleToString | Native::IntlLocaleMaximize | Native::IntlLocaleMinimize
