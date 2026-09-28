@@ -322,7 +322,9 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::DataViewByteLengthGetter
         | Native::DataViewByteOffsetGetter => 0.0,
         Native::BigIntAsIntN | Native::BigIntAsUintN => 2.0,
-        Native::BigIntValueOf | Native::BigIntToString => 0.0,
+        Native::BigIntValueOf | Native::BigIntToString | Native::BigIntToLocaleString => 0.0,
+        Native::IntlNumberFormat => 0.0,
+        Native::IntlNumberFormatFormat => 1.0,
         Native::Number => 1.0,
         Native::NumberValueOf | Native::NumberToLocaleString => 0.0,
         Native::NumberString
