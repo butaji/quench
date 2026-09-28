@@ -3,7 +3,9 @@ use super::*;
 
 impl<H: Host> Vm<H> {
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
-        let text = if value.is_undefined() || value.is_deleted() {
+        let text = if self.is_html_dda(value) {
+            "undefined"
+        } else if value.is_undefined() || value.is_deleted() {
             "undefined"
         } else if value.as_bool().is_some() {
             "boolean"
@@ -308,12 +310,23 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     pub(super) fn truthy(&self, v: Value) -> bool {
-        !(v.is_null()
+        !(self.is_html_dda(v)
+            || v.is_null()
             || v.is_undefined()
             || v.is_deleted()
             || v == Value::FALSE
             || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan())
             || matches!(self.heap.get(v), Some(Cell::String(text)) if text.units().is_empty())
             || matches!(self.heap.get(v), Some(Cell::BigInt(value)) if value == "0"))
+    }
+
+    pub(super) fn is_html_dda(&self, value: Value) -> bool {
+        matches!(
+            self.heap.get(value),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::IsHTMLDDA),
+                ..
+            })
+        )
     }
 }

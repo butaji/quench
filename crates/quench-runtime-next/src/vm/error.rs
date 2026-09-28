@@ -541,6 +541,19 @@ impl<H: Host> Vm<H> {
                     self.global(program, global.name, realm)?;
                     continue;
                 }
+                CapabilityId::IsHTMLDDA => {
+                    let realm_atom = self.intern_atom(global.name);
+                    let realm = self
+                        .own_property(self.realm.globals, realm_atom)
+                        .ok_or_else(|| JsError("IsHTMLDDA capability requires $262".into()))?;
+                    self.set_named(
+                        program,
+                        realm,
+                        "IsHTMLDDA",
+                        self.native_value(Native::IsHTMLDDA),
+                    )?;
+                    continue;
+                }
                 CapabilityId::WriteLine | CapabilityId::ClockMillis => continue,
             };
             self.global(program, global.name, self.native_value(native))?;
@@ -1248,6 +1261,10 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.regexp_prototypes.insert(global, regexp_prototype);
         self.install_regexp_accessors(program, regexp_prototype, global)?;
+        self.install_regexp_legacy_accessors(program, regexp, global)?;
+        let regexp_compile = self.native_with_realm(Native::RegExpCompile, global, global);
+        self.set_builtin_function_name(regexp_compile, "compile")?;
+        self.set_builtin_value_named(regexp_prototype, "compile", regexp_compile)?;
         self.set_builtin_value_named(regexp, "prototype", regexp_prototype)?;
         self.set_builtin_value_named(regexp_prototype, "constructor", regexp)?;
         self.install_regexp_symbol_properties(regexp, regexp_prototype, global)?;
