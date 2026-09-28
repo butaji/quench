@@ -38,10 +38,49 @@ const STRING_METHODS: &[(&str, Native, f64)] = &[
     ("valueOf", Native::StringValueOf, 0.0),
 ];
 
+struct StringHtmlMethod {
+    name: &'static str,
+    native: Native,
+    tag: &'static str,
+    attribute: Option<&'static str>,
+}
+
+const STRING_HTML_METHODS: &[StringHtmlMethod] = &[
+    StringHtmlMethod { name: "anchor", native: Native::StringAnchor, tag: "a", attribute: Some("name") },
+    StringHtmlMethod { name: "big", native: Native::StringBig, tag: "big", attribute: None },
+    StringHtmlMethod { name: "blink", native: Native::StringBlink, tag: "blink", attribute: None },
+    StringHtmlMethod { name: "bold", native: Native::StringBold, tag: "b", attribute: None },
+    StringHtmlMethod { name: "fixed", native: Native::StringFixed, tag: "tt", attribute: None },
+    StringHtmlMethod { name: "fontcolor", native: Native::StringFontcolor, tag: "font", attribute: Some("color") },
+    StringHtmlMethod { name: "fontsize", native: Native::StringFontsize, tag: "font", attribute: Some("size") },
+    StringHtmlMethod { name: "italics", native: Native::StringItalics, tag: "i", attribute: None },
+    StringHtmlMethod { name: "link", native: Native::StringLink, tag: "a", attribute: Some("href") },
+    StringHtmlMethod { name: "small", native: Native::StringSmall, tag: "small", attribute: None },
+    StringHtmlMethod { name: "strike", native: Native::StringStrike, tag: "strike", attribute: None },
+    StringHtmlMethod { name: "sub", native: Native::StringSub, tag: "sub", attribute: None },
+    StringHtmlMethod { name: "sup", native: Native::StringSup, tag: "sup", attribute: None },
+];
+
+const STRING_METHOD_ALIASES: &[(&str, &str)] = &[("trimLeft", "trimStart"), ("trimRight", "trimEnd")];
+const HTML_ATTRIBUTE_QUOTE: u16 = b'"' as u16;
+const HTML_QUOTE_ENTITY: &str = "&quot;";
+
 pub(super) fn string_native_length(native: Native) -> Option<f64> {
     STRING_METHODS
         .iter()
         .find_map(|(_, candidate, length)| (*candidate == native).then_some(*length))
+        .or_else(|| {
+            STRING_HTML_METHODS.iter().find_map(|method| {
+                (method.native == native)
+                    .then_some(if method.attribute.is_some() { 1.0 } else { 0.0 })
+            })
+        })
+}
+
+fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
+    STRING_HTML_METHODS
+        .iter()
+        .find(|method| method.native == native)
 }
 
 fn utf16_index(text: &str, byte_index: usize) -> usize {
@@ -81,7 +120,7 @@ impl<H: Host> Vm<H> {
         }
         let converts_receiver = STRING_METHODS.iter().any(|(_, method, _)| {
             *method == native && !matches!(native, Native::StringToString | Native::StringValueOf)
-        });
+        }) || string_html_method(native).is_some();
         if !converts_receiver {
             return Ok(receiver);
         }
@@ -154,11 +193,57 @@ impl<H: Host> Vm<H> {
         for (name, native, _) in STRING_METHODS {
             self.set_builtin_named_for_realm(program, prototype, name, *native, realm)?;
         }
+        for method in STRING_HTML_METHODS {
+            self.set_builtin_named_for_realm(program, prototype, method.name, method.native, realm)?;
+        }
+        for (alias, original) in STRING_METHOD_ALIASES {
+            let original = self.intern_atom(original);
+            let function = self
+                .own_property(prototype, original)
+                .expect("String method aliases have installed targets");
+            self.set_builtin_value_named(prototype, alias, function)?;
+        }
         let iterator = self.native_with_realm(Native::StringValues, realm, realm);
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
         let symbol = self.well_known_symbols["iterator"];
         self.set_symbol_property(prototype, symbol, iterator)?;
         Ok(prototype)
+    }
+
+    pub(super) fn string_html_method(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+        args: &[Value],
+    ) -> Option<Result<Value, JsError>> {
+        let method = string_html_method(native)?;
+        Some((|| {
+            let receiver = self.coerce_js_string(p, receiver)?;
+            let mut units = Vec::with_capacity(receiver.units().len());
+            let opening = match method.attribute {
+                Some(attribute) => format!("<{} {}=\"", method.tag, attribute),
+                None => format!("<{}>", method.tag),
+            };
+            units.extend(opening.encode_utf16());
+            if method.attribute.is_some() {
+                let argument = self.coerce_js_string(
+                    p,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                )?;
+                for &unit in argument.units() {
+                    if unit == HTML_ATTRIBUTE_QUOTE {
+                        units.extend(HTML_QUOTE_ENTITY.encode_utf16());
+                    } else {
+                        units.push(unit);
+                    }
+                }
+                units.extend("\">".encode_utf16());
+            }
+            units.extend(receiver.units());
+            units.extend(format!("</{}>", method.tag).encode_utf16());
+            Ok(self.heap.alloc(Cell::String(JsString::from_units(&units))))
+        })())
     }
 
     fn set_builtin_named_for_realm(

@@ -318,6 +318,7 @@ pub(crate) enum Native {
     StringReplace, StringSplit, StringTrim, StringTrimStart, StringTrimEnd,
     StringRepeat, StringPadStart, StringPadEnd, StringMatch, StringMatchAll, StringSearch,
     StringReplaceAll, StringAt, StringCodePointAt, StringToUpperCase, StringToLowerCase, StringConcat, StringNormalize, StringValues,
+    StringAnchor, StringBig, StringBlink, StringBold, StringFixed, StringFontcolor, StringFontsize, StringItalics, StringLink, StringSmall, StringStrike, StringSub, StringSup,
     EncodeUri, EncodeUriComponent,
     DecodeUri, DecodeUriComponent,
     GlobalEscape, GlobalUnescape,

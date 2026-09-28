@@ -53,6 +53,7 @@ const DATE_PROTOTYPE_METHODS: &[(&str, Native)] = &[
     ("toJSON", Native::DateToJSON),
     ("toTemporalInstant", Native::DateToTemporalInstant),
 ];
+const DATE_PROTOTYPE_ALIASES: &[(&str, &str)] = &[("toGMTString", "toUTCString")];
 const SECONDS_PER_MINUTE: i32 = 60;
 const LEGACY_DATE_YEAR_OFFSET: i32 = 1900;
 const MONTHS_PER_YEAR: f64 = 12.0;
@@ -195,6 +196,13 @@ impl<H: Host> Vm<H> {
             let method = self.native_with_realm(*native, global, global);
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(prototype, name, method)?;
+        }
+        for (alias, original) in DATE_PROTOTYPE_ALIASES {
+            let original = self.intern_atom(original);
+            let method = self
+                .own_property(prototype, original)
+                .expect("Date method aliases have installed targets");
+            self.set_builtin_value_named(prototype, alias, method)?;
         }
         for (name, native) in [
             ("now", Native::DateNow),
