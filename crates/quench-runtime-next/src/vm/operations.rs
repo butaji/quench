@@ -45,6 +45,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let this = self.string_method_receiver(p, native, this)?;
+        if let Some(result) = self.string_html_method(p, native, this, args) {
+            return result;
+        }
         if Self::is_finalization_native(native) {
             return self.call_finalization_registry_native(p, native, this, args);
         }

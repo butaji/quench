@@ -491,6 +491,7 @@ const NATIVES: &[Native] = &[
     Native::StringSearch,
     Native::StringReplaceAll,
     Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringToLocaleLowerCase, Native::StringToLocaleUpperCase, Native::StringLocaleCompare, Native::StringConcat, Native::StringNormalize, Native::StringValues,
+    Native::StringAnchor, Native::StringBig, Native::StringBlink, Native::StringBold, Native::StringFixed, Native::StringFontcolor, Native::StringFontsize, Native::StringItalics, Native::StringLink, Native::StringSmall, Native::StringStrike, Native::StringSub, Native::StringSup,
     Native::StringToWellFormed,
     Native::EncodeUri,
     Native::EncodeUriComponent,
