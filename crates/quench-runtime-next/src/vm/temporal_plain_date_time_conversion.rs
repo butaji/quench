@@ -65,8 +65,9 @@ pub(super) fn to_time_with_options<H: Host>(
         return Ok([local[3], local[4], local[5], local[6], local[7], local[8]]);
     }
     if vm.is_string(value) {
+        let time = parse_time_string(vm, p, value)?;
         let _ = vm.plain_date_overflow(p, options)?;
-        return parse_time_string(vm, p, value);
+        return Ok(time);
     }
     if !vm.is_object_like(value) {
         return Err(vm.type_error(p, "Invalid time".into()));
