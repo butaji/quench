@@ -734,15 +734,19 @@ fn annex_b_function_names_in(statement: &Statement<'_>) -> Vec<(u32, String)> {
     }
 }
 
+pub(super) fn annex_b_function_eligible(function: &oxc_ast::ast::Function<'_>) -> bool {
+    !function.r#async && !function.generator && function.id.is_some()
+}
+
 fn annex_b_function_name(function: &oxc_ast::ast::Function<'_>) -> Option<String> {
-    (!function.r#async && !function.generator)
+    annex_b_function_eligible(function)
         .then(|| {
             function
                 .id
                 .as_ref()
-                .map(|identifier| identifier.name.to_string())
+                .expect("eligible Annex B function has a name")
         })
-        .flatten()
+        .map(|identifier| identifier.name.to_string())
 }
 
 fn block_function_names(statements: &[Statement<'_>]) -> Vec<String> {
