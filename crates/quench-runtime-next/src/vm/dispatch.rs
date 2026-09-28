@@ -168,6 +168,8 @@ impl<H: Host> Vm<H> {
                     self.root_global_lexical_value(p, self.frames[f].function, slot)
                 {
                     value
+                } else if let Some(atom) = self.global_eval_var_atom(f, slot) {
+                    self.get_property(p, self.realm.globals, atom)?
                 } else if let Some(value) =
                     self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
                 {
