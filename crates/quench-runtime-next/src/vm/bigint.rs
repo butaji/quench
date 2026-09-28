@@ -121,17 +121,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let bigint = self.bigint_value_of(p, this)?;
-        let locales = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let constructor = self
-            .intl_number_format_constructors
-            .get(&self.realm.globals)
-            .copied()
-            .ok_or_else(|| JsError("Intl.NumberFormat intrinsic is not installed".into()))?;
-        let formatter = self.construct_value(p, constructor, &[locales, options])?;
-        let format_atom = self.intern_atom("format");
-        let format = self.get_property(p, formatter, format_atom)?;
-        self.call_value(p, format, formatter, &[bigint])
+        self.intl_format_primitive(p, bigint, args)
     }
 
     fn bigint_to_string(
