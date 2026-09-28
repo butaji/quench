@@ -49,7 +49,9 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(duration, "Duration")?;
         let prototype = self.object();
         self.set_builtin_value_named(duration, "prototype", prototype)?;
+        self.lock_temporal_constructor_prototype(duration)?;
         self.set_builtin_value_named(prototype, "constructor", duration)?;
+        self.install_temporal_to_string_tag(prototype, "Temporal.Duration")?;
         for (name, native) in [
             ("from", Native::TemporalDurationFrom),
             ("compare", Native::TemporalDurationCompare),
@@ -108,6 +110,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(p, prototype, name, native)?;
         }
         self.set_builtin_value_named(temporal, "Duration", duration)?;
+        self.install_temporal_to_string_tag(temporal, "Temporal")?;
         self.install_temporal_now(p, temporal)?;
         self.install_temporal_plain_time(p, temporal)?;
         self.install_temporal_plain_date(p, temporal)?;
@@ -116,6 +119,53 @@ impl<H: Host> Vm<H> {
         self.install_temporal_instant(p, temporal)?;
         self.install_temporal_zoned_date_time(p, temporal)?;
         self.set_builtin_value_named(self.realm.globals, "Temporal", temporal)
+    }
+
+    fn install_temporal_to_string_tag(
+        &mut self,
+        object: Value,
+        tag: &str,
+    ) -> Result<(), JsError> {
+        let symbol = self
+            .well_known_symbols
+            .get("toStringTag")
+            .copied()
+            .ok_or_else(|| JsError("Symbol.toStringTag is not initialized".into()))?;
+        let value = self.heap.alloc(Cell::String(tag.into()));
+        self.set_symbol_property(object, symbol, value)?;
+        self.set_property_attributes(
+            object,
+            PropertyKey::symbol(symbol),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
+    }
+
+    fn lock_temporal_constructor_prototype(
+        &mut self,
+        constructor: Value,
+    ) -> Result<(), JsError> {
+        let prototype = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
     }
 
     fn install_temporal_now(
