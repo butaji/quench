@@ -168,17 +168,22 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             }
             Native::Date => self.date_call(),
-            Native::IntlNumberFormat => self.intl_number_format_construct(
-                p,
-                args,
-                self.native_value(Native::IntlNumberFormat),
-            ),
+            Native::IntlNumberFormat => self.intl_number_format_call(p, this, args),
+            Native::IntlNumberFormatSupportedLocalesOf => {
+                self.intl_number_format_supported_locales_of(p, args)
+            }
             Native::IntlNumberFormatFormatGetter => {
                 self.intl_number_format_format_getter(p, this)
             }
             Native::IntlNumberFormatFormat => self.intl_number_format_format(p, this, args),
             Native::IntlNumberFormatFormatToParts => {
                 self.intl_number_format_format_to_parts(p, this, args)
+            }
+            Native::IntlNumberFormatFormatRange => {
+                self.intl_number_format_format_range(p, this, args)
+            }
+            Native::IntlNumberFormatFormatRangeToParts => {
+                self.intl_number_format_format_range_to_parts(p, this, args)
             }
             Native::IntlNumberFormatResolvedOptions => {
                 self.intl_number_format_resolved_options(p, this)

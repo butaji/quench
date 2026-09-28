@@ -58,6 +58,7 @@ impl<H: Host> Vm<H> {
             regexp_prototypes: FxHashMap::default(),
             intl_number_format_constructors: FxHashMap::default(),
             intl_number_format_prototypes: FxHashMap::default(),
+            intl_number_format_fallback_symbols: FxHashMap::default(),
             intl_collator_constructors: FxHashMap::default(),
             intl_collator_prototypes: FxHashMap::default(),
             intl_datetime_format_constructors: FxHashMap::default(),

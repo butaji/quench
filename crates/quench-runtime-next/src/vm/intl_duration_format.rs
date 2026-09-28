@@ -867,16 +867,10 @@ fn duration_fraction(
     let value = whole * scale + fraction;
     let sign = if value < 0 { "-" } else { "" };
     let absolute = value.saturating_abs();
-    let exact = format!(
-        "{}.{:0width$}",
-        absolute / scale,
-        absolute % scale,
-        width = exponent
-    );
-    let formatted = exact.parse::<f64>().unwrap_or_default().to_string();
-    let (integer, raw_fraction) = formatted.split_once('.').unwrap_or((&formatted, ""));
+    let integer = (absolute / scale).to_string();
+    let raw_fraction = format!("{:0width$}", absolute % scale, width = exponent);
     let digit_limit = digits.unwrap_or(exponent).min(exponent);
-    let mut fractional = raw_fraction[..raw_fraction.len().min(digit_limit)].to_owned();
+    let mut fractional = raw_fraction[..digit_limit].to_owned();
     if digits.is_none() {
         while fractional.ends_with('0') {
             fractional.pop();
