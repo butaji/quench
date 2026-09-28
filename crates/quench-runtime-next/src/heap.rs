@@ -226,7 +226,7 @@ impl Heap {
             .filter_map(|(index, slot)| {
                 let object = slot.cell.as_ref()?.object()?;
                 self.properties
-                    .has_values(object.properties)
+                    .has_compact_range(object.properties)
                     .then_some(())?;
                 Some((object.properties.start_offset(), index))
             })
@@ -483,13 +483,7 @@ impl Heap {
             work.push(object.proto);
             shape_roots(object.shape(), work);
             work.extend(object.private_names.iter().map(|brand| brand.home));
-            work.extend(
-                properties
-                    .values(object.properties)
-                    .iter()
-                    .copied()
-                    .filter(|value| !value.is_deleted()),
-            );
+            properties.append_live_values(object.properties, work);
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
             object(value);
