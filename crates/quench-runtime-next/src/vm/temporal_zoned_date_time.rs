@@ -2137,10 +2137,12 @@ pub(super) struct ZonedDateTimeRecord {
     pub(super) calendar: String,
 }
 
+#[derive(Clone, Copy)]
 struct IsoZonedDateTimeBase {
     date: super::temporal_date::IsoDate,
     time: [u32; 6],
     offset_nanoseconds: Option<i128>,
+    time_zone_offset_syntax: bool,
     z_designator: bool,
     leap_second: bool,
 }
@@ -2182,6 +2184,43 @@ fn parse_zoned_date_time_string(text: &str) -> Option<ParsedZonedDateTimeString>
         calendar,
         local,
     })
+}
+
+pub(super) fn parse_relative_date_string(text: &str) -> Option<super::temporal_date::IsoDate> {
+    let local = if let Some(parsed) = parse_zoned_date_time_string(text) {
+        let local = parsed.local;
+        resolve_zoned_date_time_string(parsed, "reject")?;
+        local
+    } else {
+        let (base, annotations) = text
+            .split_once('[')
+            .map_or((text, None), |(base, tail)| (base, Some(tail)));
+        if let Some(annotations) = annotations {
+            let (calendar, tail) = annotations.split_once(']')?;
+            let calendar = calendar.strip_prefix('!').unwrap_or(calendar);
+            if !calendar.starts_with("u-ca=") || !tail.is_empty() {
+                return None;
+            }
+            super::temporal_date_parse::parse_calendar_identifier_name(
+                calendar.strip_prefix("u-ca=")?,
+            )?;
+        }
+        parse_iso_zoned_base_fields(base)?
+    };
+    if local.z_designator && !text.contains('[') {
+        return None;
+    }
+    let date = local.date;
+    super::temporal_date::checked_iso_date(date.year, date.month as i32, date.day as i32)?;
+    let mut time = [0; 6];
+    for (target, field) in time.iter_mut().zip(local.time) {
+        *target = i32::try_from(field).ok()?;
+    }
+    super::temporal_plain_date_time_conversion::is_within_bounds(
+        (date.year, date.month, date.day),
+        time,
+    )
+    .then_some(date)
 }
 
 fn resolve_zoned_date_time_string(

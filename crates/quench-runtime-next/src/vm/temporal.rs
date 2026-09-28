@@ -557,8 +557,13 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<quench_temporal::IsoDate, JsError> {
         if let Some(Cell::String(text)) = self.heap.get(value) {
-            let (date, _) = super::temporal_date_parse::parse_plain_date_string(text.host_string())
-                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            let text = text.host_string();
+            let date = if text.contains(['T', 't']) {
+                super::temporal_zoned_date_time::parse_relative_date_string(&text)
+            } else {
+                super::temporal_date_parse::parse_plain_date_string(&text).map(|(date, _)| date)
+            }
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
             return Ok(quench_temporal::IsoDate {
                 year: date.year,
                 month: date.month,
@@ -578,31 +583,35 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(value) {
             return Err(self.type_error(p, "Invalid relativeTo".into()));
         }
-        let year_atom = self.intern_atom("year");
-        let month_atom = self.intern_atom("month");
-        let day_atom = self.intern_atom("day");
-        let year = self.get_property(p, value, year_atom)?;
-        let month = self.get_property(p, value, month_atom)?;
-        let day = self.get_property(p, value, day_atom)?;
-        let year = self.to_number(p, year)?;
-        let month = self.to_number(p, month)?;
-        let day = self.to_number(p, day)?;
-        if !year.is_finite()
-            || !month.is_finite()
-            || !day.is_finite()
-            || year.fract() != 0.0
-            || month.fract() != 0.0
-            || day.fract() != 0.0
-        {
-            return Err(self.range_error(p, "Invalid relativeTo".into()));
+        let constructor = self.temporal_plain_date_constructor(p)?;
+        let date = self.temporal_plain_date_from(p, constructor, &[value])?;
+        let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
+        let _ = super::temporal_plain_date_time_conversion::to_date_time(
+            self,
+            p,
+            value,
+            Value::UNDEFINED,
+        )?;
+        let timezone_atom = self.intern_atom("timeZone");
+        let timezone = self.get_property(p, value, timezone_atom)?;
+        if !timezone.is_undefined() {
+            if !matches!(self.heap.get(timezone), Some(Cell::String(_))) {
+                return Err(self.type_error(p, "Invalid time zone".into()));
+            }
+            self.temporal_timezone_id(p, timezone)?;
         }
-        super::temporal_date::checked_iso_date(year as i32, month as i32, day as i32)
-            .map(|date| quench_temporal::IsoDate {
-                year: date.year,
-                month: date.month,
-                day: date.day,
-            })
-            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))
+        let offset_atom = self.intern_atom("offset");
+        let offset = self.get_property(p, value, offset_atom)?;
+        if !offset.is_undefined() {
+            if !matches!(self.heap.get(offset), Some(Cell::String(_))) {
+                return Err(self.type_error(p, "Invalid offset".into()));
+            }
+            let offset = self.to_string(p, offset)?;
+            if !quench_temporal::valid_string_offset(&offset) {
+                return Err(self.range_error(p, "Invalid offset".into()));
+            }
+        }
+        Ok(quench_temporal::IsoDate { year, month, day })
     }
 
     fn temporal_duration_total(
@@ -660,26 +669,7 @@ impl<H: Host> Vm<H> {
         unit: usize,
         relative_to: Value,
     ) -> Result<Value, JsError> {
-        let start = if let Some(Cell::TemporalPlainDate {
-            year, month, day, ..
-        }) = self.heap.get(relative_to)
-        {
-            super::temporal_date::IsoDate {
-                year: *year,
-                month: *month,
-                day: *day,
-            }
-        } else if let Some(Cell::String(text)) = self.heap.get(relative_to) {
-            let (date, _) = super::temporal_date_parse::parse_plain_date_string(text.host_string())
-                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-            date
-        } else {
-            let constructor = self.temporal_plain_date_constructor(p)?;
-            let args = [relative_to];
-            let date = self.temporal_plain_date_from(p, constructor, &args)?;
-            let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
-            super::temporal_date::IsoDate { year, month, day }
-        };
+        let start = self.temporal_relative_date(p, relative_to)?;
         let fields = std::array::from_fn(|index| fields[index] as i128);
         let date = quench_temporal::IsoDate {
             year: start.year,
