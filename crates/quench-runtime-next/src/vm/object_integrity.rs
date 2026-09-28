@@ -320,9 +320,13 @@ impl<H: Host> Vm<H> {
                 .map(|object| object.proto)
                 .unwrap_or(Value::NULL);
         }
-        self.object_data_mut(target)
-            .expect("object validated")
-            .proto = proto;
+        if current_proto != proto {
+            self.object_data_mut(target)
+                .expect("object validated")
+                .proto = proto;
+            self.invalidate_field_caches();
+            self.invalidate_method_caches();
+        }
         Ok(target)
     }
 
