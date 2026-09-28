@@ -6,10 +6,6 @@ const NANOSECONDS_PER_MINUTE: i128 = 60_000_000_000;
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 const NANOSECONDS_PER_MICROSECOND: i128 = 1_000;
-const DAY_ROUNDING_INCREMENT_LIMIT: f64 = 1.0;
-const HOUR_ROUNDING_INCREMENT_LIMIT: f64 = 24.0;
-const SEXAGESIMAL_ROUNDING_INCREMENT_LIMIT: f64 = 60.0;
-const SUBSECOND_ROUNDING_INCREMENT_LIMIT: f64 = 1_000.0;
 const UNITS: [(&str, i128); 7] = [
     ("day", NANOSECONDS_PER_DAY),
     ("hour", NANOSECONDS_PER_HOUR),
@@ -19,6 +15,13 @@ const UNITS: [(&str, i128); 7] = [
     ("microsecond", NANOSECONDS_PER_MICROSECOND),
     ("nanosecond", 1),
 ];
+
+#[derive(Clone, Copy)]
+pub(super) enum RoundingDomain {
+    Instant,
+    PlainDateTime,
+    PlainTime,
+}
 pub(super) const MODES: [&str; 9] = [
     "ceil",
     "floor",
@@ -40,8 +43,13 @@ pub(super) fn round<H: Host>(
     let epoch = vm.temporal_instant_epoch(p, this)?;
     let options = args.first().copied().unwrap_or(Value::UNDEFINED);
     let parsed = read_options(vm, p, options)?;
-    let (_, scale) = parse_unit(vm, p, parsed.smallest_unit.as_deref())?;
-    let increment = validate_increment(vm, p, parsed.increment, scale)?;
+    let (_, scale) = parse_unit(
+        vm,
+        p,
+        parsed.smallest_unit.as_deref(),
+        RoundingDomain::Instant,
+    )?;
+    let increment = validate_increment(vm, p, parsed.increment, scale, RoundingDomain::Instant)?;
     let mode = validate_mode(vm, p, parsed.rounding_mode.as_deref())?;
     let mode = match (epoch < 0, mode) {
         (true, "trunc") => "floor",
@@ -129,14 +137,19 @@ pub(super) fn parse_unit<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     unit: Option<&str>,
+    domain: RoundingDomain,
 ) -> Result<(&'static str, i128), JsError> {
     let unit = unit.ok_or_else(|| vm.range_error(p, "Missing smallestUnit".into()))?;
     let singular = unit.strip_suffix('s').unwrap_or(unit);
-    UNITS
+    let parsed = UNITS
         .iter()
         .find(|(name, _)| *name == singular)
         .copied()
-        .ok_or_else(|| vm.range_error(p, "Invalid smallestUnit".into()))
+        .ok_or_else(|| vm.range_error(p, "Invalid smallestUnit".into()))?;
+    if parsed.0 == "day" && !matches!(domain, RoundingDomain::PlainDateTime) {
+        return Err(vm.range_error(p, "Invalid smallestUnit".into()));
+    }
+    Ok(parsed)
 }
 
 pub(super) fn validate_increment<H: Host>(
@@ -144,23 +157,27 @@ pub(super) fn validate_increment<H: Host>(
     p: &ResidualProgram,
     increment: Option<f64>,
     scale: i128,
+    domain: RoundingDomain,
 ) -> Result<i128, JsError> {
     let increment = increment.unwrap_or(1.0);
-    let limit = match scale {
-        NANOSECONDS_PER_DAY => DAY_ROUNDING_INCREMENT_LIMIT,
-        NANOSECONDS_PER_HOUR => HOUR_ROUNDING_INCREMENT_LIMIT,
-        NANOSECONDS_PER_MINUTE | NANOSECONDS_PER_SECOND => SEXAGESIMAL_ROUNDING_INCREMENT_LIMIT,
-        NANOSECONDS_PER_MILLISECOND | NANOSECONDS_PER_MICROSECOND | 1 => {
-            SUBSECOND_ROUNDING_INCREMENT_LIMIT
-        }
-        _ => return Err(vm.range_error(p, "Invalid rounding unit".into())),
+    let limit = match domain {
+        RoundingDomain::Instant => (NANOSECONDS_PER_DAY / scale) as f64,
+        RoundingDomain::PlainDateTime | RoundingDomain::PlainTime => match scale {
+            NANOSECONDS_PER_DAY => 1.0,
+            NANOSECONDS_PER_HOUR => 24.0,
+            NANOSECONDS_PER_MINUTE | NANOSECONDS_PER_SECOND => 60.0,
+            NANOSECONDS_PER_MILLISECOND | NANOSECONDS_PER_MICROSECOND | 1 => 1_000.0,
+            _ => return Err(vm.range_error(p, "Invalid rounding unit".into())),
+        },
     };
     let increment = increment.trunc();
-    let at_or_above_exclusive_limit = scale != NANOSECONDS_PER_DAY && increment >= limit;
+    let exclusive = !matches!(domain, RoundingDomain::Instant)
+        && scale != NANOSECONDS_PER_DAY
+        && increment >= limit;
     if !increment.is_finite()
         || increment < 1.0
         || increment > limit
-        || at_or_above_exclusive_limit
+        || exclusive
         || limit % increment != 0.0
     {
         return Err(vm.range_error(p, "Invalid roundingIncrement".into()));
