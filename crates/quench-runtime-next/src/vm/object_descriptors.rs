@@ -175,10 +175,7 @@ impl<H: Host> Vm<H> {
         if super::number::number_to_decimal(number) != key {
             return TypedArrayIndexKey::NotCanonical;
         }
-        if !number.is_finite()
-            || number < 0.0
-            || number.fract() != 0.0
-            || number > MAX_SAFE_INTEGER
+        if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > MAX_SAFE_INTEGER
         {
             return TypedArrayIndexKey::Invalid;
         }
@@ -192,16 +189,11 @@ impl<H: Host> Vm<H> {
         index: usize,
         descriptor: Value,
     ) -> Result<Value, JsError> {
-        let getter = self.descriptor_field(p, descriptor, "get")?;
-        let setter = self.descriptor_field(p, descriptor, "set")?;
-        let value = self.descriptor_field(p, descriptor, "value")?;
-        let writable = self.descriptor_field(p, descriptor, "writable")?;
-        let enumerable = self.descriptor_field(p, descriptor, "enumerable")?;
-        let configurable = self.descriptor_field(p, descriptor, "configurable")?;
-        let invalid_kind = getter.is_some() || setter.is_some();
-        let invalid_attributes = writable.is_some_and(|value| !self.truthy(value))
-            || enumerable.is_some_and(|value| !self.truthy(value))
-            || configurable.is_some_and(|value| !self.truthy(value));
+        let descriptor = self.to_property_descriptor(p, descriptor)?;
+        let invalid_kind = descriptor.has_accessor_fields();
+        let invalid_attributes = descriptor.writable == Some(false)
+            || descriptor.enumerable == Some(false)
+            || descriptor.configurable == Some(false);
         if invalid_kind || invalid_attributes {
             return Err(self.type_error(
                 p,
@@ -217,7 +209,7 @@ impl<H: Host> Vm<H> {
                 "cannot define a property on an out-of-bounds typed array".into(),
             ));
         }
-        if let Some(value) = value
+        if let Some(value) = descriptor.value
             && !self.typed_array_set(p, target, index, value)?
         {
             return Err(self.type_error(
