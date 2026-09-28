@@ -331,6 +331,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::NumberFixed
         | Native::NumberExponential
         | Native::NumberPrecision => 1.0,
+        Native::GlobalIsFinite | Native::GlobalIsNaN => 1.0,
         Native::ParseInt => 2.0,
         Native::SuppressedError => 3.0,
         Native::Error
