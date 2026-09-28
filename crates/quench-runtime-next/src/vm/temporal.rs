@@ -849,6 +849,15 @@ impl<H: Host> Vm<H> {
                 "largestUnit must not be smaller than smallestUnit".into(),
             ));
         }
+        if largest < smallest
+            && smallest <= super::temporal_date_arithmetic::DURATION_DAYS_FIELD
+            && increment > 1
+        {
+            return Err(self.range_error(
+                p,
+                "Cannot round to an increment while balancing calendar units".into(),
+            ));
+        }
         let needs_relative_date = smallest <= 2
             || largest <= 2
             || fields[..3].iter().any(|value| *value != 0.0);
