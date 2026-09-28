@@ -38,5 +38,6 @@ quench-intl = { path = "../quench-intl" }
 quench-temporal = { path = "../quench-temporal" }
 serde_json = "1"
 unicode-normalization = "0.1"
+unicode-segmentation = "1.13"
 
 [dev-dependencies]

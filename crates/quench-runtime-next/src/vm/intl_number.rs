@@ -156,6 +156,7 @@ impl<H: Host> Vm<H> {
         self.install_intl_display_names_for_realm(program, intl, global, object_prototype)?;
         self.install_intl_duration_format_for_realm(intl, global, object_prototype)?;
         self.install_intl_list_format_for_realm(intl, global, object_prototype)?;
+        self.install_intl_segmenter_for_realm(intl, global, object_prototype)?;
         self.set_builtin_value_named(global, "Intl", intl)?;
         let _ = program;
         Ok(())
