@@ -1022,6 +1022,9 @@ impl<H: Host> Vm<H> {
                     return self.set_property_with_program(p, object, atom, value);
                 }
             }
+            if self.store_direct_eval_var_binding(atom, value) {
+                return Ok(());
+            }
             if let Some(frame) = self.frames.last_mut()
                 && let Some((_, current)) = frame
                     .dynamic_bindings
@@ -1128,6 +1131,55 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    fn store_direct_eval_var_binding(&mut self, atom: Atom, value: Value) -> bool {
+        let Some(eval_program_id) = self.direct_eval_var_program else {
+            return false;
+        };
+        let Some(eval_frame_index) = self.frames.len().checked_sub(1) else {
+            return false;
+        };
+        let eval_frame = &self.frames[eval_frame_index];
+        if eval_frame.program != eval_program_id || eval_frame.function != super::ROOT_FUNCTION_ID {
+            return false;
+        }
+        let Some(eval_program) = self.programs.get(eval_program_id) else {
+            return false;
+        };
+        if !eval_program.functions[super::ROOT_FUNCTION_ID as usize]
+            .global_var_atoms
+            .contains(&atom)
+        {
+            return false;
+        }
+        let Some(caller_index) = eval_frame_index.checked_sub(1) else {
+            return false;
+        };
+        let Some(binding_index) = self.frames[caller_index]
+            .dynamic_bindings
+            .iter()
+            .rposition(|(candidate, _)| *candidate == atom)
+        else {
+            return false;
+        };
+        self.frames[caller_index].dynamic_bindings[binding_index].1 = value;
+        let (captured, env) = {
+            let frame = &self.frames[caller_index];
+            (frame.captured, frame.env)
+        };
+        if captured
+            && let Some(Cell::Environment {
+                dynamic_bindings, ..
+            }) = self.heap.get_mut(env)
+            && let Some((_, binding)) = dynamic_bindings
+                .iter_mut()
+                .rev()
+                .find(|(candidate, _)| *candidate == atom)
+        {
+            *binding = value;
+        }
+        true
+    }
+
     fn store_global_var_binding(
         &mut self,
         p: &ResidualProgram,
@@ -1137,7 +1189,18 @@ impl<H: Host> Vm<H> {
         let Some(root_index) = self
             .frames
             .iter()
-            .rposition(|frame| frame.program == self.active_program && frame.function == 0)
+            .rposition(|frame| {
+                frame.function == super::ROOT_FUNCTION_ID
+                    && self
+                        .programs
+                        .get(frame.program)
+                        .is_some_and(|program| {
+                            program
+                                .functions
+                                .get(super::ROOT_FUNCTION_ID as usize)
+                                .is_some_and(|function| function.global_var_atoms.contains(&atom))
+                        })
+            })
         else {
             return Ok(false);
         };
