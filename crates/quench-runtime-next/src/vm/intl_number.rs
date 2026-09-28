@@ -5,6 +5,8 @@ const NUMBER_FORMAT_MAX_FRACTION_DIGITS: f64 = 100.0;
 const NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS: f64 = 21.0;
 const NUMBER_FORMAT_LOCALE_SLOT: &str = "\0rqj:intl-number-format-locale";
 const NUMBER_FORMAT_STYLE_SLOT: &str = "\0rqj:intl-number-format-style";
+const NUMBER_FORMAT_CURRENCY_SLOT: &str = "\0rqj:intl-number-format-currency";
+const NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT: &str = "\0rqj:intl-number-format-numbering-system";
 const NUMBER_FORMAT_UNIT_SLOT: &str = "\0rqj:intl-number-format-unit";
 const NUMBER_FORMAT_UNIT_DISPLAY_SLOT: &str = "\0rqj:intl-number-format-unit-display";
 const NUMBER_FORMAT_GROUPING_SLOT: &str = "\0rqj:intl-number-format-use-grouping";
@@ -17,6 +19,8 @@ const NUMBER_FORMAT_ROUNDING_MODE_SLOT: &str = "\0rqj:intl-number-format-roundin
 
 struct NumberFormatOptions {
     style: String,
+    currency: Option<String>,
+    numbering_system: Option<String>,
     minimum_fraction_digits: usize,
     maximum_fraction_digits: Option<usize>,
     maximum_significant_digits: Option<usize>,
@@ -38,6 +42,7 @@ impl<H: Host> Vm<H> {
         let intl = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.install_intl_namespace_for_realm(program, intl, global, object_prototype)?;
         let constructor = self.native_with_realm(Native::IntlNumberFormat, global, global);
         self.intl_number_format_constructors
             .insert(global, constructor);
@@ -60,6 +65,10 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        let resolved_options =
+            self.native_with_realm(Native::IntlNumberFormatResolvedOptions, global, global);
+        self.set_builtin_function_name(resolved_options, "resolvedOptions")?;
+        self.set_builtin_value_named(prototype, "resolvedOptions", resolved_options)?;
         let format = self.native_with_realm(Native::IntlNumberFormatFormat, global, global);
         self.set_builtin_function_name(format, "format")?;
         self.set_builtin_value_named(prototype, "format", format)?;
@@ -73,10 +82,6 @@ impl<H: Host> Vm<H> {
         self.install_intl_display_names_for_realm(program, intl, global, object_prototype)?;
         self.install_intl_duration_format_for_realm(intl, global, object_prototype)?;
         self.install_intl_list_format_for_realm(intl, global, object_prototype)?;
-        let supported_values =
-            self.native_with_realm(Native::IntlSupportedValuesOf, global, global);
-        self.set_builtin_function_name(supported_values, "supportedValuesOf")?;
-        self.set_builtin_value_named(intl, "supportedValuesOf", supported_values)?;
         self.set_builtin_value_named(global, "Intl", intl)?;
         let _ = program;
         Ok(())
@@ -94,6 +99,16 @@ impl<H: Host> Vm<H> {
         let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.set_hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT, &locale)?;
         self.set_hidden_string(formatter, NUMBER_FORMAT_STYLE_SLOT, &options.style)?;
+        self.set_hidden_string(
+            formatter,
+            NUMBER_FORMAT_CURRENCY_SLOT,
+            options.currency.as_deref().unwrap_or(""),
+        )?;
+        self.set_hidden_string(
+            formatter,
+            NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT,
+            options.numbering_system.as_deref().unwrap_or(""),
+        )?;
         self.set_hidden_value(
             formatter,
             NUMBER_FORMAT_MIN_FRACTION_SLOT,
@@ -148,41 +163,6 @@ impl<H: Host> Vm<H> {
                 .map_or(Value::UNDEFINED, |digits| Value::number(digits as f64)),
         )?;
         Ok(formatter)
-    }
-
-    pub(super) fn intl_supported_values_of(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let key = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        if key == "numberingSystem" {
-            let values = quench_intl::NUMBERING_SYSTEMS
-                .iter()
-                .map(|system| self.heap.alloc(Cell::String((*system).into())))
-                .collect::<Vec<_>>();
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(values),
-            }));
-        }
-        if key != "timeZone" {
-            return Err(self.range_error(p, "invalid key".into()));
-        }
-        let mut values = chrono_tz::TZ_VARIANTS
-            .iter()
-            .map(|timezone| timezone.name().to_owned())
-            .collect::<Vec<_>>();
-        values.sort_unstable();
-        values.dedup();
-        let values = values
-            .into_iter()
-            .map(|timezone| self.heap.alloc(Cell::String(timezone.into())))
-            .collect::<Vec<_>>();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
     }
 
     fn number_format_instance_prototype(
@@ -251,6 +231,8 @@ impl<H: Host> Vm<H> {
         let Some(options) = options.filter(|value| !value.is_undefined()) else {
             return Ok(NumberFormatOptions {
                 style: "decimal".into(),
+                currency: None,
+                numbering_system: None,
                 minimum_fraction_digits: 0,
                 maximum_fraction_digits: None,
                 maximum_significant_digits: None,
@@ -268,6 +250,7 @@ impl<H: Host> Vm<H> {
         let options = self.box_object(options)?;
         let mut style = "decimal".to_owned();
         let mut currency = None;
+        let mut numbering_system = None;
         let mut unit = None;
         let mut unit_display = "short".to_owned();
         let mut use_grouping = true;
@@ -302,6 +285,15 @@ impl<H: Host> Vm<H> {
                         return Err(self.range_error(p, "invalid currency".into()));
                     }
                     currency = Some(value);
+                }
+                "numberingSystem" => {
+                    let value = self.to_string(p, value)?.to_ascii_lowercase();
+                    if !quench_intl::valid_unicode_type(&value) {
+                        return Err(self.range_error(p, "invalid numberingSystem".into()));
+                    }
+                    numbering_system = quench_intl::NUMBERING_SYSTEMS
+                        .contains(&value.as_str())
+                        .then_some(value);
                 }
                 "unit" => {
                     let value = self.to_string(p, value)?;
@@ -394,6 +386,8 @@ impl<H: Host> Vm<H> {
         }
         Ok(NumberFormatOptions {
             style,
+            currency,
+            numbering_system,
             minimum_fraction_digits,
             maximum_fraction_digits,
             maximum_significant_digits,
@@ -511,6 +505,78 @@ impl<H: Host> Vm<H> {
             _ => formatted,
         };
         Ok(self.heap.alloc(Cell::String(formatted.into())))
+    }
+
+    pub(super) fn intl_number_format_resolved_options(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let Some(locale) = self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT) else {
+            return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
+        };
+        let Some(style) = self.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT) else {
+            return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
+        };
+        let result = self.object();
+        let locale_value = self.heap.alloc(Cell::String(locale.clone().into()));
+        self.set_named(p, result, "locale", locale_value)?;
+        let numbering_system = self
+            .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
+        let numbering_system_value = self.heap.alloc(Cell::String(numbering_system.into()));
+        self.set_named(p, result, "numberingSystem", numbering_system_value)?;
+        let style_value = self.heap.alloc(Cell::String(style.clone().into()));
+        self.set_named(p, result, "style", style_value)?;
+        for (name, slot, fallback) in [
+            ("minimumIntegerDigits", NUMBER_FORMAT_MIN_INTEGER_SLOT, 1.0),
+            (
+                "minimumFractionDigits",
+                NUMBER_FORMAT_MIN_FRACTION_SLOT,
+                0.0,
+            ),
+        ] {
+            let value = self
+                .hidden_value(this, slot)
+                .and_then(Value::as_number)
+                .unwrap_or(fallback);
+            self.set_named(p, result, name, Value::number(value))?;
+        }
+        let maximum_fraction_digits = self
+            .hidden_value(this, NUMBER_FORMAT_MAX_FRACTION_SLOT)
+            .and_then(Value::as_number)
+            .unwrap_or(if style == "currency" { 2.0 } else { 3.0 });
+        self.set_named(
+            p,
+            result,
+            "maximumFractionDigits",
+            Value::number(maximum_fraction_digits),
+        )?;
+        if style == "currency" {
+            let currency = self
+                .hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
+                .unwrap_or_default();
+            let currency = self.heap.alloc(Cell::String(currency.into()));
+            self.set_named(p, result, "currency", currency)?;
+            let display = self.heap.alloc(Cell::String("symbol".into()));
+            self.set_named(p, result, "currencyDisplay", display)?;
+            let sign = self.heap.alloc(Cell::String("standard".into()));
+            self.set_named(p, result, "currencySign", sign)?;
+        }
+        if style == "unit" {
+            let unit = self
+                .hidden_string(this, NUMBER_FORMAT_UNIT_SLOT)
+                .unwrap_or_default();
+            let unit = self.heap.alloc(Cell::String(unit.into()));
+            self.set_named(p, result, "unit", unit)?;
+            let unit_display = self
+                .hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
+                .unwrap_or_else(|| "short".into());
+            let unit_display = self.heap.alloc(Cell::String(unit_display.into()));
+            self.set_named(p, result, "unitDisplay", unit_display)?;
+        }
+        Ok(result)
     }
 
     pub(super) fn intl_number_format_format_to_parts(

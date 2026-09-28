@@ -6,6 +6,7 @@
 //! that slot through the call receiver.
 
 use crate::{execute::VmError, ops::Builtin, value::Value};
+use quench_intl::{canonical_region, language_alias, titlecase_script};
 
 pub(crate) mod collator;
 pub(crate) mod datetime;
@@ -388,4 +389,33 @@ pub(crate) fn default_numbering_system(locale: &str) -> &'static str {
     }
 }
 
-include!("locale_canonicalization.rs");
+fn dedupe(locales: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    locales
+        .into_iter()
+        .filter(|tag| seen.insert(tag.clone()))
+        .collect()
+}
+
+pub(crate) fn to_string_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::StringUnits(value) => String::from_utf16_lossy(value),
+        Value::Number(value) => value.to_string(),
+        Value::Boolean(value) => value.to_string(),
+        Value::Null => "null".to_string(),
+        Value::Undefined => "undefined".to_string(),
+        Value::Array(values) => values
+            .snapshot()
+            .iter()
+            .map(to_string_value)
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => "[object Object]".to_string(),
+    }
+}
+
+pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
+    quench_intl::canonicalize_locale_identifier(tag)
+        .map_err(|()| runtime_error("RangeError: invalid language tag"))
+}

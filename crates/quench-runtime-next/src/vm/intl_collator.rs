@@ -586,9 +586,14 @@ fn normalize_collator_locale(
         if !overrides.ignore_punctuation {
             ignore_punctuation = locale.starts_with("th-") || locale == "th";
         }
+        let collation = requested_collation
+            .as_deref()
+            .filter(|value| quench_intl::collation_supported(locale, value))
+            .unwrap_or("default")
+            .to_owned();
         return (
             locale.to_owned(),
-            requested_collation.unwrap_or_else(|| "default".into()),
+            collation,
             numeric,
             case_first,
             ignore_punctuation,
@@ -648,12 +653,7 @@ fn normalize_collator_locale(
     let has_numeric_extension = ext_value("kn").is_some();
     let extension_numeric =
         ext_value("kn").is_some_and(|value| value.first().is_none_or(|value| value == "true"));
-    let supported = |collation: &str| match collation {
-        "phonebk" => locale.starts_with("de"),
-        "pinyin" => locale.starts_with("zh"),
-        "eor" => true,
-        _ => false,
-    };
+    let supported = |collation: &str| quench_intl::collation_supported(locale, collation);
     let collation = requested_collation
         .as_ref()
         .filter(|value| supported(value))

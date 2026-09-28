@@ -177,6 +177,8 @@ impl<H: Host> Vm<H> {
                         | Native::IntlDisplayNames
                         | Native::IntlDurationFormat
                         | Native::IntlListFormat
+                        | Native::IntlLocale
+                        | Native::IntlRelativeTimeFormat
                         | Native::Promise
                         | Native::Symbol
                         | Native::TemporalDuration
@@ -898,6 +900,10 @@ impl<H: Host> Vm<H> {
             Native::IntlDisplayNames => self.intl_display_names_construct(p, args, new_target),
             Native::IntlDurationFormat => self.intl_duration_format_construct(p, args, new_target),
             Native::IntlListFormat => self.intl_list_format_construct(p, args, new_target),
+            Native::IntlLocale => self.intl_namespace_construct(p, native, args, new_target),
+            Native::IntlRelativeTimeFormat => {
+                self.intl_relative_time_format_construct(p, args, new_target)
+            }
             Native::TemporalDuration => self.temporal_duration_construct(p, args),
             Native::TemporalPlainTime => self.temporal_plain_time_construct(p, args),
             Native::TemporalPlainDate => self.temporal_plain_date_construct(p, args, new_target),

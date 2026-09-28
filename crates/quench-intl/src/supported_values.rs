@@ -1,25 +1,31 @@
-use crate::value::Value;
-use quench_intl::COLLATIONS;
+use std::collections::BTreeSet;
 
-pub(crate) fn supported_calendars() -> Vec<Value> {
-    strings(CALENDARS)
+pub const COLLATIONS: &[&str] = &[
+    "big5han", "compat", "dict", "emoji", "eor", "gb2312", "phonebk", "phonetic", "pinyin",
+    "searchjl", "stroke", "trad", "unihan", "zhuyin",
+];
+
+pub fn collation_supported(locale: &str, collation: &str) -> bool {
+    let language = locale
+        .split(['-', '_'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match collation {
+        "compat" => language == "ar",
+        "dict" => language == "si",
+        "emoji" | "eor" => true,
+        "phonebk" => language == "de",
+        "phonetic" => language == "ln",
+        "searchjl" => language == "ko",
+        "pinyin" | "big5han" | "gb2312" | "stroke" | "trad" | "unihan" | "zhuyin" => {
+            language == "zh"
+        }
+        _ => false,
+    }
 }
 
-pub(crate) fn is_supported_calendar(value: &str) -> bool {
-    CALENDARS.contains(&value)
-}
-
-const CALENDARS: &[&str] = quench_intl::CALENDARS;
-
-pub(crate) fn supported_collations() -> Vec<Value> {
-    strings(COLLATIONS)
-}
-
-pub(crate) fn is_supported_currency(value: &str) -> bool {
-    CURRENCIES.contains(&value)
-}
-
-const CURRENCIES: &[&str] = &[
+pub const CURRENCIES: &[&str] = &[
     "ADP", "AED", "AFA", "AFN", "ALL", "AMD", "ANG", "AOA", "AOK", "AON", "AOR", "ARA", "ARP",
     "ARS", "ATS", "AUD", "AWG", "AZM", "AZN", "BAM", "BBD", "BDT", "BEF", "BGL", "BGN", "BHD",
     "BIF", "BMD", "BND", "BOB", "BOP", "BOV", "BRB", "BRC", "BRE", "BRL", "BRN", "BRR", "BSD",
@@ -44,45 +50,7 @@ const CURRENCIES: &[&str] = &[
     "ZMK", "ZMW", "ZRN", "ZRZ", "ZWD", "ZWL", "ZWR",
 ];
 
-pub(crate) fn supported_currencies() -> Vec<Value> {
-    strings(CURRENCIES)
-}
-
-pub(crate) fn supported_numbering_systems() -> Vec<Value> {
-    strings(NUMBERING_SYSTEMS)
-}
-
-pub(crate) fn valid_numbering_system_syntax(value: &str) -> bool {
-    quench_intl::valid_unicode_type(value)
-}
-
-pub(crate) const NUMBERING_SYSTEMS: &[&str] = quench_intl::NUMBERING_SYSTEMS;
-
-pub(crate) fn supported_time_zones() -> Vec<Value> {
-    let mut names = chrono_tz::TZ_VARIANTS
-        .iter()
-        .filter(|timezone| {
-            !matches!(
-                timezone.name(),
-                "Etc/GMT"
-                    | "Etc/GMT+0"
-                    | "Etc/GMT-0"
-                    | "Etc/GMT0"
-                    | "Etc/Greenwich"
-                    | "Etc/UCT"
-                    | "Etc/UTC"
-                    | "Etc/Universal"
-                    | "Etc/Zulu"
-            )
-        })
-        .map(|timezone| crate::temporal::timezone_primary_name(timezone.name()).to_string())
-        .collect::<Vec<_>>();
-    names.sort();
-    names.dedup();
-    names.into_iter().map(Value::String).collect()
-}
-
-pub(crate) const UNITS: &[&str] = &[
+pub const UNITS: &[&str] = &[
     "acre",
     "bit",
     "byte",
@@ -130,13 +98,10 @@ pub(crate) const UNITS: &[&str] = &[
     "year",
 ];
 
-pub(crate) fn supported_units() -> Vec<Value> {
-    strings(UNITS)
-}
-
-fn strings(values: &[&str]) -> Vec<Value> {
-    values
+pub fn supported_time_zones() -> Vec<String> {
+    let names = chrono_tz::TZ_VARIANTS
         .iter()
-        .map(|value| Value::String(value.to_string()))
-        .collect()
+        .map(|timezone| quench_temporal::timezone_primary_name(timezone.name()).to_owned())
+        .collect::<BTreeSet<_>>();
+    names.into_iter().collect()
 }
