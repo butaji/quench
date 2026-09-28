@@ -41,6 +41,13 @@ enum AssignmentReference {
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
+        if let Some(SimpleAssignmentTarget::StaticMemberExpression(target)) =
+            value.left.as_simple_assignment_target()
+            && target.property.name.as_str() == self.owner.annex_b_call_target_marker
+            && matches!(&target.object, Expression::CallExpression(_))
+        {
+            return self.throw_invalid_call_assignment(&target.object);
+        }
         if let Some(target) = value.left.as_simple_assignment_target() {
             let reference = self.prepare_assignment_reference(target);
             let operator = value.operator as u8;

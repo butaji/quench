@@ -344,11 +344,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: Some(&function.params),
-                        source_text: self
-                            .owner
-                            .text
-                            .get(function.span.start as usize..function.span.end as usize)
-                            .map(str::to_owned),
+                        source_text: self.owner.source_text(function.span),
                         name_binding: None,
                         async_function: function.r#async,
                         generator: function.generator,

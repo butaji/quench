@@ -331,6 +331,14 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn bind_for_of_left(&mut self, left: &ForStatementLeft<'_>, value: Register) {
+        if let Some(SimpleAssignmentTarget::StaticMemberExpression(target)) =
+            left.as_simple_assignment_target()
+            && target.property.name.as_str() == self.owner.annex_b_call_target_marker
+            && matches!(&target.object, Expression::CallExpression(_))
+        {
+            self.throw_invalid_call_assignment(&target.object);
+            return;
+        }
         match left {
             ForStatementLeft::VariableDeclaration(declaration)
                 if declaration.declarations.len() == 1 =>
