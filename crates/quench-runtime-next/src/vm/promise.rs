@@ -363,7 +363,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::TemporalPlainDateTimeWith => 1.0,
         Native::TemporalPlainDateTimeWithCalendar => 1.0,
         Native::TemporalPlainDateTimeWithPlainTime => 0.0,
-        Native::TemporalPlainTime => 6.0,
+        Native::TemporalPlainTime => 0.0,
         Native::TemporalPlainTimeFrom => 1.0,
         Native::TemporalPlainTimeCompare => 2.0,
         Native::TemporalPlainTimeAdd | Native::TemporalPlainTimeSubtract => 1.0,
