@@ -377,7 +377,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     self.store_atom_with_initialization(atom, dst, true);
                 } else if let Some(identifier) = &function.id {
                     let atom = self.owner.atom(identifier.name.as_str());
+                    let block_binding = self.active_lexical_binding(atom).is_some();
                     self.store_atom(atom, dst);
+                    if block_binding && !self.strict {
+                        self.store_annex_b_outer(atom, dst);
+                    }
                 } else {
                     continue;
                 }
@@ -685,9 +689,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     pub(super) fn push_lexical_scope(&mut self, body: &[Statement<'_>]) {
         let mut scope = FxHashMap::default();
         for statement in body {
-            if !self.strict && matches!(statement, Statement::FunctionDeclaration(_)) {
-                continue;
-            }
             self.collect_lexical_binding(statement, &mut scope);
         }
         self.push_lexical_bindings(scope);

@@ -348,14 +348,22 @@ impl FunctionCompiler<'_, '_> {
     fn if_statement(&mut self, item: &IfStatement<'_>) {
         self.clear_statement_completion();
         let alternate = self.condition(&item.test);
-        self.statement(&item.consequent);
+        self.annex_b_statement(&item.consequent);
         if let Some(other) = &item.alternate {
             let end = self.emit(Op::Jump, 0, 0, 0, 0);
             self.patch(alternate);
-            self.statement(other);
+            self.annex_b_statement(other);
             self.patch(end);
         } else {
             self.patch(alternate);
+        }
+    }
+
+    fn annex_b_statement(&mut self, statement: &Statement<'_>) {
+        if matches!(statement, Statement::FunctionDeclaration(_)) && !self.strict {
+            self.emit_hoisted(std::slice::from_ref(statement));
+        } else {
+            self.statement(statement);
         }
     }
 
