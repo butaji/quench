@@ -8,6 +8,7 @@ members = [
     "crates/quench-runtime",
     "crates/quench-runtime-next",
     "crates/quench-regexp",
+    "crates/quench-intl",
     "crates/quench-temporal",
     "crates/quench-test262",
     "crates/quench-wasm",
