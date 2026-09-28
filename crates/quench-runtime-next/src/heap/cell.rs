@@ -310,6 +310,7 @@ pub(crate) enum Native {
     IntlDateTimeFormatFormatToParts, IntlDateTimeFormatFormatRange,
     IntlDateTimeFormatFormatRangeToParts, IntlDateTimeFormatSupportedLocalesOf,
     IntlDateTimeFormatResolvedOptions,
+    IntlDisplayNames, IntlDisplayNamesOf, IntlDisplayNamesResolvedOptions,
     SymbolFor,
     SymbolKeyFor,
     StringCharCodeAt, StringSlice,

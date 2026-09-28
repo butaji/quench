@@ -174,6 +174,7 @@ impl<H: Host> Vm<H> {
                         | Native::IntlNumberFormat
                         | Native::IntlCollator
                         | Native::IntlDateTimeFormat
+                        | Native::IntlDisplayNames
                         | Native::Promise
                         | Native::Symbol
                         | Native::TemporalDuration
@@ -894,11 +895,10 @@ impl<H: Host> Vm<H> {
             }
             Native::IntlCollator => self.intl_collator_construct(p, args, new_target),
             Native::IntlDateTimeFormat => self.intl_date_time_format_construct(p, args, new_target),
+            Native::IntlDisplayNames => self.intl_display_names_construct(p, args, new_target),
             Native::TemporalDuration => self.temporal_duration_construct(p, args),
             Native::TemporalPlainTime => self.temporal_plain_time_construct(p, args),
-            Native::TemporalPlainDate => {
-                self.temporal_plain_date_construct(p, args, new_target)
-            }
+            Native::TemporalPlainDate => self.temporal_plain_date_construct(p, args, new_target),
             Native::TemporalPlainDateTime => {
                 self.temporal_plain_date_time_construct(p, args, new_target)
             }

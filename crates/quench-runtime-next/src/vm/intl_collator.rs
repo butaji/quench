@@ -445,7 +445,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let locales = self.collator_locale_list(p, args.first().copied())?;
+        let locales = self
+            .collator_locale_list(p, args.first().copied())?
+            .into_iter()
+            .filter(|locale| super::intl_number::is_supported_locale(locale))
+            .collect::<Vec<_>>();
         let elements = locales
             .into_iter()
             .map(|locale| self.heap.alloc(Cell::String(locale.into())))
@@ -456,7 +460,7 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn collator_locale_list(
+    pub(super) fn collator_locale_list(
         &mut self,
         p: &ResidualProgram,
         locales: Option<Value>,
@@ -467,40 +471,46 @@ impl<H: Host> Vm<H> {
         if locales.is_null() {
             return Err(self.type_error(p, "invalid locales".into()));
         }
-        if matches!(self.heap.get(locales), Some(Cell::Array { .. })) {
-            let length = self.array_like_length(p, locales)?;
-            let mut output = Vec::new();
-            for index in 0..length {
-                let locale = self.get_index(p, locales, Value::number(index as f64))?;
-                let locale = self.to_string(p, locale)?;
-                if !super::intl_number::valid_locale_identifier(&locale) {
-                    return Err(self.range_error(p, "invalid locale identifier".into()));
-                }
-                if locale
-                    .split('-')
-                    .next()
-                    .is_some_and(|language| language.eq_ignore_ascii_case("en"))
-                {
-                    output.push(locale);
-                }
-            }
-            return Ok(output);
+        if matches!(self.heap.get(locales), Some(Cell::String(_))) {
+            let Some(Cell::String(locale)) = self.heap.get(locales) else {
+                unreachable!("string locale checked above")
+            };
+            let locale = locale.to_string();
+            let locale = self.canonical_locale_tag(p, locale)?;
+            return Ok(vec![locale]);
         }
-        let locale = self.to_string(p, locales)?;
-        if !super::intl_number::valid_locale_identifier(&locale) {
-            return Err(self.range_error(p, "invalid locale identifier".into()));
-        }
-        Ok(
-            if locale
-                .split('-')
-                .next()
-                .is_some_and(|language| language.eq_ignore_ascii_case("en"))
+        let locales = self.box_object(locales)?;
+        let length = self.array_like_length(p, locales)?;
+        let mut output = Vec::new();
+        for index in 0..length {
+            let value = self.get_index(p, locales, Value::number(index as f64))?;
+            if !matches!(self.heap.get(value), Some(Cell::String(_)))
+                && !self.is_object_like(value)
             {
-                vec![locale]
-            } else {
-                Vec::new()
-            },
-        )
+                return Err(self.type_error(p, "locale list elements must be strings".into()));
+            }
+            let locale = self.to_string(p, value)?;
+            let locale = self.canonical_locale_tag(p, locale)?;
+            if !output
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&locale))
+            {
+                output.push(locale);
+            }
+        }
+        Ok(output)
+    }
+
+    fn canonical_locale_tag(
+        &mut self,
+        p: &ResidualProgram,
+        locale: String,
+    ) -> Result<String, JsError> {
+        if super::intl_number::valid_locale_identifier(&locale) {
+            Ok(locale)
+        } else {
+            Err(self.range_error(p, "invalid locale identifier".into()))
+        }
     }
 
     fn set_collator_string(
