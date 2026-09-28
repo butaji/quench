@@ -376,11 +376,18 @@ impl<H: Host> Vm<H> {
                     return Ok(value);
                 }
             }
-            if let Some(index) = super::object_static::array_index(self.atom_name(atom))
-                && matches!(self.heap.get(object), Some(Cell::TypedArray { .. }))
-                && let Some(value) = self.typed_array_get(object, index as usize)
-            {
-                return Ok(value);
+            if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
+                match Self::typed_array_index_key(self.atom_name(atom)) {
+                    super::object_descriptors::TypedArrayIndexKey::Index(index) => {
+                        return Ok(self
+                            .typed_array_get(object, index)
+                            .unwrap_or(Value::UNDEFINED));
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::Invalid => {
+                        return Ok(Value::UNDEFINED);
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+                }
             }
             if let Some(v) = self.own_property(object, atom) {
                 return Ok(v);

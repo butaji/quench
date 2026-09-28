@@ -345,23 +345,6 @@ impl<H: Host> Vm<H> {
             iterator,
             self.native_value(Native::StringValues),
         )?;
-        self.set_symbol_property(
-            self.uint8_array_proto,
-            iterator,
-            self.native_value(Native::Uint8ArrayValues),
-        )?;
-        self.set_property_attributes(
-            self.uint8_array_proto,
-            PropertyKey::symbol(iterator),
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
         self.set_property_attributes(
             self.array_proto,
             PropertyKey::symbol(iterator),

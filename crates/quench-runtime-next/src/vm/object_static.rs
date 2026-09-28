@@ -866,10 +866,19 @@ impl<H: Host> Vm<H> {
             );
         }
         let key = self.coerce_js_string(p, key_value)?;
-        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. }))
-            && let Some(index) = Self::canonical_typed_array_index(key.host_string())
-        {
-            return self.define_typed_array_property(p, target, index, descriptor);
+        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
+            match Self::typed_array_index_key(key.host_string()) {
+                super::object_descriptors::TypedArrayIndexKey::Index(index) => {
+                    return self.define_typed_array_property(p, target, index, descriptor);
+                }
+                super::object_descriptors::TypedArrayIndexKey::Invalid => {
+                    return Err(self.type_error(
+                        p,
+                        "cannot define a non-integer typed array index".into(),
+                    ));
+                }
+                super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+            }
         }
         if key.host_string() == "length"
             && matches!(self.heap.get(target), Some(Cell::Array { .. }))

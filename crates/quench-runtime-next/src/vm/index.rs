@@ -288,53 +288,71 @@ impl<H: Host> Vm<H> {
                     || *x < u32::MAX as f64)
         }) {
             let index = index as usize;
-            if let Some(attributes) = self.array_descriptor(object, index) {
-                if attributes.accessor {
-                    if let Some(setter) = attributes.setter {
-                        self.call_value(p, setter, object, &[value])?;
-                    } else if strict {
-                        return Err(self.type_error(p, "array index has no setter".into()));
+            let typed_array_index_in_proto =
+                if matches!(self.heap.get(object), Some(Cell::Array { .. })) {
+                let atom = self.intern_atom(&index.to_string());
+                self.prototype_chain_contains_typed_array_index(object, atom)
+            } else {
+                false
+            };
+            if !typed_array_index_in_proto {
+                if let Some(attributes) = self.array_descriptor(object, index) {
+                    if attributes.accessor {
+                        if let Some(setter) = attributes.setter {
+                            self.call_value(p, setter, object, &[value])?;
+                        } else if strict {
+                            return Err(self.type_error(p, "array index has no setter".into()));
+                        }
+                        return Ok(());
                     }
+                    if !attributes.writable {
+                        return if strict {
+                            Err(self.type_error(p, "array index is not writable".into()))
+                        } else {
+                            Ok(())
+                        };
+                    }
+                }
+                if self.set_inherited_index_accessor(p, object, index, value, strict)? {
                     return Ok(());
                 }
-                if !attributes.writable {
-                    return if strict {
-                        Err(self.type_error(p, "array index is not writable".into()))
-                    } else {
-                        Ok(())
-                    };
-                }
-            }
-            if self.set_inherited_index_accessor(p, object, index, value, strict)? {
-                return Ok(());
-            }
-            #[cfg(feature = "profile-aggregate")]
-            let kind = self.heap.get(object).and_then(|cell| match cell {
-                Cell::Array { elements, .. } => {
-                    let sparse =
-                        self.array_index_uses_sparse_storage(object, index, elements.len());
-                    Some(if sparse {
-                        2
-                    } else {
-                        usize::from(index >= elements.len())
-                    })
-                }
-                _ => None,
-            });
-            if self.set_array_element(object, index, value) {
                 #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .index_set(usize::from(key.as_int().is_none()) * 3 + kind.unwrap());
-                return Ok(());
+                let kind = self.heap.get(object).and_then(|cell| match cell {
+                    Cell::Array { elements, .. } => {
+                        let sparse =
+                            self.array_index_uses_sparse_storage(object, index, elements.len());
+                        Some(if sparse {
+                            2
+                        } else {
+                            usize::from(index >= elements.len())
+                        })
+                    }
+                    _ => None,
+                });
+                if self.set_array_element(object, index, value) {
+                    #[cfg(feature = "profile-aggregate")]
+                    self.profile
+                        .index_set(usize::from(key.as_int().is_none()) * 3 + kind.unwrap());
+                    return Ok(());
+                }
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.index_set(6);
             }
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.index_set(6);
         }
         #[cfg(feature = "profile-aggregate")]
         if key.as_number().is_none_or(|x| x < 0.0 || x.fract() != 0.0) {
             self.profile.index_set(7);
         }
         let key = self.coerce_js_string(p, key)?;
+        if let Some(index) = super::object_static::array_index(key.host_string())
+            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && !self.has_own_array_index(object, index as usize)
+        {
+            let atom = self.intern_js_atom(&key);
+            if self.prototype_chain_contains_typed_array_index(object, atom) {
+                return self.set_property_with_program_mode(p, object, atom, value, strict);
+            }
+        }
         if let Some(index) = super::object_static::array_index(key.host_string())
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
         {

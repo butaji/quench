@@ -784,7 +784,7 @@ impl<H: Host> Vm<H> {
         Ok(result)
     }
 
-    fn array_buffer_to_index(
+    pub(super) fn array_buffer_to_index(
         &mut self,
         p: &ResidualProgram,
         value: Value,
