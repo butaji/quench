@@ -188,6 +188,13 @@ impl<H: Host> Vm<H> {
             Native::IntlNumberFormatResolvedOptions => {
                 self.intl_number_format_resolved_options(p, this)
             }
+            Native::IntlPluralRules => Err(self.type_error(p, "constructor requires new".into())),
+            Native::IntlPluralRulesSupportedLocalesOf
+            | Native::IntlPluralRulesSelect
+            | Native::IntlPluralRulesSelectRange
+            | Native::IntlPluralRulesResolvedOptions => {
+                self.intl_plural_rules_native(p, native, this, args)
+            }
             Native::IntlGetCanonicalLocales
             | Native::IntlSupportedValuesOf
             | Native::IntlLocale

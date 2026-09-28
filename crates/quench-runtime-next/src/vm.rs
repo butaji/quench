@@ -64,6 +64,7 @@ mod intl_duration_format;
 mod intl_list_format;
 mod intl_namespace;
 mod intl_number;
+mod intl_plural_rules;
 mod intl_relative;
 mod iterators;
 mod json;
@@ -409,6 +410,7 @@ pub struct Vm<H> {
     intl_number_format_fallback_symbols: FxHashMap<Value, Value>,
     intl_collator_constructors: FxHashMap<Value, Value>,
     intl_collator_prototypes: FxHashMap<Value, Value>,
+    intl_plural_rules_prototypes: FxHashMap<Value, Value>,
     intl_datetime_format_constructors: FxHashMap<Value, Value>,
     intl_datetime_format_prototypes: FxHashMap<Value, Value>,
     intl_datetime_format_fallback_symbols: FxHashMap<Value, Value>,

@@ -341,6 +341,11 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::IntlLocaleCaseFirstGetter | Native::IntlLocaleFirstDayOfWeekGetter
         | Native::IntlLocaleNumberingSystemGetter | Native::IntlLocaleNumericGetter => 0.0,
         Native::IntlCollator => 0.0,
+        Native::IntlPluralRules => 0.0,
+        Native::IntlPluralRulesSupportedLocalesOf => 1.0,
+        Native::IntlPluralRulesSelect => 1.0,
+        Native::IntlPluralRulesSelectRange => 2.0,
+        Native::IntlPluralRulesResolvedOptions => 0.0,
         Native::IntlCollatorSupportedLocalesOf => 1.0,
         Native::IntlCollatorCompareGetter => 0.0,
         Native::IntlCollatorCompare => 2.0,
