@@ -50,10 +50,17 @@ impl Compiler<'_> {
             }
             _ => locals.iter().copied().collect(),
         };
+        let annex_b_collisions = match &value.body {
+            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
+                early::annex_b_lexical_collisions(&body.statements)
+            }
+            _ => FxHashSet::default(),
+        };
         let mut function = FunctionCompiler::new(
             self,
             locals,
             function_scope,
+            annex_b_collisions,
             scopes.to_vec(),
             id,
             (false, false),

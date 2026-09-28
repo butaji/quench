@@ -88,6 +88,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
     function_scope: FxHashSet<Atom>,
+    annex_b_collisions: FxHashSet<u32>,
     pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
     pub(super) function_id: u32,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
@@ -131,6 +132,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         owner: &'a mut Compiler<'b>,
         locals: Vec<Atom>,
         function_scope: FxHashSet<Atom>,
+        annex_b_collisions: FxHashSet<u32>,
         scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
         function_id: u32,
         super_flags: (bool, bool),
@@ -160,6 +162,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             max_reg: 0,
             local_slots,
             function_scope,
+            annex_b_collisions,
             scopes,
             function_id,
             handlers: vec![],
@@ -380,7 +383,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     let block_binding = self.active_lexical_binding(atom).is_some();
                     self.store_atom(atom, dst);
                     if block_binding && !self.strict {
-                        self.store_annex_b_outer(atom, dst);
+                        self.store_annex_b_outer(atom, dst, function.span.start);
                     }
                 } else {
                     continue;

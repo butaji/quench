@@ -276,18 +276,17 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    pub(super) fn store_annex_b_outer(&mut self, atom: Atom, value: Register) {
+    pub(super) fn store_annex_b_outer(
+        &mut self,
+        atom: Atom,
+        value: Register,
+        declaration_start: u32,
+    ) {
         let parameter_binding = self
             .local_slots
             .get(&atom)
             .is_some_and(|slot| usize::from(*slot) < self.parameter_local_count);
-        let lexical_collision = self
-            .lexical_scopes
-            .iter()
-            .rev()
-            .skip(1)
-            .any(|scope| scope.bindings.contains_key(&atom));
-        if parameter_binding || lexical_collision {
+        if parameter_binding || self.annex_b_collisions.contains(&declaration_start) {
             return;
         }
         if let Some(slot) = self.local_slots.get(&atom).copied() {

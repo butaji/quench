@@ -147,7 +147,8 @@ impl Engine {
         declarations.extend(
             early::annex_b_function_names(&parsed.program.body)
                 .into_iter()
-                .filter(|name| !collisions.contains(name)),
+                .filter(|(span, _)| !collisions.contains(span))
+                .map(|(_, name)| name),
         );
         declarations.sort();
         declarations.dedup();
@@ -1512,7 +1513,8 @@ impl<'a> Compiler<'a> {
             global_var_names.extend(
                 early::annex_b_function_names(&program.body)
                     .into_iter()
-                    .filter(|name| !collisions.contains(name)),
+                    .filter(|(span, _)| !collisions.contains(span))
+                    .map(|(_, name)| name),
             );
         }
         global_var_names.sort();
@@ -1852,6 +1854,7 @@ impl<'a> Compiler<'a> {
         let module_goal = self.module_goal;
         let capture_script_completion = parent.is_none() && self.capture_script_completion;
         let module_source = self.source;
+        let annex_b_collisions = early::annex_b_lexical_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {
             Some(slot)
         } else if parent.is_none() {
@@ -1876,6 +1879,7 @@ impl<'a> Compiler<'a> {
             self,
             locals,
             function_scope,
+            annex_b_collisions,
             scopes.to_vec(),
             id,
             (options.super_static, options.super_home),
