@@ -16,6 +16,19 @@ impl<H: Host> Vm<H> {
         root.global_var_atoms.contains(&atom).then_some(atom)
     }
 
+    pub(super) fn global_eval_var_atom(&self, frame: usize, slot: usize) -> Option<Atom> {
+        let eval = self.frames.get(frame)?;
+        if eval.function != super::ROOT_FUNCTION_ID {
+            return None;
+        }
+        let caller = frame.checked_sub(1).and_then(|index| self.frames.get(index))?;
+        if caller.function != super::ROOT_FUNCTION_ID || caller.program == eval.program {
+            return None;
+        }
+        let program = self.programs.get(eval.program)?;
+        self.root_global_var_atom(&program, eval.function, slot)
+    }
+
     pub(super) fn root_global_lexical_atom(
         &self,
         program: &ResidualProgram,
