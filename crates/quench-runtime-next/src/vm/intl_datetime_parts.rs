@@ -53,14 +53,34 @@ pub(super) enum TemporalKind {
 
 impl DateTimeFields {
     pub(super) fn from_date(date: &chrono::DateTime<chrono::FixedOffset>) -> Self {
+        Self::from_components(
+            date.year(),
+            date.month(),
+            date.day(),
+            date.hour(),
+            date.minute(),
+            date.second(),
+            date.timestamp_subsec_millis(),
+        )
+    }
+
+    pub(super) fn from_components(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+        millisecond: u32,
+    ) -> Self {
         Self {
-            year: date.year(),
-            month: date.month(),
-            day: date.day(),
-            hour: date.hour(),
-            minute: date.minute(),
-            second: date.second(),
-            millisecond: date.timestamp_subsec_millis(),
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
             has_date: true,
             has_time: true,
             is_temporal: false,
