@@ -159,7 +159,7 @@ impl<H: Host> Vm<H> {
             "iso8601".to_owned()
         } else if matches!(self.heap.get(calendar), Some(Cell::String(_))) {
             let value = self.to_string(p, calendar)?.to_string();
-            super::temporal_date_parse::parse_calendar_identifier(&value)
+            super::temporal_date_parse::parse_calendar_identifier_name(&value)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
         } else {
             return Err(self.type_error(p, "Invalid calendar".into()));
