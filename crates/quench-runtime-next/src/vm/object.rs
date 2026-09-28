@@ -122,16 +122,15 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn shape_keys(&self, shape: u32) -> Vec<PropertyKey> {
         self.shape_entries(shape)
-            .into_iter()
-            .map(|(key, _)| key)
+            .iter()
+            .map(|(key, _)| *key)
             .collect()
     }
-    pub(super) fn shape_entries(&self, shape: u32) -> Vec<(PropertyKey, u32)> {
-        self.shapes[shape as usize]
+    pub(super) fn shape_entries(&self, shape: u32) -> &[(PropertyKey, u32)] {
+        &self.shapes[shape as usize]
             .lookup_index
             .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))
             .entries
-            .clone()
     }
     fn append_shape(
         &mut self,
