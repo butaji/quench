@@ -86,6 +86,7 @@ pub(crate) enum CellKind {
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
     pub(crate) const COUNT: usize = Self::TemporalZonedDateTime as usize + 1;
+    #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
         "array",
