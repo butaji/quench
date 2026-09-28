@@ -2830,6 +2830,7 @@ dependencies = [
  "oxc_semantic 0.150.0",
  "oxc_span 0.150.0",
  "oxc_syntax 0.150.0",
+ "quench-intl",
  "quench-regexp",
  "quench-temporal",
  "regex",
