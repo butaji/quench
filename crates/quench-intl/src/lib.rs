@@ -4,6 +4,7 @@ mod collator;
 mod digits;
 mod locale_canonicalization;
 mod locale_data;
+mod locale_case;
 mod plural;
 mod supported_values;
 
@@ -21,6 +22,7 @@ pub use locale_data::{
     calendar_alias, default_numbering_system, sanitize_datetime_locale, valid_calendar,
     valid_numbering_system, valid_unicode_type, CALENDARS, NUMBERING_SYSTEMS,
 };
+pub use locale_case::locale_case;
 pub use plural::{
     plural_categories, plural_category, plural_category_compact, plural_category_decimal,
     plural_category_range, plural_category_range_decimal,
