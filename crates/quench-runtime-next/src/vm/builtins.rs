@@ -768,18 +768,14 @@ impl<H: Host> Vm<H> {
             self.native_value(Native::GlobalIsFinite),
         )?;
         self.install_number(program)?;
-        self.global(program, "encodeURI", self.native_value(Native::EncodeUri))?;
-        self.global(
-            program,
-            "encodeURIComponent",
-            self.native_value(Native::EncodeUriComponent),
-        )?;
-        self.global(program, "decodeURI", self.native_value(Native::DecodeUri))?;
-        self.global(
-            program,
-            "decodeURIComponent",
-            self.native_value(Native::DecodeUriComponent),
-        )?;
+        for (name, native) in [
+            ("encodeURI", Native::EncodeUri),
+            ("encodeURIComponent", Native::EncodeUriComponent),
+            ("decodeURI", Native::DecodeUri),
+            ("decodeURIComponent", Native::DecodeUriComponent),
+        ] {
+            self.set_builtin_named(program, self.realm.globals, name, native)?;
+        }
         self.install_json(program)?;
         self.install_reflect(program)?;
         self.install_math(program)?;

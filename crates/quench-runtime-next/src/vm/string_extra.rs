@@ -17,36 +17,75 @@ pub(super) fn encode_uri(value: &str, component: bool) -> String {
     output
 }
 
-pub(super) fn decode_uri(value: &str, component: bool) -> Result<String, &'static str> {
-    let bytes = value.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
+pub(super) fn decode_uri(
+    value: &super::wtf16::JsString,
+    component: bool,
+) -> Result<super::wtf16::JsString, &'static str> {
+    let units = value.units();
+    let mut output = Vec::with_capacity(units.len());
     let reserved = b";/?:@&=+$,#";
-    let hex = |byte: u8| match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
+    let hex = |unit: u16| match unit {
+        unit if (b'0' as u16..=b'9' as u16).contains(&unit) => Some((unit - b'0' as u16) as u8),
+        unit if (b'a' as u16..=b'f' as u16).contains(&unit) => Some((unit - b'a' as u16 + 10) as u8),
+        unit if (b'A' as u16..=b'F' as u16).contains(&unit) => Some((unit - b'A' as u16 + 10) as u8),
         _ => None,
     };
     let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'%' {
-            output.push(bytes[index]);
+    while index < units.len() {
+        if units[index] != b'%' as u16 {
+            output.push(units[index]);
             index += 1;
             continue;
         }
-        if index + 2 >= bytes.len() {
+        if index + 2 >= units.len() {
             return Err("malformed URI escape");
         }
-        let decoded = (hex(bytes[index + 1]).ok_or("malformed URI escape")? << 4)
-            | hex(bytes[index + 2]).ok_or("malformed URI escape")?;
-        if !component && reserved.contains(&decoded) {
-            output.extend_from_slice(&bytes[index..index + 3]);
-        } else {
-            output.push(decoded);
+        let first = (hex(units[index + 1]).ok_or("malformed URI escape")? << 4)
+            | hex(units[index + 2]).ok_or("malformed URI escape")?;
+        let (width, mut code_point, minimum) = match first {
+            0x00..=0x7f => (1, u32::from(first), 0),
+            0xc2..=0xdf => (2, u32::from(first & 0x1f), 0x80),
+            0xe0..=0xef => (3, u32::from(first & 0x0f), 0x800),
+            0xf0..=0xf4 => (4, u32::from(first & 0x07), 0x10000),
+            _ => return Err("malformed URI sequence"),
+        };
+        if width == 1 && !component && reserved.contains(&(first as u8)) {
+            output.extend_from_slice(&units[index..index + 3]);
+            index += 3;
+            continue;
         }
-        index += 3;
+        for continuation in 1..width {
+            let escape = index + continuation * 3;
+            if units.get(escape) != Some(&(b'%' as u16)) || escape + 2 >= units.len() {
+                return Err("malformed URI sequence");
+            }
+            let byte = (hex(units[escape + 1]).ok_or("malformed URI escape")? << 4)
+                | hex(units[escape + 2]).ok_or("malformed URI escape")?;
+            if byte & 0xc0 != 0x80 {
+                return Err("malformed URI sequence");
+            }
+            if continuation == 1
+                && ((first == 0xe0 && byte < 0xa0)
+                    || (first == 0xf0 && byte < 0x90)
+                    || (first == 0xf4 && byte > 0x8f))
+            {
+                return Err("malformed URI sequence");
+            }
+            code_point = (code_point << 6) | u32::from(byte & 0x3f);
+        }
+        if code_point < minimum || code_point > 0x10ffff {
+            return Err("malformed URI sequence");
+        }
+        if code_point <= 0xffff {
+            output.push(code_point as u16);
+        } else {
+            let scalar = code_point - 0x10000;
+            output.push(0xd800 | (scalar >> 10) as u16);
+            output.push(0xdc00 | (scalar & 0x3ff) as u16);
+        }
+        index += width * 3;
     }
-    String::from_utf8(output).map_err(|_| "malformed URI sequence")
+    Ok(super::wtf16::JsString::from_units(&output))
 }
 
 pub(super) fn parse_integer(text: &str, mut radix: i32) -> f64 {
