@@ -45,6 +45,8 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(format, "format")?;
         self.set_builtin_value_named(prototype, "format", format)?;
         self.set_builtin_value_named(intl, "NumberFormat", constructor)?;
+        self.install_intl_collator_for_realm(program, intl, global, object_prototype)?;
+        self.install_intl_date_time_format_for_realm(intl, global, object_prototype)?;
         self.set_builtin_value_named(global, "Intl", intl)?;
         let _ = program;
         Ok(())
@@ -287,7 +289,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn valid_locale_identifier(locale: &str) -> bool {
+pub(super) fn valid_locale_identifier(locale: &str) -> bool {
     let mut subtags = locale.split('-');
     let Some(language) = subtags.next() else {
         return false;

@@ -1,0 +1,410 @@
+use super::*;
+use chrono::{Datelike, Timelike};
+use std::str::FromStr;
+
+const DATE_TIME_FORMAT_OPTIONS_SLOT: &str = "\0rqj:intl-datetime-options";
+const DATE_TIME_FORMAT_DATE_SLOT: &str = "\0rqj:intl-datetime-date";
+const DATE_TIME_FORMAT_TIME_SLOT: &str = "\0rqj:intl-datetime-time";
+const DATE_TIME_FORMAT_BOUND_SLOT: &str = "\0rqj:intl-datetime-bound-format";
+const DATE_TIME_OPTIONS: &[(&str, &[&str])] = &[
+    ("localeMatcher", &["lookup", "best fit"]),
+    ("calendar", &[]),
+    ("numberingSystem", &[]),
+    ("timeZone", &[]),
+    ("hour12", &[]),
+    ("hourCycle", &["h11", "h12", "h23", "h24"]),
+    ("weekday", &["narrow", "short", "long"]),
+    ("era", &["narrow", "short", "long"]),
+    ("year", &["numeric", "2-digit"]),
+    ("month", &["numeric", "2-digit", "narrow", "short", "long"]),
+    ("day", &["numeric", "2-digit"]),
+    ("dayPeriod", &["narrow", "short", "long"]),
+    ("hour", &["numeric", "2-digit"]),
+    ("minute", &["numeric", "2-digit"]),
+    ("second", &["numeric", "2-digit"]),
+    ("fractionalSecondDigits", &[]),
+    (
+        "timeZoneName",
+        &[
+            "short",
+            "long",
+            "shortOffset",
+            "longOffset",
+            "shortGeneric",
+            "longGeneric",
+        ],
+    ),
+    ("formatMatcher", &["basic", "best fit"]),
+];
+
+#[derive(Clone, Copy)]
+enum DateTimeDefaults {
+    Date,
+    Time,
+    DateAndTime,
+}
+
+impl<H: Host> Vm<H> {
+    pub(super) fn install_intl_date_time_format_for_realm(
+        &mut self,
+        intl: Value,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<(), JsError> {
+        let constructor = self.native_with_realm(Native::IntlDateTimeFormat, global, global);
+        self.intl_datetime_format_constructors
+            .insert(global, constructor);
+        self.set_builtin_function_name(constructor, "DateTimeFormat")?;
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        set_non_writable_property(self, constructor, "prototype");
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        self.install_builtin_to_string_tag(prototype, "Intl.DateTimeFormat")?;
+        let getter = self.native_with_realm(Native::IntlDateTimeFormatFormatGetter, global, global);
+        self.set_builtin_function_name(getter, "get format")?;
+        let format_atom = self.intern_atom("format");
+        self.set_builtin_value_named(prototype, "format", getter)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(format_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: None,
+            },
+        );
+        let resolved =
+            self.native_with_realm(Native::IntlDateTimeFormatResolvedOptions, global, global);
+        self.set_builtin_function_name(resolved, "resolvedOptions")?;
+        self.set_builtin_value_named(prototype, "resolvedOptions", resolved)?;
+        self.set_builtin_value_named(intl, "DateTimeFormat", constructor)
+    }
+
+    pub(super) fn intl_date_time_format_call(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let constructor = self
+            .intl_datetime_format_constructors
+            .get(&self.realm.globals)
+            .copied()
+            .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
+        self.intl_date_time_format_construct(p, args, constructor)
+    }
+
+    pub(super) fn intl_date_time_format_construct(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        let locale = self.collator_locale(p, args.first().copied())?;
+        let options =
+            self.date_time_options(p, args.get(1).copied(), DateTimeDefaults::DateAndTime)?;
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = if self.is_object_like(prototype) {
+            prototype
+        } else {
+            self.object_proto
+        };
+        let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let locale_value = self.heap.alloc(Cell::String(locale.into()));
+        self.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale_value)?;
+        self.set_date_time_slot(
+            formatter,
+            DATE_TIME_FORMAT_DATE_SLOT,
+            if options.0 { Value::TRUE } else { Value::FALSE },
+        )?;
+        self.set_date_time_slot(
+            formatter,
+            DATE_TIME_FORMAT_TIME_SLOT,
+            if options.1 { Value::TRUE } else { Value::FALSE },
+        )?;
+        Ok(formatter)
+    }
+
+    fn date_time_options(
+        &mut self,
+        p: &ResidualProgram,
+        options: Option<Value>,
+        defaults: DateTimeDefaults,
+    ) -> Result<(bool, bool), JsError> {
+        let options = match options.filter(|value| !value.is_undefined()) {
+            Some(value) if value.is_null() => {
+                return Err(self.type_error(p, "options must not be null".into()));
+            }
+            Some(value) => self.box_object(value)?,
+            None => self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(self.object_proto))),
+        };
+        let mut has_date = false;
+        let mut has_time = false;
+        let mut any = false;
+        for (key, allowed) in DATE_TIME_OPTIONS {
+            let atom = self.intern_atom(key);
+            let value = self.get_property(p, options, atom)?;
+            if value.is_undefined() {
+                continue;
+            }
+            any = true;
+            match key.as_ref() {
+                "localeMatcher" | "formatMatcher" | "hourCycle" | "weekday" | "era" | "year"
+                | "month" | "day" | "dayPeriod" | "hour" | "minute" | "second" | "timeZoneName" => {
+                    let text = self.to_string(p, value)?;
+                    if !allowed.contains(&text.as_str()) {
+                        return Err(self.range_error(p, format!("invalid {key}").into()));
+                    }
+                    match *key {
+                        "year" | "month" | "day" | "weekday" | "era" => has_date = true,
+                        _ => has_time = true,
+                    }
+                }
+                "timeZone" => {
+                    let zone = self.to_string(p, value)?;
+                    if zone != "UTC" && chrono_tz::Tz::from_str(&zone).is_err() {
+                        return Err(self.range_error(p, "invalid timeZone".into()));
+                    }
+                    has_time = true;
+                }
+                "hour12" | "fractionalSecondDigits" | "calendar" | "numberingSystem" => {
+                    if *key == "fractionalSecondDigits" {
+                        let digits = self.to_number(p, value)?;
+                        if !digits.is_finite() || !(1.0..=3.0).contains(&digits) {
+                            return Err(
+                                self.range_error(p, "invalid fractionalSecondDigits".into())
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !any || (!has_date && !has_time) {
+            match defaults {
+                DateTimeDefaults::Date => has_date = true,
+                DateTimeDefaults::Time => has_time = true,
+                DateTimeDefaults::DateAndTime => {
+                    has_date = true;
+                    has_time = true;
+                }
+            }
+        }
+        Ok((has_date, has_time))
+    }
+
+    pub(super) fn date_to_locale_string(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !matches!(self.heap.get(this), Some(Cell::Date { .. })) {
+            return Err(self.type_error(p, "Date method called on incompatible receiver".into()));
+        }
+        if matches!(self.heap.get(this), Some(Cell::Date { milliseconds, .. }) if !milliseconds.is_finite())
+        {
+            return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
+        }
+        let constructor = self
+            .intl_datetime_format_constructors
+            .get(&self.realm.globals)
+            .copied()
+            .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
+        let defaults = match native {
+            Native::DateToLocaleDateString => DateTimeDefaults::Date,
+            Native::DateToLocaleTimeString => DateTimeDefaults::Time,
+            _ => DateTimeDefaults::DateAndTime,
+        };
+        let locale = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let options = self.date_time_options(p, args.get(1).copied(), defaults)?;
+        let prototype_atom = self.intern_atom("prototype");
+        let constructor_prototype = self.get_property(p, constructor, prototype_atom)?;
+        let formatter = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(constructor_prototype)));
+        let locale = self.collator_locale(p, Some(locale))?;
+        let locale_value = self.heap.alloc(Cell::String(locale.into()));
+        self.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale_value)?;
+        self.set_date_time_slot(
+            formatter,
+            DATE_TIME_FORMAT_DATE_SLOT,
+            if options.0 { Value::TRUE } else { Value::FALSE },
+        )?;
+        self.set_date_time_slot(
+            formatter,
+            DATE_TIME_FORMAT_TIME_SLOT,
+            if options.1 { Value::TRUE } else { Value::FALSE },
+        )?;
+        let format_atom = self.intern_atom("format");
+        let format = self.get_property(p, formatter, format_atom)?;
+        self.call_value(p, format, formatter, &[this])
+    }
+
+    pub(super) fn intl_date_time_format_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        match native {
+            Native::IntlDateTimeFormatFormatGetter => self.date_time_format_getter(p, this),
+            Native::IntlDateTimeFormatFormat => self.date_time_format(p, this, args),
+            Native::IntlDateTimeFormatResolvedOptions => self.date_time_resolved_options(p, this),
+            _ => Err(JsError("invalid Intl.DateTimeFormat method".into())),
+        }
+    }
+
+    fn date_time_format_getter(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        if self.date_time_locale(this).is_none() {
+            return Err(self.type_error(p, "incompatible DateTimeFormat receiver".into()));
+        }
+        if let Some(bound) = self.date_time_slot(this, DATE_TIME_FORMAT_BOUND_SLOT) {
+            return Ok(bound);
+        }
+        let function = self.native_with_realm(
+            Native::IntlDateTimeFormatFormat,
+            Value::NULL,
+            self.realm.globals,
+        );
+        let bound = self.bind_function(p, function, &[this])?;
+        self.set_date_time_slot(this, DATE_TIME_FORMAT_BOUND_SLOT, bound)?;
+        Ok(bound)
+    }
+
+    fn date_time_format(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(_locale) = self.date_time_locale(this) else {
+            return Err(self.type_error(p, "incompatible DateTimeFormat receiver".into()));
+        };
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let Some(Cell::Date { milliseconds, .. }) = self.heap.get(value) else {
+            return Err(self.type_error(p, "Intl.DateTimeFormat format requires a Date".into()));
+        };
+        if !milliseconds.is_finite() {
+            return Err(self.range_error(p, "Invalid time value".into()));
+        }
+        let Some(date) = super::date::date_local(*milliseconds) else {
+            return Err(self.range_error(p, "Invalid time value".into()));
+        };
+        let has_date = self
+            .date_time_slot(this, DATE_TIME_FORMAT_DATE_SLOT)
+            .is_some_and(|value| value == Value::TRUE);
+        let has_time = self
+            .date_time_slot(this, DATE_TIME_FORMAT_TIME_SLOT)
+            .is_some_and(|value| value == Value::TRUE);
+        let text = format_date_time(&date, has_date, has_time);
+        Ok(self.heap.alloc(Cell::String(text.into())))
+    }
+
+    fn date_time_resolved_options(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let locale = self
+            .date_time_locale(this)
+            .ok_or_else(|| self.type_error(p, "incompatible DateTimeFormat receiver".into()))?;
+        let result = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        let locale = self.heap.alloc(Cell::String(locale.into()));
+        let calendar = self.heap.alloc(Cell::String("gregory".into()));
+        let numbering_system = self.heap.alloc(Cell::String("latn".into()));
+        self.set_date_time_property(result, "locale", locale)?;
+        self.set_date_time_property(result, "calendar", calendar)?;
+        self.set_date_time_property(result, "numberingSystem", numbering_system)?;
+        Ok(result)
+    }
+
+    fn set_date_time_property(
+        &mut self,
+        object: Value,
+        name: &str,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let atom = self.intern_atom(name);
+        self.set_property(object, atom, value)
+    }
+
+    fn set_date_time_slot(
+        &mut self,
+        object: Value,
+        name: &str,
+        value: Value,
+    ) -> Result<(), JsError> {
+        self.set_date_time_property(object, name, value)
+    }
+
+    fn date_time_slot(&self, object: Value, name: &str) -> Option<Value> {
+        self.lookup_atom(name)
+            .and_then(|atom| self.own_property(object, atom))
+    }
+
+    fn date_time_locale(&self, object: Value) -> Option<String> {
+        self.date_time_slot(object, DATE_TIME_FORMAT_OPTIONS_SLOT)
+            .and_then(|value| match self.heap.get(value) {
+                Some(Cell::String(locale)) => Some(locale.to_string()),
+                _ => None,
+            })
+    }
+}
+
+fn format_date_time(
+    date: &chrono::DateTime<chrono::FixedOffset>,
+    has_date: bool,
+    has_time: bool,
+) -> String {
+    match (has_date, has_time) {
+        (true, true) => format!(
+            "{} {}, {} {:02}:{:02}:{:02}",
+            date.month(),
+            date.day(),
+            date.year(),
+            date.hour(),
+            date.minute(),
+            date.second()
+        ),
+        (true, false) => format!("{} {}, {}", date.month(), date.day(), date.year()),
+        (false, true) => format!(
+            "{:02}:{:02}:{:02}",
+            date.hour(),
+            date.minute(),
+            date.second()
+        ),
+        (false, false) => String::new(),
+    }
+}
+
+fn set_non_writable_property<H: Host>(vm: &mut Vm<H>, object: Value, name: &str) {
+    let atom = vm.intern_atom(name);
+    vm.set_property_attributes(
+        object,
+        PropertyKey::string(atom),
+        PropertyAttributes {
+            writable: false,
+            enumerable: false,
+            configurable: false,
+            accessor: false,
+            getter: None,
+            setter: None,
+        },
+    );
+}
