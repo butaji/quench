@@ -251,6 +251,8 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::Uint8ArrayKeys
         | Native::Uint8ArrayValues
         | Native::Uint8ArrayEntries
+        | Native::Uint8ArrayToHex
+        | Native::Uint8ArrayToBase64
         | Native::TypedArrayToStringTag
         | Native::TypedArrayBufferGetter
         | Native::TypedArrayByteLengthGetter
@@ -269,6 +271,10 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::Uint8ArrayJoin
         | Native::Uint8ArraySet => 1.0,
         Native::Uint8ArrayCopyWithin | Native::Uint8ArraySubarray | Native::Uint8ArraySlice => 2.0,
+        Native::Uint8ArrayFromBase64
+        | Native::Uint8ArrayFromHex
+        | Native::Uint8ArraySetFromBase64
+        | Native::Uint8ArraySetFromHex => 1.0,
         Native::FunctionPrototypeHasInstance => 1.0,
         Native::FunctionCall | Native::FunctionBind => 1.0,
         Native::FunctionApply => 2.0,

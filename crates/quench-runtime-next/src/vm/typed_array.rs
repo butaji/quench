@@ -10,6 +10,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
         if native.is_typed_array_method() {
+            if native.is_uint8_array_base64_method() {
+                return Some(self.typed_array_base64_native(p, native, this, args));
+            }
             Some(self.typed_array_native(p, native, this, args))
         } else if native.is_typed_array_iterator() {
             Some(self.array_iterator_native(p, native, this))
@@ -96,6 +99,14 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(program, self.typed_array_proto, name, native)?;
         }
+        for (name, native) in [
+            ("setFromBase64", Native::Uint8ArraySetFromBase64),
+            ("setFromHex", Native::Uint8ArraySetFromHex),
+            ("toBase64", Native::Uint8ArrayToBase64),
+            ("toHex", Native::Uint8ArrayToHex),
+        ] {
+            self.set_builtin_named(program, self.uint8_array_proto, name, native)?;
+        }
         for &(name, native, _) in TYPED_ARRAY_CALLBACK_METHODS {
             let method = self.native_with_realm(native, Value::NULL, self.realm.globals);
             self.set_builtin_function_name(method, name)?;
@@ -149,6 +160,12 @@ impl<H: Host> Vm<H> {
             );
         }
         self.global(program, "Uint8Array", uint8_array)?;
+        for (name, native) in [
+            ("fromBase64", Native::Uint8ArrayFromBase64),
+            ("fromHex", Native::Uint8ArrayFromHex),
+        ] {
+            self.set_builtin_named(program, uint8_array, name, native)?;
+        }
         for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
             if kind != TypedArrayKind::Uint8 {
                 self.install_typed_array_kind(program, kind, native, name)?;
