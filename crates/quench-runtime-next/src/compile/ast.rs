@@ -382,7 +382,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     let atom = self.owner.atom(identifier.name.as_str());
                     let block_binding = self.active_lexical_binding(atom).is_some();
                     self.store_atom(atom, dst);
-                    if block_binding && !self.strict {
+                    if block_binding
+                        && !self.strict
+                        && super::early::annex_b_function_eligible(function)
+                    {
                         self.store_annex_b_outer(atom, dst, function.span.start);
                     }
                 } else {

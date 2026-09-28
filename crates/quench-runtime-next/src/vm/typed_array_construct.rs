@@ -50,23 +50,32 @@ impl<H: Host> Vm<H> {
                 .map(|value| self.array_buffer_to_index(p, value))
                 .transpose()?;
             let Some(Cell::ArrayBuffer {
-                bytes, detached, ..
+                bytes,
+                detached,
+                resizable,
+                ..
             }) = self.heap.get(source)
             else {
                 unreachable!("typed array buffer source remains live")
             };
+            let resizable = *resizable;
             let buffer_length = bytes.len();
             if *detached {
                 return Err(self.type_error(p, format!("{name} backing buffer is detached").into()));
             }
-            if requested_length.is_none() && !(buffer_length - offset).is_multiple_of(width) {
+            if !offset.is_multiple_of(width) || offset > buffer_length {
+                return Err(
+                    self.range_error(p, format!("{name} byte offset is out of range").into())
+                );
+            }
+            if requested_length.is_none()
+                && !resizable
+                && !(buffer_length - offset).is_multiple_of(width)
+            {
                 return Err(self.range_error(
                     p,
                     format!("{name} byte length is not divisible by element size").into(),
                 ));
-            }
-            if !offset.is_multiple_of(width) || offset > buffer_length {
-                return Err(self.range_error(p, format!("{name} byte offset is out of range").into()));
             }
             let length = requested_length.unwrap_or((buffer_length - offset) / width);
             let byte_length = length.checked_mul(width).ok_or_else(|| {
@@ -81,7 +90,7 @@ impl<H: Host> Vm<H> {
                 buffer: source,
                 offset,
                 length,
-                length_tracking: self.array_buffer_resizable(source) && requested_length.is_none(),
+                length_tracking: resizable && requested_length.is_none(),
             }));
         }
         let values = self.typed_array_source_values(p, source)?;

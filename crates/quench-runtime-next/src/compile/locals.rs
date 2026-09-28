@@ -48,7 +48,9 @@ impl Compiler<'_> {
                 }
                 Statement::FunctionDeclaration(function)
                     if (!strict || !nested)
-                        && (!nested || !annex_b_collisions.contains(&function.span.start)) =>
+                        && (!nested
+                            || (super::early::annex_b_function_eligible(function)
+                                && !annex_b_collisions.contains(&function.span.start))) =>
                 {
                     self.collect_name(
                         function.id.as_ref().map(|name| name.name.as_str()),
