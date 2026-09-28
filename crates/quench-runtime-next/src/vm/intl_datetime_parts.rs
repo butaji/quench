@@ -26,7 +26,7 @@ const FORMAT_STYLE_LONG: &str = "long";
 const FORMAT_STYLE_MEDIUM: &str = "medium";
 const FORMAT_STYLE_SHORT: &str = "short";
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct DateTimeFields {
     pub year: i32,
     pub month: u32,
@@ -38,6 +38,17 @@ pub(super) struct DateTimeFields {
     pub has_date: bool,
     pub has_time: bool,
     pub is_temporal: bool,
+    pub temporal_kind: Option<TemporalKind>,
+    pub calendar: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TemporalKind {
+    PlainDate,
+    PlainDateTime,
+    PlainMonthDay,
+    PlainYearMonth,
+    PlainTime,
 }
 
 impl DateTimeFields {
@@ -53,6 +64,8 @@ impl DateTimeFields {
             has_date: true,
             has_time: true,
             is_temporal: false,
+            temporal_kind: None,
+            calendar: None,
         }
     }
 }
@@ -60,6 +73,7 @@ impl DateTimeFields {
 #[derive(Default)]
 pub(super) struct DateTimePartOptions {
     pub weekday: Option<String>,
+    pub era: Option<String>,
     pub year: Option<String>,
     pub month: Option<String>,
     pub day: Option<String>,
@@ -107,14 +121,15 @@ pub(super) fn apply_time_style(options: &mut DateTimePartOptions, style: &str) {
 }
 
 pub(super) fn format_parts(
-    fields: DateTimeFields,
+    fields: &DateTimeFields,
     options: &DateTimePartOptions,
 ) -> Vec<(String, String)> {
     let has_date = fields.has_date
         && (options.year.is_some()
             || options.month.is_some()
             || options.day.is_some()
-            || options.weekday.is_some());
+            || options.weekday.is_some()
+            || options.era.is_some());
     let has_time = fields.has_time
         && (options.hour.is_some()
             || options.minute.is_some()
@@ -143,7 +158,7 @@ pub(super) fn format_parts(
 
 fn append_date(
     parts: &mut Vec<(String, String)>,
-    fields: DateTimeFields,
+    fields: &DateTimeFields,
     options: &DateTimePartOptions,
 ) {
     if let Some(style) = &options.weekday {
@@ -198,22 +213,42 @@ fn append_date(
         } else if options.day.is_some() {
             push(parts, "literal", " ");
         }
+        let display_year = if options.era.is_some() && fields.year <= 0 {
+            1 - fields.year
+        } else {
+            fields.year
+        };
         let value = if style == "2-digit" {
             format!(
                 "{:0width$}",
-                fields.year.rem_euclid(YEARS_PER_CENTURY),
+                display_year.rem_euclid(YEARS_PER_CENTURY),
                 width = TWO_DIGIT_WIDTH
             )
         } else {
-            fields.year.to_string()
+            display_year.to_string()
         };
         push(parts, "year", value);
+    }
+    if let Some(style) = &options.era {
+        push(parts, "literal", " ");
+        push(parts, "era", era_value(fields.year, style));
+    }
+}
+
+fn era_value(year: i32, style: &str) -> &'static str {
+    match (year > 0, style) {
+        (true, "long") => "Anno Domini",
+        (true, "narrow") => "A",
+        (true, _) => "AD",
+        (false, "long") => "Before Christ",
+        (false, "narrow") => "B",
+        (false, _) => "BC",
     }
 }
 
 fn append_time(
     parts: &mut Vec<(String, String)>,
-    fields: DateTimeFields,
+    fields: &DateTimeFields,
     options: &DateTimePartOptions,
 ) {
     if options.hour.is_none() && options.minute.is_none() && options.second.is_none() {
@@ -312,7 +347,7 @@ fn day_period_value(hour: u32, style: &str) -> &'static str {
     }
 }
 
-fn format_weekday(fields: DateTimeFields, style: &str) -> String {
+fn format_weekday(fields: &DateTimeFields, style: &str) -> String {
     const WEEKDAYS: [&str; DAYS_PER_WEEK] = [
         "Sunday",
         "Monday",
