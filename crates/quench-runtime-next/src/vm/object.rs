@@ -3,6 +3,46 @@ use super::*;
 
 const PRIVATE_NAME_PREFIX: &str = "\0rqj:private:";
 
+fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
+    let mut entries = Vec::new();
+    let mut seen_keys = FxHashSet::default();
+    let mut seen_slots = FxHashSet::default();
+    let mut attributes = FxHashMap::default();
+    let mut current = Some(shape);
+    while let Some(id) = current {
+        let shape = &shapes[id as usize];
+        match shape.transition {
+            ShapeTransition::Add { key, slot } => {
+                if seen_keys.insert(key) {
+                    entries.push((key, slot));
+                }
+                seen_slots.insert(slot);
+            }
+            ShapeTransition::Delete { key, slot } => {
+                seen_keys.insert(key);
+                seen_slots.insert(slot);
+            }
+            ShapeTransition::Descriptor {
+                slot,
+                attributes: value,
+            } => {
+                if seen_slots.insert(slot) && value != DEFAULT_PROPERTY_ATTRIBUTES {
+                    attributes.insert(slot, value);
+                }
+            }
+            ShapeTransition::Root | ShapeTransition::Vacant => {}
+        }
+        current = shape.parent;
+    }
+    entries.reverse();
+    let slots = entries.iter().copied().collect();
+    ShapeLookupIndex {
+        entries,
+        slots,
+        attributes,
+    }
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn is_private_name(&self, atom: Atom) -> bool {
         self.atom_name(atom).starts_with(PRIVATE_NAME_PREFIX)
@@ -14,6 +54,9 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     pub(super) fn property_shape_slot(&self, shape: u32, key: PropertyKey) -> Option<usize> {
+        if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
+            return index.slots.get(&key).map(|slot| *slot as usize);
+        }
         let mut current = Some(shape);
         while let Some(id) = current {
             let shape = &self.shapes[id as usize];
@@ -45,6 +88,15 @@ impl<H: Host> Vm<H> {
         Some((shape, self.property_shape_slot(shape, key)?))
     }
     fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
+        if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
+            return Some(
+                index
+                    .attributes
+                    .get(&(slot as u32))
+                    .copied()
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES),
+            );
+        }
         let mut current = Some(shape);
         while let Some(id) = current {
             let shape = &self.shapes[id as usize];
@@ -75,27 +127,11 @@ impl<H: Host> Vm<H> {
             .collect()
     }
     pub(super) fn shape_entries(&self, shape: u32) -> Vec<(PropertyKey, u32)> {
-        let mut entries = Vec::new();
-        let mut seen = FxHashSet::default();
-        let mut current = Some(shape);
-        while let Some(id) = current {
-            let shape = &self.shapes[id as usize];
-            match shape.transition {
-                ShapeTransition::Add { key, slot } if seen.insert(key) => {
-                    entries.push((key, slot));
-                }
-                ShapeTransition::Delete { key, .. } => {
-                    seen.insert(key);
-                }
-                ShapeTransition::Root
-                | ShapeTransition::Add { .. }
-                | ShapeTransition::Vacant
-                | ShapeTransition::Descriptor { .. } => {}
-            }
-            current = shape.parent;
-        }
-        entries.reverse();
-        entries
+        self.shapes[shape as usize]
+            .lookup_index
+            .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))
+            .entries
+            .clone()
     }
     fn append_shape(
         &mut self,
@@ -613,8 +649,7 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(receiver) {
             return Ok(false);
         }
-        if matches!(self.heap.get(receiver), Some(Cell::TypedArray { .. }))
-        {
+        if matches!(self.heap.get(receiver), Some(Cell::TypedArray { .. })) {
             match Self::typed_array_index_key(self.atom_name(atom)) {
                 super::object_descriptors::TypedArrayIndexKey::Index(index)
                     if self
