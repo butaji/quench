@@ -9,13 +9,23 @@ const HOUR_LIMIT: i32 = 23;
 const MINUTE_SECOND_LIMIT: i32 = 59;
 const SUBSECOND_LIMIT: i32 = 999;
 
-struct PlainDateTimeFromFields {
+pub(super) struct PlainDateTimeFromFields {
     calendar: String,
     day: Option<i32>,
     month: Option<i32>,
     month_code: Option<i32>,
     year: Option<i32>,
     time: [Option<i32>; 6],
+    pub(super) offset: Option<String>,
+    pub(super) time_zone: Option<String>,
+}
+
+impl PlainDateTimeFromFields {
+    pub(super) fn has_zoned_time(&self) -> bool {
+        self.time.iter().any(Option::is_some)
+            || self.offset.is_some()
+            || self.time_zone.is_some()
+    }
 }
 
 impl<H: Host> Vm<H> {
@@ -441,10 +451,11 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    fn read_plain_date_time_fields(
+    pub(super) fn read_plain_date_time_fields(
         &mut self,
         p: &ResidualProgram,
         bag: Value,
+        include_zoned_fields: bool,
     ) -> Result<PlainDateTimeFromFields, JsError> {
         let calendar_atom = self.intern_atom("calendar");
         let calendar = self.get_property(p, bag, calendar_atom)?;
@@ -460,13 +471,35 @@ impl<H: Host> Vm<H> {
         }
         let month = self.plain_date_field(p, bag, "month")?;
         let month_code = self.plain_date_time_month_code_field(p, bag)?;
-        for (index, name) in super::temporal_plain_date_time_conversion::TIME_FIELDS
-            .iter()
-            .enumerate()
-            .skip(super::temporal_plain_date_time_conversion::TIME_FIELDS_BEFORE_MONTH)
-        {
+        let mut offset = None;
+        for (index, name) in super::temporal_plain_date_time_conversion::TIME_FIELDS.iter().enumerate().skip(
+            super::temporal_plain_date_time_conversion::TIME_FIELDS_BEFORE_MONTH,
+        ) {
+            if include_zoned_fields && *name == "second" {
+                let atom = self.intern_atom("offset");
+                let value = self.get_property(p, bag, atom)?;
+                if !value.is_undefined() {
+                    if !self.is_string(value) && !self.is_object_like(value) {
+                        return Err(self.type_error(p, "Invalid offset".into()));
+                    }
+                    offset = Some(self.to_string(p, value)?.to_string());
+                }
+            }
             time[index] = self.plain_date_field(p, bag, name)?;
         }
+        let time_zone = if include_zoned_fields {
+            let atom = self.intern_atom("timeZone");
+            let value = self.get_property(p, bag, atom)?;
+            if value.is_undefined() {
+                None
+            } else if self.is_string(value) {
+                Some(self.to_string(p, value)?.to_string())
+            } else {
+                return Err(self.type_error(p, "Invalid time zone".into()));
+            }
+        } else {
+            None
+        };
         let year = self.plain_date_field(p, bag, "year")?;
         Ok(PlainDateTimeFromFields {
             calendar,
@@ -475,6 +508,8 @@ impl<H: Host> Vm<H> {
             month_code,
             year,
             time,
+            offset,
+            time_zone,
         })
     }
 
@@ -522,11 +557,12 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
     }
 
-    fn resolve_plain_date_time_fields(
+    pub(super) fn resolve_plain_date_time_fields(
         &mut self,
         p: &ResidualProgram,
         fields: PlainDateTimeFromFields,
         constrain: bool,
+        validate_time_bounds: bool,
     ) -> Result<(i32, u32, u32, String, [i32; 6]), JsError> {
         let year = fields
             .year
@@ -564,9 +600,11 @@ impl<H: Host> Vm<H> {
         let date = checked_iso_date(year, month, day)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
         let time = self.resolve_plain_date_time_time(p, fields.time, constrain)?;
-        super::temporal_plain_date_time_conversion::validate_bounds(
-            self, p, date.year, date.month, date.day, time,
-        )?;
+        if validate_time_bounds {
+            super::temporal_plain_date_time_conversion::validate_bounds(
+                self, p, date.year, date.month, date.day, time,
+            )?;
+        }
         Ok((date.year, date.month, date.day, fields.calendar, time))
     }
 
