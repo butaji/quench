@@ -834,8 +834,12 @@ impl<H: Host> Vm<H> {
             self.heap.property_push(object, value);
             self.object_data_mut(object).unwrap().set_shape(next_shape);
         }
-        if invalidates_method || slot.is_none() {
+        if invalidates_method {
             self.invalidate_method_caches_for_key(key);
+        } else if slot.is_none()
+            && let PropertyKey::String(atom) = key
+        {
+            self.invalidate_method_caches_for_prototype_add(object, atom);
         }
         Ok(())
     }
