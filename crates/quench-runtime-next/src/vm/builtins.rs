@@ -471,11 +471,13 @@ const NATIVES: &[Native] = &[
     Native::RegExpSource,
     Native::RegExpFlags,
     Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf, Native::BigIntToString, Native::BigIntToLocaleString, Native::BigIntAsIntN, Native::BigIntAsUintN,
-    Native::IntlNumberFormat, Native::IntlNumberFormatFormat,
+    Native::IntlNumberFormat, Native::IntlNumberFormatFormat, Native::IntlSupportedValuesOf,
     Native::IntlCollator, Native::IntlCollatorSupportedLocalesOf, Native::IntlCollatorCompareGetter, Native::IntlCollatorCompare,
     Native::IntlCollatorResolvedOptions,
     Native::IntlDateTimeFormat, Native::IntlDateTimeFormatFormatGetter,
-    Native::IntlDateTimeFormatFormat, Native::IntlDateTimeFormatResolvedOptions,
+    Native::IntlDateTimeFormatFormat, Native::IntlDateTimeFormatFormatToParts,
+    Native::IntlDateTimeFormatFormatRange, Native::IntlDateTimeFormatFormatRangeToParts,
+    Native::IntlDateTimeFormatSupportedLocalesOf, Native::IntlDateTimeFormatResolvedOptions,
     Native::Symbol, Native::SymbolToString, Native::SymbolToPrimitive, Native::SymbolValueOf,
     Native::SymbolDescriptionGetter,
     Native::SymbolFor,
@@ -1098,11 +1100,33 @@ impl<H: Host> Vm<H> {
         }) {
             return Ok(());
         }
+        self.override_builtin_function_name(function, name)
+    }
+
+    pub(super) fn override_builtin_function_name(
+        &mut self,
+        function: Value,
+        name: &str,
+    ) -> Result<(), JsError> {
+        let atom = self.intern_atom("name");
+        let property = PropertyKey::string(atom);
+        self.set_property_attributes(
+            function,
+            property,
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         let value = self.heap.alloc(Cell::String(JsString::from_str(name)));
         self.set_property(function, atom, value)?;
         self.set_property_attributes(
             function,
-            PropertyKey::string(atom),
+            property,
             PropertyAttributes {
                 writable: false,
                 enumerable: false,

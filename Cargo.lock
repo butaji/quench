@@ -2716,9 +2716,11 @@ version = "0.1.0"
 name = "quench-intl"
 version = "0.1.0"
 dependencies = [
+ "icu_calendar",
  "icu_collator",
  "icu_locale_core",
  "icu_provider",
+ "quench-temporal",
  "unicode-normalization",
 ]
 

@@ -100,23 +100,23 @@ mod shadow_realm;
 mod string;
 mod string_cache;
 mod string_extra;
+mod superinstruction;
+mod symbol;
 mod temporal;
-mod temporal_instant;
-mod temporal_instant_format;
-mod temporal_instant_round;
-mod temporal_instant_difference;
 mod temporal_date;
 mod temporal_date_arithmetic;
 mod temporal_date_difference;
 mod temporal_date_parse;
+mod temporal_date_projection;
 mod temporal_date_time;
 mod temporal_date_time_difference;
-mod temporal_date_projection;
+mod temporal_instant;
+mod temporal_instant_difference;
+mod temporal_instant_format;
+mod temporal_instant_round;
 mod temporal_plain_date_time_conversion;
 mod temporal_plain_time;
 mod temporal_zoned_date_time;
-mod superinstruction;
-mod symbol;
 mod type_predicates;
 mod typed_array;
 mod typed_array_access;
@@ -403,6 +403,8 @@ pub struct Vm<H> {
     intl_collator_constructors: FxHashMap<Value, Value>,
     intl_collator_prototypes: FxHashMap<Value, Value>,
     intl_datetime_format_constructors: FxHashMap<Value, Value>,
+    intl_datetime_format_prototypes: FxHashMap<Value, Value>,
+    intl_datetime_format_fallback_symbols: FxHashMap<Value, Value>,
     temporal_plain_date_proto: Value,
     temporal_plain_time_proto: Value,
     temporal_plain_month_day_proto: Value,

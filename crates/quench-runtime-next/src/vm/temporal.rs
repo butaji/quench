@@ -129,11 +129,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(self.realm.globals, "Temporal", temporal)
     }
 
-    fn install_temporal_to_string_tag(
-        &mut self,
-        object: Value,
-        tag: &str,
-    ) -> Result<(), JsError> {
+    fn install_temporal_to_string_tag(&mut self, object: Value, tag: &str) -> Result<(), JsError> {
         let symbol = self
             .well_known_symbols
             .get("toStringTag")
@@ -156,10 +152,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn lock_temporal_constructor_prototype(
-        &mut self,
-        constructor: Value,
-    ) -> Result<(), JsError> {
+    fn lock_temporal_constructor_prototype(&mut self, constructor: Value) -> Result<(), JsError> {
         let prototype = self.intern_atom("prototype");
         self.set_property_attributes(
             constructor,
@@ -233,13 +226,13 @@ impl<H: Host> Vm<H> {
             value if value.is_undefined() => "UTC".to_owned(),
             value => self.temporal_timezone_id(p, value)?,
         };
-        let fields = super::temporal_zoned_date_time::zoned_date_time_fields(
-            epoch_nanoseconds,
-            &timezone,
-        )
-        .ok_or_else(|| self.range_error(p, "Invalid current time".into()))?;
+        let fields =
+            super::temporal_zoned_date_time::zoned_date_time_fields(epoch_nanoseconds, &timezone)
+                .ok_or_else(|| self.range_error(p, "Invalid current time".into()))?;
         let date = (fields[0], fields[1], fields[2]);
-        let time = [fields[3], fields[4], fields[5], fields[6], fields[7], fields[8]];
+        let time = [
+            fields[3], fields[4], fields[5], fields[6], fields[7], fields[8],
+        ];
         match native {
             Native::TemporalNowPlainDateISO => {
                 let constructor = self.temporal_plain_date_constructor(p)?;
@@ -275,7 +268,8 @@ impl<H: Host> Vm<H> {
                 let constructor_key = self.intern_atom("ZonedDateTime");
                 let constructor = self.get_property(p, temporal, constructor_key)?;
                 let args = [
-                    self.heap.alloc(Cell::BigInt(epoch_nanoseconds.to_string().into())),
+                    self.heap
+                        .alloc(Cell::BigInt(epoch_nanoseconds.to_string().into())),
                     self.heap.alloc(Cell::String(timezone.into())),
                 ];
                 self.temporal_zoned_date_time_construct(p, &args, constructor)
@@ -467,7 +461,8 @@ impl<H: Host> Vm<H> {
                         "relativeTo is required to compare calendar units".into(),
                     ));
                 }
-                let ordering = if let Some(date) = relative_date.as_ref().filter(|_| has_date_units) {
+                let ordering = if let Some(date) = relative_date.as_ref().filter(|_| has_date_units)
+                {
                     let left = quench_temporal::relative_duration_nanoseconds(
                         date.iso_date,
                         std::array::from_fn(|index| left[index] as i128),
@@ -801,8 +796,7 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.range_error(p, "Invalid relativeTo range".into()));
         }
-        if (index <= 2 || fields[..3].iter().any(|value| *value != 0.0))
-            && relative_date.is_none()
+        if (index <= 2 || fields[..3].iter().any(|value| *value != 0.0)) && relative_date.is_none()
         {
             return Err(self.range_error(p, "relativeTo required".into()));
         }
@@ -811,7 +805,9 @@ impl<H: Host> Vm<H> {
                 p,
                 &fields,
                 index,
-                relative_date.expect("relative date required above").iso_date,
+                relative_date
+                    .expect("relative date required above")
+                    .iso_date,
             );
         }
         let divisor = DURATION_TIME_NANOSECOND_SCALES[index - 3];
@@ -936,8 +932,7 @@ impl<H: Host> Vm<H> {
             relative_to,
             explicit_unit,
             explicit_smallest_unit,
-        ) =
-            self.duration_round_options(p, options)?;
+        ) = self.duration_round_options(p, options)?;
         let smallest =
             smallest.ok_or_else(|| self.range_error(p, "smallestUnit is required".into()))?;
         if !explicit_unit {
@@ -1051,19 +1046,15 @@ impl<H: Host> Vm<H> {
                     0.0
                 }
             });
-            let rounded = round_duration_integer(
-                self.duration_time_nanos(&time_fields),
-                quantum,
-                mode,
-            )
-            .checked_mul(quantum)
-            .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
-            if rounded.unsigned_abs()
-                < super::temporal_date_arithmetic::NANOS_PER_DAY as u128
-            {
+            let rounded =
+                round_duration_integer(self.duration_time_nanos(&time_fields), quantum, mode)
+                    .checked_mul(quantum)
+                    .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+            if rounded.unsigned_abs() < super::temporal_date_arithmetic::NANOS_PER_DAY as u128 {
                 let mut result = [0.0; 10];
-                result[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
-                    .copy_from_slice(&fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]);
+                result[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD].copy_from_slice(
+                    &fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD],
+                );
                 balance_duration_time_units(
                     rounded,
                     super::temporal_date_arithmetic::DURATION_HOURS_FIELD,
@@ -1103,25 +1094,24 @@ impl<H: Host> Vm<H> {
         } else {
             let total = quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-            let (rounded, whole_days) = if smallest
-                == super::temporal_date_arithmetic::DURATION_WEEKS_FIELD
-            {
-                (
-                    total,
-                    total / super::temporal_date_arithmetic::NANOS_PER_DAY,
-                )
-            } else {
-                let quantum = duration_round_unit_nanoseconds(smallest)
-                    .checked_mul(increment)
-                    .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
-                let rounded = round_duration_integer(total, quantum, mode)
-                    .checked_mul(quantum)
-                    .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
-                (
-                    rounded,
-                    rounded / super::temporal_date_arithmetic::NANOS_PER_DAY,
-                )
-            };
+            let (rounded, whole_days) =
+                if smallest == super::temporal_date_arithmetic::DURATION_WEEKS_FIELD {
+                    (
+                        total,
+                        total / super::temporal_date_arithmetic::NANOS_PER_DAY,
+                    )
+                } else {
+                    let quantum = duration_round_unit_nanoseconds(smallest)
+                        .checked_mul(increment)
+                        .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
+                    let rounded = round_duration_integer(total, quantum, mode)
+                        .checked_mul(quantum)
+                        .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+                    (
+                        rounded,
+                        rounded / super::temporal_date_arithmetic::NANOS_PER_DAY,
+                    )
+                };
             let days = i64::try_from(whole_days)
                 .map_err(|_| self.range_error(p, "Invalid relativeTo".into()))?;
             let target = super::temporal_date::shift_iso_days(relative_date.into(), days)
@@ -1178,9 +1168,12 @@ impl<H: Host> Vm<H> {
         if explicit_smallest_unit
             && smallest == super::temporal_date_arithmetic::DURATION_WEEKS_FIELD
         {
-            let months = i128::from(result[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64)
-                * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
-                + i128::from(result[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64);
+            let months =
+                i128::from(result[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64)
+                    * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+                    + i128::from(
+                        result[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64,
+                    );
             let cursor = super::temporal_date::shift_iso_months(relative_date.into(), months)
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
             let remainder_days = i128::from(super::temporal_date::days_from_iso_date(target_date))
@@ -1195,8 +1188,7 @@ impl<H: Host> Vm<H> {
             let rounded_weeks = round_duration_integer(remainder, quantum, mode)
                 .checked_mul(increment)
                 .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
-            result[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] =
-                rounded_weeks as f64;
+            result[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] = rounded_weeks as f64;
             result[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] = 0.0;
         } else if time_remainder != 0 {
             balance_duration_time_units_into(time_remainder, &mut result);
@@ -1466,7 +1458,9 @@ fn round_duration_number(value: f64, mode: &str) -> f64 {
         "halfCeil" => absolute_remainder > 0.5 || absolute_remainder == 0.5 && value > 0.0,
         "halfFloor" => absolute_remainder > 0.5 || absolute_remainder == 0.5 && value < 0.0,
         "halfTrunc" => absolute_remainder > 0.5,
-        "halfEven" => absolute_remainder > 0.5 || absolute_remainder == 0.5 && truncated % 2.0 != 0.0,
+        "halfEven" => {
+            absolute_remainder > 0.5 || absolute_remainder == 0.5 && truncated % 2.0 != 0.0
+        }
         _ => absolute_remainder >= 0.5,
     };
     if increment {

@@ -176,6 +176,7 @@ impl<H: Host> Vm<H> {
             Native::IntlNumberFormatFormat => {
                 self.intl_number_format_format(p, this, args)
             }
+            Native::IntlSupportedValuesOf => self.intl_supported_values_of(p, args),
             Native::IntlCollator
             | Native::IntlCollatorSupportedLocalesOf
             | Native::IntlCollatorCompareGetter
@@ -184,10 +185,14 @@ impl<H: Host> Vm<H> {
                 self.intl_collator_native(p, native, this, args)
             }
             Native::IntlDateTimeFormat => {
-                self.intl_date_time_format_call(p, args)
+                self.intl_date_time_format_call(p, this, args)
             }
             Native::IntlDateTimeFormatFormatGetter
             | Native::IntlDateTimeFormatFormat
+            | Native::IntlDateTimeFormatFormatToParts
+            | Native::IntlDateTimeFormatFormatRange
+            | Native::IntlDateTimeFormatFormatRangeToParts
+            | Native::IntlDateTimeFormatSupportedLocalesOf
             | Native::IntlDateTimeFormatResolvedOptions => {
                 self.intl_date_time_format_native(p, native, this, args)
             }

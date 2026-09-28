@@ -28,6 +28,30 @@ pub const NUMBERING_SYSTEMS: &[&str] = &[
     "tols", "vaii", "wara", "wcho",
 ];
 
+const DEFAULT_NUMBERING_SYSTEMS: &[(&str, &str)] = &[
+    ("ar", "arab"),
+    ("bn", "beng"),
+    ("fa", "arabext"),
+    ("gu", "gujr"),
+    ("hi", "deva"),
+    ("mr", "deva"),
+    ("my", "mymr"),
+    ("ne", "deva"),
+    ("pa", "guru"),
+    ("ta", "tamldec"),
+    ("te", "telu"),
+    ("th", "thai"),
+    ("ur", "arabext"),
+];
+
+pub fn default_numbering_system(locale: &str) -> &'static str {
+    let language = locale.split(['-', '_']).next().unwrap_or_default();
+    DEFAULT_NUMBERING_SYSTEMS
+        .iter()
+        .find_map(|(candidate, numbering)| (*candidate == language).then_some(*numbering))
+        .unwrap_or("latn")
+}
+
 pub fn calendar_alias(value: &str) -> String {
     match value.to_ascii_lowercase().as_str() {
         "islamicc" | "islamic" | "islamic-rgsa" => "islamic-civil".into(),

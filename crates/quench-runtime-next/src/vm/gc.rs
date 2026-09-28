@@ -217,6 +217,16 @@ impl<H: Host> Vm<H> {
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),
                 )
+                .chain(
+                    self.intl_datetime_format_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
+                .chain(
+                    self.intl_datetime_format_fallback_symbols
+                        .iter()
+                        .flat_map(|(realm, symbol)| [*realm, *symbol]),
+                )
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(
                     self.iterator_realm_prototypes

@@ -325,14 +325,20 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::BigIntValueOf | Native::BigIntToString | Native::BigIntToLocaleString => 0.0,
         Native::IntlNumberFormat => 0.0,
         Native::IntlNumberFormatFormat => 1.0,
+        Native::IntlSupportedValuesOf => 1.0,
         Native::IntlCollator => 0.0,
         Native::IntlCollatorSupportedLocalesOf => 1.0,
         Native::IntlCollatorCompareGetter => 0.0,
         Native::IntlCollatorCompare => 2.0,
         Native::IntlCollatorResolvedOptions => 0.0,
         Native::IntlDateTimeFormat => 0.0,
-        Native::IntlDateTimeFormatFormatGetter | Native::IntlDateTimeFormatResolvedOptions => 0.0,
+        Native::IntlDateTimeFormatFormatGetter
+        | Native::IntlDateTimeFormatResolvedOptions => 0.0,
         Native::IntlDateTimeFormatFormat => 1.0,
+        Native::IntlDateTimeFormatFormatToParts => 1.0,
+        Native::IntlDateTimeFormatFormatRange => 2.0,
+        Native::IntlDateTimeFormatFormatRangeToParts => 2.0,
+        Native::IntlDateTimeFormatSupportedLocalesOf => 1.0,
         Native::Number => 1.0,
         Native::NumberValueOf | Native::NumberToLocaleString => 0.0,
         Native::NumberString
@@ -630,9 +636,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::MapGetOrInsert | Native::MapGetOrInsertComputed => 2.0,
         Native::WeakMapGet | Native::WeakMapHas | Native::WeakMapDelete => 1.0,
         Native::WeakSetAdd | Native::WeakSetHas | Native::WeakSetDelete => 1.0,
-        Native::WeakMapSet
-        | Native::WeakMapGetOrInsert
-        | Native::WeakMapGetOrInsertComputed => 2.0,
+        Native::WeakMapSet | Native::WeakMapGetOrInsert | Native::WeakMapGetOrInsertComputed => 2.0,
         Native::WeakRef => 1.0,
         Native::MathMax
         | Native::MathMin
@@ -671,7 +675,18 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::MathTan
         | Native::MathTanh
         | Native::MathTrunc => 1.0,
-        Native::SetAdd | Native::SetHas | Native::SetDelete | Native::SetForEach => 1.0,
+        Native::SetAdd
+        | Native::SetHas
+        | Native::SetDelete
+        | Native::SetForEach
+        | Native::SetDifference
+        | Native::SetIntersection
+        | Native::SetSymmetricDifference
+        | Native::SetUnion
+        | Native::SetIsDisjointFrom
+        | Native::SetIsSubsetOf
+        | Native::SetIsSupersetOf => 1.0,
+        Native::SetSpeciesGetter => 0.0,
         Native::SetClear | Native::SetKeys | Native::SetValues | Native::SetEntries => 0.0,
         Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
@@ -4008,8 +4023,7 @@ impl<H: Host> Vm<H> {
             .collect::<FxHashMap<_, _>>();
         let keys = self.shape_keys(object.shape());
         Some(
-            keys
-                .iter()
+            keys.iter()
                 .filter_map(|key| {
                     let crate::vm::property_key::PropertyKey::String(atom) = key else {
                         return None;
