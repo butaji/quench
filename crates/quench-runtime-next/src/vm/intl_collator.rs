@@ -66,7 +66,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn set_non_writable_property(&mut self, object: Value, name: &str) {
+    pub(super) fn set_non_writable_property(&mut self, object: Value, name: &str) {
         let atom = self.intern_atom(name);
         self.set_property_attributes(
             object,

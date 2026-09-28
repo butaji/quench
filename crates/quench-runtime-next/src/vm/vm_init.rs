@@ -61,6 +61,7 @@ impl<H: Host> Vm<H> {
             intl_number_format_fallback_symbols: FxHashMap::default(),
             intl_collator_constructors: FxHashMap::default(),
             intl_collator_prototypes: FxHashMap::default(),
+            intl_plural_rules_prototypes: FxHashMap::default(),
             intl_datetime_format_constructors: FxHashMap::default(),
             intl_datetime_format_prototypes: FxHashMap::default(),
             intl_datetime_format_fallback_symbols: FxHashMap::default(),

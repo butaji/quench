@@ -7,8 +7,10 @@ description = "Shared engine-independent internationalization algorithms for Que
 
 [dependencies]
 chrono-tz = "0.10"
+fixed_decimal = "0.7.2"
 icu_calendar = { version = "2.3", features = ["compiled_data"] }
 icu_collator = { version = "2.3", features = ["compiled_data"] }
+icu_plurals = { version = "2.3", features = ["compiled_data", "unstable"] }
 icu_locale_core = "2.3"
 icu_provider = "2.3"
 quench-temporal = { path = "../quench-temporal" }

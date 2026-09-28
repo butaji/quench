@@ -223,6 +223,11 @@ impl<H: Host> Vm<H> {
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
+                    self.intl_plural_rules_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
+                .chain(
                     self.intl_datetime_format_constructors
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),

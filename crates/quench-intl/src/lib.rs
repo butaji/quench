@@ -4,6 +4,7 @@ mod collator;
 mod digits;
 mod locale_canonicalization;
 mod locale_data;
+mod plural;
 mod supported_values;
 
 pub use bigint::{format_bigint, BigIntFormatOptions};
@@ -19,6 +20,10 @@ pub use locale_canonicalization::{
 pub use locale_data::{
     calendar_alias, default_numbering_system, sanitize_datetime_locale, valid_calendar,
     valid_numbering_system, valid_unicode_type, CALENDARS, NUMBERING_SYSTEMS,
+};
+pub use plural::{
+    plural_categories, plural_category, plural_category_compact, plural_category_decimal,
+    plural_category_range, plural_category_range_decimal,
 };
 pub use supported_values::{
     collation_supported, currency_fraction_digits, supported_time_zones, COLLATIONS, CURRENCIES,
