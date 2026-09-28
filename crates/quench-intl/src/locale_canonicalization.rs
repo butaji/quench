@@ -19,9 +19,8 @@ pub fn canonicalize_locale_identifier(tag: &str) -> Result<String, ()> {
     }
     let mut parts = tag.split('-');
     let language = parts.next().ok_or_else(|| ())?;
-    if language.is_empty()
-        || language.len() < 2
-        || language.len() > 8
+    if !matches!(language.len(), 2 | 3 | 5..=8)
+        || language.is_empty()
         || !language.chars().all(|c| c.is_ascii_alphabetic())
     {
         return Err(());
