@@ -265,10 +265,6 @@ impl<H: Host> Vm<H> {
         if self.array_buffer_detached(buffer) {
             return Ok(true);
         }
-        let length = self.typed_array_length(object).unwrap_or(0);
-        if index >= length {
-            return Ok(true);
-        }
         let bigint = match kind {
             TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => Some(self.to_bigint(p, value)?),
             _ => None,
@@ -277,6 +273,10 @@ impl<H: Host> Vm<H> {
             .is_none()
             .then(|| self.to_number(p, value))
             .transpose()?;
+        let length = self.typed_array_length(object).unwrap_or(0);
+        if index >= length {
+            return Ok(true);
+        }
         let bigint_bytes = bigint.map(|value| {
             let fill = if value.sign() == num_bigint::Sign::Minus {
                 u8::MAX

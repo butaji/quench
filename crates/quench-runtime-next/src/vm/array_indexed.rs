@@ -304,6 +304,9 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "array callback is not callable".into()));
         }
         let result = match native {
+            Native::ArrayMap if typed_array => {
+                Some(self.typed_array_species_create_for_writing(p, this, length)?)
+            }
             Native::ArrayMap => Some(self.array_species_create(p, this, length)?),
             Native::ArrayFilter if typed_array => None,
             Native::ArrayFilter => Some(self.array_species_create(p, this, 0)?),
@@ -338,7 +341,11 @@ impl<H: Host> Vm<H> {
                             .heap
                             .root_value(result_root.expect("map result is rooted"))
                             .unwrap();
-                        self.create_data_property_or_throw(p, target, index, mapped)?;
+                        if typed_array {
+                            self.typed_array_set(p, target, index, mapped)?;
+                        } else {
+                            self.create_data_property_or_throw(p, target, index, mapped)?;
+                        }
                     }
                     Native::ArrayFilter if self.truthy(mapped) => {
                         if typed_array {
@@ -368,7 +375,7 @@ impl<H: Host> Vm<H> {
             match native {
                 Native::ArrayForEach => Ok(Value::UNDEFINED),
                 Native::ArrayFilter if typed_array => {
-                    let target = self.typed_array_species_create(p, this, result_length)?;
+                    let target = self.typed_array_species_create_for_writing(p, this, result_length)?;
                     let target_root = self.heap.root(target);
                     let result = (|| {
                         for (index, value_root) in filtered_value_roots.iter().enumerate() {
