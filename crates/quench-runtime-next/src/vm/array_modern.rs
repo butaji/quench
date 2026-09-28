@@ -196,6 +196,14 @@ impl<H: Host> Vm<H> {
                     self.type_error(p, "typed array constructor returned invalid result".into())
                 );
             }
+            if target == ArrayFromTarget::TypedArray {
+                self.validate_typed_array_result(
+                    p,
+                    result,
+                    length.unwrap_or_default(),
+                    true,
+                )?;
+            }
             Ok(result)
         } else if target == ArrayFromTarget::TypedArray {
             Err(self.type_error(p, "typed array from receiver is not a constructor".into()))
@@ -355,10 +363,19 @@ impl<H: Host> Vm<H> {
         let iterator_root = self.heap.root(iterator);
         let mut values = Vec::new();
         let outcome = (|| {
+            let next_atom = self.intern_atom("next");
+            let next_method = self.get_property(p, iterator, next_atom)?;
+            if !self.is_function(next_method) {
+                return Err(self.type_error(p, "iterator next is not callable".into()));
+            }
             loop {
                 let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
-                let step = match self.iterator_next(p, iterator) {
-                    Ok(step) => step,
+                let step = match self.call_value(p, next_method, iterator, &[]) {
+                    Ok(step) if self.is_object_like(step) => step,
+                    Ok(_) => {
+                        let error = self.type_error(p, "iterator next result is not an object".into());
+                        return Err(self.iterator_abrupt(p, iterator, error));
+                    }
                     Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
                 };
                 let done = match self.get_property(p, step, done_atom) {
@@ -368,21 +385,10 @@ impl<H: Host> Vm<H> {
                 if self.truthy(done) {
                     break;
                 }
-                let mut value = match self.get_property(p, step, value_atom) {
+                let value = match self.get_property(p, step, value_atom) {
                     Ok(value) => value,
                     Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
                 };
-                if let Some(mapfn) = mapfn {
-                    value = match self.call_value(
-                        p,
-                        mapfn,
-                        map_this,
-                        &[value, Value::number(values.len() as f64)],
-                    ) {
-                        Ok(value) => value,
-                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                    };
-                }
                 values.push(self.heap.root(value));
             }
             let target = self.array_from_target(
@@ -395,6 +401,16 @@ impl<H: Host> Vm<H> {
             let result = (|| {
                 for (index, value) in values.iter().enumerate() {
                     let value = self.heap.root_value(*value).unwrap();
+                    let value = if let Some(mapfn) = mapfn {
+                        self.call_value(
+                            p,
+                            mapfn,
+                            map_this,
+                            &[value, Value::number(index as f64)],
+                        )?
+                    } else {
+                        value
+                    };
                     self.typed_array_set(p, target, index, value)?;
                 }
                 Ok(self.heap.root_value(target_root).unwrap())

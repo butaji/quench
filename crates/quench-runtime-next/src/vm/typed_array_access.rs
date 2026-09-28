@@ -256,17 +256,10 @@ impl<H: Host> Vm<H> {
             }) => (*buffer, *offset, *kind),
             _ => return Ok(false),
         };
+        let (bigint, number) = self.typed_array_convert_value(p, kind, value)?;
         if self.array_buffer_detached(buffer) {
             return Ok(true);
         }
-        let bigint = match kind {
-            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => Some(self.to_bigint(p, value)?),
-            _ => None,
-        };
-        let number = bigint
-            .is_none()
-            .then(|| self.to_number(p, value))
-            .transpose()?;
         let length = self.typed_array_length(object).unwrap_or(0);
         if index >= length {
             return Ok(true);
@@ -283,13 +276,13 @@ impl<H: Host> Vm<H> {
             }
             bytes
         });
-        if index >= self.typed_array_length(object).unwrap_or(0) {
+        if self.array_buffer_detached(buffer)
+            || self.typed_array_length(object).is_none_or(|length| index >= length)
+        {
             return Ok(true);
         }
         if self.array_buffer_out_of_bounds(buffer, offset, kind.width() * (index + 1)) {
-            return Err(JsError(
-                "typed array backing buffer is out of bounds".into(),
-            ));
+            return Ok(true);
         }
         if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
             let bytes = Rc::make_mut(bytes);
@@ -321,5 +314,22 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(true)
+    }
+
+    pub(super) fn typed_array_convert_value(
+        &mut self,
+        p: &ResidualProgram,
+        kind: TypedArrayKind,
+        value: Value,
+    ) -> Result<(Option<num_bigint::BigInt>, Option<f64>), JsError> {
+        let bigint = match kind {
+            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => Some(self.to_bigint(p, value)?),
+            _ => None,
+        };
+        let number = bigint
+            .is_none()
+            .then(|| self.to_number(p, value))
+            .transpose()?;
+        Ok((bigint, number))
     }
 }

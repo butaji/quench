@@ -594,6 +594,23 @@ impl Native {
                 | Self::ArrayBufferIsView
         )
     }
+    pub(crate) fn is_typed_array_constructor(self) -> bool {
+        matches!(
+            self,
+            Self::TypedArray
+                | Self::Uint8Array
+                | Self::Uint8ClampedArray
+                | Self::Uint16Array
+                | Self::Uint32Array
+                | Self::Int8Array
+                | Self::Int16Array
+                | Self::Int32Array
+                | Self::BigInt64Array
+                | Self::BigUint64Array
+                | Self::Float32Array
+                | Self::Float64Array
+        )
+    }
     pub(crate) fn is_typed_array_iterator(self) -> bool {
         matches!(
             self,

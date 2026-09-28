@@ -69,6 +69,9 @@ impl<H: Host> Vm<H> {
         if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
             return result;
         }
+        if native.is_typed_array_constructor() {
+            return Err(self.type_error(p, "typed array constructor requires new".into()));
+        }
         if native.is_atomics_native() {
             return self.atomics_native(p, native, args);
         }
@@ -138,7 +141,7 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::String(value.into())))
             }
             Native::ProxyRevocable => self.proxy_revocable(p, args),
-            Native::ArrayBuffer | Native::SharedArrayBuffer | Native::TypedArray => {
+            Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
             native if native.is_host_control_native() => self.call_host(p, native, args),
