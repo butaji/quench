@@ -606,6 +606,12 @@ impl FunctionCompiler<'_, '_> {
         )
     }
     pub(super) fn update(&mut self, value: &UpdateExpression<'_>) -> Register {
+        if let SimpleAssignmentTarget::StaticMemberExpression(target) = &value.argument
+            && target.property.name.as_str() == self.owner.annex_b_call_target_marker
+            && matches!(&target.object, Expression::CallExpression(_))
+        {
+            return self.throw_invalid_call_assignment(&target.object);
+        }
         let (old, target) = match &value.argument {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => {
                 let atom = self.owner.atom(id.name.as_str());

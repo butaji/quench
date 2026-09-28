@@ -1,6 +1,20 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
+    pub(super) fn throw_invalid_call_assignment(&mut self, call: &Expression<'_>) -> Register {
+        if self.strict {
+            self.owner
+                .reject(call.span(), "SyntaxError: invalid call assignment target");
+            return self.literal(Constant::Undefined);
+        }
+        self.expression(call);
+        let constructor = self.load_name("ReferenceError");
+        let error = self.reg();
+        self.emit(Op::Construct, error, constructor, constructor, 0);
+        self.emit(Op::Throw, error, 0, 0, 0);
+        self.literal(Constant::Undefined)
+    }
+
     pub(super) fn unary(&mut self, value: &UnaryExpression<'_>) -> Register {
         if value.operator == UnaryOperator::Delete {
             return self.delete_expression(&value.argument);

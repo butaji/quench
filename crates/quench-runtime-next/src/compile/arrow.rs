@@ -17,10 +17,7 @@ impl Compiler<'_> {
     ) -> u32 {
         let id = self.functions.len() as u32;
         self.functions.push(None);
-        let source_text = self
-            .text
-            .get(value.span.start as usize..value.span.end as usize)
-            .map(str::to_owned);
+        let source_text = self.source_text(value.span);
         let lexical_atoms = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
         {
             self.collect_lexical_atoms(&body.statements)

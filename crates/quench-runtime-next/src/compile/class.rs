@@ -959,13 +959,8 @@ impl Compiler<'_> {
             FunctionOptions {
                 defaults: Some(&method.value.params),
                 source_text: source_span.and_then(|span| {
-                    class_method_source_span(self.text, span, method.key.span().start).and_then(
-                        |span| {
-                            self.text
-                                .get(span.start as usize..span.end as usize)
-                                .map(str::to_owned)
-                        },
-                    )
+                    class_method_source_span(self.text, span, method.key.span().start)
+                        .and_then(|span| self.source_text(span))
                 }),
                 name_binding: None,
                 async_function: method.value.r#async,
