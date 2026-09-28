@@ -152,6 +152,7 @@ impl Compiler<'_> {
             global_lexical_atoms: Vec::new(),
             global_var_atoms: Vec::new(),
             global_function_atoms: Vec::new(),
+            global_annex_b_var_atoms: Vec::new(),
             global_immutable_atoms: Vec::new(),
             eval_sites: function.eval_sites,
             code: function.code,

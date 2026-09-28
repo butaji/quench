@@ -1496,6 +1496,7 @@ impl<'a> Compiler<'a> {
             .filter_map(|name| self.atom_index.get(name.as_str()).copied())
             .collect();
         let mut global_var_names = early::collect_var_names(&program.body);
+        let mut global_annex_b_var_names = Vec::new();
         for statement in &program.body {
             if let Statement::FunctionDeclaration(function) = statement
                 && let Some(identifier) = &function.id
@@ -1510,16 +1511,28 @@ impl<'a> Compiler<'a> {
                 .any(|directive| directive.directive == "use strict");
         if !strict_script {
             let collisions = early::annex_b_lexical_collisions(&program.body);
-            global_var_names.extend(
-                early::annex_b_function_names(&program.body)
-                    .into_iter()
-                    .filter(|(span, _)| !collisions.contains(span))
-                    .map(|(_, name)| name),
-            );
+            let direct_functions: FxHashSet<_> = program
+                .body
+                .iter()
+                .filter_map(|statement| match statement {
+                    Statement::FunctionDeclaration(function) => Some(function.span.start),
+                    _ => None,
+                })
+                .collect();
+            global_annex_b_var_names = early::annex_b_function_names(&program.body)
+                .into_iter()
+                .filter(|(span, _)| !direct_functions.contains(span) && !collisions.contains(span))
+                .map(|(_, name)| name)
+                .collect();
+            global_var_names.extend(global_annex_b_var_names.iter().cloned());
         }
         global_var_names.sort();
         global_var_names.dedup();
         let global_var_atoms = global_var_names
+            .iter()
+            .filter_map(|name| self.atom_index.get(name.as_str()).copied())
+            .collect();
+        let global_annex_b_var_atoms = global_annex_b_var_names
             .iter()
             .filter_map(|name| self.atom_index.get(name.as_str()).copied())
             .collect();
@@ -1528,6 +1541,7 @@ impl<'a> Compiler<'a> {
             root.global_immutable_atoms = global_immutable_atoms;
             root.global_var_atoms = global_var_atoms;
             root.global_function_atoms = global_function_atoms;
+            root.global_annex_b_var_atoms = global_annex_b_var_atoms;
         }
         if !self.errors.is_empty() {
             return Err(self.errors);
@@ -2055,6 +2069,7 @@ impl<'a> Compiler<'a> {
             global_lexical_atoms: Vec::new(),
             global_var_atoms: Vec::new(),
             global_function_atoms: Vec::new(),
+            global_annex_b_var_atoms: Vec::new(),
             global_immutable_atoms: Vec::new(),
             eval_sites: function.eval_sites,
             code: function.code,

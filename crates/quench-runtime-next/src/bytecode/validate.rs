@@ -427,6 +427,7 @@ mod tests {
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],
             global_function_atoms: vec![],
+            global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
             eval_sites: vec![],
             code,

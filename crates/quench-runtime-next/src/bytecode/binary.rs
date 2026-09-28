@@ -148,6 +148,10 @@ pub(super) fn write_program(
         for atom in &function.global_function_atoms {
             out.u32(*atom);
         }
+        out.u32(function.global_annex_b_var_atoms.len() as u32);
+        for atom in &function.global_annex_b_var_atoms {
+            out.u32(*atom);
+        }
         out.u32(function.global_immutable_atoms.len() as u32);
         for atom in &function.global_immutable_atoms {
             out.u32(*atom);
@@ -386,6 +390,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let global_lexical_atoms = input.list(|input| input.u32())?;
         let global_var_atoms = input.list(|input| input.u32())?;
         let global_function_atoms = input.list(|input| input.u32())?;
+        let global_annex_b_var_atoms = input.list(|input| input.u32())?;
         let global_immutable_atoms = input.list(|input| input.u32())?;
         let eval_sites = input.list(|input| {
             let resume_pc = input.u32()?;
@@ -487,6 +492,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             global_lexical_atoms,
             global_var_atoms,
             global_function_atoms,
+            global_annex_b_var_atoms,
             global_immutable_atoms,
             eval_sites,
             code,
