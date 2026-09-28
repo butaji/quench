@@ -8,24 +8,7 @@ pub(crate) fn is_supported_calendar(value: &str) -> bool {
     CALENDARS.contains(&value)
 }
 
-const CALENDARS: &[&str] = &[
-    "buddhist",
-    "chinese",
-    "coptic",
-    "dangi",
-    "ethioaa",
-    "ethiopic",
-    "gregory",
-    "hebrew",
-    "indian",
-    "islamic-civil",
-    "islamic-tbla",
-    "islamic-umalqura",
-    "iso8601",
-    "japanese",
-    "persian",
-    "roc",
-];
+const CALENDARS: &[&str] = quench_intl::CALENDARS;
 
 pub(crate) fn supported_collations() -> Vec<Value> {
     strings(&[
@@ -71,25 +54,10 @@ pub(crate) fn supported_numbering_systems() -> Vec<Value> {
 }
 
 pub(crate) fn valid_numbering_system_syntax(value: &str) -> bool {
-    !value.is_empty()
-        && value.split('-').all(|part| {
-            (3..=8).contains(&part.len())
-                && part
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric())
-        })
+    quench_intl::valid_unicode_type(value)
 }
 
-pub(crate) const NUMBERING_SYSTEMS: &[&str] = &[
-    "adlm", "ahom", "arab", "arabext", "bali", "beng", "bhks", "brah", "cakm", "cham", "deva",
-    "diak", "fullwide", "gara", "gong", "gonm", "gujr", "gukh", "guru", "hanidec", "hmng", "hmnp",
-    "java", "kali", "kawi", "khmr", "knda", "krai", "lana", "lanatham", "laoo", "latn", "lepc",
-    "limb", "mathbold", "mathdbl", "mathmono", "mathsanb", "mathsans", "mlym", "modi", "mong",
-    "mroo", "mtei", "mymr", "mymrepka", "mymrpao", "mymrshan", "mymrtlng", "nagm", "newa", "nkoo",
-    "olck", "onao", "orya", "osma", "outlined", "rohg", "saur", "segment", "shrd", "sind", "sinh",
-    "sora", "sund", "sunu", "takr", "talu", "tamldec", "telu", "thai", "tibt", "tirh", "tnsa",
-    "tols", "vaii", "wara", "wcho",
-];
+pub(crate) const NUMBERING_SYSTEMS: &[&str] = quench_intl::NUMBERING_SYSTEMS;
 
 pub(crate) fn supported_time_zones() -> Vec<Value> {
     let mut names = chrono_tz::TZ_VARIANTS

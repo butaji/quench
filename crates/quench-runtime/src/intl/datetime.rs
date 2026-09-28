@@ -5,8 +5,8 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string, supported_values::NUMBERING_SYSTEMS, SLOT,
+    SLOT, default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
+    slot_string,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -114,44 +114,11 @@ pub(crate) fn format_temporal_value(
 }
 
 fn sanitize_locale(locale: &str) -> String {
-    let Some((base, extension)) = locale.split_once("-u-") else {
-        return locale.to_string();
-    };
-    let parts: Vec<&str> = extension.split('-').collect();
-    let mut kept: Vec<String> = Vec::new();
-    let mut index = 0;
-    while index < parts.len() {
-        let key = parts[index];
-        if key == "ca" {
-            let end = (index + 1..parts.len())
-                .find(|candidate| parts[*candidate].len() == 2)
-                .unwrap_or(parts.len());
-            let value = parts[index + 1..end].join("-");
-            let value = super::locale::calendar_alias(&value);
-            if available_calendar(&value) {
-                kept.extend([key.to_string(), value]);
-            }
-            index = end;
-        } else if let Some(value) = parts.get(index + 1).copied() {
-            if key == "hc" || (key == "nu" && NUMBERING_SYSTEMS.contains(&value)) {
-                kept.extend([key.to_string(), value.to_string()]);
-            }
-            index += 2;
-        } else {
-            index += 1;
-        }
-    }
-    if kept.is_empty() {
-        base.to_string()
-    } else {
-        format!("{base}-u-{}", kept.join("-"))
-    }
+    quench_intl::sanitize_datetime_locale(locale)
 }
 
 fn available_calendar(calendar: &str) -> bool {
-    super::supported_values::supported_calendars()
-        .iter()
-        .any(|value| matches!(value, Value::String(value) if value == calendar))
+    quench_intl::valid_calendar(calendar)
 }
 
 impl DateTimeOptions {

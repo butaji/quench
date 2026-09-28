@@ -198,6 +198,21 @@ impl<H: Host> Vm<H> {
         let resolved = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        let locale_calendar = locale_unicode_value(locale, "ca")
+            .map(|calendar| quench_intl::calendar_alias(&calendar))
+            .filter(|calendar| quench_intl::valid_calendar(calendar))
+            .unwrap_or_else(|| "gregory".into());
+        let locale_numbering_system = locale_unicode_value(locale, "nu")
+            .filter(|system| quench_intl::valid_numbering_system(system))
+            .unwrap_or_else(|| "latn".into());
+        let calendar_value = self
+            .heap
+            .alloc(Cell::String(locale_calendar.clone().into()));
+        self.set_date_time_property(resolved, "calendar", calendar_value)?;
+        let numbering_value = self
+            .heap
+            .alloc(Cell::String(locale_numbering_system.clone().into()));
+        self.set_date_time_property(resolved, "numberingSystem", numbering_value)?;
         for (key, allowed) in DATE_TIME_OPTIONS {
             let atom = self.intern_atom(key);
             let value = self.get_property(p, options, atom)?;
@@ -246,12 +261,22 @@ impl<H: Host> Vm<H> {
                     }
                     Some(Value::number(digits.floor()))
                 }
-                "calendar" | "numberingSystem" => {
+                "calendar" => {
                     let text = self.to_string(p, value)?;
-                    if text.is_empty() {
+                    if !quench_intl::valid_unicode_type(&text) {
                         return Err(self.range_error(p, format!("invalid {key}").into()));
                     }
-                    Some(self.heap.alloc(Cell::String(text.into())))
+                    let calendar = quench_intl::calendar_alias(&text);
+                    quench_intl::valid_calendar(&calendar)
+                        .then(|| self.heap.alloc(Cell::String(calendar.into())))
+                }
+                "numberingSystem" => {
+                    let text = self.to_string(p, value)?.to_ascii_lowercase();
+                    if !quench_intl::valid_unicode_type(&text) {
+                        return Err(self.range_error(p, format!("invalid {key}").into()));
+                    }
+                    quench_intl::valid_numbering_system(&text)
+                        .then(|| self.heap.alloc(Cell::String(text.into())))
                 }
                 _ => None,
             };
@@ -285,7 +310,21 @@ impl<H: Host> Vm<H> {
             }
             _ => {}
         }
-        let mut resolved_locale = locale.to_string();
+        let mut resolved_locale = quench_intl::sanitize_datetime_locale(locale);
+        if self
+            .date_time_option(resolved, "calendar")
+            .and_then(|value| self.string_value(value))
+            .is_some_and(|calendar| calendar != locale_calendar)
+        {
+            resolved_locale = remove_locale_unicode_key(&resolved_locale, "ca");
+        }
+        if self
+            .date_time_option(resolved, "numberingSystem")
+            .and_then(|value| self.string_value(value))
+            .is_some_and(|system| system != locale_numbering_system)
+        {
+            resolved_locale = remove_locale_unicode_key(&resolved_locale, "nu");
+        }
         if self.date_time_option(resolved, "hour").is_some()
             || self.date_time_option(resolved, "timeStyle").is_some()
             || self.date_time_option(resolved, "hour12").is_some()

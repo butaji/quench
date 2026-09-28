@@ -354,13 +354,7 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
 }
 
 pub(crate) fn calendar_alias(value: &str) -> String {
-    let value = value.to_ascii_lowercase();
-    match value.as_str() {
-        "islamicc" => "islamic-civil".to_string(),
-        "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
-        "ethiopic-amete-alem" => "ethioaa".to_string(),
-        other => other.to_string(),
-    }
+    quench_intl::calendar_alias(value)
 }
 
 include!("locale_options.rs");
