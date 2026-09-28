@@ -1610,6 +1610,7 @@ impl<H: Host> Vm<H> {
         if !super::temporal_date_time_difference::difference_increment_is_valid(
             increment as f64,
             smallest,
+            super::temporal_date_time_difference::DifferenceDomain::ZonedDateTime,
         ) {
             return Err(self.range_error(p, "Invalid roundingIncrement".into()));
         }
