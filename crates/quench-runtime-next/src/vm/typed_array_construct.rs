@@ -23,20 +23,18 @@ impl<H: Host> Vm<H> {
             }
         }) {
             if detached {
-                return Err(JsError(format!("{name} backing buffer is detached").into()));
+                return Err(self.type_error(p, format!("{name} backing buffer is detached").into()));
             }
             let offset = self.to_number(p, args.get(1).copied().unwrap_or(Value::number(0.0)))?;
-            if offset.is_nan() || offset.is_sign_negative() {
-                return Err(JsError(format!("{name} byte offset is invalid").into()));
+            if offset.is_nan() || offset < 0.0 {
+                return Err(self.range_error(p, format!("{name} byte offset is invalid").into()));
             }
             let offset = offset.trunc() as usize;
             if !offset.is_multiple_of(width) || offset > buffer_length {
-                return Err(JsError(
-                    format!("{name} byte offset is out of range").into(),
-                ));
+                return Err(self.range_error(p, format!("{name} byte offset is out of range").into()));
             }
-            let length = args
-                .get(2)
+            let requested_length = args.get(2).filter(|value| !value.is_undefined());
+            let length = requested_length
                 .map(|value| self.to_number(p, *value))
                 .transpose()?
                 .map_or((buffer_length - offset) / width, |value| {
@@ -47,7 +45,7 @@ impl<H: Host> Vm<H> {
                     }
                 });
             if offset.saturating_add(length.saturating_mul(width)) > buffer_length {
-                return Err(JsError(format!("{name} length is out of range").into()));
+                return Err(self.range_error(p, format!("{name} length is out of range").into()));
             }
             return Ok(self.heap.alloc(Cell::TypedArray {
                 kind,
@@ -55,7 +53,7 @@ impl<H: Host> Vm<H> {
                 buffer: source,
                 offset,
                 length,
-                length_tracking: self.array_buffer_resizable(source) && args.get(2).is_none(),
+                length_tracking: self.array_buffer_resizable(source) && requested_length.is_none(),
             }));
         }
         let values = self.typed_array_source_values(p, source)?;
@@ -169,6 +167,21 @@ impl<H: Host> Vm<H> {
         source: Value,
         length: usize,
     ) -> Result<Value, JsError> {
+        self.typed_array_species_create_with_args(
+            p,
+            source,
+            &[Value::number(length as f64)],
+            length,
+        )
+    }
+
+    pub(super) fn typed_array_species_create_with_args(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        args: &[Value],
+        minimum_length: usize,
+    ) -> Result<Value, JsError> {
         let kind = self
             .typed_array_kind(source)
             .ok_or_else(|| self.type_error(p, "typed array species source is invalid".into()))?;
@@ -191,7 +204,7 @@ impl<H: Host> Vm<H> {
         if !self.is_constructable(p, constructor) {
             return Err(self.type_error(p, "typed array species is not a constructor".into()));
         }
-        let target = self.construct_value(p, constructor, &[Value::number(length as f64)])?;
+        let target = self.construct_value(p, constructor, args)?;
         let Some(target_kind) = self.typed_array_kind(target) else {
             return Err(
                 self.type_error(p, "typed array species result is not a typed array".into())
@@ -204,6 +217,34 @@ impl<H: Host> Vm<H> {
             )
         {
             return Err(self.type_error(p, "typed array species content type differs".into()));
+        }
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(target) else {
+            unreachable!("species result was validated as a typed array")
+        };
+        if self.typed_array_out_of_bounds(target)
+            || self.array_buffer_detached(*buffer)
+            || self.typed_array_length(target).unwrap_or_default() < minimum_length
+        {
+            return Err(self.type_error(p, "typed array species result is not writable".into()));
+        }
+        Ok(target)
+    }
+
+    pub(super) fn typed_array_species_create_for_writing(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        length: usize,
+    ) -> Result<Value, JsError> {
+        let target = self.typed_array_species_create(p, source, length)?;
+        let immutable = match self.heap.get(target) {
+            Some(Cell::TypedArray { buffer, .. }) => {
+                matches!(self.heap.get(*buffer), Some(Cell::ArrayBuffer { immutable: true, .. }))
+            }
+            _ => false,
+        };
+        if immutable {
+            return Err(self.type_error(p, "typed array species result is not writable".into()));
         }
         Ok(target)
     }

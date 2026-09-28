@@ -255,9 +255,12 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TypedArrayByteLengthGetter
         | Native::TypedArrayByteOffsetGetter
         | Native::TypedArrayLengthGetter
+        | Native::TypedArrayToReversed
         | Native::ThrowTypeError => 0.0,
+        Native::TypedArrayAt | Native::TypedArrayToSorted => 1.0,
         Native::TypedArrayLastIndexOf => 1.0,
         Native::TypedArraySort => 1.0,
+        Native::TypedArrayWith => 2.0,
         Native::Uint8ArrayFill
         | Native::Uint8ArrayIncludes
         | Native::Uint8ArrayIndexOf

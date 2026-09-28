@@ -71,6 +71,10 @@ const NATIVES: &[Native] = &[
     Native::Array, Native::TypedArray, Native::TypedArrayFrom, Native::TypedArrayOf,
     Native::TypedArrayLastIndexOf,
     Native::TypedArraySort,
+    Native::TypedArrayAt,
+    Native::TypedArrayToReversed,
+    Native::TypedArrayToSorted,
+    Native::TypedArrayWith,
     Native::TypedArrayBufferGetter,
     Native::TypedArrayByteLengthGetter,
     Native::TypedArrayByteOffsetGetter,
@@ -625,6 +629,7 @@ impl<H: Host> Vm<H> {
             self.well_known_symbols.insert(name.into(), value);
             self.set_named_constant(program, symbol, name, value)?;
         }
+        self.install_typed_array_iterator_symbol(program)?;
         let symbol_prototype_atom = self.intern_atom("prototype");
         let symbol_prototype = self.get_property(program, symbol, symbol_prototype_atom)?;
         let symbol_to_primitive = self.native_value(Native::SymbolToPrimitive);

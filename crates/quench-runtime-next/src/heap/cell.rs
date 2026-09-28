@@ -26,7 +26,7 @@ pub(crate) enum Native {
     JsonStringify,
     JsonRawJson,
     JsonIsRawJson,
-    Array, TypedArray, TypedArrayFrom, TypedArrayOf, TypedArrayLastIndexOf, TypedArraySort, TypedArrayBufferGetter, TypedArrayByteLengthGetter, TypedArrayByteOffsetGetter, TypedArrayLengthGetter, TypedArrayToStringTag, ArrayToLocaleString, ArraySpecies, ArrayFromAsync,
+    Array, TypedArray, TypedArrayFrom, TypedArrayOf, TypedArrayAt, TypedArrayLastIndexOf, TypedArraySort, TypedArrayToReversed, TypedArrayToSorted, TypedArrayWith, TypedArrayBufferGetter, TypedArrayByteLengthGetter, TypedArrayByteOffsetGetter, TypedArrayLengthGetter, TypedArrayToStringTag, ArrayToLocaleString, ArraySpecies, ArrayFromAsync,
     ArrayFromAsyncFulfilled, ArrayFromAsyncRejected,
     ArrayIsArray,
     ArrayPush,
@@ -586,6 +586,10 @@ impl Native {
                 | Self::TypedArrayReduceRight
                 | Self::TypedArrayLastIndexOf
                 | Self::TypedArraySort
+                | Self::TypedArrayAt
+                | Self::TypedArrayToReversed
+                | Self::TypedArrayToSorted
+                | Self::TypedArrayWith
                 | Self::ArrayBufferIsView
         )
     }
