@@ -763,9 +763,9 @@ impl<H: Host> Vm<H> {
     pub(super) fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
         let mut entries = self
             .shape_entries(data.shape())
-            .into_iter()
-            .filter_map(|(key, slot)| match key {
-                PropertyKey::String(atom) => Some((atom, slot as usize)),
+            .iter()
+            .filter_map(|(key, slot)| match *key {
+                PropertyKey::String(atom) => Some((atom, *slot as usize)),
                 PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
             })
             .collect::<Vec<_>>();
