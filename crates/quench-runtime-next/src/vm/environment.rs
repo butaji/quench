@@ -1257,18 +1257,6 @@ impl<H: Host> Vm<H> {
         } else {
             self.frames[root_index].locals[slot] = value;
         }
-        self.set_property_attributes(
-            self.realm.globals,
-            PropertyKey::string(atom),
-            PropertyAttributes {
-                writable: true,
-                enumerable: true,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
         Ok(true)
     }
 
