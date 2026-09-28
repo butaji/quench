@@ -361,16 +361,11 @@ impl FunctionCompiler<'_, '_> {
 
     fn annex_b_statement(&mut self, statement: &Statement<'_>) {
         match statement {
-            Statement::FunctionDeclaration(function) if !self.strict => {
-                let atom = function
-                    .id
-                    .as_ref()
-                    .map(|identifier| self.owner.atom(identifier.name.as_str()));
-                if atom.is_some_and(|atom| {
-                    self.annex_b_outer_binding_allowed(atom, function.span.start)
-                }) {
-                    self.emit_hoisted(std::slice::from_ref(statement));
-                }
+            Statement::FunctionDeclaration(_) if !self.strict => {
+                let declaration = std::slice::from_ref(statement);
+                self.push_lexical_scope(declaration);
+                self.emit_hoisted(declaration);
+                self.lexical_scopes.pop();
             }
             _ => self.statement(statement),
         }
