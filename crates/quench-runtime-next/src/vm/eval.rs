@@ -213,7 +213,20 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.type_error(p, "dynamic program is unavailable".into()))?;
         let active_program = std::mem::replace(&mut self.active_program, program_id);
         let direct_eval = std::mem::replace(&mut self.direct_eval, false);
+        let root_function = residual.functions[super::ROOT_FUNCTION_ID as usize].clone();
+        let root_scope = self
+            .frames
+            .last()
+            .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
+        let caller_scope = direct_eval && !root_scope && !root_function.strict;
+        let previous_eval_var_program = std::mem::replace(
+            &mut self.direct_eval_var_program,
+            caller_scope.then_some(program_id),
+        );
         let result = (|| {
+            if caller_scope {
+                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms);
+            }
             let global_function_atoms = residual.functions[super::ROOT_FUNCTION_ID as usize]
                 .global_function_atoms
                 .clone();
@@ -303,6 +316,7 @@ impl<H: Host> Vm<H> {
             let root = self.closure(&residual, super::ROOT_FUNCTION_ID, parent)?;
             self.call_value(&residual, root, self.realm.globals, &[])
         })();
+        self.direct_eval_var_program = previous_eval_var_program;
         self.direct_eval = direct_eval;
         self.active_program = active_program;
         result
@@ -1458,6 +1472,46 @@ impl<H: Host> Vm<H> {
             .iter()
             .find(|binding| binding.atom == atom)
             .copied()
+    }
+
+    fn prepare_direct_eval_var_bindings(&mut self, atoms: &[Atom]) {
+        let Some(frame_index) = self.frames.len().checked_sub(1) else {
+            return;
+        };
+        let frame = &self.frames[frame_index];
+        let has_activation_binding = |atom: &Atom| {
+            self.programs.get(frame.program).is_some_and(|program| {
+                program
+                    .functions
+                    .get(frame.function as usize)
+                    .is_some_and(|function| function.local_atoms.contains(atom))
+            })
+        };
+        let mut additions = atoms
+            .iter()
+            .copied()
+            .filter(|atom| {
+                !has_activation_binding(atom)
+                    && !frame
+                        .dynamic_bindings
+                        .iter()
+                        .any(|(candidate, _)| candidate == atom)
+            })
+            .map(|atom| (atom, Value::UNDEFINED))
+            .collect::<Vec<_>>();
+        self.frames[frame_index]
+            .dynamic_bindings
+            .append(&mut additions);
+        let bindings = self.frames[frame_index].dynamic_bindings.clone();
+        if self.frames[frame_index].captured {
+            let env = self.frames[frame_index].env;
+            if let Some(Cell::Environment {
+                dynamic_bindings, ..
+            }) = self.heap.get_mut(env)
+            {
+                *dynamic_bindings = bindings;
+            }
+        }
     }
 
     fn direct_eval_lexical_value(&self, p: &ResidualProgram, atom: Atom) -> Option<Value> {

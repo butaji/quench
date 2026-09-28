@@ -104,6 +104,7 @@ impl<H: Host> Vm<H> {
             descriptors: FxHashMap::default(),
             function_values: FxHashMap::default(),
             direct_eval: false,
+            direct_eval_var_program: None,
             parameter_eval: false,
             eval_script_context: false,
             deferred_dependency_batch: false,
