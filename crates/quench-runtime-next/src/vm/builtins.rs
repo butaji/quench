@@ -496,6 +496,8 @@ const NATIVES: &[Native] = &[
     Native::EncodeUriComponent,
     Native::DecodeUri,
     Native::DecodeUriComponent,
+    Native::GlobalEscape,
+    Native::GlobalUnescape,
     Native::StringFromCharCode, Native::StringFromCodePoint, Native::StringRaw,
     Native::ParseInt,
     Native::MathLog,
@@ -769,6 +771,12 @@ impl<H: Host> Vm<H> {
             ("encodeURIComponent", Native::EncodeUriComponent),
             ("decodeURI", Native::DecodeUri),
             ("decodeURIComponent", Native::DecodeUriComponent),
+        ] {
+            self.set_builtin_named(program, self.realm.globals, name, native)?;
+        }
+        for (name, native) in [
+            ("escape", Native::GlobalEscape),
+            ("unescape", Native::GlobalUnescape),
         ] {
             self.set_builtin_named(program, self.realm.globals, name, native)?;
         }

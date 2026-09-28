@@ -11,8 +11,87 @@ const SURROGATE_CODE_POINTS: std::ops::RangeInclusive<u32> =
     LEADING_SURROGATE_BASE..=(TRAILING_SURROGATE_BASE + SURROGATE_OFFSET_MASK);
 const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 const HEX_NIBBLE_MASK: u8 = 0x0f;
+const ESCAPE_ASCII_MAX: u16 = 0x7f;
+const ESCAPE_LATIN1_MAX: u16 = 0xff;
+const ESCAPE_WIDE_MARKER: u16 = b'u' as u16;
+const ESCAPE_BYTE_HEX_DIGITS: usize = 2;
+const ESCAPE_WIDE_HEX_DIGITS: usize = 4;
 const URI_RESERVED: &[u8] = b";/?:@&=+$,#";
 const URI_UNESCAPED: &[u8] = b"-_.!~*'()";
+const ESCAPE_UNESCAPED: &[u8] = b"@*_+-./";
+
+fn hex_digit(unit: u16) -> Option<u8> {
+    match unit {
+        unit if (b'0' as u16..=b'9' as u16).contains(&unit) => Some((unit - b'0' as u16) as u8),
+        unit if (b'a' as u16..=b'f' as u16).contains(&unit) => {
+            Some((unit - b'a' as u16 + 10) as u8)
+        }
+        unit if (b'A' as u16..=b'F' as u16).contains(&unit) => {
+            Some((unit - b'A' as u16 + 10) as u8)
+        }
+        _ => None,
+    }
+}
+
+fn append_escape_hex(output: &mut String, value: u16, digit_count: usize) {
+    for shift in (0..digit_count).rev() {
+        let digit = ((value >> (shift * 4)) & u16::from(HEX_NIBBLE_MASK)) as usize;
+        output.push(HEX_DIGITS[digit] as char);
+    }
+}
+
+pub(super) fn escape(value: &super::wtf16::JsString) -> String {
+    let mut output = String::with_capacity(value.units().len());
+    for &unit in value.units() {
+        if unit <= ESCAPE_ASCII_MAX && (unit as u8).is_ascii_alphanumeric() {
+            output.push(unit as u8 as char);
+        } else if unit <= ESCAPE_ASCII_MAX && ESCAPE_UNESCAPED.contains(&(unit as u8)) {
+            output.push(unit as u8 as char);
+        } else {
+            output.push('%');
+            let digit_count = if unit <= ESCAPE_LATIN1_MAX {
+                ESCAPE_BYTE_HEX_DIGITS
+            } else {
+                output.push(ESCAPE_WIDE_MARKER as u8 as char);
+                ESCAPE_WIDE_HEX_DIGITS
+            };
+            append_escape_hex(&mut output, unit, digit_count);
+        }
+    }
+    output
+}
+
+pub(super) fn unescape(value: &super::wtf16::JsString) -> super::wtf16::JsString {
+    let units = value.units();
+    let mut output = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if units[index] == b'%' as u16 {
+            if let Some(escaped) = unescape_escape(units, index) {
+                let (unit, width) = escaped;
+                output.push(unit);
+                index += width;
+                continue;
+            }
+        }
+        output.push(units[index]);
+        index += 1;
+    }
+    super::wtf16::JsString::from_units(&output)
+}
+
+fn unescape_escape(units: &[u16], index: usize) -> Option<(u16, usize)> {
+    if units.get(index + 1) == Some(&ESCAPE_WIDE_MARKER) {
+        let digits = units.get(index + 2..index + 2 + ESCAPE_WIDE_HEX_DIGITS)?;
+        let unit = digits.iter().try_fold(0_u16, |value, digit| {
+            Some((value << 4) | u16::from(hex_digit(*digit)?))
+        })?;
+        return Some((unit, 2 + ESCAPE_WIDE_HEX_DIGITS));
+    }
+    let high = hex_digit(*units.get(index + 1)?)?;
+    let low = hex_digit(*units.get(index + 2)?)?;
+    Some((u16::from((high << 4) | low), 3))
+}
 
 pub(super) fn encode_uri(
     value: &super::wtf16::JsString,
@@ -66,12 +145,6 @@ pub(super) fn decode_uri(
 ) -> Result<super::wtf16::JsString, &'static str> {
     let units = value.units();
     let mut output = Vec::with_capacity(units.len());
-    let hex = |unit: u16| match unit {
-        unit if (b'0' as u16..=b'9' as u16).contains(&unit) => Some((unit - b'0' as u16) as u8),
-        unit if (b'a' as u16..=b'f' as u16).contains(&unit) => Some((unit - b'a' as u16 + 10) as u8),
-        unit if (b'A' as u16..=b'F' as u16).contains(&unit) => Some((unit - b'A' as u16 + 10) as u8),
-        _ => None,
-    };
     let mut index = 0;
     while index < units.len() {
         if units[index] != b'%' as u16 {
@@ -82,8 +155,8 @@ pub(super) fn decode_uri(
         if index + 2 >= units.len() {
             return Err("malformed URI escape");
         }
-        let first = (hex(units[index + 1]).ok_or("malformed URI escape")? << 4)
-            | hex(units[index + 2]).ok_or("malformed URI escape")?;
+        let first = (hex_digit(units[index + 1]).ok_or("malformed URI escape")? << 4)
+            | hex_digit(units[index + 2]).ok_or("malformed URI escape")?;
         let (width, mut code_point, minimum) = match first {
             0x00..=0x7f => (1, u32::from(first), 0),
             0xc2..=0xdf => (2, u32::from(first & 0x1f), 0x80),
@@ -101,8 +174,8 @@ pub(super) fn decode_uri(
             if units.get(escape) != Some(&(b'%' as u16)) || escape + 2 >= units.len() {
                 return Err("malformed URI sequence");
             }
-            let byte = (hex(units[escape + 1]).ok_or("malformed URI escape")? << 4)
-                | hex(units[escape + 2]).ok_or("malformed URI escape")?;
+            let byte = (hex_digit(units[escape + 1]).ok_or("malformed URI escape")? << 4)
+                | hex_digit(units[escape + 2]).ok_or("malformed URI escape")?;
             if byte & 0xc0 != 0x80 {
                 return Err("malformed URI sequence");
             }
