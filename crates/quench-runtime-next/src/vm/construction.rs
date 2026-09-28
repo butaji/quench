@@ -173,6 +173,7 @@ impl<H: Host> Vm<H> {
                         | Native::Number
                         | Native::IntlNumberFormat
                         | Native::IntlCollator
+                        | Native::IntlPluralRules
                         | Native::IntlDateTimeFormat
                         | Native::IntlDisplayNames
                         | Native::IntlDurationFormat
@@ -896,6 +897,7 @@ impl<H: Host> Vm<H> {
             Native::Date => self.date_construct_native(p, args),
             Native::IntlNumberFormat => self.intl_number_format_construct(p, args, new_target),
             Native::IntlCollator => self.intl_collator_construct(p, args, new_target),
+            Native::IntlPluralRules => self.intl_plural_rules_construct(p, args, new_target),
             Native::IntlDateTimeFormat => self.intl_date_time_format_construct(p, args, new_target),
             Native::IntlDisplayNames => self.intl_display_names_construct(p, args, new_target),
             Native::IntlDurationFormat => self.intl_duration_format_construct(p, args, new_target),

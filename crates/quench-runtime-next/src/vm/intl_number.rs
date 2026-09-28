@@ -151,6 +151,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(supported, "supportedLocalesOf")?;
         self.set_builtin_value_named(constructor, "supportedLocalesOf", supported)?;
         self.install_intl_collator_for_realm(program, intl, global, object_prototype)?;
+        self.install_intl_plural_rules_for_realm(intl, global, object_prototype)?;
         self.install_intl_date_time_format_for_realm(intl, global, object_prototype)?;
         self.install_intl_display_names_for_realm(program, intl, global, object_prototype)?;
         self.install_intl_duration_format_for_realm(intl, global, object_prototype)?;
@@ -2234,7 +2235,7 @@ fn round_number(
     magnitude_rounded * increment / scale
 }
 
-fn round_number_at_precision(
+pub(super) fn round_number_at_precision(
     value: f64,
     fraction_digits: i32,
     increment: usize,

@@ -317,6 +317,8 @@ pub(crate) enum Native {
     IntlLocaleCaseFirstGetter, IntlLocaleFirstDayOfWeekGetter,
     IntlLocaleNumberingSystemGetter, IntlLocaleNumericGetter,
     IntlCollator, IntlCollatorSupportedLocalesOf, IntlCollatorCompareGetter, IntlCollatorCompare, IntlCollatorResolvedOptions,
+    IntlPluralRules, IntlPluralRulesSupportedLocalesOf, IntlPluralRulesSelect,
+    IntlPluralRulesSelectRange, IntlPluralRulesResolvedOptions,
     IntlDateTimeFormat, IntlDateTimeFormatFormatGetter, IntlDateTimeFormatFormat,
     IntlDateTimeFormatFormatToParts, IntlDateTimeFormatFormatRange,
     IntlDateTimeFormatFormatRangeToParts, IntlDateTimeFormatSupportedLocalesOf,
