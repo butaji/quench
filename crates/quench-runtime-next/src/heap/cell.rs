@@ -242,6 +242,8 @@ pub(crate) enum Native {
     WeakMapSet,
     WeakMapHas,
     WeakMapDelete,
+    WeakMapGetOrInsert,
+    WeakMapGetOrInsertComputed,
     WeakSet,
     WeakSetAdd,
     WeakSetHas,

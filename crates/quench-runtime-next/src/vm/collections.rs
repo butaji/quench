@@ -83,6 +83,8 @@ impl<H: Host> Vm<H> {
                 | Native::WeakMapSet
                 | Native::WeakMapHas
                 | Native::WeakMapDelete
+                | Native::WeakMapGetOrInsert
+                | Native::WeakMapGetOrInsertComputed
                 | Native::WeakSetAdd
                 | Native::WeakSetHas
                 | Native::WeakSetDelete
@@ -91,20 +93,104 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn construct_weak_collection_native(
         &mut self,
+        p: &ResidualProgram,
         native: Native,
+        args: &[Value],
+        new_target: Value,
     ) -> Result<Value, JsError> {
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = if self.object_data(prototype).is_some() {
+            prototype
+        } else {
+            let realm = self.function_realm(p, new_target)?;
+            let constructor_name = if native == Native::WeakMap { "WeakMap" } else { "WeakSet" };
+            let constructor_atom = self.intern_atom(constructor_name);
+            let constructor = self.get_property(p, realm, constructor_atom)?;
+            let fallback = self.get_property(p, constructor, prototype_atom)?;
+            if self.object_data(fallback).is_some() {
+                fallback
+            } else if native == Native::WeakMap {
+                self.weak_map_proto
+            } else {
+                self.weak_set_proto
+            }
+        };
         let cell = match native {
             Native::WeakMap => Cell::WeakMap {
-                object: Self::empty_object(self.weak_map_proto),
+                object: Self::empty_object(prototype),
                 entries: Vec::new(),
             },
             Native::WeakSet => Cell::WeakSet {
-                object: Self::empty_object(self.weak_set_proto),
+                object: Self::empty_object(prototype),
                 entries: Vec::new(),
             },
             _ => return Err(JsError("invalid weak collection constructor".into())),
         };
-        Ok(self.heap.alloc(cell))
+        let collection = self.heap.alloc(cell);
+        if native != Native::WeakMap {
+            return Ok(collection);
+        }
+        let Some(iterable) = args.first().copied().filter(|value| !value.is_null() && !value.is_undefined()) else {
+            return Ok(collection);
+        };
+        let setter_atom = self.intern_atom("set");
+        let setter = self.get_property(p, collection, setter_atom)?;
+        if self.call_target(setter).is_err() {
+            return Err(self.type_error(p, "WeakMap.prototype.set is not callable".into()));
+        }
+        let iterator = self.get_iterator(p, iterable)?;
+        loop {
+            let step = match self.iterator_next(p, iterator) {
+                Ok(step) => step,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    return Err(error);
+                }
+            };
+            let done_atom = self.intern_atom("done");
+            let done = match self.get_property(p, step, done_atom) {
+                Ok(done) => self.truthy(done),
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    return Err(error);
+                }
+            };
+            if done {
+                return Ok(collection);
+            }
+            let value_atom = self.intern_atom("value");
+            let entry = match self.get_property(p, step, value_atom) {
+                Ok(entry) => entry,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    return Err(error);
+                }
+            };
+            if !self.is_object_like(entry) {
+                let error = self.type_error(p, "Iterator value is not an entry object".into());
+                let _ = self.iterator_close(p, iterator);
+                return Err(error);
+            }
+            let key = match self.get_index(p, entry, Value::number(MAP_ENTRY_KEY_INDEX as f64)) {
+                Ok(key) => key,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    return Err(error);
+                }
+            };
+            let value = match self.get_index(p, entry, Value::number(MAP_ENTRY_VALUE_INDEX as f64)) {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = self.iterator_close(p, iterator);
+                    return Err(error);
+                }
+            };
+            if let Err(error) = self.call_value(p, setter, collection, &[key, value]) {
+                let _ = self.iterator_close(p, iterator);
+                return Err(error);
+            }
+        }
     }
     pub(super) fn construct_weak_ref_native(&mut self, args: &[Value]) -> Result<Value, JsError> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -126,20 +212,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let weak_map = self.native_value(Native::WeakMap);
         self.weak_map_proto = self.object();
-        for (name, native) in [
-            ("get", Native::WeakMapGet),
-            ("set", Native::WeakMapSet),
-            ("has", Native::WeakMapHas),
-            ("delete", Native::WeakMapDelete),
-        ] {
-            self.set_named(
-                program,
-                self.weak_map_proto,
-                name,
-                self.native_value(native),
-            )?;
-        }
+        self.install_weak_map_prototype(program, weak_map, self.weak_map_proto)?;
         self.set_named(program, weak_map, "prototype", self.weak_map_proto)?;
+        self.set_builtin_function_name(weak_map, "WeakMap")?;
+        self.set_constructor_prototype_attributes(weak_map);
         self.global(program, "WeakMap", weak_map)?;
         let weak_set = self.native_value(Native::WeakSet);
         self.weak_set_proto = self.object();
@@ -167,6 +243,75 @@ impl<H: Host> Vm<H> {
         )?;
         self.set_named(program, weak_ref, "prototype", self.weak_ref_proto)?;
         self.global(program, "WeakRef", weak_ref)
+    }
+
+    fn install_weak_map_prototype(
+        &mut self,
+        program: &ResidualProgram,
+        constructor: Value,
+        prototype: Value,
+    ) -> Result<(), JsError> {
+        for (name, native) in [
+            ("get", Native::WeakMapGet),
+            ("set", Native::WeakMapSet),
+            ("has", Native::WeakMapHas),
+            ("delete", Native::WeakMapDelete),
+            ("getOrInsert", Native::WeakMapGetOrInsert),
+            ("getOrInsertComputed", Native::WeakMapGetOrInsertComputed),
+        ] {
+            self.set_builtin_named(program, prototype, name, native)?;
+        }
+        self.set_builtin_value_named(prototype, "constructor", constructor)
+    }
+
+    fn set_constructor_prototype_attributes(&mut self, constructor: Value) {
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+    }
+
+    pub(super) fn install_weak_collections_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<(), JsError> {
+        let weak_map = self.native_with_realm(Native::WeakMap, Value::NULL, global);
+        self.set_builtin_function_name(weak_map, "WeakMap")?;
+        let weak_map_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.install_weak_map_prototype(program, weak_map, weak_map_prototype)?;
+        self.set_builtin_value_named(weak_map, "prototype", weak_map_prototype)?;
+        self.set_constructor_prototype_attributes(weak_map);
+        self.set_builtin_value_named(global, "WeakMap", weak_map)?;
+
+        let weak_set = self.native_with_realm(Native::WeakSet, Value::NULL, global);
+        self.set_builtin_function_name(weak_set, "WeakSet")?;
+        let weak_set_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.set_builtin_value_named(weak_set, "prototype", weak_set_prototype)?;
+        self.set_builtin_value_named(weak_set_prototype, "constructor", weak_set)?;
+        for (name, native) in [
+            ("add", Native::WeakSetAdd),
+            ("has", Native::WeakSetHas),
+            ("delete", Native::WeakSetDelete),
+        ] {
+            self.set_builtin_named(program, weak_set_prototype, name, native)?;
+        }
+        self.set_constructor_prototype_attributes(weak_set);
+        self.set_builtin_value_named(global, "WeakSet", weak_set)
     }
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
@@ -915,7 +1060,11 @@ impl<H: Host> Vm<H> {
             | Native::AsyncGeneratorReturn
             | Native::AsyncGeneratorThrow => self.async_generator_method(p, native, this, args),
             Native::WeakMapGet => {
-                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                self.validate_weak_map_receiver(p, this)?;
+                let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if !self.is_weak_key_value(key) {
+                    return Ok(Value::UNDEFINED);
+                }
                 let Some(index) = self.weak_map_entry_index(this, key) else {
                     return Ok(Value::UNDEFINED);
                 };
@@ -925,6 +1074,7 @@ impl<H: Host> Vm<H> {
                 Ok(entries[index].1)
             }
             Native::WeakMapSet => {
+                self.validate_weak_map_receiver(p, this)?;
                 let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let index = self.weak_map_entry_index(this, key);
@@ -939,7 +1089,11 @@ impl<H: Host> Vm<H> {
                 Ok(this)
             }
             Native::WeakMapHas => {
-                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                self.validate_weak_map_receiver(p, this)?;
+                let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if !self.is_weak_key_value(key) {
+                    return Ok(Value::FALSE);
+                }
                 Ok(if self.weak_map_entry_index(this, key).is_some() {
                     Value::TRUE
                 } else {
@@ -947,7 +1101,11 @@ impl<H: Host> Vm<H> {
                 })
             }
             Native::WeakMapDelete => {
-                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                self.validate_weak_map_receiver(p, this)?;
+                let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if !self.is_weak_key_value(key) {
+                    return Ok(Value::FALSE);
+                }
                 let Some(index) = self.weak_map_entry_index(this, key) else {
                     return Ok(Value::FALSE);
                 };
@@ -956,6 +1114,47 @@ impl<H: Host> Vm<H> {
                 };
                 entries.remove(index);
                 Ok(Value::TRUE)
+            }
+            Native::WeakMapGetOrInsert => {
+                self.validate_weak_map_receiver(p, this)?;
+                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                if let Some(index) = self.weak_map_entry_index(this, key) {
+                    let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
+                        return Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()));
+                    };
+                    return Ok(entries[index].1);
+                }
+                let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
+                    return Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()));
+                };
+                entries.push((key, value));
+                Ok(value)
+            }
+            Native::WeakMapGetOrInsertComputed => {
+                self.validate_weak_map_receiver(p, this)?;
+                let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                if self.call_target(callback).is_err() {
+                    return Err(self.type_error(p, "WeakMap callback must be callable".into()));
+                }
+                if let Some(index) = self.weak_map_entry_index(this, key) {
+                    let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
+                        return Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()));
+                    };
+                    return Ok(entries[index].1);
+                }
+                let value = self.call_value(p, callback, Value::UNDEFINED, &[key])?;
+                let index = self.weak_map_entry_index(this, key);
+                let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
+                    return Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()));
+                };
+                if let Some(index) = index {
+                    entries[index].1 = value;
+                } else {
+                    entries.push((key, value));
+                }
+                Ok(value)
             }
             Native::WeakSetAdd => {
                 let value = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -1065,11 +1264,23 @@ impl<H: Host> Vm<H> {
             || (left.as_number().is_some_and(f64::is_nan)
                 && right.as_number().is_some_and(f64::is_nan))
     }
-    pub(super) fn weak_key(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+    fn validate_weak_map_receiver(&mut self, p: &ResidualProgram, receiver: Value) -> Result<(), JsError> {
+        if matches!(self.heap.get(receiver), Some(Cell::WeakMap { .. })) {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()))
+        }
+    }
+
+    fn is_weak_key_value(&self, value: Value) -> bool {
         let is_object = self.is_object_like(value);
         let is_unique_symbol = matches!(self.heap.get(value), Some(Cell::Symbol(_)))
             && !self.symbol_registry.values().any(|symbol| *symbol == value);
-        if is_object || is_unique_symbol {
+        is_object || is_unique_symbol
+    }
+
+    pub(super) fn weak_key(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+        if self.is_weak_key_value(value) {
             Ok(value)
         } else {
             Err(self.type_error(p, "weak collection keys must be objects".into()))

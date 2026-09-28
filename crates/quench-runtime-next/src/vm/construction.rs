@@ -873,7 +873,9 @@ impl<H: Host> Vm<H> {
                 self.construct_collection_native(p, native, args, new_target)
             }
             Native::ShadowRealm => self.construct_shadow_realm(p, new_target),
-            Native::WeakMap | Native::WeakSet => self.construct_weak_collection_native(native),
+            Native::WeakMap | Native::WeakSet => {
+                self.construct_weak_collection_native(p, native, args, new_target)
+            }
             Native::WeakRef => self.construct_weak_ref_native(args),
             Native::FinalizationRegistry => {
                 self.construct_finalization_registry_native(p, args, new_target)
