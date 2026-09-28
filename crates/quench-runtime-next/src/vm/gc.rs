@@ -273,6 +273,11 @@ impl<H: Host> Vm<H> {
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
+                    self.intl_relative_time_format_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
+                .chain(
                     self.intl_locale_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),

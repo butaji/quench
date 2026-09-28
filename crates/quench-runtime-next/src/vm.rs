@@ -420,6 +420,7 @@ pub struct Vm<H> {
     intl_duration_format_prototypes: FxHashMap<Value, Value>,
     intl_list_format_constructors: FxHashMap<Value, Value>,
     intl_list_format_prototypes: FxHashMap<Value, Value>,
+    intl_relative_time_format_prototypes: FxHashMap<Value, Value>,
     intl_locale_prototypes: FxHashMap<Value, Value>,
     temporal_plain_date_proto: Value,
     temporal_plain_time_proto: Value,
