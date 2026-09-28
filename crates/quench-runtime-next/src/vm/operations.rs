@@ -228,6 +228,13 @@ impl<H: Host> Vm<H> {
             Native::IntlRelativeTimeFormatResolvedOptions => {
                 self.intl_relative_time_format_resolved_options(p, this)
             }
+            Native::IntlRelativeTimeFormatSupportedLocalesOf => {
+                self.intl_relative_time_format_supported_locales_of(p, args)
+            }
+            Native::IntlRelativeTimeFormatFormat
+            | Native::IntlRelativeTimeFormatFormatToParts => {
+                self.intl_relative_time_format_native(p, native, this, args)
+            }
             Native::IntlCollator
             | Native::IntlCollatorSupportedLocalesOf
             | Native::IntlCollatorCompareGetter
