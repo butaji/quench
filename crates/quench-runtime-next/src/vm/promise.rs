@@ -2249,6 +2249,8 @@ impl<H: Host> Vm<H> {
             target.module_bindings = source.module_bindings;
             target.deferred_module = None;
         }
+        self.invalidate_field_caches();
+        self.invalidate_method_caches();
         Ok(())
     }
 
@@ -3088,6 +3090,7 @@ impl<H: Host> Vm<H> {
                     self.type_error(p, "module export property is unavailable".into())
                 })?;
             self.heap.property_set(namespace, property, value);
+            self.invalidate_method_caches_for_atom(atom);
         }
         Ok(())
     }
