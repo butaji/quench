@@ -141,6 +141,12 @@ pub(crate) enum Native {
     Uint8ArrayKeys,
     Uint8ArrayValues,
     Uint8ArrayEntries,
+    Uint8ArrayFromBase64,
+    Uint8ArrayFromHex,
+    Uint8ArraySetFromBase64,
+    Uint8ArraySetFromHex,
+    Uint8ArrayToBase64,
+    Uint8ArrayToHex,
     DataView,
     DataViewGetUint8,
     DataViewSetUint8,
@@ -592,6 +598,23 @@ impl Native {
                 | Self::TypedArrayWith
                 | Self::TypedArrayToLocaleString
                 | Self::ArrayBufferIsView
+                | Self::Uint8ArrayFromBase64
+                | Self::Uint8ArrayFromHex
+                | Self::Uint8ArraySetFromBase64
+                | Self::Uint8ArraySetFromHex
+                | Self::Uint8ArrayToBase64
+                | Self::Uint8ArrayToHex
+        )
+    }
+    pub(crate) fn is_uint8_array_base64_method(self) -> bool {
+        matches!(
+            self,
+            Self::Uint8ArrayFromBase64
+                | Self::Uint8ArrayFromHex
+                | Self::Uint8ArraySetFromBase64
+                | Self::Uint8ArraySetFromHex
+                | Self::Uint8ArrayToBase64
+                | Self::Uint8ArrayToHex
         )
     }
     pub(crate) fn is_typed_array_constructor(self) -> bool {
