@@ -607,6 +607,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::MapGroupBy => 2.0,
         Native::MapGetOrInsert | Native::MapGetOrInsertComputed => 2.0,
         Native::WeakMapGet | Native::WeakMapHas | Native::WeakMapDelete => 1.0,
+        Native::WeakSetAdd | Native::WeakSetHas | Native::WeakSetDelete => 1.0,
         Native::WeakMapSet
         | Native::WeakMapGetOrInsert
         | Native::WeakMapGetOrInsertComputed => 2.0,
