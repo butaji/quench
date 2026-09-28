@@ -360,10 +360,13 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn annex_b_statement(&mut self, statement: &Statement<'_>) {
-        if matches!(statement, Statement::FunctionDeclaration(_)) && !self.strict {
-            self.emit_hoisted(std::slice::from_ref(statement));
-        } else {
-            self.statement(statement);
+        match statement {
+            Statement::FunctionDeclaration(function) if !self.strict => {
+                if !self.annex_b_collisions.contains(&function.span.start) {
+                    self.emit_hoisted(std::slice::from_ref(statement));
+                }
+            }
+            _ => self.statement(statement),
         }
     }
 
