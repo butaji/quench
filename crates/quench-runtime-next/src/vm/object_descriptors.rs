@@ -146,17 +146,66 @@ impl<H: Host> Vm<H> {
         enumerable: bool,
         configurable: bool,
     ) -> Result<Value, JsError> {
+        self.property_descriptor_object(
+            value,
+            PropertyAttributes {
+                writable,
+                enumerable,
+                configurable,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        )
+    }
+
+    fn property_descriptor_object(
+        &mut self,
+        value: Value,
+        attributes: PropertyAttributes,
+    ) -> Result<Value, JsError> {
         let descriptor = self.object();
-        for (name, value) in [
-            ("value", value),
-            ("writable", Self::integrity_bool(writable)),
-            ("enumerable", Self::integrity_bool(enumerable)),
-            ("configurable", Self::integrity_bool(configurable)),
-        ] {
-            let atom = self.intern_atom(name);
-            self.set_property(descriptor, atom, value)?;
+        if attributes.accessor {
+            self.write_descriptor_field(
+                descriptor,
+                "get",
+                attributes.getter.unwrap_or(Value::UNDEFINED),
+            )?;
+            self.write_descriptor_field(
+                descriptor,
+                "set",
+                attributes.setter.unwrap_or(Value::UNDEFINED),
+            )?;
+        } else {
+            self.write_descriptor_field(descriptor, "value", value)?;
+            self.write_descriptor_field(
+                descriptor,
+                "writable",
+                Self::integrity_bool(attributes.writable),
+            )?;
         }
+        self.write_descriptor_field(
+            descriptor,
+            "enumerable",
+            Self::integrity_bool(attributes.enumerable),
+        )?;
+        self.write_descriptor_field(
+            descriptor,
+            "configurable",
+            Self::integrity_bool(attributes.configurable),
+        )?;
         Ok(descriptor)
+    }
+
+    fn write_descriptor_field(
+        &mut self,
+        descriptor: Value,
+        name: &str,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let atom = self.intern_atom(name);
+        self.set_property(descriptor, atom, value)?;
+        Ok(())
     }
 
     pub(super) fn typed_array_index_key(key: &str) -> TypedArrayIndexKey {
@@ -289,29 +338,7 @@ impl<H: Host> Vm<H> {
             let attributes = self
                 .property_attributes(target, PropertyKey::symbol(key))
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            let descriptor = self.object();
-            let fields = if attributes.accessor {
-                vec![
-                    ("get", attributes.getter.unwrap_or(Value::UNDEFINED)),
-                    ("set", attributes.setter.unwrap_or(Value::UNDEFINED)),
-                ]
-            } else {
-                vec![
-                    ("value", value),
-                    ("writable", Self::integrity_bool(attributes.writable)),
-                ]
-            };
-            for (name, value) in fields.into_iter().chain([
-                ("enumerable", Self::integrity_bool(attributes.enumerable)),
-                (
-                    "configurable",
-                    Self::integrity_bool(attributes.configurable),
-                ),
-            ]) {
-                let atom = self.intern_atom(name);
-                self.set_property(descriptor, atom, value)?;
-            }
-            return Ok(descriptor);
+            return self.property_descriptor_object(value, attributes);
         }
         let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
             unreachable!("ToPropertyKey returns a string or symbol")
@@ -337,20 +364,13 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 });
-            let descriptor = self.object();
-            for (name, value) in [
-                ("value", Value::number(length as f64)),
-                ("writable", Self::integrity_bool(length_attributes.writable)),
-                ("enumerable", Value::FALSE),
-                (
-                    "configurable",
-                    Self::integrity_bool(length_attributes.configurable),
-                ),
-            ] {
-                let atom = self.intern_atom(name);
-                self.set_property(descriptor, atom, value)?;
-            }
-            return Ok(descriptor);
+            return self.property_descriptor_object(
+                Value::number(length as f64),
+                PropertyAttributes {
+                    enumerable: false,
+                    ..length_attributes
+                },
+            );
         }
         if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
             match Self::typed_array_index_key(key.host_string()) {
@@ -378,20 +398,7 @@ impl<H: Host> Vm<H> {
                 .property_attributes(target, PropertyKey::string(atom))
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             if attributes.accessor {
-                let descriptor = self.object();
-                for (name, value) in [
-                    ("get", attributes.getter.unwrap_or(Value::UNDEFINED)),
-                    ("set", attributes.setter.unwrap_or(Value::UNDEFINED)),
-                    ("enumerable", Self::integrity_bool(attributes.enumerable)),
-                    (
-                        "configurable",
-                        Self::integrity_bool(attributes.configurable),
-                    ),
-                ] {
-                    let atom = self.intern_atom(name);
-                    self.set_property(descriptor, atom, value)?;
-                }
-                return Ok(descriptor);
+                return self.property_descriptor_object(Value::UNDEFINED, attributes);
             }
             let value = match self.heap.get(target) {
                 Some(Cell::Array { elements, .. }) => elements
@@ -406,20 +413,7 @@ impl<H: Host> Vm<H> {
                     .filter(|value| !value.is_deleted())
             });
             if let Some(value) = value {
-                let descriptor = self.object();
-                for (name, value) in [
-                    ("value", value),
-                    ("writable", Self::integrity_bool(attributes.writable)),
-                    ("enumerable", Self::integrity_bool(attributes.enumerable)),
-                    (
-                        "configurable",
-                        Self::integrity_bool(attributes.configurable),
-                    ),
-                ] {
-                    let atom = self.intern_atom(name);
-                    self.set_property(descriptor, atom, value)?;
-                }
-                return Ok(descriptor);
+                return self.property_descriptor_object(value, attributes);
             }
         }
         let module_binding = self.module_binding_value(target, atom);
@@ -442,35 +436,13 @@ impl<H: Host> Vm<H> {
             .object_data(target)
             .is_some_and(Object::is_module_namespace)
             || attributes.writable;
-        let descriptor = self.object();
-        if attributes.accessor {
-            for (name, value) in [
-                ("get", attributes.getter.unwrap_or(Value::UNDEFINED)),
-                ("set", attributes.setter.unwrap_or(Value::UNDEFINED)),
-                ("enumerable", Self::integrity_bool(attributes.enumerable)),
-                (
-                    "configurable",
-                    Self::integrity_bool(attributes.configurable),
-                ),
-            ] {
-                let atom = self.intern_atom(name);
-                self.set_property(descriptor, atom, value)?;
-            }
-            return Ok(descriptor);
-        }
-        for (name, value) in [
-            ("value", value),
-            ("writable", Self::integrity_bool(writable)),
-            ("enumerable", Self::integrity_bool(attributes.enumerable)),
-            (
-                "configurable",
-                Self::integrity_bool(attributes.configurable),
-            ),
-        ] {
-            let atom = self.intern_atom(name);
-            self.set_property(descriptor, atom, value)?;
-        }
-        Ok(descriptor)
+        self.property_descriptor_object(
+            value,
+            PropertyAttributes {
+                writable,
+                ..attributes
+            },
+        )
     }
 
     fn validate_proxy_get_own_property_descriptor(
