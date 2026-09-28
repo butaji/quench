@@ -85,6 +85,16 @@ impl<H: Host> Vm<H> {
             Some(Cell::String(name)) => Some(self.intern_js_atom(&name)),
             _ => None,
         };
+        if matches!(self.heap.get(object), Some(Cell::TypedArray { .. }))
+            && let Some(index) = match self.heap.get(key).cloned() {
+                Some(Cell::String(name)) => Self::canonical_typed_array_index(name.host_string()),
+                _ => None,
+            }
+        {
+            return Ok(self
+                .typed_array_length(object)
+                .is_some_and(|length| index < length));
+        }
         let mut current = object;
         loop {
             if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {

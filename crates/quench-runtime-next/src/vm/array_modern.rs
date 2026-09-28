@@ -83,13 +83,22 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn array_to_locale_string_native(
+    pub(super) fn array_to_locale_string_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
+        self.array_to_locale_string_with_length(p, object, length)
+    }
+
+    pub(super) fn array_to_locale_string_with_length(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        length: usize,
+    ) -> Result<Value, JsError> {
         let to_locale_string = self.intern_atom("toLocaleString");
         let mut result = String::new();
         for index in 0..length {

@@ -138,8 +138,8 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::String(value.into())))
             }
             Native::ProxyRevocable => self.proxy_revocable(p, args),
-            Native::ArrayBuffer | Native::SharedArrayBuffer => {
-                Err(self.type_error(p, "ArrayBuffer constructor requires new".into()))
+            Native::ArrayBuffer | Native::SharedArrayBuffer | Native::TypedArray => {
+                Err(self.type_error(p, "constructor requires new".into()))
             }
             native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::Print => {
