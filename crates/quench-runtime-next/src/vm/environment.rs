@@ -8,7 +8,10 @@ impl<H: Host> Vm<H> {
         function: u32,
         slot: usize,
     ) -> Option<Atom> {
-        if program.module || function != super::ROOT_FUNCTION_ID {
+        if program.module
+            || function != super::ROOT_FUNCTION_ID
+            || self.direct_eval_var_program.is_some()
+        {
             return None;
         }
         let root = program.functions.first()?;

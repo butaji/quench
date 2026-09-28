@@ -231,13 +231,16 @@ impl<H: Host> Vm<H> {
                 .global_function_atoms
                 .clone();
             for atom in &global_function_atoms {
-                if self.realm.global_lexical_declarations.contains(atom)
+                if (!caller_scope && self.realm.global_lexical_declarations.contains(atom))
                     || (direct_eval && self.direct_eval_lexical_binding(p, *atom).is_some())
                 {
                     return self.syntax_error_result(
                         p,
                         "eval function declaration conflicts with lexical binding",
                     );
+                }
+                if caller_scope {
+                    continue;
                 }
                 let globals = self.realm.globals;
                 let name = self.atom_name(*atom).to_owned();
@@ -259,13 +262,16 @@ impl<H: Host> Vm<H> {
                 if global_function_atoms.contains(&atom) {
                     continue;
                 }
-                if self.realm.global_lexical_declarations.contains(&atom)
+                if (!caller_scope && self.realm.global_lexical_declarations.contains(&atom))
                     || (direct_eval && self.direct_eval_lexical_binding(p, atom).is_some())
                 {
                     return self.syntax_error_result(
                         p,
                         "eval var declaration conflicts with lexical binding",
                     );
+                }
+                if caller_scope {
+                    continue;
                 }
                 let globals = self.realm.globals;
                 let name = self.atom_name(atom).to_owned();
