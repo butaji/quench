@@ -206,9 +206,8 @@ impl<H: Host> Vm<H> {
             | Native::TemporalInstantEpochMillisecondsGetter => {
                 self.temporal_instant_getter(p, native, this)
             }
-            Native::TemporalInstantToString | Native::TemporalInstantToJSON => {
-                self.temporal_instant_to_string(p, this)
-            }
+            Native::TemporalInstantToString => self.temporal_instant_to_string(p, this, args),
+            Native::TemporalInstantToJSON => self.temporal_instant_to_string(p, this, &[]),
             Native::TemporalInstantValueOf => self.temporal_instant_value_of(p),
             Native::TemporalInstantEquals => self.temporal_instant_equals(p, this, args),
             Native::TemporalInstantAdd | Native::TemporalInstantSubtract => {
@@ -311,10 +310,45 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         this: Value,
+        args: &[Value],
     ) -> Result<Value, JsError> {
         let epoch = self.temporal_instant_epoch(p, this)?;
-        let text = super::temporal_instant_format::format_instant(epoch)
-            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        let options = super::temporal_instant_format::read_options(
+            self,
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+            false,
+        )?;
+        let text = if let Some(time_zone) = options.time_zone.as_deref() {
+            let fields = super::temporal_zoned_date_time::zoned_date_time_fields(epoch, time_zone)
+                .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+            let date = super::temporal_date::IsoDate {
+                year: fields[0],
+                month: fields[1] as u32,
+                day: fields[2] as u32,
+            };
+            let time = [
+                fields[3] as u32,
+                fields[4] as u32,
+                fields[5] as u32,
+                fields[6] as u32,
+                fields[7] as u32,
+                fields[8] as u32,
+            ];
+            let local = super::temporal_zoned_date_time::local_epoch_from_iso_fields(date, time);
+            let offset =
+                super::temporal_zoned_date_time::timezone_offset_nanoseconds(time_zone, epoch)
+                    .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))?;
+            super::temporal_instant_format::format_temporal_datetime(
+                local,
+                &options,
+                None,
+                &super::temporal_zoned_date_time::format_offset_nanoseconds(offset),
+            )
+        } else {
+            super::temporal_instant_format::format_temporal_datetime(epoch, &options, None, "Z")
+        }
+        .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
         Ok(self.heap.alloc(Cell::String(text.into())))
     }
 
@@ -430,6 +464,9 @@ impl<H: Host> Vm<H> {
             return Ok(*epoch_nanoseconds);
         }
         if value.is_null() || value.is_undefined() {
+            return Err(self.type_error(p, "Invalid Instant input".into()));
+        }
+        if !self.is_string(value) && !self.is_object_like(value) {
             return Err(self.type_error(p, "Invalid Instant input".into()));
         }
         let text = self.to_string(p, value)?.to_string();

@@ -2,8 +2,6 @@ use super::temporal_date::{IsoDate, checked_iso_date};
 use super::*;
 
 const MONTH_CODE_DIGITS: usize = 2;
-const TIME_COMPONENT_WIDTH: usize = 2;
-const FRACTIONAL_SECOND_DIGITS: usize = 9;
 const MILLISECOND_FIELD: usize = 3;
 const MICROSECOND_FIELD: usize = 4;
 const NANOSECOND_FIELD: usize = 5;
@@ -231,35 +229,34 @@ impl<H: Host> Vm<H> {
         if native == Native::TemporalPlainDateTimeRound {
             return self.temporal_plain_date_time_round(p, this, args);
         }
-        if matches!(native, Native::TemporalPlainDateTimeUntil | Native::TemporalPlainDateTimeSince) {
-            return self.temporal_plain_date_time_difference(p, native, this, args);
-        }
         if matches!(
             native,
-            Native::TemporalPlainDateTimeToString | Native::TemporalPlainDateTimeToJSON
+            Native::TemporalPlainDateTimeUntil | Native::TemporalPlainDateTimeSince
         ) {
-            let (date, time, _) = self.temporal_plain_date_time_slots(p, this)?;
-            let date = super::temporal_date::format_iso_date(date.year, date.month, date.day);
-            let fraction = time[MILLISECOND_FIELD]
-                * super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
-                    [MILLISECOND_FIELD] as u32
-                + time[MICROSECOND_FIELD]
-                    * super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
-                        [MICROSECOND_FIELD] as u32
-                + time[NANOSECOND_FIELD];
-            let fraction = if fraction == 0 {
-                String::new()
-            } else {
-                let digits = format!("{fraction:0width$}", width = FRACTIONAL_SECOND_DIGITS);
-                format!(".{}", digits.trim_end_matches('0'))
-            };
-            let text = format!(
-                "{date}T{:0width$}:{:0width$}:{:0width$}{fraction}",
-                time[0],
-                time[1],
-                time[2],
-                width = TIME_COMPONENT_WIDTH,
-            );
+            return self.temporal_plain_date_time_difference(p, native, this, args);
+        }
+        if native == Native::TemporalPlainDateTimeToString
+            || native == Native::TemporalPlainDateTimeToJSON
+        {
+            let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
+            let options = super::temporal_instant_format::read_options(
+                self,
+                p,
+                if native == Native::TemporalPlainDateTimeToJSON {
+                    Value::UNDEFINED
+                } else {
+                    args.first().copied().unwrap_or(Value::UNDEFINED)
+                },
+                true,
+            )?;
+            let total = super::temporal_zoned_date_time::local_epoch_from_iso_fields(date, time);
+            let text = super::temporal_instant_format::format_temporal_datetime(
+                total,
+                &options,
+                Some(&calendar),
+                "",
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
             return Ok(self.heap.alloc(Cell::String(text.into())));
         }
         if native == Native::TemporalPlainDateTimeToPlainDate {

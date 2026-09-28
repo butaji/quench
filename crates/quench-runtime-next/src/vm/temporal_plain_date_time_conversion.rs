@@ -380,12 +380,14 @@ pub(super) fn validate_bounds<H: Host>(
     day: u32,
     time: [i32; 6],
 ) -> Result<(), JsError> {
-    let date = (year, month, day);
-    let midnight = time.iter().all(|part| *part == 0);
-    if date == MIN_PLAIN_DATE_TIME_DATE && midnight {
+    if !is_within_bounds((year, month, day), time) {
         return Err(vm.range_error(p, "Invalid PlainDateTime".into()));
     }
     Ok(())
+}
+
+pub(super) fn is_within_bounds(date: (i32, u32, u32), time: [i32; 6]) -> bool {
+    date != MIN_PLAIN_DATE_TIME_DATE || time.iter().any(|part| *part != 0)
 }
 
 fn construct<H: Host>(

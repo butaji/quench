@@ -13,7 +13,7 @@ const OFFSET_MAX_SECOND: u8 = 59;
 const FRACTIONAL_OFFSET_DIGIT_LIMIT: usize = 9;
 
 pub fn valid_timezone_offset(value: &str) -> bool {
-    valid_offset(value) && value.matches(':').count() <= 1
+    (valid_offset(value) || valid_hour_only_offset(value)) && value.matches(':').count() <= 1
 }
 
 pub fn valid_string_offset(value: &str) -> bool {
@@ -175,6 +175,15 @@ fn valid_offset(value: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn valid_hour_only_offset(value: &str) -> bool {
+    let Some(hour) = value.strip_prefix(['+', '-']) else {
+        return false;
+    };
+    hour.len() == OFFSET_HOUR_DIGITS
+        && hour.bytes().all(|byte| byte.is_ascii_digit())
+        && hour.parse::<u8>().is_ok_and(|hour| hour <= OFFSET_MAX_HOUR)
 }
 
 fn valid_hour_minute(hour: &str, minute: &str) -> bool {

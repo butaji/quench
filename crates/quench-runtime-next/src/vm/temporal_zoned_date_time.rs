@@ -2628,7 +2628,7 @@ fn format_iso_year(year: i32) -> String {
     }
 }
 
-fn format_offset_nanoseconds(offset: i128) -> String {
+pub(super) fn format_offset_nanoseconds(offset: i128) -> String {
     let sign = if offset < 0 { '-' } else { '+' };
     let seconds = offset.unsigned_abs() / NANOSECONDS_PER_SECOND as u128;
     let hours = seconds / SECONDS_PER_HOUR as u128;
