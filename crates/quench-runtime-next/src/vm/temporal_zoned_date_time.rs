@@ -1197,6 +1197,12 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        enum FieldValue {
+            Undefined,
+            Number(f64),
+            String(String),
+        }
+
         let Some(Cell::TemporalZonedDateTime {
             epoch_nanoseconds,
             time_zone,
@@ -1260,17 +1266,20 @@ impl<H: Host> Vm<H> {
             let key = self.intern_atom(name);
             let value = self.get_property(p, partial, key)?;
             let value = if value.is_undefined() {
-                value
+                FieldValue::Undefined
             } else if matches!(name, "monthCode" | "offset") {
                 if name == "offset"
-                    && !matches!(self.heap.get(value), Some(Cell::String(_) | Cell::Object(_)))
+                    && !matches!(
+                        self.heap.get(value),
+                        Some(Cell::String(_) | Cell::Object(_))
+                    )
                 {
                     return Err(self.type_error(p, "Invalid offset".into()));
                 }
                 let text = self.to_string(p, value)?.to_string();
-                self.heap.alloc(Cell::String(text.into()))
+                FieldValue::String(text)
             } else {
-                Value::number(self.to_number(p, value)?)
+                FieldValue::Number(self.to_number(p, value)?)
             };
             supplied.push((name, value));
         }
@@ -1299,21 +1308,33 @@ impl<H: Host> Vm<H> {
         )?;
         let offset_mode = option(self, "offset", &OFFSET_OPTIONS, "prefer")?;
         let overflow = option(self, "overflow", &OVERFLOW_OPTIONS, "constrain")?;
-        if supplied.iter().all(|(_, value)| value.is_undefined()) {
+        if supplied
+            .iter()
+            .all(|(_, value)| matches!(value, FieldValue::Undefined))
+        {
             return Err(self.type_error(p, "Insufficient date-time data".into()));
         }
-        if let Some((_, offset)) = supplied.iter().find(|(name, _)| *name == "offset") {
-            if !offset.is_undefined() {
-                let offset_text = self.to_string(p, *offset)?.to_string();
-                if parse_offset_nanoseconds(&offset_text).is_none() {
-                    return Err(self.range_error(p, "Invalid offset".into()));
-                }
+        if let Some((_, FieldValue::String(offset))) =
+            supplied.iter().find(|(name, _)| *name == "offset")
+        {
+            if parse_offset_nanoseconds(offset).is_none() {
+                return Err(self.range_error(p, "Invalid offset".into()));
             }
         }
 
         let fields = zoned_date_time_fields(epoch_nanoseconds, &time_zone)
             .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
-        let [year, month, day, hour, minute, second, millisecond, microsecond, nanosecond] = fields;
+        let [
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+            microsecond,
+            nanosecond,
+        ] = fields;
         let base_date = self.heap.alloc(Cell::TemporalPlainDate {
             object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
             year,
@@ -1325,16 +1346,19 @@ impl<H: Host> Vm<H> {
         let mut has_date_change = false;
         let explicit_month = supplied
             .iter()
-            .find(|(name, value)| *name == "month" && !value.is_undefined())
-            .map(|(_, value)| *value);
+            .find_map(|(name, value)| match (name, value) {
+                (&"month", FieldValue::Number(value)) => Some(*value),
+                _ => None,
+            });
         let explicit_month_code = supplied
             .iter()
-            .find(|(name, value)| *name == "monthCode" && !value.is_undefined())
-            .map(|(_, value)| *value);
+            .find_map(|(name, value)| match (name, value) {
+                (&"monthCode", FieldValue::String(value)) => Some(value.as_str()),
+                _ => None,
+            });
         if let (Some(month), Some(month_code)) = (explicit_month, explicit_month_code) {
-            let month = self.to_number(p, month)?.trunc();
-            let month_code = self.to_string(p, month_code)?.to_string();
-            let code_month = super::temporal_date::parse_iso_month_code(&month_code)
+            let month = month.trunc();
+            let code_month = super::temporal_date::parse_iso_month_code(month_code)
                 .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
             if month != f64::from(code_month) {
                 return Err(self.range_error(p, "Month mismatch".into()));
@@ -1342,13 +1366,20 @@ impl<H: Host> Vm<H> {
         }
         for (name, value) in &supplied {
             if matches!(*name, "year" | "month" | "monthCode" | "day")
-                && !value.is_undefined()
+                && !matches!(value, FieldValue::Undefined)
             {
                 if *name == "monthCode" && explicit_month.is_some() {
                     continue;
                 }
                 let key = self.intern_atom(name);
-                self.set_property(changes, key, *value)?;
+                let value = match value {
+                    FieldValue::Number(value) => Value::number(*value),
+                    FieldValue::String(value) => {
+                        self.heap.alloc(Cell::String(value.clone().into()))
+                    }
+                    FieldValue::Undefined => Value::UNDEFINED,
+                };
+                self.set_property(changes, key, value)?;
                 has_date_change = true;
             }
         }
@@ -1374,10 +1405,9 @@ impl<H: Host> Vm<H> {
                 _ => None,
             };
             let Some(index) = index else { continue };
-            if value.is_undefined() {
+            let FieldValue::Number(number) = value else {
                 continue;
-            }
-            let number = self.to_number(p, *value)?;
+            };
             if !number.is_finite() {
                 return Err(self.range_error(p, "Invalid time".into()));
             }
@@ -1396,27 +1426,25 @@ impl<H: Host> Vm<H> {
         }
         let date = super::temporal_date::IsoDate { year, month, day };
         let time = time.map(|field| field as u32);
-        let offset = match supplied
+        let offset = supplied
             .iter()
-            .find(|(name, value)| *name == "offset" && !value.is_undefined())
-        {
-            Some((_, value)) => {
-                let text = self.to_string(p, *value)?.to_string();
-                Some(
-                    parse_offset_nanoseconds(&text)
-                        .ok_or_else(|| self.range_error(p, "Invalid offset".into()))?,
-                )
-            }
-            None => None,
-        };
+            .find_map(|(name, value)| match (name, value) {
+                (&"offset", FieldValue::String(value)) => Some(value),
+                _ => None,
+            })
+            .map(|value| {
+                parse_offset_nanoseconds(value)
+                    .ok_or_else(|| self.range_error(p, "Invalid offset".into()))
+            })
+            .transpose()?;
         if offset.is_none() && offset_mode != "ignore" {
             return self.make_zoned_date_time_from_local(
-            p,
+                p,
                 date,
                 time,
-            calendar,
-            time_zone,
-            &disambiguation,
+                calendar,
+                time_zone,
+                &disambiguation,
             );
         }
         let local_epoch = local_epoch_from_iso_fields(date, time);

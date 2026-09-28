@@ -946,6 +946,16 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "cannot assign property on primitive value".into()))
             };
         }
+        if matches!(self.heap.get(object), Some(Cell::TypedArray { .. }))
+            && let Some(index) = Self::canonical_typed_array_index(self.atom_name(atom))
+        {
+            let written = self.typed_array_set(p, object, index, value)?;
+            return if written || !strict {
+                Ok(())
+            } else {
+                Err(self.type_error(p, "cannot assign typed array index".into()))
+            };
+        }
         if atom == self.length_atom
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
             && !self
