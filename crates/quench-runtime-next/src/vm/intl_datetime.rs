@@ -183,6 +183,7 @@ impl<H: Host> Vm<H> {
         defaults: DateTimeDefaults,
         locale: &str,
     ) -> Result<(bool, bool, Value), JsError> {
+        let locale = quench_intl::sanitize_datetime_locale(locale);
         let options = match options.filter(|value| !value.is_undefined()) {
             Some(value) if value.is_null() => {
                 return Err(self.type_error(p, "options must not be null".into()));
@@ -198,11 +199,11 @@ impl<H: Host> Vm<H> {
         let resolved = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        let locale_calendar = locale_unicode_value(locale, "ca")
+        let locale_calendar = locale_unicode_value(&locale, "ca")
             .map(|calendar| quench_intl::calendar_alias(&calendar))
             .filter(|calendar| quench_intl::valid_calendar(calendar))
             .unwrap_or_else(|| "gregory".into());
-        let locale_numbering_system = locale_unicode_value(locale, "nu")
+        let locale_numbering_system = locale_unicode_value(&locale, "nu")
             .filter(|system| quench_intl::valid_numbering_system(system))
             .unwrap_or_else(|| "latn".into());
         let calendar_value = self
@@ -310,7 +311,7 @@ impl<H: Host> Vm<H> {
             }
             _ => {}
         }
-        let mut resolved_locale = quench_intl::sanitize_datetime_locale(locale);
+        let mut resolved_locale = locale.clone();
         if self
             .date_time_option(resolved, "calendar")
             .and_then(|value| self.string_value(value))
@@ -722,9 +723,37 @@ impl<H: Host> Vm<H> {
 
     fn format_intl_date_time(&self, formatter: Value, fields: DateTimeFields) -> String {
         let options = self.date_time_part_options(formatter, &fields);
-        intl_datetime_parts::format_parts(&fields, &options)
+        self.localize_date_time_parts(
+            formatter,
+            intl_datetime_parts::format_parts(&fields, &options),
+        )
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect()
+    }
+
+    fn localize_date_time_parts(
+        &self,
+        formatter: Value,
+        parts: Vec<(String, String)>,
+    ) -> Vec<(String, String)> {
+        let resolved = self
+            .date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT)
+            .unwrap_or(Value::UNDEFINED);
+        let numbering = self
+            .date_time_option(resolved, "numberingSystem")
+            .and_then(|value| self.string_value(value))
+            .unwrap_or_else(|| "latn".into());
+        parts
             .into_iter()
-            .map(|(_, value)| value)
+            .map(|(kind, value)| {
+                let value = if numbering == "arab" && kind == "literal" && value == "." {
+                    "٫".into()
+                } else {
+                    quench_intl::localize_digits(value, &numbering)
+                };
+                (kind, value)
+            })
             .collect()
     }
 
@@ -893,7 +922,8 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let fields = self.date_time_fields_for_value(p, this, value)?;
         let options = self.date_time_part_options(this, &fields);
-        let parts = intl_datetime_parts::format_parts(&fields, &options);
+        let parts = self
+            .localize_date_time_parts(this, intl_datetime_parts::format_parts(&fields, &options));
         self.date_time_parts_array(parts)
     }
 
@@ -941,7 +971,10 @@ impl<H: Host> Vm<H> {
         let text = self.heap.alloc(Cell::String(text.into()));
         if native == Native::IntlDateTimeFormatFormatRangeToParts {
             let start_options = self.date_time_part_options(this, &start_fields);
-            let start_parts = intl_datetime_parts::format_parts(&start_fields, &start_options);
+            let start_parts = self.localize_date_time_parts(
+                this,
+                intl_datetime_parts::format_parts(&start_fields, &start_options),
+            );
             let parts = if is_shared_range {
                 start_parts
                     .into_iter()
@@ -949,7 +982,10 @@ impl<H: Host> Vm<H> {
                     .collect()
             } else {
                 let end_options = self.date_time_part_options(this, &end_fields);
-                let end_parts = intl_datetime_parts::format_parts(&end_fields, &end_options);
+                let end_parts = self.localize_date_time_parts(
+                    this,
+                    intl_datetime_parts::format_parts(&end_fields, &end_options),
+                );
                 start_parts
                     .into_iter()
                     .map(|(kind, value)| (kind, value, Some("startRange".into())))
