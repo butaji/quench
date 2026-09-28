@@ -281,6 +281,8 @@ const NATIVES: &[Native] = &[
     Native::WeakMapSet,
     Native::WeakMapHas,
     Native::WeakMapDelete,
+    Native::WeakMapGetOrInsert,
+    Native::WeakMapGetOrInsertComputed,
     Native::WeakSet,
     Native::WeakSetAdd,
     Native::WeakSetHas,

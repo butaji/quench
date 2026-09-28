@@ -66,6 +66,9 @@ impl<H: Host> Vm<H> {
         if native == Native::ShadowRealm {
             return Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()));
         }
+        if matches!(native, Native::WeakMap | Native::WeakSet) {
+            return Err(self.type_error(p, "Weak collection constructor requires 'new'".into()));
+        }
         if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
             return result;
         }
