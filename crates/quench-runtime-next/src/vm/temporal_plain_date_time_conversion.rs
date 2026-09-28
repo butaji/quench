@@ -1,7 +1,7 @@
 use super::*;
 const MAX_ISO_TIME_ZONE_OFFSET_DIGITS: usize = 5;
 
-const MIN_PLAIN_DATE_TIME_DATE: (i32, u32, u32) = (-271_821, 4, 19);
+pub(super) const MIN_PLAIN_DATE_TIME_DATE: (i32, u32, u32) = (-271_821, 4, 19);
 pub(super) const TIME_FIELDS: [&str; 6] = [
     "hour",
     "microsecond",

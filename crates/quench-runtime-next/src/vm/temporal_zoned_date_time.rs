@@ -758,7 +758,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn temporal_zoned_date_time_arithmetic(
+    pub(super) fn temporal_zoned_date_time_arithmetic(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -2187,11 +2187,16 @@ fn parse_zoned_date_time_string(text: &str) -> Option<ParsedZonedDateTimeString>
     })
 }
 
-pub(super) fn parse_relative_date_string(text: &str) -> Option<super::temporal_date::IsoDate> {
-    let local = if let Some(parsed) = parse_zoned_date_time_string(text) {
+pub(super) fn parse_relative_date_details(
+    text: &str,
+) -> Option<(
+    super::temporal_date::IsoDate,
+    Option<ZonedDateTimeRecord>,
+)> {
+    let (local, zoned_epoch_nanoseconds) = if let Some(parsed) = parse_zoned_date_time_string(text) {
         let local = parsed.local;
-        resolve_zoned_date_time_string(parsed, "reject")?;
-        local
+        let record = resolve_zoned_date_time_string(parsed, "reject")?;
+        (local, Some(record))
     } else {
         let (base, annotations) = text
             .split_once('[')
@@ -2206,7 +2211,7 @@ pub(super) fn parse_relative_date_string(text: &str) -> Option<super::temporal_d
                 calendar.strip_prefix("u-ca=")?,
             )?;
         }
-        parse_iso_zoned_base_fields(base)?
+        (parse_iso_zoned_base_fields(base)?, None)
     };
     if local.z_designator && !text.contains('[') {
         return None;
@@ -2221,7 +2226,7 @@ pub(super) fn parse_relative_date_string(text: &str) -> Option<super::temporal_d
         (date.year, date.month, date.day),
         time,
     )
-    .then_some(date)
+    .then_some((date, zoned_epoch_nanoseconds))
 }
 
 fn resolve_zoned_date_time_string(

@@ -41,6 +41,14 @@ const DURATION_TIME_NANOSECOND_SCALES: [i128; 7] = [
     1,
 ];
 const NOW_NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
+
+#[derive(Clone)]
+struct TemporalRelativeDate {
+    iso_date: quench_temporal::IsoDate,
+    zoned: Option<super::temporal_zoned_date_time::ZonedDateTimeRecord>,
+    minimum_date_time_boundary: bool,
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn install_temporal(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         let temporal = self.object();
@@ -437,39 +445,43 @@ impl<H: Host> Vm<H> {
                 };
                 self.validate_duration_fields(p, &left)?;
                 self.validate_duration_fields(p, &right)?;
+                let relative_date = if relative_to.is_undefined() {
+                    None
+                } else {
+                    Some(self.temporal_relative_date(p, relative_to)?)
+                };
                 if left == right {
-                    if !relative_to.is_undefined() {
-                        self.temporal_relative_date(p, relative_to)?;
-                    }
                     return Ok(Value::number(0.0));
                 }
-                if left[..3]
+                let has_calendar_units = left[..3]
                     .iter()
                     .chain(right[..3].iter())
-                    .any(|value| *value != 0.0)
-                    && relative_to.is_undefined()
-                {
+                    .any(|value| *value != 0.0);
+                let has_date_units = left[..4]
+                    .iter()
+                    .chain(right[..4].iter())
+                    .any(|value| *value != 0.0);
+                if has_calendar_units && relative_date.is_none() {
                     return Err(self.range_error(
                         p,
                         "relativeTo is required to compare calendar units".into(),
                     ));
                 }
-                let ordering = if relative_to.is_undefined() {
-                    self.duration_time_nanos(&left)
-                        .cmp(&self.duration_time_nanos(&right))
-                } else {
-                    let date = self.temporal_relative_date(p, relative_to)?;
+                let ordering = if let Some(date) = relative_date.as_ref().filter(|_| has_date_units) {
                     let left = quench_temporal::relative_duration_nanoseconds(
-                        date,
+                        date.iso_date,
                         std::array::from_fn(|index| left[index] as i128),
                     )
                     .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
                     let right = quench_temporal::relative_duration_nanoseconds(
-                        date,
+                        date.iso_date,
                         std::array::from_fn(|index| right[index] as i128),
                     )
                     .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
                     left.cmp(&right)
+                } else {
+                    self.duration_time_nanos(&left)
+                        .cmp(&self.duration_time_nanos(&right))
                 };
                 Ok(Value::number(match ordering {
                     std::cmp::Ordering::Less => -1.0,
@@ -601,33 +613,93 @@ impl<H: Host> Vm<H> {
             .sum()
     }
 
+    fn relative_duration_is_out_of_range(
+        &self,
+        relative_date: &TemporalRelativeDate,
+        fields: &[f64; 10],
+    ) -> bool {
+        if fields.iter().all(|value| *value == 0.0) {
+            return false;
+        }
+        if relative_date.minimum_date_time_boundary {
+            return true;
+        }
+        if duration_total_time_out_of_range(&fields[3..]) {
+            return true;
+        }
+        relative_date.zoned.as_ref().is_some_and(|zoned| {
+            fields[..4].iter().all(|value| *value == 0.0)
+                && zoned
+                    .epoch_nanoseconds
+                    .checked_add(self.duration_time_nanos(fields))
+                    .is_none_or(|target| {
+                        target.unsigned_abs()
+                            >= super::temporal_zoned_date_time::MAX_EPOCH_NANOSECONDS as u128
+                    })
+        })
+    }
+
+    fn validate_zoned_relative_next_day(
+        &mut self,
+        p: &ResidualProgram,
+        relative: &super::temporal_zoned_date_time::ZonedDateTimeRecord,
+    ) -> Result<(), JsError> {
+        let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
+            object: Box::new(Self::empty_object(self.object_proto)),
+            epoch_nanoseconds: relative.epoch_nanoseconds,
+            time_zone: relative.time_zone.clone(),
+            calendar: relative.calendar.clone(),
+        });
+        let mut fields = [Value::number(0.0); 10];
+        fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] = Value::number(1.0);
+        let duration = self.temporal_duration_construct(p, &fields)?;
+        self.temporal_zoned_date_time_arithmetic(
+            p,
+            Native::TemporalZonedDateTimeAdd,
+            receiver,
+            &[duration],
+        )?;
+        Ok(())
+    }
+
     fn temporal_relative_date(
         &mut self,
         p: &ResidualProgram,
         value: Value,
-    ) -> Result<quench_temporal::IsoDate, JsError> {
+    ) -> Result<TemporalRelativeDate, JsError> {
         if let Some(Cell::String(text)) = self.heap.get(value) {
-            let text = text.host_string();
-            let date = if text.contains(['T', 't']) {
-                super::temporal_zoned_date_time::parse_relative_date_string(&text)
+            let text = text.host_string().to_owned();
+            let (date, zoned) = if text.contains(['T', 't']) {
+                super::temporal_zoned_date_time::parse_relative_date_details(&text)
             } else {
-                super::temporal_date_parse::parse_plain_date_string(&text).map(|(date, _)| date)
+                super::temporal_date_parse::parse_plain_date_string(&text)
+                    .map(|(date, _)| (date, None))
             }
             .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-            return Ok(quench_temporal::IsoDate {
-                year: date.year,
-                month: date.month,
-                day: date.day,
+            return Ok(TemporalRelativeDate {
+                iso_date: quench_temporal::IsoDate {
+                    year: date.year,
+                    month: date.month,
+                    day: date.day,
+                },
+                zoned,
+                minimum_date_time_boundary: (date.year, date.month, date.day)
+                    == super::temporal_plain_date_time_conversion::MIN_PLAIN_DATE_TIME_DATE,
             });
         }
         if let Some(Cell::TemporalPlainDate {
             year, month, day, ..
         }) = self.heap.get(value)
         {
-            return Ok(quench_temporal::IsoDate {
-                year: *year,
-                month: *month,
-                day: *day,
+            return Ok(TemporalRelativeDate {
+                iso_date: quench_temporal::IsoDate {
+                    year: *year,
+                    month: *month,
+                    day: *day,
+                },
+                zoned: None,
+                minimum_date_time_boundary: (*year, *month, *day)
+                    == super::temporal_plain_date_time_conversion::MIN_PLAIN_DATE_TIME_DATE,
             });
         }
         if !self.is_object_like(value) {
@@ -640,7 +712,24 @@ impl<H: Host> Vm<H> {
             let constructor = self.temporal_plain_date_constructor(p)?;
             let date = self.temporal_plain_date_from(p, constructor, &[value])?;
             let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
-            return Ok(quench_temporal::IsoDate { year, month, day });
+            let zoned = match self.heap.get(value) {
+                Some(Cell::TemporalZonedDateTime {
+                    epoch_nanoseconds,
+                    time_zone,
+                    calendar,
+                    ..
+                }) => Some(super::temporal_zoned_date_time::ZonedDateTimeRecord {
+                    epoch_nanoseconds: *epoch_nanoseconds,
+                    time_zone: time_zone.clone(),
+                    calendar: calendar.clone(),
+                }),
+                _ => None,
+            };
+            return Ok(TemporalRelativeDate {
+                iso_date: quench_temporal::IsoDate { year, month, day },
+                zoned,
+                minimum_date_time_boundary: false,
+            });
         }
         let fields = self.read_plain_date_time_fields(p, value, true)?;
         let offset = fields.offset.clone();
@@ -648,6 +737,8 @@ impl<H: Host> Vm<H> {
         let validate_time_bounds = fields.has_zoned_time();
         let (year, month, day, _, _) =
             self.resolve_plain_date_time_fields(p, fields, true, validate_time_bounds)?;
+        let minimum_date_time_boundary = (year, month, day)
+            == super::temporal_plain_date_time_conversion::MIN_PLAIN_DATE_TIME_DATE;
         if let Some(timezone) = timezone {
             let timezone = self.heap.alloc(Cell::String(timezone.into()));
             self.temporal_timezone_id(p, timezone)?;
@@ -657,7 +748,11 @@ impl<H: Host> Vm<H> {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
         }
-        Ok(quench_temporal::IsoDate { year, month, day })
+        Ok(TemporalRelativeDate {
+            iso_date: quench_temporal::IsoDate { year, month, day },
+            zoned: None,
+            minimum_date_time_boundary,
+        })
     }
 
     fn temporal_duration_total(
@@ -692,6 +787,20 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|field| field.strip_suffix('s').unwrap_or(field) == unit)
             .ok_or_else(|| self.range_error(p, "Invalid unit".into()))?;
+        if index == super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
+            if let Some(relative) = relative_date
+                .as_ref()
+                .and_then(|relative| relative.zoned.as_ref())
+            {
+                self.validate_zoned_relative_next_day(p, &relative)?;
+            }
+        }
+        if relative_date
+            .as_ref()
+            .is_some_and(|relative| self.relative_duration_is_out_of_range(relative, &fields))
+        {
+            return Err(self.range_error(p, "Invalid relativeTo range".into()));
+        }
         if (index <= 2 || fields[..3].iter().any(|value| *value != 0.0))
             && relative_date.is_none()
         {
@@ -702,7 +811,7 @@ impl<H: Host> Vm<H> {
                 p,
                 &fields,
                 index,
-                relative_date.expect("relative date required above"),
+                relative_date.expect("relative date required above").iso_date,
             );
         }
         let divisor = DURATION_TIME_NANOSECOND_SCALES[index - 3];
@@ -856,9 +965,22 @@ impl<H: Host> Vm<H> {
                 "Cannot round to an increment while balancing calendar units".into(),
             ));
         }
-        let needs_relative_date = smallest <= 2
-            || largest <= 2
-            || fields[..3].iter().any(|value| *value != 0.0);
+        if largest == super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
+            if let Some(relative) = relative_date
+                .as_ref()
+                .and_then(|relative| relative.zoned.as_ref())
+            {
+                self.validate_zoned_relative_next_day(p, &relative)?;
+            }
+        }
+        if relative_date
+            .as_ref()
+            .is_some_and(|relative| self.relative_duration_is_out_of_range(relative, &fields))
+        {
+            return Err(self.range_error(p, "Invalid relativeTo range".into()));
+        }
+        let needs_relative_date =
+            smallest <= 2 || largest <= 2 || fields[..3].iter().any(|value| *value != 0.0);
         if needs_relative_date && relative_date.is_none() {
             return Err(self.range_error(p, "relativeTo required for calendar units".into()));
         }
@@ -870,7 +992,7 @@ impl<H: Host> Vm<H> {
                 smallest,
                 increment,
                 &mode,
-                relative_date.expect("relative date checked above"),
+                relative_date.expect("relative date checked above").iso_date,
                 explicit_smallest_unit,
             );
         }
@@ -1047,7 +1169,7 @@ impl<H: Host> Vm<H> {
             Option<usize>,
             i128,
             String,
-            Option<quench_temporal::IsoDate>,
+            Option<TemporalRelativeDate>,
             bool,
             bool,
         ),
