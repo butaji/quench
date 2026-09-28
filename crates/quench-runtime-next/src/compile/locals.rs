@@ -159,12 +159,13 @@ impl Compiler<'_> {
                 }
                 Statement::ForStatement(item) => {
                     if let Some(ForStatementInit::VariableDeclaration(declaration)) = &item.init {
+                        let function_scoped = declaration.kind == VariableDeclarationKind::Var;
                         self.collect_declaration(
                             declaration,
                             output,
                             seen,
                             function_scope,
-                            declaration.kind == VariableDeclarationKind::Var,
+                            function_scoped,
                         );
                     }
                     self.collect_locals_into(
@@ -179,12 +180,13 @@ impl Compiler<'_> {
                 }
                 Statement::ForInStatement(item) => {
                     if let ForStatementLeft::VariableDeclaration(declaration) = &item.left {
+                        let function_scoped = declaration.kind == VariableDeclarationKind::Var;
                         self.collect_declaration(
                             declaration,
                             output,
                             seen,
                             function_scope,
-                            declaration.kind == VariableDeclarationKind::Var,
+                            function_scoped,
                         );
                     }
                     self.collect_locals_into(
@@ -199,12 +201,13 @@ impl Compiler<'_> {
                 }
                 Statement::ForOfStatement(item) => {
                     if let ForStatementLeft::VariableDeclaration(declaration) = &item.left {
+                        let function_scoped = declaration.kind == VariableDeclarationKind::Var;
                         self.collect_declaration(
                             declaration,
                             output,
                             seen,
                             function_scope,
-                            declaration.kind == VariableDeclarationKind::Var,
+                            function_scoped,
                         );
                     }
                     self.collect_locals_into(
