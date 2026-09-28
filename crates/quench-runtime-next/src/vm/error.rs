@@ -1383,8 +1383,10 @@ impl<H: Host> Vm<H> {
             "decodeURIComponent",
             "encodeURI",
             "encodeURIComponent",
+            "escape",
             "isFinite",
             "isNaN",
+            "unescape",
         ];
         let source_global = self.realm.globals;
         for name in SHARED_BINDINGS {

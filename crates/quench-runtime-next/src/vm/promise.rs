@@ -292,6 +292,8 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::EncodeUriComponent
         | Native::DecodeUri
         | Native::DecodeUriComponent
+        | Native::GlobalEscape
+        | Native::GlobalUnescape
         | Native::Eval => 1.0,
         Native::DataViewGetBigInt64
         | Native::DataViewGetBigUint64
