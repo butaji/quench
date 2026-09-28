@@ -64,6 +64,7 @@ mod number;
 mod intl_number;
 mod intl_collator;
 mod intl_datetime;
+mod intl_datetime_parts;
 mod numeric_site;
 mod object;
 mod object_array;
