@@ -1376,7 +1376,7 @@ impl<'a> Compiler<'a> {
         if let Some(error) = early::regexp_early_error(program) {
             self.reject(Span::default(), error);
         }
-        if let Some(error) = early::block_early_error(program) {
+        if let Some(error) = early::block_early_error(program, self.root_strict) {
             self.reject(Span::default(), error);
         }
         if let Some(error) = early::strict_binding_early_error(program, self.root_strict) {
@@ -1842,7 +1842,8 @@ impl<'a> Compiler<'a> {
         }
         let parameter_local_count = locals.len();
         let root_strict = self.root_strict || options.strict;
-        let mut function_scope = self.collect_locals(body, &mut locals, root_strict);
+        let mut function_scope =
+            self.collect_locals(body, &mut locals, root_strict, parent.is_some());
         let name_binding = options.name_binding.and_then(|source_name| {
             if locals.contains(&source_name) {
                 None
@@ -1907,6 +1908,7 @@ impl<'a> Compiler<'a> {
             options.generator,
             options.defer_instance_fields,
             parameter_arguments_slot,
+            arguments_slot.is_some(),
             parameter_local_count,
             options.with_depth,
         );
