@@ -12,6 +12,7 @@ const NUMBER_FORMAT_UNIT_DISPLAY_SLOT: &str = "\0rqj:intl-number-format-unit-dis
 const NUMBER_FORMAT_GROUPING_SLOT: &str = "\0rqj:intl-number-format-use-grouping";
 const NUMBER_FORMAT_MIN_INTEGER_SLOT: &str = "\0rqj:intl-number-format-min-integer";
 const NUMBER_FORMAT_SIGN_DISPLAY_SLOT: &str = "\0rqj:intl-number-format-sign-display";
+const NUMBER_FORMAT_BOUND_SLOT: &str = "\0rqj:intl-number-format-bound";
 const NUMBER_FORMAT_MIN_FRACTION_SLOT: &str = "\0rqj:intl-number-format-min-fraction";
 const NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT: &str = "\0rqj:intl-number-format-max-significant";
 const NUMBER_FORMAT_MAX_FRACTION_SLOT: &str = "\0rqj:intl-number-format-max-fraction";
@@ -33,6 +34,23 @@ struct NumberFormatOptions {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn intl_format_primitive(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let constructor = self
+            .intl_number_format_constructors
+            .get(&self.realm.globals)
+            .copied()
+            .ok_or_else(|| JsError("Intl.NumberFormat intrinsic is not installed".into()))?;
+        let formatter = self.construct_value(p, constructor, args)?;
+        let format_atom = self.intern_atom("format");
+        let format = self.get_property(p, formatter, format_atom)?;
+        self.call_value(p, format, formatter, &[value])
+    }
+
     pub(super) fn install_intl_number_format_for_realm(
         &mut self,
         program: &ResidualProgram,
@@ -69,9 +87,23 @@ impl<H: Host> Vm<H> {
             self.native_with_realm(Native::IntlNumberFormatResolvedOptions, global, global);
         self.set_builtin_function_name(resolved_options, "resolvedOptions")?;
         self.set_builtin_value_named(prototype, "resolvedOptions", resolved_options)?;
-        let format = self.native_with_realm(Native::IntlNumberFormatFormat, global, global);
-        self.set_builtin_function_name(format, "format")?;
-        self.set_builtin_value_named(prototype, "format", format)?;
+        let format_getter =
+            self.native_with_realm(Native::IntlNumberFormatFormatGetter, global, global);
+        self.set_builtin_function_name(format_getter, "get format")?;
+        let format_atom = self.intern_atom("format");
+        self.set_builtin_value_named(prototype, "format", format_getter)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(format_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(format_getter),
+                setter: None,
+            },
+        );
         let format_to_parts =
             self.native_with_realm(Native::IntlNumberFormatFormatToParts, global, global);
         self.set_builtin_function_name(format_to_parts, "formatToParts")?;
@@ -177,6 +209,28 @@ impl<H: Host> Vm<H> {
         } else {
             self.object_proto
         })
+    }
+
+    pub(super) fn intl_number_format_format_getter(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        if self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT).is_none() {
+            return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
+        }
+        if let Some(bound) = self.hidden_value(this, NUMBER_FORMAT_BOUND_SLOT) {
+            return Ok(bound);
+        }
+        let function = self.native_with_realm(
+            Native::IntlNumberFormatFormat,
+            Value::NULL,
+            self.realm.globals,
+        );
+        let bound = self.bind_function(p, function, &[this])?;
+        self.override_builtin_function_name(bound, "")?;
+        self.set_hidden_value(this, NUMBER_FORMAT_BOUND_SLOT, bound)?;
+        Ok(bound)
     }
 
     fn number_format_locale(

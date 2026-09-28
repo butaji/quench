@@ -173,6 +173,9 @@ impl<H: Host> Vm<H> {
                 args,
                 self.native_value(Native::IntlNumberFormat),
             ),
+            Native::IntlNumberFormatFormatGetter => {
+                self.intl_number_format_format_getter(p, this)
+            }
             Native::IntlNumberFormatFormat => self.intl_number_format_format(p, this, args),
             Native::IntlNumberFormatFormatToParts => {
                 self.intl_number_format_format_to_parts(p, this, args)

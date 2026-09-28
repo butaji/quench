@@ -587,9 +587,7 @@ impl<H: Host> Vm<H> {
             }
             Native::NumberToLocaleString => {
                 let number = self.number_receiver_value(p, this)?;
-                Ok(self.heap.alloc(Cell::String(
-                    super::number::number_to_decimal(number).into(),
-                )))
+                self.intl_format_primitive(p, Value::number(number), args)
             }
             Native::NumberString => {
                 let number = self.number_receiver_value(p, this)?;
