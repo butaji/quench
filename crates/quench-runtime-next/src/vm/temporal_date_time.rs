@@ -891,8 +891,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
         let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let is_plain_time = matches!(
+            self.heap.get(changes),
+            Some(Cell::Object(object)) if object.proto == self.temporal_plain_time_proto
+        );
         if !self.is_object_like(changes)
             || matches!(self.heap.get(changes), Some(Cell::Array { .. }))
+            || is_plain_time
             || matches!(
                 self.heap.get(changes),
                 Some(
