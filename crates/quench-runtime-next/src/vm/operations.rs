@@ -182,7 +182,31 @@ impl<H: Host> Vm<H> {
             }
             Native::IntlGetCanonicalLocales
             | Native::IntlSupportedValuesOf
-            | Native::IntlLocale => self.intl_namespace_native(p, native, args),
+            | Native::IntlLocale
+            | Native::IntlLocaleToString
+            | Native::IntlLocaleMaximize
+            | Native::IntlLocaleMinimize
+            | Native::IntlLocaleGetCalendars
+            | Native::IntlLocaleGetCollations
+            | Native::IntlLocaleGetHourCycles
+            | Native::IntlLocaleGetNumberingSystems
+            | Native::IntlLocaleGetTimeZones
+            | Native::IntlLocaleGetTextInfo
+            | Native::IntlLocaleGetWeekInfo
+            | Native::IntlLocaleBaseNameGetter
+            | Native::IntlLocaleLanguageGetter
+            | Native::IntlLocaleScriptGetter
+            | Native::IntlLocaleRegionGetter
+            | Native::IntlLocaleVariantsGetter
+            | Native::IntlLocaleCalendarGetter
+            | Native::IntlLocaleCollationGetter
+            | Native::IntlLocaleHourCycleGetter
+            | Native::IntlLocaleCaseFirstGetter
+            | Native::IntlLocaleFirstDayOfWeekGetter
+            | Native::IntlLocaleNumberingSystemGetter
+            | Native::IntlLocaleNumericGetter => {
+                self.intl_namespace_native(p, native, this, args)
+            }
             Native::IntlRelativeTimeFormat => {
                 self.intl_relative_time_format_native(p, native, this, args)
             }
