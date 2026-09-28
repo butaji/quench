@@ -68,14 +68,17 @@ impl FunctionCompiler<'_, '_> {
                     14 => self.emit(Op::JumpFalse, old, 0, 0, 0),
                     15 => {
                         let null = self.literal(Constant::Null);
-                        let is_null =
-                            self.emit_binary(0, Operand::register(old), Operand::register(null));
+                        let is_null = self.emit_binary(
+                            BinaryOperator::StrictEquality as u32,
+                            Operand::register(old),
+                            Operand::register(null),
+                        );
                         let not_null = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
                         let evaluate_null = self.emit(Op::Jump, 0, 0, 0, 0);
                         self.patch(not_null);
                         let undefined = self.literal(Constant::Undefined);
                         let is_undefined = self.emit_binary(
-                            0,
+                            BinaryOperator::StrictEquality as u32,
                             Operand::register(old),
                             Operand::register(undefined),
                         );
