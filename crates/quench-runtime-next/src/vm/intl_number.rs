@@ -2209,8 +2209,9 @@ fn round_number(
     mode: &str,
     negative: bool,
 ) -> f64 {
-    let quantum = increment as f64 / 10_f64.powi(fraction_digits.min(100) as i32);
-    let scaled = value / quantum;
+    let scale = 10_f64.powi(fraction_digits.min(100) as i32);
+    let increment = increment as f64;
+    let scaled = value * scale / increment;
     let lower = scaled.floor();
     let fraction = scaled - lower;
     let tie = (fraction - 0.5).abs() <= 1e-9;
@@ -2230,7 +2231,7 @@ fn round_number(
         "halfExpand" | "halfFloor" | "halfCeil" | "halfEven" => lower + 1.0,
         _ => lower + 1.0,
     };
-    magnitude_rounded * quantum
+    magnitude_rounded * increment / scale
 }
 
 fn round_number_at_precision(
