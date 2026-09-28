@@ -555,11 +555,11 @@ fn validate_nested(statements: &[Statement<'_>]) -> Option<String> {
                 }
             }
             Statement::IfStatement(statement) => {
-                if let Some(error) = validate_loop_body(&statement.consequent) {
+                if let Some(error) = validate_nested(std::slice::from_ref(&statement.consequent)) {
                     return Some(error);
                 }
                 if let Some(alternate) = &statement.alternate
-                    && let Some(error) = validate_loop_body(alternate)
+                    && let Some(error) = validate_nested(std::slice::from_ref(alternate))
                 {
                     return Some(error);
                 }
@@ -677,6 +677,190 @@ pub(super) fn collect_var_names(statements: &[Statement<'_>]) -> Vec<String> {
     let mut names = names.into_iter().collect::<Vec<_>>();
     names.sort();
     names
+}
+
+pub(super) fn annex_b_lexical_collisions(statements: &[Statement<'_>]) -> FxHashSet<String> {
+    let visible = lexical_names(statements);
+    let mut collisions = FxHashSet::default();
+    collect_annex_b_collisions(statements, &visible, &mut collisions);
+    collisions
+}
+
+pub(super) fn annex_b_function_names(statements: &[Statement<'_>]) -> Vec<String> {
+    statements.iter().flat_map(annex_b_function_names_in).collect()
+}
+
+fn annex_b_function_names_in(statement: &Statement<'_>) -> Vec<String> {
+    match statement {
+        Statement::FunctionDeclaration(function) => annex_b_function_name(function)
+            .into_iter()
+            .collect(),
+        Statement::BlockStatement(block) => annex_b_function_names(&block.body),
+        Statement::IfStatement(statement) => {
+            let mut names = annex_b_function_names(std::slice::from_ref(&statement.consequent));
+            if let Some(alternate) = &statement.alternate {
+                names.extend(annex_b_function_names(std::slice::from_ref(alternate)));
+            }
+            names
+        }
+        Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .flat_map(|case| annex_b_function_names(&case.consequent))
+            .collect(),
+        Statement::LabeledStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
+        Statement::WhileStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
+        Statement::DoWhileStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
+        Statement::TryStatement(statement) => {
+            let mut names = annex_b_function_names(&statement.block.body);
+            if let Some(handler) = &statement.handler {
+                names.extend(annex_b_function_names(&handler.body.body));
+            }
+            if let Some(finalizer) = &statement.finalizer {
+                names.extend(annex_b_function_names(&finalizer.body));
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn annex_b_function_name(function: &oxc_ast::ast::Function<'_>) -> Option<String> {
+    (!function.r#async && !function.generator)
+        .then(|| function.id.as_ref().map(|identifier| identifier.name.to_string()))
+        .flatten()
+}
+
+fn lexical_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = FxHashSet::default();
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind != VariableDeclarationKind::Var =>
+            {
+                for item in &declaration.declarations {
+                    collect_pattern_names(&item.id, &mut names);
+                }
+            }
+            Statement::ClassDeclaration(class) => {
+                if let Some(identifier) = &class.id {
+                    names.insert(identifier.name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn collect_annex_b_collisions(
+    statements: &[Statement<'_>],
+    visible: &[String],
+    collisions: &mut FxHashSet<String>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::BlockStatement(block) => {
+                let mut nested = visible.to_vec();
+                nested.extend(lexical_names(&block.body));
+                collect_annex_b_collisions(&block.body, &nested, collisions);
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(identifier) = &function.id
+                    && visible.iter().any(|name| name == identifier.name.as_str())
+                {
+                    collisions.insert(identifier.name.to_string());
+                }
+            }
+            Statement::IfStatement(statement) => {
+                collect_annex_b_one(&statement.consequent, visible, collisions);
+                if let Some(alternate) = &statement.alternate {
+                    collect_annex_b_one(alternate, visible, collisions);
+                }
+            }
+            Statement::ForStatement(statement) => {
+                let mut nested = visible.to_vec();
+                if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                    &statement.init
+                    && declaration.kind != VariableDeclarationKind::Var
+                {
+                    for item in &declaration.declarations {
+                        collect_pattern_names(&item.id, &mut nested);
+                    }
+                }
+                collect_annex_b_one(&statement.body, &nested, collisions);
+            }
+            Statement::ForInStatement(statement) => {
+                collect_loop_collisions(&statement.left, &statement.body, visible, collisions);
+            }
+            Statement::ForOfStatement(statement) => {
+                collect_loop_collisions(&statement.left, &statement.body, visible, collisions);
+            }
+            Statement::LabeledStatement(statement) => {
+                collect_annex_b_one(&statement.body, visible, collisions);
+            }
+            Statement::WhileStatement(statement) => {
+                collect_annex_b_one(&statement.body, visible, collisions);
+            }
+            Statement::DoWhileStatement(statement) => {
+                collect_annex_b_one(&statement.body, visible, collisions);
+            }
+            Statement::SwitchStatement(statement) => {
+                let mut nested = visible.to_vec();
+                for case in &statement.cases {
+                    nested.extend(lexical_names(&case.consequent));
+                }
+                for case in &statement.cases {
+                    collect_annex_b_collisions(&case.consequent, &nested, collisions);
+                }
+            }
+            Statement::TryStatement(statement) => {
+                collect_annex_b_collisions(&statement.block.body, visible, collisions);
+                if let Some(handler) = &statement.handler {
+                    let mut nested = visible.to_vec();
+                    if let Some(parameter) = &handler.param {
+                        collect_pattern_names(&parameter.pattern, &mut nested);
+                    }
+                    collect_annex_b_collisions(&handler.body.body, &nested, collisions);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    collect_annex_b_collisions(&finalizer.body, visible, collisions);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_annex_b_one(
+    statement: &Statement<'_>,
+    visible: &[String],
+    collisions: &mut FxHashSet<String>,
+) {
+    collect_annex_b_collisions(std::slice::from_ref(statement), visible, collisions);
+}
+
+fn collect_loop_collisions(
+    left: &oxc_ast::ast::ForStatementLeft<'_>,
+    body: &Statement<'_>,
+    visible: &[String],
+    collisions: &mut FxHashSet<String>,
+) {
+    let mut nested = visible.to_vec();
+    if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left
+        && declaration.kind != VariableDeclarationKind::Var
+    {
+        for item in &declaration.declarations {
+            collect_pattern_names(&item.id, &mut nested);
+        }
+    }
+    collect_annex_b_one(body, &nested, collisions);
 }
 
 fn collect_nested_vars(statements: &[Statement<'_>], names: &mut FxHashSet<String>) {

@@ -252,9 +252,9 @@ impl FunctionCompiler<'_, '_> {
                 u16::from(initializing),
                 u32::from(slot),
             );
-            if self.function_id == 0 && !self.owner.module_goal {
+            if lexical.is_none() && self.function_id == 0 && !self.owner.module_goal {
                 let cache = self.owner.cache_site();
-                self.emit(Op::StoreName, value, 0, cache, atom);
+                self.emit(Op::StoreName, value, 0, cache, source_atom);
             }
         } else if (self.with_depth == 0 || initializing)
             && let Some((depth, slot)) = self
@@ -271,6 +271,29 @@ impl FunctionCompiler<'_, '_> {
                 crate::bytecode::ImmediateLayout::capture_immediate(depth, slot),
             );
         } else {
+            let cache = self.owner.cache_site();
+            self.emit(Op::StoreName, value, 0, cache, atom);
+        }
+    }
+
+    pub(super) fn store_annex_b_outer(&mut self, atom: Atom, value: Register) {
+        let parameter_binding = self
+            .local_slots
+            .get(&atom)
+            .is_some_and(|slot| usize::from(*slot) < self.parameter_local_count);
+        let lexical_collision = self
+            .lexical_scopes
+            .iter()
+            .rev()
+            .skip(1)
+            .any(|scope| scope.bindings.contains_key(&atom));
+        if parameter_binding || lexical_collision {
+            return;
+        }
+        if let Some(slot) = self.local_slots.get(&atom).copied() {
+            self.emit(Op::StoreLocal, value, 0, 0, u32::from(slot));
+        }
+        if self.function_id == 0 && !self.owner.module_goal {
             let cache = self.owner.cache_site();
             self.emit(Op::StoreName, value, 0, cache, atom);
         }

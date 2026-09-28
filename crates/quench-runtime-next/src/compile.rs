@@ -143,6 +143,12 @@ impl Engine {
                 _ => None,
             }
         }));
+        let collisions = early::annex_b_lexical_collisions(&parsed.program.body);
+        declarations.extend(
+            early::annex_b_function_names(&parsed.program.body)
+                .into_iter()
+                .filter(|name| !collisions.contains(name)),
+        );
         declarations.sort();
         declarations.dedup();
         Some(EvalVarNames {
@@ -1495,6 +1501,19 @@ impl<'a> Compiler<'a> {
             {
                 global_var_names.push(identifier.name.to_string());
             }
+        }
+        let strict_script = inherited_strict
+            || program
+                .directives
+                .iter()
+                .any(|directive| directive.directive == "use strict");
+        if !strict_script {
+            let collisions = early::annex_b_lexical_collisions(&program.body);
+            global_var_names.extend(
+                early::annex_b_function_names(&program.body)
+                    .into_iter()
+                    .filter(|name| !collisions.contains(name)),
+            );
         }
         global_var_names.sort();
         global_var_names.dedup();

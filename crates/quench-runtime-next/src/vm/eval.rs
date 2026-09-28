@@ -570,6 +570,17 @@ impl<H: Host> Vm<H> {
             }
             self.sync_dynamic_bindings();
         }
+        if self.direct_eval && !strict {
+            let declarations = crate::Engine::eval_var_names(source)
+                .map(|names| names.declarations)
+                .unwrap_or_default();
+            for name in declarations {
+                let atom = self.intern_atom(&name);
+                if self.load_eval_name(p, atom).is_err() {
+                    self.store_eval_name(p, atom, Value::UNDEFINED, false, true)?;
+                }
+            }
+        }
         for statement in &statements {
             if function_declaration_name(statement.trim()).is_some() {
                 self.install_eval_function(p, statement.trim(), strict)?;
