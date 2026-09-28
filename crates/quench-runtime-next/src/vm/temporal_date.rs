@@ -654,18 +654,7 @@ impl<H: Host> Vm<H> {
         let month = self.get_property(p, value, month_atom)?;
         let month = self.plain_date_optional_integer(p, month)?;
         let month_code_value = self.get_property(p, value, month_code_atom)?;
-        let month_code = if month_code_value.is_undefined() {
-            None
-        } else {
-            if !self.is_string(month_code_value) {
-                return Err(self.type_error(p, "Invalid monthCode".into()));
-            }
-            let text = self.to_string(p, month_code_value)?.to_string();
-            Some(
-                parse_iso_month_code_syntax(&text)
-                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?,
-            )
-        };
+        let month_code = self.plain_date_time_month_code_from_value(p, month_code_value)?;
         let year = self.get_property(p, value, year_atom)?;
         let year = self.plain_date_optional_integer(p, year)?;
         let constrain = self.plain_date_overflow(p, options)?;

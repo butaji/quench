@@ -496,6 +496,14 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<i32>, JsError> {
         let month_code_atom = self.intern_atom("monthCode");
         let value = self.get_property(p, bag, month_code_atom)?;
+        self.plain_date_time_month_code_from_value(p, value)
+    }
+
+    pub(super) fn plain_date_time_month_code_from_value(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Option<i32>, JsError> {
         if value.is_undefined() {
             return Ok(None);
         }
