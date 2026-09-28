@@ -235,6 +235,12 @@ impl<H: Host> Vm<H> {
                         );
                     }
                 }
+                if self.eval_script_context
+                    && let Some(atom) =
+                        self.root_global_lexical_atom(p, self.frames[f].function, slot)
+                {
+                    self.realm.global_lexical_bindings.insert(atom, value);
+                }
                 if self.frames[f].captured {
                     let Some(Cell::Environment { slots, .. }) =
                         self.heap.get_mut(self.frames[f].env)

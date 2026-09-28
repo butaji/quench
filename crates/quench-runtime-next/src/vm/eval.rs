@@ -33,10 +33,11 @@ impl<H: Host> Vm<H> {
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
-        let residual = match crate::Engine::specialize_unspecialized_with_atom_prefix(
+        let residual = match crate::Engine::specialize_eval_unspecialized_with_atom_prefix(
             &source,
             &source_name,
             &atom_prefix,
+            false,
         ) {
             Ok(residual) => residual,
             Err(diagnostics) => {
