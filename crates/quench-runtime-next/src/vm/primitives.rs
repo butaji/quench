@@ -466,7 +466,7 @@ impl<H: Host> Vm<H> {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, value)?;
                 let radix = match args.get(1).copied() {
-                    Some(value) => self.to_number(p, value)? as i32,
+                    Some(value) => crate::value::number_to_u32(self.to_number(p, value)?) as i32,
                     None => 0,
                 };
                 Ok(Value::number(super::string_extra::parse_integer(
