@@ -26,6 +26,26 @@ impl<H: Host> Vm<H> {
         self.megamorphic_methods.retain(|set| set.len != 0);
     }
 
+    pub(super) fn invalidate_method_caches_for_prototype_add(&mut self, object: Value, atom: Atom) {
+        #[cfg(feature = "profile-aggregate")]
+        self.snapshot_shadowed_method_caches(object, atom);
+        let heap = &self.heap;
+        for entries in &mut self.method_caches {
+            let len = entries.len();
+            retain_unshadowed_entries(heap, entries, len, object, atom);
+        }
+        for set in &mut self.megamorphic_methods {
+            set.len = retain_unshadowed_entries(
+                heap,
+                &mut set.entries,
+                usize::from(set.len),
+                object,
+                atom,
+            ) as u8;
+        }
+        self.megamorphic_methods.retain(|set| set.len != 0);
+    }
+
     pub(super) fn is_function(&self, value: Value) -> bool {
         match self.heap.get(value) {
             Some(Cell::Function { .. }) => true,
@@ -38,66 +58,54 @@ impl<H: Host> Vm<H> {
 
     #[cfg(feature = "profile-aggregate")]
     pub(super) fn snapshot_method_caches(&mut self, reason: usize) {
-        let mut records = Vec::new();
-        for (site, entries) in self.method_caches.iter().enumerate() {
-            records.extend(entries.iter().filter_map(|entry| {
-                entry
-                    .target
-                    .map(|target| (site, entry.shape, entry.proto, target))
-            }));
-        }
-        for set in &self.megamorphic_methods {
-            records.extend(
-                set.entries[..usize::from(set.len)]
-                    .iter()
-                    .filter_map(|entry| {
-                        entry
-                            .target
-                            .map(|target| (usize::from(set.site), entry.shape, entry.proto, target))
-                    }),
-            );
-        }
-        self.profile.method_cache_clear(reason, records.len());
-        for (site, shape, proto, target) in records {
-            self.invalidated_methods.insert(
-                MethodCacheKey { site, shape, proto },
-                InvalidatedMethod {
-                    target,
-                    reason: reason as u8,
-                },
-            );
-        }
+        self.snapshot_method_cache_entries(self.all_method_cache_entries(), reason);
     }
 
     #[cfg(feature = "profile-aggregate")]
     fn snapshot_method_caches_for_atom(&mut self, atom: Atom, reason: usize) {
-        let mut records = Vec::new();
-        for (site, entries) in self.method_caches.iter().enumerate() {
-            records.extend(entries.iter().filter_map(|entry| {
-                (entry.atom == atom)
-                    .then(|| {
-                        entry
-                            .target
-                            .map(|target| (site, entry.shape, entry.proto, target))
-                    })
-                    .flatten()
-            }));
+        let entries = self
+            .all_method_cache_entries()
+            .into_iter()
+            .filter(|(_, entry)| entry.atom == atom)
+            .collect();
+        self.snapshot_method_cache_entries(entries, reason);
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    fn snapshot_shadowed_method_caches(&mut self, object: Value, atom: Atom) {
+        let heap = &self.heap;
+        let entries = self
+            .all_method_cache_entries()
+            .into_iter()
+            .filter(|(_, entry)| method_cache_shadowed_by(heap, *entry, object, atom))
+            .collect();
+        self.snapshot_method_cache_entries(entries, 1);
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    fn all_method_cache_entries(&self) -> Vec<(usize, MethodCache)> {
+        let mut entries = Vec::new();
+        for (site, cache) in self.method_caches.iter().enumerate() {
+            entries.extend(cache.iter().map(|entry| (site, *entry)));
         }
-        for set in &self.megamorphic_methods {
-            records.extend(
-                set.entries[..usize::from(set.len)]
-                    .iter()
-                    .filter_map(|entry| {
-                        (entry.atom == atom)
-                            .then(|| {
-                                entry.target.map(|target| {
-                                    (usize::from(set.site), entry.shape, entry.proto, target)
-                                })
-                            })
-                            .flatten()
-                    }),
-            );
-        }
+        entries.extend(self.megamorphic_methods.iter().flat_map(|set| {
+            set.entries[..usize::from(set.len)]
+                .iter()
+                .map(|entry| (usize::from(set.site), *entry))
+        }));
+        entries
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    fn snapshot_method_cache_entries(&mut self, entries: Vec<(usize, MethodCache)>, reason: usize) {
+        let records: Vec<_> = entries
+            .into_iter()
+            .filter_map(|(site, entry)| {
+                entry
+                    .target
+                    .map(|target| (site, entry.shape, entry.proto, target))
+            })
+            .collect();
         self.profile.method_cache_clear(reason, records.len());
         for (site, shape, proto, target) in records {
             self.invalidated_methods.insert(
@@ -238,6 +246,47 @@ fn retain_other_atom(entries: &mut [MethodCache], len: usize, atom: Atom) -> usi
     }
     entries[retained..].fill(EMPTY_METHOD_CACHE);
     retained
+}
+
+fn retain_unshadowed_entries(
+    heap: &crate::heap::Heap,
+    entries: &mut [MethodCache],
+    len: usize,
+    object: Value,
+    atom: Atom,
+) -> usize {
+    let mut retained = 0;
+    for index in 0..len {
+        let entry = entries[index];
+        if !method_cache_shadowed_by(heap, entry, object, atom) {
+            entries[retained] = entry;
+            retained += 1;
+        }
+    }
+    entries[retained..].fill(EMPTY_METHOD_CACHE);
+    retained
+}
+
+fn method_cache_shadowed_by(
+    heap: &crate::heap::Heap,
+    entry: MethodCache,
+    object: Value,
+    atom: Atom,
+) -> bool {
+    if entry.atom != atom || entry.guard.depth <= 1 {
+        return false;
+    }
+    let mut prototype = entry.proto;
+    for _ in 1..entry.guard.depth {
+        if prototype == object {
+            return true;
+        }
+        let Some(Cell::Object(data)) = heap.get(prototype) else {
+            return false;
+        };
+        prototype = data.proto;
+    }
+    false
 }
 
 fn retain_entries(heap: &crate::heap::Heap, entries: &mut [MethodCache], len: usize) -> usize {
