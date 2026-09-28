@@ -156,6 +156,17 @@ impl<H: Host> Vm<H> {
             })
     }
 
+    fn function_environment_binding(
+        &self,
+        p: &ResidualProgram,
+        function: u32,
+        atom: Atom,
+    ) -> bool {
+        p.functions
+            .get(function as usize)
+            .is_some_and(|metadata| metadata.environment_atoms.contains(&atom))
+    }
+
     pub(super) fn activation_binding_slot(&self, frame: usize, atom: Atom) -> Option<usize> {
         let frame = self.frames.get(frame)?;
         self.programs
@@ -594,7 +605,7 @@ impl<H: Host> Vm<H> {
         if self
             .frames
             .last()
-            .is_some_and(|frame| self.local_binding_slot(p, frame.function, atom).is_some())
+            .is_some_and(|frame| self.function_environment_binding(p, frame.function, atom))
         {
             return Ok(true);
         }
@@ -918,7 +929,7 @@ impl<H: Host> Vm<H> {
         }
         if !name.starts_with('\0') {
             if let Some(frame) = self.frames.last()
-                && (frame.function != 0
+                && (self.function_environment_binding(p, frame.function, atom)
                     || p.functions[frame.function as usize]
                         .global_lexical_atoms
                         .contains(&atom)
@@ -1004,7 +1015,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             if let Some(frame) = self.frames.last()
-                && (frame.function != 0
+                && (self.function_environment_binding(p, frame.function, atom)
                     || p.functions[frame.function as usize]
                         .global_lexical_atoms
                         .contains(&atom)
