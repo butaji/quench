@@ -878,7 +878,7 @@ impl<H: Host> Vm<H> {
 
         let mut year = date.year;
         let mut month = date.month as i32;
-        let mut month_code = None;
+        let mut month_code_text = None;
         let mut day = date.day as i32;
         let mut time = time.map(|value| value as i32);
         let names = if calendar == "iso8601" {
@@ -932,7 +932,9 @@ impl<H: Host> Vm<H> {
                     month = self.plain_date_integer(p, value)?;
                     month_was_provided = true;
                 }
-                "monthCode" => month_code = Some(self.plain_date_month_code(p, value)?),
+                "monthCode" => {
+                    month_code_text = Some(self.temporal_month_code_to_string(p, value)?)
+                }
                 "nanosecond" => time[NANOSECOND_FIELD] = self.plain_date_integer(p, value)?,
                 "second" => time[2] = self.plain_date_integer(p, value)?,
                 "year" => {
@@ -953,18 +955,6 @@ impl<H: Host> Vm<H> {
         if !recognized {
             return Err(self.type_error(p, "Insufficient date-time data".into()));
         }
-        if let Some(code_month) = month_code {
-            if !(1..=super::temporal_date::ISO_MONTHS_PER_YEAR).contains(&code_month) {
-                return Err(self.range_error(p, "Invalid monthCode".into()));
-            }
-            if month_was_provided && month != code_month {
-                return Err(self.range_error(p, "Month mismatch".into()));
-            }
-            if !month_was_provided {
-                month = code_month;
-            }
-        }
-
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let options_primitive = !options.is_undefined() && !self.is_object_like(options);
         let overflow = if options.is_undefined() || options_primitive {
@@ -980,6 +970,21 @@ impl<H: Host> Vm<H> {
         };
         if !matches!(overflow.as_str(), "constrain" | "reject") {
             return Err(self.range_error(p, "Invalid overflow".into()));
+        }
+        let month_code = month_code_text
+            .as_deref()
+            .map(|text| self.parse_plain_date_month_code(p, text))
+            .transpose()?;
+        if let Some(code_month) = month_code {
+            if !(1..=super::temporal_date::ISO_MONTHS_PER_YEAR).contains(&code_month) {
+                return Err(self.range_error(p, "Invalid monthCode".into()));
+            }
+            if month_was_provided && month != code_month {
+                return Err(self.range_error(p, "Month mismatch".into()));
+            }
+            if !month_was_provided {
+                month = code_month;
+            }
         }
         let constrain = overflow == "constrain";
         let month = if constrain {
