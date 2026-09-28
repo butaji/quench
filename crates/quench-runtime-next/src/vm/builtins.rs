@@ -75,6 +75,7 @@ const NATIVES: &[Native] = &[
     Native::TypedArrayToReversed,
     Native::TypedArrayToSorted,
     Native::TypedArrayWith,
+    Native::TypedArrayToLocaleString,
     Native::TypedArrayBufferGetter,
     Native::TypedArrayByteLengthGetter,
     Native::TypedArrayByteOffsetGetter,

@@ -34,6 +34,21 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(self.typed_array_proto, "constructor", typed_array)?;
         let typed_name = self.heap.alloc(Cell::String("TypedArray".into()));
         self.set_named(program, typed_array, "name", typed_name)?;
+        for (name, configurable) in [("length", true), ("name", true), ("prototype", false)] {
+            let atom = self.intern_atom(name);
+            self.set_property_attributes(
+                typed_array,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         self.object_data_mut(uint8_array)
             .expect("Uint8Array constructor")
             .proto = typed_array;
@@ -63,7 +78,6 @@ impl<H: Host> Vm<H> {
             ("includes", Native::Uint8ArrayIncludes),
             ("indexOf", Native::Uint8ArrayIndexOf),
             ("join", Native::Uint8ArrayJoin),
-            ("toString", Native::Uint8ArrayToString),
             ("keys", Native::Uint8ArrayKeys),
             ("values", Native::Uint8ArrayValues),
             ("entries", Native::Uint8ArrayEntries),
@@ -75,6 +89,9 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(self.typed_array_proto, name, method)?;
         }
+        let to_string_atom = self.intern_atom("toString");
+        let to_string = self.get_property(program, self.array_proto, to_string_atom)?;
+        self.set_builtin_value_named(self.typed_array_proto, "toString", to_string)?;
         let last_index_of = self.native_with_realm(
             Native::TypedArrayLastIndexOf,
             Value::NULL,
@@ -90,6 +107,7 @@ impl<H: Host> Vm<H> {
             ("toReversed", Native::TypedArrayToReversed),
             ("toSorted", Native::TypedArrayToSorted),
             ("with", Native::TypedArrayWith),
+            ("toLocaleString", Native::TypedArrayToLocaleString),
         ] {
             let method = self.native_with_realm(native, Value::NULL, self.realm.globals);
             self.set_builtin_function_name(method, name)?;
@@ -132,7 +150,20 @@ impl<H: Host> Vm<H> {
         let iterator = self.well_known_symbols["iterator"];
         let values_atom = self.intern_atom("values");
         let values = self.get_property(p, self.typed_array_proto, values_atom)?;
-        self.set_symbol_property(self.typed_array_proto, iterator, values)
+        self.set_symbol_property(self.typed_array_proto, iterator, values)?;
+        self.set_property_attributes(
+            self.typed_array_proto,
+            PropertyKey::symbol(iterator),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(())
     }
     pub(super) fn typed_array_native(
         &mut self,
@@ -146,6 +177,16 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TypedArraySort {
             return self.typed_array_sort_native(p, this, args);
+        }
+        if native == Native::TypedArrayToLocaleString {
+            let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
+                return Err(self.type_error(p, "typed array receiver is invalid".into()));
+            };
+            if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(*buffer) {
+                return Err(self.type_error(p, "typed array receiver is invalid".into()));
+            }
+            let length = self.typed_array_length(this).unwrap_or_default();
+            return self.array_to_locale_string_with_length(p, this, length);
         }
         if native == Native::Uint8ArraySubarray {
             return self.typed_array_subarray_native(p, this, args);
@@ -191,6 +232,16 @@ impl<H: Host> Vm<H> {
             _ => unreachable!("typed array receiver was validated"),
         };
         let length = self.typed_array_length(this).unwrap_or_default();
+        if matches!(
+            native,
+            Native::Uint8ArrayReverse
+                | Native::Uint8ArrayFill
+                | Native::Uint8ArrayCopyWithin
+                | Native::Uint8ArraySet
+        ) && matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. }))
+        {
+            return Err(self.type_error(p, "typed array backing buffer is immutable".into()));
+        }
         match native {
             Native::Uint8ArrayReverse => {
                 for index in 0..length / 2 {
@@ -208,26 +259,46 @@ impl<H: Host> Vm<H> {
             }
             Native::Uint8ArrayFill => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let start = self.typed_array_relative_index(p, args.get(1), length)?;
-                let end = if args.get(2).is_none() {
-                    length
+                let value = if matches!(
+                    self.typed_array_kind(this),
+                    Some(TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
+                ) {
+                    let value = self.to_bigint(p, value)?;
+                    self.heap.alloc(Cell::BigInt(value.to_string()))
                 } else {
-                    self.typed_array_relative_index(p, args.get(2), length)?
+                    Value::number(self.to_number(p, value)?)
                 };
-                for index in start.min(end)..start.max(end) {
+                self.typed_array_validate_current_write(p, this)?;
+                let start = self.typed_array_relative_index(p, args.get(1), length)?;
+                self.typed_array_validate_current_write(p, this)?;
+                let end_arg = args.get(2).filter(|value| !value.is_undefined());
+                let end = match end_arg {
+                    Some(value) => self.typed_array_relative_index(p, Some(value), length)?,
+                    None => length,
+                };
+                self.typed_array_validate_current_write(p, this)?;
+                for index in start..end {
                     self.typed_array_set(p, this, index, value)?;
                 }
                 Ok(this)
             }
             Native::Uint8ArrayCopyWithin => {
                 let target = self.typed_array_relative_index(p, args.first(), length)?;
+                self.typed_array_validate_current_write(p, this)?;
                 let start = self.typed_array_relative_index(p, args.get(1), length)?;
-                let end = if args.get(2).is_none() {
-                    length
-                } else {
-                    self.typed_array_relative_index(p, args.get(2), length)?
+                self.typed_array_validate_current_write(p, this)?;
+                let end_arg = args.get(2).filter(|value| !value.is_undefined());
+                let end = match end_arg {
+                    Some(value) => self.typed_array_relative_index(p, Some(value), length)?,
+                    None => length,
                 };
-                let count = end.saturating_sub(start).min(length.saturating_sub(target));
+                self.typed_array_validate_current_write(p, this)?;
+                let current_length = self.typed_array_length(this).unwrap_or_default();
+                let effective_length = current_length.min(length);
+                let count = end
+                    .saturating_sub(start)
+                    .min(effective_length.saturating_sub(target))
+                    .min(effective_length.saturating_sub(start));
                 let values = (0..count)
                     .map(|index| {
                         self.typed_array_get(this, start + index)
@@ -240,13 +311,6 @@ impl<H: Host> Vm<H> {
                 Ok(this)
             }
             Native::Uint8ArraySet => {
-                let immutable = matches!(
-                    self.heap.get(buffer),
-                    Some(Cell::ArrayBuffer { immutable: true, .. })
-                );
-                if immutable {
-                    return Err(self.type_error(p, "typed array backing buffer is immutable".into()));
-                }
                 let source = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let start = args
                     .get(1)
@@ -345,7 +409,17 @@ impl<H: Host> Vm<H> {
                 }
                 let search = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let from = self.typed_array_relative_index(p, args.get(1), length)?;
-                let found = (from..length).find(|index| {
+                let invalid_view =
+                    self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer);
+                if native == Native::Uint8ArrayIndexOf && invalid_view {
+                    return Ok(Value::number(-1.0));
+                }
+                let current_length = if native == Native::Uint8ArrayIncludes {
+                    length
+                } else {
+                    self.typed_array_length(this).unwrap_or_default().min(length)
+                };
+                let found = (from..current_length).find(|index| {
                     let Some(value) = self.typed_array_get(this, *index) else {
                         return false;
                     };
@@ -370,8 +444,9 @@ impl<H: Host> Vm<H> {
                     ",".to_owned()
                 } else {
                     match args.first().copied() {
-                        Some(value) => self.to_string(p, value)?,
+                        Some(value) if !value.is_undefined() => self.to_string(p, value)?,
                         None => ",".to_owned(),
+                        Some(_) => ",".to_owned(),
                     }
                 };
                 let mut result = String::new();
@@ -382,12 +457,33 @@ impl<H: Host> Vm<H> {
                     let value = self
                         .typed_array_get(this, index)
                         .unwrap_or(Value::UNDEFINED);
+                    if value.is_null() || value.is_undefined() {
+                        continue;
+                    }
                     result.push_str(&self.to_string(p, value)?);
                 }
                 Ok(self.heap.alloc(Cell::String(result.into())))
             }
             _ => unreachable!(),
         }
+    }
+
+    fn typed_array_validate_current_write(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<(), JsError> {
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
+            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+        };
+        let buffer = *buffer;
+        if self.typed_array_out_of_bounds(this)
+            || self.array_buffer_detached(buffer)
+            || matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. }))
+        {
+            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+        }
+        Ok(())
     }
 
     fn typed_array_subarray_native(
@@ -679,7 +775,7 @@ impl<H: Host> Vm<H> {
         Ok(match native {
             Native::TypedArrayBufferGetter => buffer,
             Native::TypedArrayByteOffsetGetter if !out_of_bounds => {
-                Value::number(offset as f64)
+                Value::number(self.typed_array_byte_offset(this).unwrap_or_default() as f64)
             }
             Native::TypedArrayLengthGetter if !out_of_bounds => {
                 Value::number(view_length as f64)
