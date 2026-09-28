@@ -177,7 +177,18 @@ impl<H: Host> Vm<H> {
             Native::IntlNumberFormatFormatToParts => {
                 self.intl_number_format_format_to_parts(p, this, args)
             }
-            Native::IntlSupportedValuesOf => self.intl_supported_values_of(p, args),
+            Native::IntlNumberFormatResolvedOptions => {
+                self.intl_number_format_resolved_options(p, this)
+            }
+            Native::IntlGetCanonicalLocales
+            | Native::IntlSupportedValuesOf
+            | Native::IntlLocale => self.intl_namespace_native(p, native, args),
+            Native::IntlRelativeTimeFormat => {
+                self.intl_relative_time_format_native(p, native, this, args)
+            }
+            Native::IntlRelativeTimeFormatResolvedOptions => {
+                self.intl_relative_time_format_resolved_options(p, this)
+            }
             Native::IntlCollator
             | Native::IntlCollatorSupportedLocalesOf
             | Native::IntlCollatorCompareGetter

@@ -1,4 +1,5 @@
 use crate::value::Value;
+use quench_intl::COLLATIONS;
 
 pub(crate) fn supported_calendars() -> Vec<Value> {
     strings(CALENDARS)
@@ -11,9 +12,7 @@ pub(crate) fn is_supported_calendar(value: &str) -> bool {
 const CALENDARS: &[&str] = quench_intl::CALENDARS;
 
 pub(crate) fn supported_collations() -> Vec<Value> {
-    strings(&[
-        "compat", "dict", "emoji", "eor", "phonebk", "pinyin", "stroke", "trad", "unihan", "zhuyin",
-    ])
+    strings(COLLATIONS)
 }
 
 pub(crate) fn is_supported_currency(value: &str) -> bool {

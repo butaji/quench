@@ -8,13 +8,27 @@ const DISPLAY_NAMES_LANGUAGE_DISPLAY_SLOT: &str = "\0rqj:intl-display-names-lang
 const DISPLAY_NAMES_OPTIONS: &[(&str, &str, &str)] = &[
     ("localeMatcher", "best fit", "lookup|best fit"),
     ("style", "long", "long|short|narrow"),
-    ("type", "", "language|region|script|currency|calendar|dateTimeField"),
+    (
+        "type",
+        "",
+        "language|region|script|currency|calendar|dateTimeField",
+    ),
     ("fallback", "code", "code|none"),
     ("languageDisplay", "dialect", "dialect|standard"),
 ];
 const DATE_TIME_FIELDS: &[&str] = &[
-    "era", "year", "quarter", "month", "weekOfYear", "weekday", "day", "dayPeriod",
-    "hour", "minute", "second", "timeZoneName",
+    "era",
+    "year",
+    "quarter",
+    "month",
+    "weekOfYear",
+    "weekday",
+    "day",
+    "dayPeriod",
+    "hour",
+    "minute",
+    "second",
+    "timeZoneName",
 ];
 
 impl<H: Host> Vm<H> {
@@ -29,7 +43,8 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.intl_display_names_constructors.insert(global, constructor);
+        self.intl_display_names_constructors
+            .insert(global, constructor);
         self.intl_display_names_prototypes.insert(global, prototype);
         self.set_builtin_function_name(constructor, "DisplayNames")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
@@ -146,9 +161,7 @@ impl<H: Host> Vm<H> {
         let locale = self.display_names_slot(p, this, DISPLAY_NAMES_LOCALE_SLOT)?;
         match native {
             Native::IntlDisplayNamesOf => self.display_name_of(p, this, args, &locale),
-            Native::IntlDisplayNamesResolvedOptions => {
-                self.display_names_resolved_options(p, this)
-            }
+            Native::IntlDisplayNamesResolvedOptions => self.display_names_resolved_options(p, this),
             _ => Err(JsError("invalid Intl.DisplayNames method".into())),
         }
     }
@@ -166,10 +179,11 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "invalid code".into()));
         }
         let fallback = self.display_names_slot(p, this, DISPLAY_NAMES_FALLBACK_SLOT)?;
-        Ok(display_name_value(&code, &kind, locale, &fallback)
-            .map_or(Value::UNDEFINED, |name| {
+        Ok(
+            display_name_value(&code, &kind, locale, &fallback).map_or(Value::UNDEFINED, |name| {
                 self.heap.alloc(Cell::String(name.into()))
-            }))
+            }),
+        )
     }
 
     fn display_names_resolved_options(
@@ -219,16 +233,17 @@ fn immutable_data_attributes() -> PropertyAttributes {
 fn valid_display_name_code(code: &str, kind: &str) -> bool {
     match kind {
         "language" => valid_language_code(code),
-        "region" => (code.len() == 2 && code.bytes().all(|byte| byte.is_ascii_alphabetic()))
-            || (code.len() == 3 && code.bytes().all(|byte| byte.is_ascii_digit())),
+        "region" => {
+            (code.len() == 2 && code.bytes().all(|byte| byte.is_ascii_alphabetic()))
+                || (code.len() == 3 && code.bytes().all(|byte| byte.is_ascii_digit()))
+        }
         "script" => valid_alpha_code(code, 4),
         "currency" => valid_alpha_code(code, 3),
         "calendar" => code.split('-').all(|part| {
-            (3..=8).contains(&part.len())
-                && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            (3..=8).contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
         }),
         "dateTimeField" => DATE_TIME_FIELDS.contains(&code),
-            _ => false,
+        _ => false,
     }
 }
 
@@ -318,5 +333,11 @@ fn display_name_value(code: &str, kind: &str, locale: &str, fallback: &str) -> O
     } else {
         None
     };
-    name.map(str::to_owned).or_else(|| (fallback == "code").then(|| code.to_owned()))
+    name.map(str::to_owned)
+        .or_else(|| match kind {
+            "currency" if quench_intl::CURRENCIES.contains(&code) => Some(code.to_owned()),
+            "calendar" if quench_intl::CALENDARS.contains(&code) => Some(code.to_owned()),
+            _ => None,
+        })
+        .or_else(|| (fallback == "code").then(|| code.to_owned()))
 }

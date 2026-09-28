@@ -2716,6 +2716,7 @@ version = "0.1.0"
 name = "quench-intl"
 version = "0.1.0"
 dependencies = [
+ "chrono-tz",
  "icu_calendar",
  "icu_collator",
  "icu_locale_core",
