@@ -118,8 +118,8 @@ impl DynamicBodyLexicalState {
     }
 }
 
-pub(super) fn block_early_error(program: &Program<'_>) -> Option<String> {
-    validate_nested(&program.body)
+pub(super) fn block_early_error(program: &Program<'_>, strict: bool) -> Option<String> {
+    validate_nested(&program.body, strict)
 }
 
 pub(super) fn regexp_early_error(program: &Program<'_>) -> Option<String> {
@@ -545,67 +545,74 @@ fn strict_reserved(name: &str) -> bool {
     )
 }
 
-fn validate_nested(statements: &[Statement<'_>]) -> Option<String> {
+fn validate_nested(statements: &[Statement<'_>], strict: bool) -> Option<String> {
     for statement in statements {
         match statement {
             Statement::BlockStatement(block) => {
-                if let Some(error) = validate_block(&block.body) {
+                if let Some(error) = validate_block(&block.body, strict) {
                     return Some(error);
                 }
             }
             Statement::IfStatement(statement) => {
-                if let Some(error) = validate_nested(std::slice::from_ref(&statement.consequent)) {
+                if let Some(error) =
+                    validate_nested(std::slice::from_ref(&statement.consequent), strict)
+                {
                     return Some(error);
                 }
                 if let Some(alternate) = &statement.alternate
-                    && let Some(error) = validate_nested(std::slice::from_ref(alternate))
+                    && let Some(error) = validate_nested(std::slice::from_ref(alternate), strict)
                 {
                     return Some(error);
                 }
             }
             Statement::WhileStatement(statement) => {
-                if let Some(error) = validate_loop_body(&statement.body) {
+                if let Some(error) = validate_loop_body(&statement.body, strict) {
                     return Some(error);
                 }
             }
             Statement::DoWhileStatement(statement) => {
-                if let Some(error) = validate_loop_body(&statement.body) {
+                if let Some(error) = validate_loop_body(&statement.body, strict) {
                     return Some(error);
                 }
             }
             Statement::ForStatement(statement) => {
-                if let Some(error) = validate_loop_body(&statement.body) {
+                if let Some(error) = validate_loop_body(&statement.body, strict) {
                     return Some(error);
                 }
             }
             Statement::ForInStatement(statement) => {
-                if let Some(error) = validate_loop_body(&statement.body) {
+                if let Some(error) = validate_loop_body(&statement.body, strict) {
                     return Some(error);
                 }
             }
             Statement::ForOfStatement(statement) => {
-                if let Some(error) = validate_loop_body(&statement.body) {
+                if let Some(error) = validate_loop_body(&statement.body, strict) {
                     return Some(error);
                 }
             }
             Statement::FunctionDeclaration(function) => {
-                if let Some(body) = &function.body
-                    && let Some(error) = validate_nested(&body.statements)
-                {
-                    return Some(error);
+                if let Some(body) = &function.body {
+                    let strict = strict
+                        || body
+                            .directives
+                            .iter()
+                            .any(|directive| directive.directive == "use strict");
+                    if let Some(error) = validate_nested(&body.statements, strict) {
+                        return Some(error);
+                    }
                 }
             }
             Statement::TryStatement(statement) => {
-                if let Some(error) = validate_nested(&statement.block.body) {
+                if let Some(error) = validate_nested(&statement.block.body, strict) {
                     return Some(error);
                 }
                 if let Some(handler) = &statement.handler
-                    && let Some(error) = validate_block(&handler.body.body)
+                    && let Some(error) = validate_block(&handler.body.body, strict)
                 {
                     return Some(error);
                 }
                 if let Some(finalizer) = &statement.finalizer
-                    && let Some(error) = validate_block(&finalizer.body)
+                    && let Some(error) = validate_block(&finalizer.body, strict)
                 {
                     return Some(error);
                 }
@@ -616,15 +623,16 @@ fn validate_nested(statements: &[Statement<'_>]) -> Option<String> {
     None
 }
 
-fn validate_loop_body(body: &Statement<'_>) -> Option<String> {
+fn validate_loop_body(body: &Statement<'_>, strict: bool) -> Option<String> {
     if matches!(body, Statement::FunctionDeclaration(_)) {
         return Some("SyntaxError: function declaration is not a loop body".into());
     }
-    validate_nested(std::slice::from_ref(body))
+    validate_nested(std::slice::from_ref(body), strict)
 }
 
-fn validate_block(statements: &[Statement<'_>]) -> Option<String> {
+fn validate_block(statements: &[Statement<'_>], strict: bool) -> Option<String> {
     let mut lexical = FxHashSet::default();
+    let mut functions = FxHashSet::default();
     let mut variables = FxHashSet::default();
     for statement in statements {
         match statement {
@@ -654,10 +662,12 @@ fn validate_block(statements: &[Statement<'_>]) -> Option<String> {
                 }
             }
             Statement::FunctionDeclaration(function) => {
-                if let Some(identifier) = &function.id
-                    && !lexical.insert(identifier.name.to_string())
-                {
-                    return Some("SyntaxError: duplicate lexical declaration".into());
+                if let Some(identifier) = &function.id {
+                    let name = identifier.name.to_string();
+                    if !lexical.insert(name.clone()) && (strict || !functions.contains(&name)) {
+                        return Some("SyntaxError: duplicate lexical declaration".into());
+                    }
+                    functions.insert(name);
                 }
             }
             _ => {}
@@ -667,7 +677,7 @@ fn validate_block(statements: &[Statement<'_>]) -> Option<String> {
     if lexical.iter().any(|name| variables.contains(name)) {
         return Some("SyntaxError: block lexical declaration conflicts with var".into());
     }
-    validate_nested(statements)
+    validate_nested(statements, strict)
 }
 
 pub(super) fn collect_var_names(statements: &[Statement<'_>]) -> Vec<String> {

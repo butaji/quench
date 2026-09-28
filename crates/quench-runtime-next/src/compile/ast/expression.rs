@@ -303,7 +303,11 @@ impl FunctionCompiler<'_, '_> {
             .local_slots
             .get(&atom)
             .is_some_and(|slot| usize::from(*slot) < self.parameter_local_count);
-        !parameter_binding && !self.annex_b_collisions.contains(&declaration_start)
+        let arguments_binding = self.annex_b_arguments_binding
+            && self.owner.atoms[atom as usize].as_ref() == "arguments";
+        !parameter_binding
+            && !arguments_binding
+            && !self.annex_b_collisions.contains(&declaration_start)
     }
 
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {

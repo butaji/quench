@@ -62,6 +62,7 @@ struct IteratorClosure {
 struct LexicalScope {
     bindings: FxHashMap<Atom, Atom>,
     immutable: FxHashSet<Atom>,
+    catch_parameter: bool,
     pub(super) with_depth: u16,
 }
 
@@ -112,6 +113,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
     pub(super) parameter_arguments_slot: Option<u16>,
+    annex_b_arguments_binding: bool,
     pub(super) statement_completion: StatementCompletion,
     pub(super) parameter_local_count: usize,
     pub(super) defer_instance_fields: bool,
@@ -140,6 +142,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         generator: bool,
         defer_instance_fields: bool,
         parameter_arguments_slot: Option<u16>,
+        annex_b_arguments_binding: bool,
         parameter_local_count: usize,
         with_depth: u16,
     ) -> Self {
@@ -186,6 +189,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             parameter_context: false,
             parameter_eval_arguments_error: false,
             parameter_arguments_slot,
+            annex_b_arguments_binding,
             statement_completion: StatementCompletion::Ignored,
             parameter_local_count,
             defer_instance_fields,
@@ -671,8 +675,17 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.lexical_scopes.push(LexicalScope {
             bindings,
             immutable,
+            catch_parameter: false,
             with_depth: self.with_depth,
         });
+    }
+
+    fn push_catch_lexical_bindings(&mut self, bindings: FxHashMap<Atom, Atom>) {
+        self.push_lexical_bindings(bindings);
+        self.lexical_scopes
+            .last_mut()
+            .expect("catch binding scope was just pushed")
+            .catch_parameter = true;
     }
 
     pub(super) fn initialize_lexical_scope(&mut self) {
@@ -829,7 +842,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 }
             }
         }
-        self.push_lexical_bindings(scope);
+        self.push_catch_lexical_bindings(scope);
         if requires_initialization {
             self.initialize_lexical_scope();
         }

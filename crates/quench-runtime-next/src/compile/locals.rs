@@ -7,6 +7,7 @@ impl Compiler<'_> {
         body: &[Statement<'_>],
         output: &mut Vec<Atom>,
         strict: bool,
+        implicit_arguments_binding: bool,
     ) -> FxHashSet<Atom> {
         let mut seen: FxHashSet<_> = output.iter().copied().collect();
         let mut function_scope = seen.clone();
@@ -17,6 +18,7 @@ impl Compiler<'_> {
             &mut seen,
             &mut function_scope,
             strict,
+            implicit_arguments_binding,
             false,
             &annex_b_collisions,
         );
@@ -30,6 +32,7 @@ impl Compiler<'_> {
         seen: &mut FxHashSet<Atom>,
         function_scope: &mut FxHashSet<Atom>,
         strict: bool,
+        implicit_arguments_binding: bool,
         nested: bool,
         annex_b_collisions: &FxHashSet<u32>,
     ) {
@@ -48,6 +51,12 @@ impl Compiler<'_> {
                 }
                 Statement::FunctionDeclaration(function)
                     if (!strict || !nested)
+                        && !(nested
+                            && implicit_arguments_binding
+                            && function
+                                .id
+                                .as_ref()
+                                .is_some_and(|identifier| identifier.name == "arguments"))
                         && (!nested
                             || (super::early::annex_b_function_eligible(function)
                                 && !annex_b_collisions.contains(&function.span.start))) =>
@@ -132,6 +141,7 @@ impl Compiler<'_> {
                     seen,
                     function_scope,
                     strict,
+                    implicit_arguments_binding,
                     true,
                     annex_b_collisions,
                 ),
@@ -142,6 +152,7 @@ impl Compiler<'_> {
                         seen,
                         function_scope,
                         strict,
+                        implicit_arguments_binding,
                         true,
                         annex_b_collisions,
                     );
@@ -152,6 +163,7 @@ impl Compiler<'_> {
                             seen,
                             function_scope,
                             strict,
+                            implicit_arguments_binding,
                             true,
                             annex_b_collisions,
                         );
@@ -174,6 +186,7 @@ impl Compiler<'_> {
                         seen,
                         function_scope,
                         strict,
+                        implicit_arguments_binding,
                         true,
                         annex_b_collisions,
                     )
@@ -195,6 +208,7 @@ impl Compiler<'_> {
                         seen,
                         function_scope,
                         strict,
+                        implicit_arguments_binding,
                         true,
                         annex_b_collisions,
                     )
@@ -216,6 +230,7 @@ impl Compiler<'_> {
                         seen,
                         function_scope,
                         strict,
+                        implicit_arguments_binding,
                         true,
                         annex_b_collisions,
                     )
@@ -226,6 +241,7 @@ impl Compiler<'_> {
                     seen,
                     function_scope,
                     strict,
+                    implicit_arguments_binding,
                     true,
                     annex_b_collisions,
                 ),
@@ -235,6 +251,7 @@ impl Compiler<'_> {
                     seen,
                     function_scope,
                     strict,
+                    implicit_arguments_binding,
                     true,
                     annex_b_collisions,
                 ),
@@ -254,6 +271,7 @@ impl Compiler<'_> {
                                 seen,
                                 function_scope,
                                 strict,
+                                implicit_arguments_binding,
                                 true,
                                 annex_b_collisions,
                             );
@@ -267,6 +285,7 @@ impl Compiler<'_> {
                         seen,
                         function_scope,
                         strict,
+                        implicit_arguments_binding,
                         true,
                         annex_b_collisions,
                     );
@@ -286,6 +305,7 @@ impl Compiler<'_> {
                             seen,
                             function_scope,
                             strict,
+                            implicit_arguments_binding,
                             true,
                             annex_b_collisions,
                         );

@@ -81,6 +81,16 @@ impl FunctionCompiler<'_, '_> {
     ) {
         self.clear_statement_completion();
         let scoped = self.push_iteration_scope(&item.left);
+        if let ForStatementLeft::VariableDeclaration(declaration) = &item.left
+            && declaration.kind == VariableDeclarationKind::Var
+        {
+            for item in &declaration.declarations {
+                if let Some(initializer) = &item.init {
+                    let value = self.initializer_value(initializer, &item.id);
+                    self.bind_pattern(&item.id, value);
+                }
+            }
+        }
         let object = self.expression(&item.right);
         let object_atom = self.hidden_local("\0rqj:for-in:source");
         self.store_atom(object_atom, object);

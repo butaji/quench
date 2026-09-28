@@ -628,6 +628,7 @@ pub(crate) struct EvalBinding {
     pub(crate) atom: Atom,
     pub(crate) slot: u16,
     pub(crate) immutable: bool,
+    pub(crate) catch_parameter: bool,
 }
 
 /// High bit of `Function::arguments_slot` marks a mapped (sloppy, simple
@@ -941,8 +942,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 26;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_001a_0000;
+    pub const FORMAT_VERSION: u8 = 27;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_001b_0000;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()
