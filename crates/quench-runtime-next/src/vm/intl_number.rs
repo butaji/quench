@@ -47,6 +47,9 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(intl, "NumberFormat", constructor)?;
         self.install_intl_collator_for_realm(program, intl, global, object_prototype)?;
         self.install_intl_date_time_format_for_realm(intl, global, object_prototype)?;
+        let supported_values = self.native_with_realm(Native::IntlSupportedValuesOf, global, global);
+        self.set_builtin_function_name(supported_values, "supportedValuesOf")?;
+        self.set_builtin_value_named(intl, "supportedValuesOf", supported_values)?;
         self.set_builtin_value_named(global, "Intl", intl)?;
         let _ = program;
         Ok(())
@@ -77,6 +80,31 @@ impl<H: Host> Vm<H> {
                 .map_or(Value::UNDEFINED, |digits| Value::number(digits as f64)),
         )?;
         Ok(formatter)
+    }
+
+    pub(super) fn intl_supported_values_of(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let key = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        if key != "timeZone" {
+            return Err(self.range_error(p, "invalid key".into()));
+        }
+        let mut values = chrono_tz::TZ_VARIANTS
+            .iter()
+            .map(|timezone| timezone.name().to_owned())
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values.dedup();
+        let values = values
+            .into_iter()
+            .map(|timezone| self.heap.alloc(Cell::String(timezone.into())))
+            .collect::<Vec<_>>();
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(values),
+        }))
     }
 
     fn number_format_instance_prototype(
