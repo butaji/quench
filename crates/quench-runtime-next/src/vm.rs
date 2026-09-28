@@ -115,6 +115,7 @@ mod symbol;
 mod type_predicates;
 mod typed_array;
 mod typed_array_access;
+mod typed_array_base64;
 mod typed_array_construct;
 mod typed_array_float;
 mod typed_array_install;
