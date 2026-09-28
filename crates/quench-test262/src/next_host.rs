@@ -14,12 +14,19 @@ use rqj::{
 
 use crate::Test262Host;
 
-static HOST_GLOBALS: [HostGlobal; 1] = [HostGlobal {
-    name: "$262",
-    capability: CapabilityId::CreateRealm,
-}];
-static ASYNC_GLOBALS: [HostGlobal; 2] = [
+static HOST_GLOBALS: [HostGlobal; 2] = [
+    HostGlobal {
+        name: "$262",
+        capability: CapabilityId::CreateRealm,
+    },
+    HostGlobal {
+        name: "$262",
+        capability: CapabilityId::IsHTMLDDA,
+    },
+];
+static ASYNC_GLOBALS: [HostGlobal; 3] = [
     HOST_GLOBALS[0],
+    HOST_GLOBALS[1],
     HostGlobal {
         name: "$DONE",
         capability: CapabilityId::Done,

@@ -631,6 +631,7 @@ impl Engine {
         atom_prefix: &[String],
         kind: DynamicFunctionKind,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let body = early::normalize_dynamic_function_body(body);
         let prefix = match kind {
             DynamicFunctionKind::Ordinary => "function",
             DynamicFunctionKind::Async => "async function",
@@ -656,6 +657,7 @@ impl Engine {
         atom_prefix: &[String],
         private_names: &[(String, String)],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let body = early::normalize_dynamic_function_body(body);
         let source = format!("(function anonymous({parameters}) {{{body}\n}})");
         Self::specialize_with_mode_and_private_names(
             &source,

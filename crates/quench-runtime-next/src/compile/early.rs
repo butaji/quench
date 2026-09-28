@@ -20,6 +20,105 @@ pub(super) fn normalize_hashbang(source: &str) -> Cow<'_, str> {
     Cow::Owned(normalized)
 }
 
+pub(super) fn normalize_dynamic_function_body(source: &str) -> Cow<'_, str> {
+    if dynamic_body_is_strict(source) {
+        return Cow::Borrowed(source);
+    }
+    let mut normalized = source.as_bytes().to_vec();
+    let mut lexical = DynamicBodyLexicalState::default();
+    let mut line_start = true;
+    let mut cursor = 0;
+    let mut changed = false;
+    while cursor < normalized.len() {
+        if line_start && lexical.in_code() {
+            let mut comment = cursor;
+            while matches!(normalized.get(comment), Some(b' ' | b'\t')) {
+                comment += 1;
+            }
+            if normalized.get(comment..comment.saturating_add(3)) == Some(b"-->" as &[u8]) {
+                normalized[comment..comment + 3].copy_from_slice(b"// ");
+                changed = true;
+                cursor = comment + 3;
+                line_start = false;
+                continue;
+            }
+        }
+        let byte = normalized[cursor];
+        lexical.advance(&normalized, &mut cursor);
+        line_start = matches!(byte, b'\n' | b'\r')
+            || line_start && matches!(byte, b' ' | b'\t');
+    }
+    if changed {
+        String::from_utf8(normalized).map_or(Cow::Borrowed(source), Cow::Owned)
+    } else {
+        Cow::Borrowed(source)
+    }
+}
+
+fn dynamic_body_is_strict(source: &str) -> bool {
+    let source = source.trim_start();
+    ["'use strict'", "\"use strict\""]
+        .iter()
+        .any(|directive| source.starts_with(directive))
+}
+
+#[derive(Default)]
+struct DynamicBodyLexicalState {
+    quote: Option<u8>,
+    template: bool,
+    line_comment: bool,
+    block_comment: bool,
+    escaped: bool,
+}
+
+impl DynamicBodyLexicalState {
+    fn in_code(&self) -> bool {
+        self.quote.is_none() && !self.template && !self.line_comment && !self.block_comment
+    }
+
+    fn advance(&mut self, source: &[u8], cursor: &mut usize) {
+        let byte = source[*cursor];
+        let next = source.get(*cursor + 1).copied();
+        *cursor += 1;
+        if self.line_comment {
+            self.line_comment = !matches!(byte, b'\n' | b'\r');
+        } else if self.block_comment {
+            if byte == b'*' && next == Some(b'/') {
+                self.block_comment = false;
+                *cursor += 1;
+            }
+        } else if self.escaped {
+            self.escaped = false;
+        } else if byte == b'\\' {
+            self.escaped = true;
+        } else if let Some(quote) = self.quote {
+            if byte == quote {
+                self.quote = None;
+            } else if matches!(byte, b'\n' | b'\r') {
+                self.quote = None;
+            }
+        } else if self.template {
+            if byte == b'`' {
+                self.template = false;
+            }
+        } else {
+            match (byte, next) {
+                (b'/', Some(b'/')) => {
+                    self.line_comment = true;
+                    *cursor += 1;
+                }
+                (b'/', Some(b'*')) => {
+                    self.block_comment = true;
+                    *cursor += 1;
+                }
+                (b'\'' | b'\"', _) => self.quote = Some(byte),
+                (b'`', _) => self.template = true,
+                _ => {}
+            }
+        }
+    }
+}
+
 pub(super) fn block_early_error(program: &Program<'_>) -> Option<String> {
     validate_nested(&program.body)
 }

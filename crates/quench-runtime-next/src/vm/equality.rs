@@ -14,6 +14,11 @@ impl<H: Host> Vm<H> {
         if a == b {
             return Ok(true);
         }
+        if self.is_html_dda(a) && (b.is_null() || b.is_undefined())
+            || self.is_html_dda(b) && (a.is_null() || a.is_undefined())
+        {
+            return Ok(true);
+        }
         if a.is_null() && b.is_undefined() || a.is_undefined() && b.is_null() {
             return Ok(true);
         }

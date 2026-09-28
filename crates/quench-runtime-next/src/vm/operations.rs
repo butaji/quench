@@ -127,6 +127,7 @@ impl<H: Host> Vm<H> {
             return self.data_view_native(p, native, this, args);
         }
         match native {
+            Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
             Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),
             Native::AbstractModuleSourceToStringTag => {
@@ -220,6 +221,7 @@ impl<H: Host> Vm<H> {
             | Native::DateToPrimitive
             | Native::DateToTemporalInstant => self.date_native(p, native, this, args),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
+            Native::RegExpCompile => self.regexp_compile_native(p, this, args),
             Native::RegExpExec | Native::RegExpTest => self.regexp_native(p, native, this, args),
             Native::RegExpEscape => self.regexp_escape_native(p, args),
             Native::RegExpSymbolMatch => self.regexp_symbol_match(p, this, args),
@@ -229,6 +231,8 @@ impl<H: Host> Vm<H> {
             Native::RegExpSymbolSplit => self.regexp_symbol_split(p, this, args),
             Native::RegExpToString => self.regexp_to_string_native(p, this),
             Native::RegExpSpecies => Ok(this),
+            Native::RegExpLegacyGetter => self.regexp_legacy_getter_native(p, this),
+            Native::RegExpLegacySetter => self.regexp_legacy_setter_native(p, this, args),
             Native::RegExpGlobal
             | Native::RegExpIgnoreCase
             | Native::RegExpMultiline
