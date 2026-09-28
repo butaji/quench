@@ -129,8 +129,7 @@ fn fraction_digits(style: &str, currency: Option<&str>, notation: &str, requeste
     match style {
         "percent" => 0,
         "currency" if notation != "standard" => 0,
-        "currency" if currency == Some("JPY") => 0,
-        "currency" => 2,
+        "currency" => quench_intl::currency_fraction_digits(currency.unwrap_or("USD")) as u32,
         _ => requested as u32,
     }
 }

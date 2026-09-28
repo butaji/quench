@@ -98,6 +98,16 @@ pub const UNITS: &[&str] = &[
     "year",
 ];
 
+pub fn currency_fraction_digits(currency: &str) -> usize {
+    match currency {
+        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG"
+        | "RWF" | "UGX" | "UYI" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
+        "CLF" => 4,
+        "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
+        _ => 2,
+    }
+}
+
 pub fn supported_time_zones() -> Vec<String> {
     let names = chrono_tz::TZ_VARIANTS
         .iter()
