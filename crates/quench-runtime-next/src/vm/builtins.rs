@@ -732,6 +732,7 @@ impl<H: Host> Vm<H> {
             (self.set_proto, "Set"),
             (self.weak_map_proto, "WeakMap"),
             (self.weak_set_proto, "WeakSet"),
+            (self.weak_ref_proto, "WeakRef"),
         ] {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }

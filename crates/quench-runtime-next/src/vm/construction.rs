@@ -876,7 +876,7 @@ impl<H: Host> Vm<H> {
             Native::WeakMap | Native::WeakSet => {
                 self.construct_weak_collection_native(p, native, args, new_target)
             }
-            Native::WeakRef => self.construct_weak_ref_native(args),
+            Native::WeakRef => self.construct_weak_ref_native(p, args, new_target),
             Native::FinalizationRegistry => {
                 self.construct_finalization_registry_native(p, args, new_target)
             }

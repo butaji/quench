@@ -598,6 +598,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::Set
         | Native::WeakMap
         | Native::WeakSet
+        | Native::WeakRefDeref
         | Native::MapSizeGetter
         | Native::SetSizeGetter => 0.0,
         Native::MapGet | Native::MapHas | Native::MapDelete | Native::MapForEach => 1.0,
@@ -609,6 +610,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::WeakMapSet
         | Native::WeakMapGetOrInsert
         | Native::WeakMapGetOrInsertComputed => 2.0,
+        Native::WeakRef => 1.0,
         Native::MathMax
         | Native::MathMin
         | Native::MathPow
