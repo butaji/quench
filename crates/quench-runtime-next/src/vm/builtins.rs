@@ -478,6 +478,8 @@ const NATIVES: &[Native] = &[
     Native::IntlDateTimeFormatFormat, Native::IntlDateTimeFormatFormatToParts,
     Native::IntlDateTimeFormatFormatRange, Native::IntlDateTimeFormatFormatRangeToParts,
     Native::IntlDateTimeFormatSupportedLocalesOf, Native::IntlDateTimeFormatResolvedOptions,
+    Native::IntlDisplayNames, Native::IntlDisplayNamesOf,
+    Native::IntlDisplayNamesResolvedOptions,
     Native::Symbol, Native::SymbolToString, Native::SymbolToPrimitive, Native::SymbolValueOf,
     Native::SymbolDescriptionGetter,
     Native::SymbolFor,

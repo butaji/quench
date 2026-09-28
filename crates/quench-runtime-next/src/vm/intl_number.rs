@@ -47,6 +47,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(intl, "NumberFormat", constructor)?;
         self.install_intl_collator_for_realm(program, intl, global, object_prototype)?;
         self.install_intl_date_time_format_for_realm(intl, global, object_prototype)?;
+        self.install_intl_display_names_for_realm(program, intl, global, object_prototype)?;
         let supported_values = self.native_with_realm(Native::IntlSupportedValuesOf, global, global);
         self.set_builtin_function_name(supported_values, "supportedValuesOf")?;
         self.set_builtin_value_named(intl, "supportedValuesOf", supported_values)?;
@@ -288,7 +289,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::String(formatted.into())))
     }
 
-    fn set_hidden_string(
+    pub(super) fn set_hidden_string(
         &mut self,
         object: Value,
         key: &str,
@@ -308,7 +309,7 @@ impl<H: Host> Vm<H> {
             .and_then(|atom| self.own_property(object, atom))
     }
 
-    fn hidden_string(&self, object: Value, key: &str) -> Option<String> {
+    pub(super) fn hidden_string(&self, object: Value, key: &str) -> Option<String> {
         let value = self.hidden_value(object, key)?;
         match self.heap.get(value) {
             Some(Cell::String(value)) => Some(value.to_string()),
@@ -330,4 +331,11 @@ pub(super) fn valid_locale_identifier(locale: &str) -> bool {
                 && subtag.len() <= NUMBER_FORMAT_LOCALE_SUBTAG_MAX_LENGTH
                 && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
         })
+}
+
+pub(super) fn is_supported_locale(locale: &str) -> bool {
+    locale
+        .split('-')
+        .next()
+        .is_some_and(|language| language.eq_ignore_ascii_case("en"))
 }

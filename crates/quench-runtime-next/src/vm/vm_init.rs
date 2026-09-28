@@ -62,6 +62,8 @@ impl<H: Host> Vm<H> {
             intl_datetime_format_constructors: FxHashMap::default(),
             intl_datetime_format_prototypes: FxHashMap::default(),
             intl_datetime_format_fallback_symbols: FxHashMap::default(),
+            intl_display_names_constructors: FxHashMap::default(),
+            intl_display_names_prototypes: FxHashMap::default(),
             temporal_plain_date_proto: Value::NULL,
             temporal_plain_time_proto: Value::NULL,
             temporal_plain_month_day_proto: Value::NULL,

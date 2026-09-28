@@ -1224,6 +1224,7 @@ impl<H: Host> Vm<H> {
         let locales = self.collator_locale_list(p, args.first().copied())?;
         let values = locales
             .into_iter()
+            .filter(|locale| super::intl_number::is_supported_locale(locale))
             .map(|locale| self.heap.alloc(Cell::String(locale.into())))
             .collect::<Vec<_>>();
         Ok(self.heap.alloc(Cell::Array {

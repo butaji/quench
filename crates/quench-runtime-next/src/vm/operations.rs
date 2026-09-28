@@ -187,6 +187,10 @@ impl<H: Host> Vm<H> {
             Native::IntlDateTimeFormat => {
                 self.intl_date_time_format_call(p, this, args)
             }
+            Native::IntlDisplayNames => Err(self.type_error(p, "constructor requires new".into())),
+            Native::IntlDisplayNamesOf | Native::IntlDisplayNamesResolvedOptions => {
+                self.intl_display_names_native(p, native, this, args)
+            }
             Native::IntlDateTimeFormatFormatGetter
             | Native::IntlDateTimeFormatFormat
             | Native::IntlDateTimeFormatFormatToParts

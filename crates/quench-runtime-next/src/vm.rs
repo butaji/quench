@@ -65,6 +65,7 @@ mod intl_number;
 mod intl_collator;
 mod intl_datetime;
 mod intl_datetime_parts;
+mod intl_display_names;
 mod numeric_site;
 mod object;
 mod object_array;
@@ -405,6 +406,8 @@ pub struct Vm<H> {
     intl_datetime_format_constructors: FxHashMap<Value, Value>,
     intl_datetime_format_prototypes: FxHashMap<Value, Value>,
     intl_datetime_format_fallback_symbols: FxHashMap<Value, Value>,
+    intl_display_names_constructors: FxHashMap<Value, Value>,
+    intl_display_names_prototypes: FxHashMap<Value, Value>,
     temporal_plain_date_proto: Value,
     temporal_plain_time_proto: Value,
     temporal_plain_month_day_proto: Value,
