@@ -13,6 +13,7 @@ use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::OnceCell;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -233,10 +234,24 @@ enum ShapeTransition {
         attributes: PropertyAttributes,
     },
 }
+struct ShapeLookupIndex {
+    entries: Vec<(property_key::PropertyKey, u32)>,
+    slots: FxHashMap<property_key::PropertyKey, u32>,
+    attributes: FxHashMap<u32, PropertyAttributes>,
+}
+#[cfg(feature = "profile-memory")]
+impl ShapeLookupIndex {
+    fn payload_capacity_bytes(&self) -> usize {
+        self.entries.capacity() * size_of::<(property_key::PropertyKey, u32)>()
+            + self.slots.capacity() * size_of::<(property_key::PropertyKey, u32)>()
+            + self.attributes.capacity() * size_of::<(u32, PropertyAttributes)>()
+    }
+}
 struct Shape {
     parent: Option<u32>,
     transition: ShapeTransition,
     storage_len: usize,
+    lookup_index: OnceCell<Box<ShapeLookupIndex>>,
 }
 impl Shape {
     fn root() -> Self {
@@ -248,6 +263,7 @@ impl Shape {
             parent,
             transition,
             storage_len,
+            lookup_index: OnceCell::new(),
         }
     }
 }
@@ -723,6 +739,12 @@ impl<H: Host> Vm<H> {
             property_free,
         ) = self.heap.memory_stats();
         let shape_bytes = self.shapes.capacity() * size_of::<Shape>();
+        let shape_lookup_index_payload_bytes = self
+            .shapes
+            .iter()
+            .filter_map(|shape| shape.lookup_index.get())
+            .map(|index| index.payload_capacity_bytes())
+            .sum::<usize>();
         let max_shape_width = self
             .shapes
             .iter()
@@ -751,7 +773,7 @@ impl<H: Host> Vm<H> {
             })
             .sum();
         eprintln!(
-            "{{\"kind\":\"rqj-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
+            "{{\"kind\":\"rqj-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
