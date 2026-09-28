@@ -914,13 +914,25 @@ impl<H: Host> Vm<H> {
         } else {
             let total = quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-            let quantum = duration_round_unit_nanoseconds(smallest)
-                .checked_mul(increment)
-                .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
-            let rounded = round_duration_integer(total, quantum, mode)
-                .checked_mul(quantum)
-                .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
-            let whole_days = rounded / super::temporal_date_arithmetic::NANOS_PER_DAY;
+            let (rounded, whole_days) = if smallest
+                == super::temporal_date_arithmetic::DURATION_WEEKS_FIELD
+            {
+                (
+                    total,
+                    total / super::temporal_date_arithmetic::NANOS_PER_DAY,
+                )
+            } else {
+                let quantum = duration_round_unit_nanoseconds(smallest)
+                    .checked_mul(increment)
+                    .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
+                let rounded = round_duration_integer(total, quantum, mode)
+                    .checked_mul(quantum)
+                    .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+                (
+                    rounded,
+                    rounded / super::temporal_date_arithmetic::NANOS_PER_DAY,
+                )
+            };
             let days = i64::try_from(whole_days)
                 .map_err(|_| self.range_error(p, "Invalid relativeTo".into()))?;
             let target = super::temporal_date::shift_iso_days(relative_date.into(), days)
@@ -974,7 +986,28 @@ impl<H: Host> Vm<H> {
             &[end, internal_options],
         )?;
         let mut result = self.duration_fields(p, date_difference)?;
-        if time_remainder != 0 {
+        if smallest == super::temporal_date_arithmetic::DURATION_WEEKS_FIELD {
+            let months = i128::from(result[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64)
+                * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+                + i128::from(result[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64);
+            let cursor = super::temporal_date::shift_iso_months(relative_date.into(), months)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+            let remainder_days = i128::from(super::temporal_date::days_from_iso_date(target_date))
+                - i128::from(super::temporal_date::days_from_iso_date(cursor));
+            let remainder = remainder_days
+                .checked_mul(super::temporal_date_arithmetic::NANOS_PER_DAY)
+                .and_then(|days| days.checked_add(time_remainder))
+                .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+            let quantum = duration_round_unit_nanoseconds(smallest)
+                .checked_mul(increment)
+                .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
+            let rounded_weeks = round_duration_integer(remainder, quantum, mode)
+                .checked_mul(increment)
+                .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+            result[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] =
+                rounded_weeks as f64;
+            result[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] = 0.0;
+        } else if time_remainder != 0 {
             balance_duration_time_units_into(time_remainder, &mut result);
         }
         self.validate_duration_fields(p, &result)?;
