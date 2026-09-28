@@ -401,11 +401,16 @@ impl<H: Host> Vm<H> {
                 self.string_from_units(&units)
             }
             Native::EncodeUri | Native::EncodeUriComponent => {
-                let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                Ok(self.heap.alloc(Cell::String(
-                    super::string_extra::encode_uri(&value, native == Native::EncodeUriComponent)
-                        .into(),
-                )))
+                let value = self.coerce_js_string(
+                    p,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                )?;
+                let encoded = super::string_extra::encode_uri(
+                    &value,
+                    native == Native::EncodeUriComponent,
+                )
+                .map_err(|message| self.uri_error(p, message.into()))?;
+                Ok(self.heap.alloc(Cell::String(encoded.into())))
             }
             Native::DecodeUri | Native::DecodeUriComponent => {
                 let value = self.coerce_js_string(
