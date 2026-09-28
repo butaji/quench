@@ -320,6 +320,7 @@ pub(crate) enum Native {
     StringReplaceAll, StringAt, StringCodePointAt, StringToUpperCase, StringToLowerCase, StringConcat, StringNormalize, StringValues,
     EncodeUri, EncodeUriComponent,
     DecodeUri, DecodeUriComponent,
+    GlobalEscape, GlobalUnescape,
     StringFromCharCode, StringFromCodePoint, StringRaw, StringIsWellFormed,
     StringToWellFormed, ParseInt,
     TemporalToLocaleString,

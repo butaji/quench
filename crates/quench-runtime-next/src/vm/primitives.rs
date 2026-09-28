@@ -412,6 +412,18 @@ impl<H: Host> Vm<H> {
                 .map_err(|message| self.uri_error(p, message.into()))?;
                 Ok(self.heap.alloc(Cell::String(encoded.into())))
             }
+            Native::GlobalEscape | Native::GlobalUnescape => {
+                let value = self.coerce_js_string(
+                    p,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                )?;
+                let result = if native == Native::GlobalEscape {
+                    super::string_extra::escape(&value).into()
+                } else {
+                    super::string_extra::unescape(&value)
+                };
+                Ok(self.heap.alloc(Cell::String(result)))
+            }
             Native::DecodeUri | Native::DecodeUriComponent => {
                 let value = self.coerce_js_string(
                     p,
