@@ -21,6 +21,7 @@ pub(super) fn decode_uri(
     value: &super::wtf16::JsString,
     component: bool,
 ) -> Result<super::wtf16::JsString, &'static str> {
+    const SURROGATE_CODE_POINTS: std::ops::RangeInclusive<u32> = 0xd800..=0xdfff;
     let units = value.units();
     let mut output = Vec::with_capacity(units.len());
     let reserved = b";/?:@&=+$,#";
@@ -73,7 +74,10 @@ pub(super) fn decode_uri(
             }
             code_point = (code_point << 6) | u32::from(byte & 0x3f);
         }
-        if code_point < minimum || code_point > 0x10ffff {
+        if code_point < minimum
+            || code_point > 0x10ffff
+            || SURROGATE_CODE_POINTS.contains(&code_point)
+        {
             return Err("malformed URI sequence");
         }
         if code_point <= 0xffff {
