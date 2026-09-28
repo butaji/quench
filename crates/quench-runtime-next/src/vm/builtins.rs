@@ -518,6 +518,7 @@ impl<H: Host> Vm<H> {
             let value = self.native(*native);
             self.natives.push((*native, value));
         }
+        self.install_throw_type_error_for_realm(self.realm.globals)?;
         self.install_object(program)?;
         self.install_console(program)?;
         self.install_array(program)?;
@@ -880,6 +881,42 @@ impl<H: Host> Vm<H> {
             .find(|(item, _)| *item == kind)
             .unwrap()
             .1
+    }
+    pub(super) fn throw_type_error_for_current_realm(&self) -> Value {
+        self.throw_type_error_for_realm(self.realm.globals)
+    }
+    pub(super) fn throw_type_error_for_realm(&self, global: Value) -> Value {
+        self.lookup_atom("\0rqj:throw-type-error")
+            .and_then(|atom| self.own_property(global, atom))
+            .unwrap_or_else(|| self.native_value(Native::ThrowTypeError))
+    }
+    pub(super) fn install_throw_type_error_for_realm(
+        &mut self,
+        global: Value,
+    ) -> Result<Value, JsError> {
+        const INTRINSIC_KEY: &str = "\0rqj:throw-type-error";
+        let thrower = self.native_with_realm(Native::ThrowTypeError, global, global);
+        self.set_builtin_function_name(thrower, "")?;
+        for name in ["length", "name"] {
+            let atom = self.intern_atom(name);
+            self.set_property_attributes(
+                thrower,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        self.object_data_mut(thrower)
+            .expect("ThrowTypeError is a function object")
+            .set_extensible(false);
+        self.set_builtin_value_named(global, INTRINSIC_KEY, thrower)?;
+        Ok(thrower)
     }
     pub(super) fn object(&mut self) -> Value {
         self.heap

@@ -877,6 +877,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn create_realm(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         let global = self.object();
         self.set_builtin_value_named(global, "globalThis", global)?;
+        self.install_throw_type_error_for_realm(global)?;
         for (name, value) in [
             ("undefined", Value::UNDEFINED),
             ("NaN", Value::number(f64::NAN)),
@@ -1494,7 +1495,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        let throw_type_error = self.native_value(Native::ThrowTypeError);
+        let throw_type_error = self.throw_type_error_for_realm(global);
         for key in ["caller", "arguments"] {
             let atom = self.intern_atom(key);
             self.set_property(prototype, atom, Value::UNDEFINED)?;

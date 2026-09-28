@@ -58,7 +58,7 @@ impl<H: Host> Vm<H> {
             "toString",
             Native::FunctionToString,
         )?;
-        let throw_type_error = self.native_value(Native::ThrowTypeError);
+        let throw_type_error = self.throw_type_error_for_current_realm();
         for name in ["caller", "arguments"] {
             let atom = self.intern_atom(name);
             self.set_named(program, self.function_proto, name, Value::UNDEFINED)?;

@@ -235,7 +235,10 @@ fn native_length(kind: Native) -> Option<f64> {
         return Some(length);
     }
     Some(match kind {
-        Native::FunctionPrototype | Native::FunctionToString | Native::FunctionCaller => 0.0,
+        Native::FunctionPrototype
+        | Native::FunctionToString
+        | Native::FunctionCaller
+        | Native::ThrowTypeError => 0.0,
         Native::FunctionPrototypeHasInstance => 1.0,
         Native::FunctionCall | Native::FunctionBind => 1.0,
         Native::FunctionApply => 2.0,

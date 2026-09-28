@@ -447,7 +447,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         } else {
-            let thrower = self.native_value(Native::ThrowTypeError);
+            let thrower = self.throw_type_error_for_current_realm();
             self.set_property_attributes(
                 arguments,
                 property_key::PropertyKey::string(callee),
