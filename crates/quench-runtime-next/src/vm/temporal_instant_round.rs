@@ -19,7 +19,7 @@ const UNITS: [(&str, i128); 7] = [
     ("microsecond", NANOSECONDS_PER_MICROSECOND),
     ("nanosecond", 1),
 ];
-const MODES: [&str; 9] = [
+pub(super) const MODES: [&str; 9] = [
     "ceil",
     "floor",
     "expand",
@@ -156,8 +156,7 @@ pub(super) fn validate_increment<H: Host>(
         _ => return Err(vm.range_error(p, "Invalid rounding unit".into())),
     };
     let increment = increment.trunc();
-    let at_or_above_exclusive_limit =
-        scale != NANOSECONDS_PER_DAY && increment >= limit;
+    let at_or_above_exclusive_limit = scale != NANOSECONDS_PER_DAY && increment >= limit;
     if !increment.is_finite()
         || increment < 1.0
         || increment > limit
