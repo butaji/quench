@@ -296,7 +296,6 @@ impl<H: Host> Vm<H> {
             .object_data(this)
             .map(|object| (object.shape(), object.proto))
             .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
-        let guard = self.method_cache_guard(this, metadata.atom);
         let mut cached = self
             .specialized
             .then(|| {
@@ -304,8 +303,8 @@ impl<H: Host> Vm<H> {
                     .iter()
                     .find(|entry| {
                         entry.shape == shape
+                            && entry.atom == metadata.atom
                             && (entry.proto == proto || entry.proto == this)
-                            && guard == Some(entry.guard)
                     })
                     .and_then(|entry| entry.target)
             })
@@ -316,8 +315,8 @@ impl<H: Host> Vm<H> {
             .then(|| {
                 self.method_caches[site].iter().position(|entry| {
                     entry.shape == shape
+                        && entry.atom == metadata.atom
                         && (entry.proto == proto || entry.proto == this)
-                        && guard == Some(entry.guard)
                 })
             })
             .flatten();
@@ -329,8 +328,8 @@ impl<H: Host> Vm<H> {
                 .and_then(|set| {
                     set.entries[..usize::from(set.len)].iter().find(|entry| {
                         entry.shape == shape
+                            && entry.atom == metadata.atom
                             && (entry.proto == proto || entry.proto == this)
-                            && guard == Some(entry.guard)
                     })
                 })
                 .and_then(|entry| entry.target);
@@ -339,6 +338,10 @@ impl<H: Host> Vm<H> {
                 cache_tier = Some(2);
             }
         }
+        let guard = cached
+            .is_none()
+            .then(|| self.method_cache_guard(this, metadata.atom))
+            .flatten();
         self.profile.method_cache(cached.is_some());
         #[cfg(feature = "profile-aggregate")]
         self.profile.method_cache_tier(cache_tier);

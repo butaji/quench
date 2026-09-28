@@ -179,6 +179,7 @@ impl<H: Host> Vm<H> {
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
+            self.invalidate_method_caches_for_key(key);
             return;
         }
         self.descriptors.insert((object, key), attributes);
@@ -199,6 +200,7 @@ impl<H: Host> Vm<H> {
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
+            self.invalidate_method_caches_for_key(key);
             return;
         }
         if self.descriptors.remove(&(object, key)).is_some() {
@@ -832,7 +834,7 @@ impl<H: Host> Vm<H> {
             self.heap.property_push(object, value);
             self.object_data_mut(object).unwrap().set_shape(next_shape);
         }
-        if invalidates_method {
+        if invalidates_method || slot.is_none() {
             self.invalidate_method_caches_for_key(key);
         }
         Ok(())
@@ -1231,5 +1233,6 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(object)
             .expect("object survived property deletion")
             .set_shape(next_id);
+        self.invalidate_method_caches_for_key(key);
     }
 }
