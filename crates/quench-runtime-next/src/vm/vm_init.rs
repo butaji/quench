@@ -56,6 +56,7 @@ impl<H: Host> Vm<H> {
             async_from_sync_iterator_proto: Value::NULL,
             regexp_proto: Value::NULL,
             regexp_prototypes: FxHashMap::default(),
+            intl_number_format_constructors: FxHashMap::default(),
             temporal_plain_date_proto: Value::NULL,
             temporal_plain_time_proto: Value::NULL,
             temporal_plain_month_day_proto: Value::NULL,

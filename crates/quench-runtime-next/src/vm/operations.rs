@@ -168,6 +168,14 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             }
             Native::Date => self.date_call(),
+            Native::IntlNumberFormat => self.intl_number_format_construct(
+                p,
+                args,
+                self.native_value(Native::IntlNumberFormat),
+            ),
+            Native::IntlNumberFormatFormat => {
+                self.intl_number_format_format(p, this, args)
+            }
             Native::DateNow => Ok(Value::number(
                 HostContext::new(&mut self.host)
                     .invoke(CapabilityId::ClockMillis, None)

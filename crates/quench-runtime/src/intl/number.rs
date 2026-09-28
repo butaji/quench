@@ -67,30 +67,6 @@ pub(crate) struct RawOptions {
     trailing_zero_display: String,
 }
 
-const OPTION_KEYS: &[&str] = &[
-    "localeMatcher",
-    "numberingSystem",
-    "style",
-    "currency",
-    "currencyDisplay",
-    "currencySign",
-    "unit",
-    "unitDisplay",
-    "notation",
-    "minimumIntegerDigits",
-    "minimumFractionDigits",
-    "maximumFractionDigits",
-    "minimumSignificantDigits",
-    "maximumSignificantDigits",
-    "roundingIncrement",
-    "roundingMode",
-    "roundingPriority",
-    "trailingZeroDisplay",
-    "compactDisplay",
-    "useGrouping",
-    "signDisplay",
-];
-
 fn option_text(key: &str, value: &Value) -> Result<String, VmError> {
     if matches!(
         key,
@@ -179,7 +155,7 @@ impl RawOptions {
             trailing_zero_display: "auto".to_string(),
         };
         if let Some(options) = options.filter(|value| crate::value::is_object(value)) {
-            for key in OPTION_KEYS {
+            for key in quench_intl::NUMBER_FORMAT_OPTION_KEYS {
                 let value = crate::execute::get_property_result(options, key)?;
                 if !matches!(value, Value::Undefined) {
                     if *key == "useGrouping" {

@@ -303,7 +303,8 @@ pub(crate) enum Native {
     RegExpFlags,
     String, Boolean, BooleanToString, BooleanValueOf,
     Symbol, SymbolToString, SymbolToPrimitive, SymbolValueOf, SymbolDescriptionGetter,
-    BigInt, BigIntValueOf, BigIntToString, BigIntAsIntN, BigIntAsUintN,
+    BigInt, BigIntValueOf, BigIntToString, BigIntToLocaleString, BigIntAsIntN, BigIntAsUintN,
+    IntlNumberFormat, IntlNumberFormatFormat,
     SymbolFor,
     SymbolKeyFor,
     StringCharCodeAt, StringSlice,
@@ -667,7 +668,11 @@ impl Native {
     pub(crate) fn is_bigint_native(self) -> bool {
         matches!(
             self,
-            Self::BigIntValueOf | Self::BigIntToString | Self::BigIntAsIntN | Self::BigIntAsUintN
+            Self::BigIntValueOf
+                | Self::BigIntToString
+                | Self::BigIntToLocaleString
+                | Self::BigIntAsIntN
+                | Self::BigIntAsUintN
         )
     }
     pub(crate) fn is_data_view_native(self) -> bool {

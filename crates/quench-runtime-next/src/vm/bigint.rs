@@ -36,6 +36,12 @@ impl<H: Host> Vm<H> {
         self.set_realm_bigint_method(global, constructor, "asIntN", Native::BigIntAsIntN)?;
         self.set_realm_bigint_method(global, constructor, "asUintN", Native::BigIntAsUintN)?;
         self.set_realm_bigint_method(global, prototype, "toString", Native::BigIntToString)?;
+        self.set_realm_bigint_method(
+            global,
+            prototype,
+            "toLocaleString",
+            Native::BigIntToLocaleString,
+        )?;
         self.set_realm_bigint_method(global, prototype, "valueOf", Native::BigIntValueOf)?;
         if self.well_known_symbols.contains_key("toStringTag") {
             self.install_builtin_to_string_tag(prototype, "BigInt")?;
@@ -83,6 +89,7 @@ impl<H: Host> Vm<H> {
         match native {
             Native::BigIntValueOf => self.bigint_value_of(p, this),
             Native::BigIntToString => self.bigint_to_string(p, this, args),
+            Native::BigIntToLocaleString => self.bigint_to_locale_string(p, this, args),
             Native::BigIntAsIntN => self.bigint_as_n(p, args, true),
             Native::BigIntAsUintN => self.bigint_as_n(p, args, false),
             _ => Err(JsError("invalid BigInt method".into())),
@@ -105,6 +112,26 @@ impl<H: Host> Vm<H> {
                 "BigInt.prototype.valueOf called on incompatible receiver".into(),
             ))
         }
+    }
+
+    fn bigint_to_locale_string(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let bigint = self.bigint_value_of(p, this)?;
+        let locales = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let constructor = self
+            .intl_number_format_constructors
+            .get(&self.realm.globals)
+            .copied()
+            .ok_or_else(|| JsError("Intl.NumberFormat intrinsic is not installed".into()))?;
+        let formatter = self.construct_value(p, constructor, &[locales, options])?;
+        let format_atom = self.intern_atom("format");
+        let format = self.get_property(p, formatter, format_atom)?;
+        self.call_value(p, format, formatter, &[bigint])
     }
 
     fn bigint_to_string(

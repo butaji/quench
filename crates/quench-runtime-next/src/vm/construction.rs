@@ -171,6 +171,7 @@ impl<H: Host> Vm<H> {
                         | Native::String
                         | Native::Boolean
                         | Native::Number
+                        | Native::IntlNumberFormat
                         | Native::Promise
                         | Native::Symbol
                         | Native::TemporalDuration
@@ -886,6 +887,9 @@ impl<H: Host> Vm<H> {
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args),
             Native::Date => self.date_construct_native(p, args),
+            Native::IntlNumberFormat => {
+                self.intl_number_format_construct(p, args, new_target)
+            }
             Native::TemporalDuration => self.temporal_duration_construct(p, args),
             Native::TemporalPlainTime => self.temporal_plain_time_construct(p, args),
             Native::TemporalPlainDate => {
