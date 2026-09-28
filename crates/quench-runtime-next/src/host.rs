@@ -9,6 +9,7 @@ pub enum CapabilityId {
     ClockMillis = 2,
     Done = 3,
     CreateRealm = 4,
+    IsHTMLDDA = 5,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +79,7 @@ impl<'a, H: Host> HostContext<'a, H> {
                 0.0
             }
             CapabilityId::CreateRealm => 0.0,
+            CapabilityId::IsHTMLDDA => 0.0,
         }
     }
 }
