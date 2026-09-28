@@ -1,6 +1,12 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+pub(super) enum TypedArrayIndexKey {
+    NotCanonical,
+    Invalid,
+    Index(usize),
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct PropertyDescriptorRecord {
     pub(super) value: Option<Value>,
@@ -153,9 +159,30 @@ impl<H: Host> Vm<H> {
         Ok(descriptor)
     }
 
-    pub(super) fn canonical_typed_array_index(key: &str) -> Option<usize> {
-        let index = key.parse::<usize>().ok()?;
-        (index.to_string() == key).then_some(index)
+    pub(super) fn typed_array_index_key(key: &str) -> TypedArrayIndexKey {
+        if key == "-0" {
+            return TypedArrayIndexKey::Invalid;
+        }
+        let number = match key {
+            "NaN" => f64::NAN,
+            "Infinity" => f64::INFINITY,
+            "-Infinity" => f64::NEG_INFINITY,
+            _ => match key.parse::<f64>() {
+                Ok(number) => number,
+                Err(_) => return TypedArrayIndexKey::NotCanonical,
+            },
+        };
+        if super::number::number_to_decimal(number) != key {
+            return TypedArrayIndexKey::NotCanonical;
+        }
+        if !number.is_finite()
+            || number < 0.0
+            || number.fract() != 0.0
+            || number > MAX_SAFE_INTEGER
+        {
+            return TypedArrayIndexKey::Invalid;
+        }
+        TypedArrayIndexKey::Index(number as usize)
     }
 
     pub(super) fn define_typed_array_property(
@@ -333,16 +360,23 @@ impl<H: Host> Vm<H> {
             }
             return Ok(descriptor);
         }
-        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. }))
-            && let Some(index) = Self::canonical_typed_array_index(key.host_string())
-            && self
-                .typed_array_length(target)
-                .is_some_and(|length| index < length)
-        {
-            let value = self
-                .typed_array_get(target, index)
-                .unwrap_or(Value::UNDEFINED);
-            return self.own_data_descriptor(value, true, true, true);
+        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
+            match Self::typed_array_index_key(key.host_string()) {
+                TypedArrayIndexKey::Index(index)
+                    if self
+                        .typed_array_length(target)
+                        .is_some_and(|length| index < length) =>
+                {
+                    let value = self
+                        .typed_array_get(target, index)
+                        .unwrap_or(Value::UNDEFINED);
+                    return self.own_data_descriptor(value, true, true, true);
+                }
+                TypedArrayIndexKey::Invalid | TypedArrayIndexKey::Index(_) => {
+                    return Ok(Value::UNDEFINED);
+                }
+                TypedArrayIndexKey::NotCanonical => {}
+            }
         }
         if let Some(index) =
             super::object_static::array_index(key.host_string()).map(|index| index as usize)

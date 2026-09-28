@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) const TYPED_ARRAY_INSTALLS: &[(TypedArrayKind, Native, &str)] = &[
+    (TypedArrayKind::Uint8, Native::Uint8Array, "Uint8Array"),
     (
         TypedArrayKind::Uint8Clamped,
         Native::Uint8ClampedArray,
@@ -64,6 +65,52 @@ pub(super) const TYPED_ARRAY_CALLBACK_METHODS: &[(&str, Native, Native)] = &[
 ];
 
 impl<H: Host> Vm<H> {
+    pub(super) fn install_typed_array_constructors_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+    ) -> Result<(), JsError> {
+        let typed_array = self.native_with_realm(Native::TypedArray, Value::NULL, global);
+        self.set_builtin_function_name(typed_array, "TypedArray")?;
+        let typed_array_proto = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(self.typed_array_proto)));
+        self.set_builtin_value_named(typed_array, "prototype", typed_array_proto)?;
+        self.set_builtin_value_named(typed_array_proto, "constructor", typed_array)?;
+        self.set_builtin_value_named(global, "TypedArray", typed_array)?;
+
+        for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
+            let constructor = self.native_with_realm(native, Value::NULL, global);
+            self.object_data_mut(constructor)
+                .expect("typed array constructor")
+                .proto = typed_array;
+            self.set_builtin_function_name(constructor, name)?;
+            let prototype = self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(typed_array_proto)));
+            self.set_builtin_value_named(constructor, "prototype", prototype)?;
+            let prototype_atom = self.intern_atom("prototype");
+            self.set_property_attributes(
+                constructor,
+                PropertyKey::string(prototype_atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            let width = Value::number(kind.width() as f64);
+            self.set_named_constant(program, constructor, "BYTES_PER_ELEMENT", width)?;
+            self.set_named_constant(program, prototype, "BYTES_PER_ELEMENT", width)?;
+            self.set_builtin_value_named(global, name, constructor)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn install_typed_array_kind(
         &mut self,
         program: &ResidualProgram,
@@ -93,9 +140,21 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Uint8 => unreachable!(),
         }
         self.set_named(program, constructor, "prototype", proto)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_value_named(proto, "constructor", constructor)?;
-        let name_value = self.heap.alloc(Cell::String(name.into()));
-        self.set_named(program, constructor, "name", name_value)?;
+        self.set_builtin_function_name(constructor, name)?;
         let width = Value::number(kind.width() as f64);
         self.set_named_constant(program, constructor, "BYTES_PER_ELEMENT", width)?;
         self.set_named_constant(program, proto, "BYTES_PER_ELEMENT", width)?;

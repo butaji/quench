@@ -636,6 +636,17 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::TypedArrayFrom => 1.0,
+        Native::Uint8Array
+        | Native::Uint8ClampedArray
+        | Native::Uint16Array
+        | Native::Uint32Array
+        | Native::Int8Array
+        | Native::Int16Array
+        | Native::Int32Array
+        | Native::BigInt64Array
+        | Native::BigUint64Array
+        | Native::Float32Array
+        | Native::Float64Array => 3.0,
         Native::ArrayBuffer
         | Native::SharedArrayBuffer
         | Native::ArrayBufferIsView

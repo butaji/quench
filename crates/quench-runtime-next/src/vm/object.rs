@@ -491,12 +491,34 @@ impl<H: Host> Vm<H> {
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
         }
-        if target == receiver
-            && matches!(self.heap.get(target), Some(Cell::TypedArray { .. }))
-            && let Some(index) = Self::canonical_typed_array_index(self.atom_name(atom))
-        {
-            return self.typed_array_set(p, target, index, value);
-        }
+        let typed_array_index = if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
+            match Self::typed_array_index_key(self.atom_name(atom)) {
+                super::object_descriptors::TypedArrayIndexKey::Index(index) => {
+                    if target == receiver {
+                        return self.typed_array_set(p, target, index, value);
+                    }
+                    if self
+                        .typed_array_length(target)
+                        .is_some_and(|length| index < length)
+                    {
+                        Some(index)
+                    } else {
+                        return Ok(true);
+                    }
+                }
+                super::object_descriptors::TypedArrayIndexKey::Invalid => {
+                    if target == receiver
+                        && let Some(kind) = self.typed_array_kind(target)
+                    {
+                        self.typed_array_convert_value(p, kind, value)?;
+                    }
+                    return Ok(true);
+                }
+                super::object_descriptors::TypedArrayIndexKey::NotCanonical => None,
+            }
+        } else {
+            None
+        };
         if let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(target).cloned()
@@ -506,8 +528,38 @@ impl<H: Host> Vm<H> {
         self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
 
         let mut current = target;
-        let mut found = None;
-        loop {
+        let mut found = typed_array_index.map(|_| (target, DEFAULT_PROPERTY_ATTRIBUTES));
+        while found.is_none() {
+            if matches!(self.heap.get(current), Some(Cell::TypedArray { .. })) {
+                match Self::typed_array_index_key(self.atom_name(atom)) {
+                    super::object_descriptors::TypedArrayIndexKey::Index(index)
+                        if current == receiver =>
+                    {
+                        return self.typed_array_set(p, current, index, value);
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::Invalid
+                        if current == receiver =>
+                    {
+                        if let Some(kind) = self.typed_array_kind(current) {
+                            self.typed_array_convert_value(p, kind, value)?;
+                        }
+                        return Ok(true);
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::Index(index)
+                        if self
+                            .typed_array_length(current)
+                            .is_some_and(|length| index < length) =>
+                    {
+                        found = Some((current, DEFAULT_PROPERTY_ATTRIBUTES));
+                        break;
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::Index(_)
+                    | super::object_descriptors::TypedArrayIndexKey::Invalid => {
+                        return Ok(true);
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+                }
+            }
             if let Some(Cell::Proxy {
                 target, handler, ..
             }) = self.heap.get(current).cloned()
@@ -560,6 +612,21 @@ impl<H: Host> Vm<H> {
 
         if !self.is_object_like(receiver) {
             return Ok(false);
+        }
+        if matches!(self.heap.get(receiver), Some(Cell::TypedArray { .. }))
+        {
+            match Self::typed_array_index_key(self.atom_name(atom)) {
+                super::object_descriptors::TypedArrayIndexKey::Index(index)
+                    if self
+                        .typed_array_length(receiver)
+                        .is_some_and(|length| index < length) =>
+                {
+                    return self.typed_array_set(p, receiver, index, value);
+                }
+                super::object_descriptors::TypedArrayIndexKey::Index(_)
+                | super::object_descriptors::TypedArrayIndexKey::Invalid => return Ok(false),
+                super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+            }
         }
         let receiver_descriptor = if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
             let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
@@ -983,12 +1050,40 @@ impl<H: Host> Vm<H> {
         false
     }
 
+    pub(super) fn prototype_chain_contains_typed_array_index(
+        &self,
+        object: Value,
+        atom: Atom,
+    ) -> bool {
+        let mut current = self.object_data(object).map(|data| data.proto);
+        while let Some(value) = current.filter(|value| !value.is_null()) {
+            if matches!(self.heap.get(value), Some(Cell::TypedArray { .. }))
+                && !matches!(
+                    Self::typed_array_index_key(self.atom_name(atom)),
+                    super::object_descriptors::TypedArrayIndexKey::NotCanonical
+                )
+            {
+                return true;
+            }
+            current = self.object_data(value).map(|data| data.proto);
+        }
+        false
+    }
+
     pub(super) fn property_accessor(
         &self,
         mut object: Value,
         atom: Atom,
     ) -> Option<PropertyAttributes> {
         loop {
+            if matches!(self.heap.get(object), Some(Cell::TypedArray { .. }))
+                && !matches!(
+                    Self::typed_array_index_key(self.atom_name(atom)),
+                    super::object_descriptors::TypedArrayIndexKey::NotCanonical
+                )
+            {
+                return None;
+            }
             if let Some(attributes) = self.property_attributes(object, PropertyKey::string(atom)) {
                 return attributes.accessor.then_some(attributes);
             }

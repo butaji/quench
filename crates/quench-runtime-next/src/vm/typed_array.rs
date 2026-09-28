@@ -53,9 +53,21 @@ impl<H: Host> Vm<H> {
             .expect("Uint8Array constructor")
             .proto = typed_array;
         self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            uint8_array,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         self.set_builtin_value_named(self.uint8_array_proto, "constructor", uint8_array)?;
-        let name = self.heap.alloc(Cell::String("Uint8Array".into()));
-        self.set_named(program, uint8_array, "name", name)?;
+        self.set_builtin_function_name(uint8_array, "Uint8Array")?;
         self.set_named_constant(
             program,
             uint8_array,
@@ -138,7 +150,9 @@ impl<H: Host> Vm<H> {
         }
         self.global(program, "Uint8Array", uint8_array)?;
         for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
-            self.install_typed_array_kind(program, kind, native, name)?;
+            if kind != TypedArrayKind::Uint8 {
+                self.install_typed_array_kind(program, kind, native, name)?;
+            }
         }
         Ok(())
     }

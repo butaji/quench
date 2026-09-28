@@ -120,6 +120,24 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(Value::FALSE);
             }
+            if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
+                match Self::typed_array_index_key(key.host_string()) {
+                    super::object_descriptors::TypedArrayIndexKey::Index(index) => {
+                        return Ok(if self
+                            .typed_array_length(target)
+                            .is_some_and(|length| index < length)
+                        {
+                            Value::FALSE
+                        } else {
+                            Value::TRUE
+                        });
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::Invalid => {
+                        return Ok(Value::TRUE);
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+                }
+            }
             if let Some(index) =
                 super::object_static::array_index(key.host_string()).map(|index| index as usize)
                 && matches!(self.heap.get(target), Some(Cell::Array { .. }))
