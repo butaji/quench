@@ -10,7 +10,16 @@ impl Compiler<'_> {
     ) -> FxHashSet<Atom> {
         let mut seen: FxHashSet<_> = output.iter().copied().collect();
         let mut function_scope = seen.clone();
-        self.collect_locals_into(body, output, &mut seen, &mut function_scope, strict, false);
+        let annex_b_collisions = super::early::annex_b_lexical_collisions(body);
+        self.collect_locals_into(
+            body,
+            output,
+            &mut seen,
+            &mut function_scope,
+            strict,
+            false,
+            &annex_b_collisions,
+        );
         function_scope
     }
 
@@ -22,6 +31,7 @@ impl Compiler<'_> {
         function_scope: &mut FxHashSet<Atom>,
         strict: bool,
         nested: bool,
+        annex_b_collisions: &FxHashSet<String>,
     ) {
         for statement in body {
             match statement {
@@ -36,7 +46,12 @@ impl Compiler<'_> {
                         );
                     }
                 }
-                Statement::FunctionDeclaration(function) if !strict || !nested => self
+                Statement::FunctionDeclaration(function)
+                    if (!strict || !nested)
+                        && (!nested
+                            || function.id.as_ref().is_none_or(|identifier| {
+                                !annex_b_collisions.contains(identifier.name.as_str())
+                            })) => self
                     .collect_name(
                         function.id.as_ref().map(|name| name.name.as_str()),
                         output,
@@ -117,6 +132,7 @@ impl Compiler<'_> {
                     function_scope,
                     strict,
                     true,
+                    annex_b_collisions,
                 ),
                 Statement::IfStatement(item) => {
                     self.collect_locals_into(
@@ -126,6 +142,7 @@ impl Compiler<'_> {
                         function_scope,
                         strict,
                         true,
+                        annex_b_collisions,
                     );
                     if let Some(other) = &item.alternate {
                         self.collect_locals_into(
@@ -135,6 +152,7 @@ impl Compiler<'_> {
                             function_scope,
                             strict,
                             true,
+                            annex_b_collisions,
                         );
                     }
                 }
@@ -155,6 +173,7 @@ impl Compiler<'_> {
                         function_scope,
                         strict,
                         true,
+                        annex_b_collisions,
                     )
                 }
                 Statement::ForInStatement(item) => {
@@ -174,6 +193,7 @@ impl Compiler<'_> {
                         function_scope,
                         strict,
                         true,
+                        annex_b_collisions,
                     )
                 }
                 Statement::ForOfStatement(item) => {
@@ -193,6 +213,7 @@ impl Compiler<'_> {
                         function_scope,
                         strict,
                         true,
+                        annex_b_collisions,
                     )
                 }
                 Statement::WhileStatement(item) => self.collect_locals_into(
@@ -202,6 +223,7 @@ impl Compiler<'_> {
                     function_scope,
                     strict,
                     true,
+                    annex_b_collisions,
                 ),
                 Statement::DoWhileStatement(item) => self.collect_locals_into(
                     std::slice::from_ref(&item.body),
@@ -210,13 +232,16 @@ impl Compiler<'_> {
                     function_scope,
                     strict,
                     true,
+                    annex_b_collisions,
                 ),
                 Statement::SwitchStatement(item) => {
                     for case in &item.cases {
                         for statement in &case.consequent {
-                            if matches!(statement, Statement::FunctionDeclaration(_))
-                                || matches!(statement, Statement::VariableDeclaration(declaration)
-                                    if super::is_lexical_binding_declaration(declaration.kind))
+                            if matches!(statement, Statement::VariableDeclaration(declaration)
+                                if super::is_lexical_binding_declaration(declaration.kind))
+                                || matches!(statement, Statement::FunctionDeclaration(function)
+                                    if strict || function.id.as_ref().is_some_and(|identifier|
+                                        annex_b_collisions.contains(identifier.name.as_str())))
                             {
                                 continue;
                             }
@@ -227,6 +252,7 @@ impl Compiler<'_> {
                                 function_scope,
                                 strict,
                                 true,
+                                annex_b_collisions,
                             );
                         }
                     }
@@ -239,6 +265,7 @@ impl Compiler<'_> {
                         function_scope,
                         strict,
                         true,
+                        annex_b_collisions,
                     );
                     if let Some(handler) = &item.handler {
                         if let Some(parameter) = &handler.param {
@@ -257,6 +284,7 @@ impl Compiler<'_> {
                             function_scope,
                             strict,
                             true,
+                            annex_b_collisions,
                         );
                     }
                 }
