@@ -193,10 +193,8 @@ impl<H: Host> Vm<H> {
             if values.iter().any(|value| value.is_undefined()) {
                 return Err(self.type_error(p, "Invalid PlainTime".into()));
             }
-            let left =
-                super::temporal_plain_date_time_conversion::to_time(self, p, values[0])?;
-            let right =
-                super::temporal_plain_date_time_conversion::to_time(self, p, values[1])?;
+            let left = super::temporal_plain_date_time_conversion::to_time(self, p, values[0])?;
+            let right = super::temporal_plain_date_time_conversion::to_time(self, p, values[1])?;
             let ordering = left.cmp(&right);
             return Ok(Value::number(match ordering {
                 std::cmp::Ordering::Less => -1.0,
@@ -224,11 +222,12 @@ impl<H: Host> Vm<H> {
                 .expect("PlainTime getter is a time field");
             return Ok(Value::number(f64::from(time[index])));
         }
-        if matches!(native, Native::TemporalPlainTimeAdd | Native::TemporalPlainTimeSubtract) {
-            let duration = self.duration_record(
-                p,
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-            )?;
+        if matches!(
+            native,
+            Native::TemporalPlainTimeAdd | Native::TemporalPlainTimeSubtract
+        ) {
+            let duration =
+                self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
             self.validate_duration_fields(p, &duration)?;
             let direction = if native == Native::TemporalPlainTimeSubtract {
                 -1_i128
@@ -239,10 +238,10 @@ impl<H: Host> Vm<H> {
                 duration[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] as i128
                     * super::temporal_date_arithmetic::NANOS_PER_DAY
                     + duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..]
-                    .iter()
-                    .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
-                    .map(|(value, scale)| *value as i128 * scale)
-                    .sum::<i128>();
+                        .iter()
+                        .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
+                        .map(|(value, scale)| *value as i128 * scale)
+                        .sum::<i128>();
             let time = super::temporal_plain_date_time_conversion::to_time(self, p, this)?;
             let time_nanoseconds = time
                 .iter()
@@ -269,12 +268,22 @@ impl<H: Host> Vm<H> {
             }
             let time = super::temporal_plain_date_time_conversion::to_time(self, p, this)?;
             let other = super::temporal_plain_date_time_conversion::to_time(self, p, value)?;
-            return Ok(if time == other { Value::TRUE } else { Value::FALSE });
+            return Ok(if time == other {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            });
         }
-        if matches!(native, Native::TemporalPlainTimeUntil | Native::TemporalPlainTimeSince) {
+        if matches!(
+            native,
+            Native::TemporalPlainTimeUntil | Native::TemporalPlainTimeSince
+        ) {
             return self.temporal_plain_time_difference(p, native, this, args);
         }
-        if matches!(native, Native::TemporalPlainTimeToString | Native::TemporalPlainTimeToJSON) {
+        if matches!(
+            native,
+            Native::TemporalPlainTimeToString | Native::TemporalPlainTimeToJSON
+        ) {
             let options = if native == Native::TemporalPlainTimeToJSON {
                 Value::UNDEFINED
             } else {
@@ -313,10 +322,10 @@ impl<H: Host> Vm<H> {
                 .map(|(value, scale)| i128::from(*value) * scale)
                 .sum::<i128>();
             let quantum = scale * increment;
-            let rounded = (super::temporal_zoned_date_time::round_temporal_nanoseconds(
-                total, quantum, mode,
-            ) * quantum)
-                .rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
+            let rounded =
+                (super::temporal_zoned_date_time::round_temporal_nanoseconds(total, quantum, mode)
+                    * quantum)
+                    .rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
             let mut time = [0_i32; 6];
             let mut remainder = rounded;
             for (index, scale) in super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
@@ -594,12 +603,9 @@ impl<H: Host> Vm<H> {
         ) * quantum)
             .rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
         let hour = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[0];
-        let minute = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[1]
-            % 60;
-        let second = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[2]
-            % 60;
-        let fractional = rounded
-            % super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[2];
+        let minute = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[1] % 60;
+        let second = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[2] % 60;
+        let fractional = rounded % super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[2];
         let time = if omit_seconds {
             format!(
                 "{hour:0width$}:{minute:0width$}",
@@ -637,7 +643,9 @@ impl<H: Host> Vm<H> {
                 format!(".{trimmed}")
             }
         };
-        Ok(self.heap.alloc(Cell::String(format!("{time}{fraction}").into())))
+        Ok(self
+            .heap
+            .alloc(Cell::String(format!("{time}{fraction}").into())))
     }
 
     fn temporal_plain_time_with(
@@ -693,7 +701,11 @@ impl<H: Host> Vm<H> {
             .zip(replacements.iter())
             .zip(PLAIN_TIME_WITH_FIELDS)
         {
-            let value = if replacement.is_undefined() { *old } else { *replacement };
+            let value = if replacement.is_undefined() {
+                *old
+            } else {
+                *replacement
+            };
             let integer = self.plain_date_integer(p, value)?;
             let source_index = PLAIN_TIME_FIELDS
                 .iter()

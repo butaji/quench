@@ -6,7 +6,9 @@ license = "MIT"
 description = "Shared engine-independent internationalization algorithms for Quench"
 
 [dependencies]
+icu_calendar = { version = "2.3", features = ["compiled_data"] }
 icu_collator = { version = "2.3", features = ["compiled_data"] }
 icu_locale_core = "2.3"
 icu_provider = "2.3"
+quench-temporal = { path = "../quench-temporal" }
 unicode-normalization = "0.1"

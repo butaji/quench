@@ -21,6 +21,24 @@ const EVENING_END_HOUR: u32 = 21;
 const LATE_NIGHT_START_HOUR: u32 = EVENING_END_HOUR + 1;
 const PERIOD_NOON: &str = "noon";
 const PERIOD_NARROW_NOON: &str = "n";
+const CYCLIC_STEM_COUNT: usize = 10;
+const CYCLIC_BRANCH_COUNT: usize = 12;
+const LEAP_MONTH_SUFFIX: &str = "bis";
+const HEBREW_MONTHS_EN: &[(&str, &str)] = &[
+    ("M01", "Tishri"),
+    ("M02", "Heshvan"),
+    ("M03", "Kislev"),
+    ("M04", "Tevet"),
+    ("M05", "Shevat"),
+    ("M05L", "Adar I"),
+    ("M06", "Adar"),
+    ("M07", "Nisan"),
+    ("M08", "Iyar"),
+    ("M09", "Sivan"),
+    ("M10", "Tamuz"),
+    ("M11", "Av"),
+    ("M12", "Elul"),
+];
 const FORMAT_STYLE_FULL: &str = "full";
 const FORMAT_STYLE_LONG: &str = "long";
 const FORMAT_STYLE_MEDIUM: &str = "medium";
@@ -31,15 +49,21 @@ pub(super) struct DateTimeFields {
     pub year: i32,
     pub month: u32,
     pub day: u32,
+    pub month_code: Option<String>,
     pub hour: u32,
     pub minute: u32,
     pub second: u32,
     pub millisecond: u32,
+    pub weekday: u32,
     pub has_date: bool,
     pub has_time: bool,
     pub is_temporal: bool,
     pub temporal_kind: Option<TemporalKind>,
     pub calendar: Option<String>,
+    pub related_year: Option<i32>,
+    pub cyclic_year: Option<u8>,
+    pub era: Option<String>,
+    pub era_year: Option<i32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,6 +73,8 @@ pub(super) enum TemporalKind {
     PlainMonthDay,
     PlainYearMonth,
     PlainTime,
+    Instant,
+    ZonedDateTime,
 }
 
 impl DateTimeFields {
@@ -77,21 +103,32 @@ impl DateTimeFields {
             year,
             month,
             day,
+            month_code: None,
             hour,
             minute,
             second,
             millisecond,
+            weekday: super::temporal_date::iso_day_of_week(super::temporal_date::IsoDate {
+                year,
+                month,
+                day,
+            }),
             has_date: true,
             has_time: true,
             is_temporal: false,
             temporal_kind: None,
             calendar: None,
+            related_year: None,
+            cyclic_year: None,
+            era: None,
+            era_year: None,
         }
     }
 }
 
 #[derive(Default)]
 pub(super) struct DateTimePartOptions {
+    pub locale: Option<String>,
     pub weekday: Option<String>,
     pub era: Option<String>,
     pub year: Option<String>,
@@ -209,10 +246,21 @@ fn append_date(
             }),
             _ => None,
         };
-        let value = match (style, month) {
+        let value = hebrew_month_name(fields, options.locale.as_deref()).map(str::to_owned).unwrap_or_else(|| match (style, month) {
             ("long" | "short" | "narrow", Some(name)) => name.to_string(),
             ("2-digit", Some(prefix)) => format!("{prefix}{}", fields.month),
             _ => fields.month.to_string(),
+        });
+        let value = if fields
+            .month_code
+            .as_deref()
+            .is_some_and(|code| code.ends_with('L'))
+            && fields.calendar.as_deref() != Some("hebrew")
+            && matches!(style, "numeric" | "2-digit")
+        {
+            format!("{value}{LEAP_MONTH_SUFFIX}")
+        } else {
+            value
         };
         push(parts, "month", value);
     }
@@ -247,22 +295,81 @@ fn append_date(
         } else {
             display_year.to_string()
         };
-        push(parts, "year", value);
+        if let Some(related_year) = fields.related_year {
+            push(parts, "relatedYear", related_year.to_string());
+            if let Some(cyclic_year) = fields.cyclic_year {
+                if options
+                    .month
+                    .as_deref()
+                    .is_none_or(|style| !matches!(style, "long" | "short" | "narrow"))
+                {
+                    push(
+                        parts,
+                        "yearName",
+                        cyclic_year_name(cyclic_year, options.locale.as_deref()),
+                    );
+                    if options
+                        .locale
+                        .as_deref()
+                        .is_some_and(|locale| locale.starts_with("zh"))
+                    {
+                        push(parts, "literal", "年");
+                    }
+                }
+            }
+        } else {
+            push(parts, "year", value);
+        }
     }
-    if let Some(style) = &options.era {
+    if let (Some(style), Some(code)) = (&options.era, fields.era.as_deref()) {
         push(parts, "literal", " ");
-        push(parts, "era", era_value(fields.year, style));
+        push(parts, "era", era_code_value(code, style));
     }
 }
 
-fn era_value(year: i32, style: &str) -> &'static str {
-    match (year > 0, style) {
-        (true, "long") => "Anno Domini",
-        (true, "narrow") => "A",
-        (true, _) => "AD",
-        (false, "long") => "Before Christ",
-        (false, "narrow") => "B",
-        (false, _) => "BC",
+fn hebrew_month_name<'a>(fields: &'a DateTimeFields, locale: Option<&str>) -> Option<&'a str> {
+    if fields.calendar.as_deref() != Some("hebrew")
+        || !locale.is_some_and(|locale| locale.starts_with("en"))
+    {
+        return None;
+    }
+    let code = fields.month_code.as_deref()?;
+    HEBREW_MONTHS_EN
+        .iter()
+        .find_map(|(month_code, name)| (*month_code == code).then_some(*name))
+}
+
+fn era_code_value(code: &str, style: &str) -> String {
+    let (long, short) = match code {
+        "ce" => ("Anno Domini", "AD"),
+        "bce" => ("Before Christ", "BC"),
+        "be" => ("Buddhist Era", "BE"),
+        "ah" => ("Anno Hegirae", "AH"),
+        "am" => ("Anno Mundi", "AM"),
+        other => (other, other),
+    };
+    match style {
+        "long" => long.to_string(),
+        "narrow" => short.chars().next().unwrap_or_default().to_string(),
+        _ => short.to_string(),
+    }
+}
+
+fn cyclic_year_name(year: u8, locale: Option<&str>) -> String {
+    if locale.is_some_and(|locale| locale.starts_with("zh")) {
+        const STEMS: [&str; CYCLIC_STEM_COUNT] =
+            ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"];
+        const BRANCHES: [&str; CYCLIC_BRANCH_COUNT] = [
+            "子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥",
+        ];
+        let index = usize::from(year.saturating_sub(1));
+        format!(
+            "{}{}",
+            STEMS[index % STEMS.len()],
+            BRANCHES[index % BRANCHES.len()]
+        )
+    } else {
+        "1".into()
     }
 }
 
@@ -377,11 +484,7 @@ fn format_weekday(fields: &DateTimeFields, style: &str) -> String {
         "Friday",
         "Saturday",
     ];
-    let weekday = super::temporal_date::iso_day_of_week(super::temporal_date::IsoDate {
-        year: fields.year,
-        month: fields.month,
-        day: fields.day,
-    });
+    let weekday = fields.weekday;
     let index = (weekday % DAYS_PER_WEEK_U32) as usize;
     let name = WEEKDAYS[index];
     match style {

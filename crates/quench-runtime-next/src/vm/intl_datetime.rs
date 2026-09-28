@@ -8,6 +8,8 @@ const DATE_TIME_FORMAT_RESOLVED_SLOT: &str = "\0rqj:intl-datetime-resolved-optio
 const DATE_TIME_FORMAT_DATE_SLOT: &str = "\0rqj:intl-datetime-date";
 const DATE_TIME_FORMAT_TIME_SLOT: &str = "\0rqj:intl-datetime-time";
 const DATE_TIME_FORMAT_BOUND_SLOT: &str = "\0rqj:intl-datetime-bound-format";
+const DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT: &str = "\0rqj:intl-datetime-temporal-defaults";
+const INTL_LEGACY_CONSTRUCTED_SYMBOL: &str = "IntlLegacyConstructedSymbol";
 const DEFAULT_TIME_ZONE_SHORT_NAME: &str = "GMT-5";
 const DEFAULT_TIME_ZONE_LONG_NAME: &str = "Peru Standard Time";
 const DEFAULT_TIME_ZONE_LONG_OFFSET: &str = "GMT-05:00";
@@ -35,8 +37,6 @@ const DATE_TIME_OPTIONS: &[(&str, &[&str])] = &[
     ("hour12", &[]),
     ("hourCycle", &["h11", "h12", "h23", "h24"]),
     ("timeZone", &[]),
-    ("dateStyle", &["full", "long", "medium", "short"]),
-    ("timeStyle", &["full", "long", "medium", "short"]),
     ("weekday", &["narrow", "short", "long"]),
     ("era", &["narrow", "short", "long"]),
     ("year", &["numeric", "2-digit"]),
@@ -59,6 +59,8 @@ const DATE_TIME_OPTIONS: &[(&str, &[&str])] = &[
         ],
     ),
     ("formatMatcher", &["basic", "best fit"]),
+    ("dateStyle", &["full", "long", "medium", "short"]),
+    ("timeStyle", &["full", "long", "medium", "short"]),
 ];
 
 #[derive(Clone, Copy)]
@@ -83,6 +85,12 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.intl_datetime_format_prototypes.insert(global, prototype);
+        let fallback_symbol = self
+            .heap
+            .alloc(Cell::Symbol(Some(INTL_LEGACY_CONSTRUCTED_SYMBOL.into())));
+        self.intl_datetime_format_fallback_symbols
+            .insert(global, fallback_symbol);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         set_non_writable_property(self, constructor, "prototype");
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -129,6 +137,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn intl_date_time_format_call(
         &mut self,
         p: &ResidualProgram,
+        this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
         let constructor = self
@@ -136,7 +145,8 @@ impl<H: Host> Vm<H> {
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
-        self.intl_date_time_format_construct(p, args, constructor)
+        let formatter = self.intl_date_time_format_construct(p, args, constructor)?;
+        self.chain_date_time_format(p, this, formatter)
     }
 
     pub(super) fn intl_date_time_format_construct(
@@ -154,10 +164,14 @@ impl<H: Host> Vm<H> {
             .unwrap_or(locale);
         let prototype_atom = self.intern_atom("prototype");
         let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let realm = self.function_realm(p, new_target)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
         } else {
-            self.object_proto
+            self.intl_datetime_format_prototypes
+                .get(&realm)
+                .copied()
+                .unwrap_or(self.object_proto)
         };
         let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let locale_value = self.heap.alloc(Cell::String(locale.into()));
@@ -183,7 +197,6 @@ impl<H: Host> Vm<H> {
         defaults: DateTimeDefaults,
         locale: &str,
     ) -> Result<(bool, bool, Value), JsError> {
-        let locale = quench_intl::sanitize_datetime_locale(locale);
         let options = match options.filter(|value| !value.is_undefined()) {
             Some(value) if value.is_null() => {
                 return Err(self.type_error(p, "options must not be null".into()));
@@ -193,19 +206,35 @@ impl<H: Host> Vm<H> {
                 .heap
                 .alloc(Cell::Object(Self::empty_object(Value::NULL))),
         };
-        let mut has_date = false;
-        let mut has_time = false;
-        let mut any = false;
+        let locale = quench_intl::sanitize_datetime_locale(locale);
         let resolved = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        self.active_call_roots.extend([options, resolved]);
+        let result = self.date_time_options_from(p, options, defaults, &locale, resolved);
+        self.active_call_roots.truncate(self.active_call_roots.len() - 2);
+        result
+    }
+
+    fn date_time_options_from(
+        &mut self,
+        p: &ResidualProgram,
+        options: Value,
+        defaults: DateTimeDefaults,
+        locale: &str,
+        resolved: Value,
+    ) -> Result<(bool, bool, Value), JsError> {
+        let locale = locale.to_owned();
+        let mut has_date = false;
+        let mut has_time = false;
+        let mut any = false;
         let locale_calendar = locale_unicode_value(&locale, "ca")
             .map(|calendar| quench_intl::calendar_alias(&calendar))
             .filter(|calendar| quench_intl::valid_calendar(calendar))
             .unwrap_or_else(|| "gregory".into());
         let locale_numbering_system = locale_unicode_value(&locale, "nu")
             .filter(|system| quench_intl::valid_numbering_system(system))
-            .unwrap_or_else(|| "latn".into());
+            .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
         let calendar_value = self
             .heap
             .alloc(Cell::String(locale_calendar.clone().into()));
@@ -286,6 +315,8 @@ impl<H: Host> Vm<H> {
                 self.set_property(resolved, atom, normalized)?;
             }
         }
+        let temporal_defaults = matches!(defaults, DateTimeDefaults::Format)
+            && (!any || (!has_date && !has_time));
         let has_date_style = self.date_time_option(resolved, "dateStyle").is_some();
         let has_time_style = self.date_time_option(resolved, "timeStyle").is_some();
         match defaults {
@@ -310,6 +341,9 @@ impl<H: Host> Vm<H> {
                 }
             }
             _ => {}
+        }
+        if temporal_defaults {
+            self.set_date_time_property(resolved, DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT, Value::TRUE)?;
         }
         let mut resolved_locale = locale.clone();
         if self
@@ -493,22 +527,108 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if native == Native::IntlDateTimeFormatSupportedLocalesOf {
+            return self.date_time_supported_locales_of(p, args);
+        }
+        let receiver = self.unwrap_date_time_format_receiver(p, this)?;
         match native {
-            Native::IntlDateTimeFormatFormatGetter => self.date_time_format_getter(p, this),
-            Native::IntlDateTimeFormatFormat => self.date_time_format(p, this, args),
+            Native::IntlDateTimeFormatFormatGetter => self.date_time_format_getter(p, receiver),
+            Native::IntlDateTimeFormatFormat => self.date_time_format(p, receiver, args),
             Native::IntlDateTimeFormatFormatToParts => {
-                self.date_time_format_to_parts(p, this, args)
+                self.date_time_format_to_parts(p, receiver, args)
             }
             Native::IntlDateTimeFormatFormatRange
             | Native::IntlDateTimeFormatFormatRangeToParts => {
-                self.date_time_format_range(p, native, this, args)
+                self.date_time_format_range(p, native, receiver, args)
             }
-            Native::IntlDateTimeFormatSupportedLocalesOf => {
-                self.date_time_supported_locales_of(p, args)
+            Native::IntlDateTimeFormatResolvedOptions => {
+                self.date_time_resolved_options(p, receiver)
             }
-            Native::IntlDateTimeFormatResolvedOptions => self.date_time_resolved_options(p, this),
             _ => Err(JsError("invalid Intl.DateTimeFormat method".into())),
         }
+    }
+
+    fn chain_date_time_format(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        formatter: Value,
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Ok(formatter);
+        }
+        let Some(realm) = self.intl_datetime_format_receiver_realm(p, receiver)? else {
+            return Ok(formatter);
+        };
+        let fallback = if self.date_time_locale(receiver).is_some() {
+            receiver
+        } else {
+            for slot in [
+                DATE_TIME_FORMAT_OPTIONS_SLOT,
+                DATE_TIME_FORMAT_DATE_SLOT,
+                DATE_TIME_FORMAT_TIME_SLOT,
+                DATE_TIME_FORMAT_RESOLVED_SLOT,
+            ] {
+                if let Some(value) = self.date_time_slot(formatter, slot) {
+                    self.set_date_time_slot(receiver, slot, value)?;
+                }
+            }
+            formatter
+        };
+        let symbol = self.intl_datetime_format_fallback_symbols[&realm];
+        self.set_symbol_property(receiver, symbol, fallback)?;
+        self.set_property_attributes(
+            receiver,
+            PropertyKey::symbol(symbol),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(receiver)
+    }
+
+    fn unwrap_date_time_format_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        if self.date_time_locale(receiver).is_some() {
+            return Ok(receiver);
+        }
+        let Some(realm) = self.intl_datetime_format_receiver_realm(p, receiver)? else {
+            return Err(self.type_error(p, "incompatible DateTimeFormat receiver".into()));
+        };
+        let symbol = self.intl_datetime_format_fallback_symbols[&realm];
+        let fallback = self.get_index(p, receiver, symbol)?;
+        if self.date_time_locale(fallback).is_some() {
+            Ok(fallback)
+        } else {
+            Err(self.type_error(p, "incompatible DateTimeFormat receiver".into()))
+        }
+    }
+
+    fn intl_datetime_format_receiver_realm(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Option<Value>, JsError> {
+        let mut prototype = self.object_get_prototype_of(p, receiver)?;
+        while !prototype.is_null() {
+            if let Some(realm) = self
+                .intl_datetime_format_prototypes
+                .iter()
+                .find_map(|(realm, candidate)| (*candidate == prototype).then_some(*realm))
+            {
+                return Ok(Some(realm));
+            }
+            prototype = self.object_get_prototype_of(p, prototype)?;
+        }
+        Ok(None)
     }
 
     fn date_time_format_getter(
@@ -528,6 +648,7 @@ impl<H: Host> Vm<H> {
             self.realm.globals,
         );
         let bound = self.bind_function(p, function, &[this])?;
+        self.override_builtin_function_name(bound, "")?;
         self.set_date_time_slot(this, DATE_TIME_FORMAT_BOUND_SLOT, bound)?;
         Ok(bound)
     }
@@ -555,7 +676,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<DateTimeFields, JsError> {
         let fields = temporal_date_time_fields(self.heap.get(value))
             .or_else(|| self.temporal_plain_time_fields(value));
-        if let Some(fields) = fields {
+        if let Some(mut fields) = fields {
             let resolved = self
                 .date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT)
                 .unwrap_or(Value::UNDEFINED);
@@ -578,17 +699,21 @@ impl<H: Host> Vm<H> {
                 ));
             }
             self.validate_temporal_options(p, formatter, &fields)?;
-            return Ok(DateTimeFields {
-                has_date: fields.has_date
-                    && self
-                        .date_time_slot(formatter, DATE_TIME_FORMAT_DATE_SLOT)
-                        .is_some_and(|value| value == Value::TRUE),
-                has_time: fields.has_time
-                    && self
-                        .date_time_slot(formatter, DATE_TIME_FORMAT_TIME_SLOT)
-                        .is_some_and(|value| value == Value::TRUE),
-                ..fields
-            });
+            fields.has_date = fields.has_date
+                && self
+                    .date_time_slot(formatter, DATE_TIME_FORMAT_DATE_SLOT)
+                    .is_some_and(|value| value == Value::TRUE);
+            fields.has_time = fields.has_time
+                && (self
+                    .date_time_slot(formatter, DATE_TIME_FORMAT_TIME_SLOT)
+                    .is_some_and(|value| value == Value::TRUE)
+                    || self
+                        .date_time_option(resolved, DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT)
+                        .is_some_and(|value| value == Value::TRUE)
+                        && matches!(fields.temporal_kind, Some(TemporalKind::PlainDateTime | TemporalKind::PlainTime))
+                    || fields.temporal_kind == Some(TemporalKind::PlainTime));
+            self.calendarize_date_time_fields(formatter, &mut fields);
+            return Ok(fields);
         }
         if matches!(
             self.heap.get(value),
@@ -630,7 +755,35 @@ impl<H: Host> Vm<H> {
         fields.has_time = self
             .date_time_slot(formatter, DATE_TIME_FORMAT_TIME_SLOT)
             .is_some_and(|value| value == Value::TRUE);
+        self.calendarize_date_time_fields(formatter, &mut fields);
         Ok(fields)
+    }
+
+    fn calendarize_date_time_fields(&self, formatter: Value, fields: &mut DateTimeFields) {
+        if !fields.has_date {
+            return;
+        }
+        let resolved = self
+            .date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT)
+            .unwrap_or(Value::UNDEFINED);
+        let calendar = self
+            .date_time_option(resolved, "calendar")
+            .and_then(|value| self.string_value(value))
+            .unwrap_or_else(|| "gregory".into());
+        let Some(date) =
+            quench_intl::calendar_fields_from_iso(fields.year, fields.month, fields.day, &calendar)
+        else {
+            return;
+        };
+        fields.year = date.year;
+        fields.month = date.month;
+        fields.day = date.day;
+        fields.calendar = Some(calendar);
+        fields.month_code = Some(date.month_code);
+        fields.related_year = date.related_year;
+        fields.cyclic_year = date.cyclic_year;
+        fields.era = date.era;
+        fields.era_year = date.era_year;
     }
 
     fn validate_temporal_options(
@@ -649,6 +802,9 @@ impl<H: Host> Vm<H> {
         let has_time = ["dayPeriod", "hour", "minute", "second"]
             .into_iter()
             .any(has);
+        let temporal_defaults = self
+            .date_time_option(resolved, DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT)
+            .is_some_and(|value| value == Value::TRUE);
         let has_date_style = has("dateStyle");
         if fields.temporal_kind == Some(TemporalKind::PlainMonthDay)
             && has("year")
@@ -686,6 +842,7 @@ impl<H: Host> Vm<H> {
             ));
         }
         if fields.temporal_kind == Some(TemporalKind::PlainTime)
+            && !temporal_defaults
             && ["year", "month", "day", "weekday"].into_iter().any(has)
             && !["hour", "minute", "second", "dayPeriod", "timeStyle"]
                 .into_iter()
@@ -770,6 +927,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|value| self.string_value(value))
         };
         let mut options = DateTimePartOptions {
+            locale: self.date_time_locale(formatter),
             weekday: text("weekday"),
             era: text("era"),
             year: text("year"),
@@ -805,6 +963,42 @@ impl<H: Host> Vm<H> {
         }
         if let Some(style) = text("timeStyle") {
             intl_datetime_parts::apply_time_style(&mut options, &style);
+            let time_zone_style = match style.as_str() {
+                "full" => Some("long"),
+                "long" => Some("short"),
+                _ => None,
+            };
+            if let Some(zone_style) = time_zone_style {
+                let zone = text("timeZone").unwrap_or_else(|| DEFAULT_TIME_ZONE.into());
+                options
+                    .time_zone_name
+                    .get_or_insert_with(|| time_zone_name_for(zone_style, &zone));
+            }
+        }
+        if self
+            .date_time_option(resolved, DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT)
+            .is_some_and(|value| value == Value::TRUE)
+            && fields.temporal_kind == Some(TemporalKind::PlainDateTime)
+        {
+            options.hour = Some("numeric".into());
+            options.minute = Some("2-digit".into());
+            options.second = Some("2-digit".into());
+        }
+        if fields.temporal_kind == Some(TemporalKind::PlainDateTime) {
+            let date_style = text("dateStyle").is_some();
+            let time_style = text("timeStyle").is_some();
+            if date_style && !time_style {
+                options.hour = None;
+                options.minute = None;
+                options.second = None;
+                options.day_period = None;
+            } else if time_style && !date_style {
+                options.weekday = None;
+                options.era = None;
+                options.year = None;
+                options.month = None;
+                options.day = None;
+            }
         }
         match fields.temporal_kind {
             Some(TemporalKind::PlainDate) => {
@@ -816,6 +1010,7 @@ impl<H: Host> Vm<H> {
             }
             Some(TemporalKind::PlainMonthDay) => {
                 options.year = None;
+                options.era = None;
                 options.hour = None;
                 options.minute = None;
                 options.second = None;
@@ -836,7 +1031,9 @@ impl<H: Host> Vm<H> {
                 options.day = None;
                 options.time_zone_name = None;
             }
-            Some(TemporalKind::PlainDateTime) | None => {}
+            Some(TemporalKind::PlainDateTime)
+            | Some(TemporalKind::Instant | TemporalKind::ZonedDateTime)
+            | None => {}
         }
         if options.year.is_none()
             && options.month.is_none()
@@ -847,7 +1044,11 @@ impl<H: Host> Vm<H> {
             && options.second.is_none()
         {
             match fields.temporal_kind {
-                Some(TemporalKind::PlainTime) => options.hour = Some("numeric".into()),
+                Some(TemporalKind::PlainTime) => {
+                    options.hour = Some("numeric".into());
+                    options.minute = Some("2-digit".into());
+                    options.second = Some("2-digit".into());
+                }
                 Some(TemporalKind::PlainMonthDay) => {
                     options.month = Some("numeric".into());
                     options.day = Some("numeric".into());
@@ -894,20 +1095,19 @@ impl<H: Host> Vm<H> {
                 .map(|number| number as u32)
                 .unwrap_or_default()
         };
-        Some(DateTimeFields {
-            year: 1970,
-            month: 1,
-            day: 1,
-            hour: field("hour"),
-            minute: field("minute"),
-            second: field("second"),
-            millisecond: field("millisecond"),
-            has_date: false,
-            has_time: true,
-            is_temporal: true,
-            temporal_kind: Some(TemporalKind::PlainTime),
-            calendar: None,
-        })
+        let mut fields = DateTimeFields::from_components(
+            1970,
+            1,
+            1,
+            field("hour"),
+            field("minute"),
+            field("second"),
+            field("millisecond"),
+        );
+        fields.has_date = false;
+        fields.is_temporal = true;
+        fields.temporal_kind = Some(TemporalKind::PlainTime);
+        Some(fields)
     }
 
     fn date_time_format_to_parts(
@@ -942,69 +1142,78 @@ impl<H: Host> Vm<H> {
         }
         let start = args.first().copied().unwrap_or(Value::UNDEFINED);
         let end = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let start_fields = self.date_time_fields_for_value(p, this, start)?;
-        let end_fields = self.date_time_fields_for_value(p, this, end)?;
-        if !same_datetime_range_kind(
-            self.heap.get(start),
-            self.heap.get(end),
-            start_fields.temporal_kind,
-            end_fields.temporal_kind,
-        ) {
+        let (start, start_temporal) = self.date_time_formattable(p, start)?;
+        let (end, end_temporal) = self.date_time_formattable(p, end)?;
+        if !same_datetime_range_kind(start_temporal, end_temporal) {
             return Err(self.type_error(p, "formatRange arguments have different types".into()));
         }
-        let start_text = self.date_time_format(p, this, &[start])?;
-        let end_text = self.date_time_format(p, this, &[end])?;
-        let start_text = match self.heap.get(start_text) {
-            Some(Cell::String(value)) => value.to_string(),
-            _ => String::new(),
+        let start_fields = self.date_time_fields_for_value(p, this, start)?;
+        let end_fields = self.date_time_fields_for_value(p, this, end)?;
+        let start_parts = self.date_time_parts_for_fields(this, &start_fields);
+        let end_parts = self.date_time_parts_for_fields(this, &end_fields);
+        let start_options = self.date_time_part_options(this, &start_fields);
+        let end_options = self.date_time_part_options(this, &end_fields);
+        let textual_month = |options: &DateTimePartOptions| {
+            options.month.as_deref().is_some_and(|style| {
+                matches!(style, "long" | "short" | "narrow")
+            })
         };
-        let end_text = match self.heap.get(end_text) {
-            Some(Cell::String(value)) => value.to_string(),
-            _ => String::new(),
-        };
-        let is_shared_range = start_text == end_text;
-        let text = if is_shared_range {
-            start_text
-        } else {
-            format!("{start_text} – {end_text}")
-        };
-        let text = self.heap.alloc(Cell::String(text.into()));
+        let same_date = (start_fields.year, start_fields.month, start_fields.day)
+            == (end_fields.year, end_fields.month, end_fields.day);
+        let same_year = start_fields.year == end_fields.year;
+        let fields_have_time = start_fields.has_time && end_fields.has_time;
+        let compress_date = same_year
+            && (textual_month(&start_options) || textual_month(&end_options));
+        let parts = merge_date_time_range_parts(
+            start_parts,
+            end_parts,
+            same_date,
+            fields_have_time,
+            compress_date,
+        );
         if native == Native::IntlDateTimeFormatFormatRangeToParts {
-            let start_options = self.date_time_part_options(this, &start_fields);
-            let start_parts = self.localize_date_time_parts(
-                this,
-                intl_datetime_parts::format_parts(&start_fields, &start_options),
-            );
-            let parts = if is_shared_range {
-                start_parts
-                    .into_iter()
-                    .map(|(kind, value)| (kind, value, Some("shared".into())))
-                    .collect()
-            } else {
-                let end_options = self.date_time_part_options(this, &end_fields);
-                let end_parts = self.localize_date_time_parts(
-                    this,
-                    intl_datetime_parts::format_parts(&end_fields, &end_options),
-                );
-                start_parts
-                    .into_iter()
-                    .map(|(kind, value)| (kind, value, Some("startRange".into())))
-                    .chain(std::iter::once((
-                        "literal".into(),
-                        " – ".into(),
-                        Some("shared".into()),
-                    )))
-                    .chain(
-                        end_parts
-                            .into_iter()
-                            .map(|(kind, value)| (kind, value, Some("endRange".into()))),
-                    )
-                    .collect()
-            };
             self.date_time_parts_array_with_sources(parts)
         } else {
-            Ok(text)
+            let text = parts
+                .into_iter()
+                .map(|(_, value, _)| value)
+                .collect::<String>();
+            Ok(self.heap.alloc(Cell::String(text.into())))
         }
+    }
+
+    fn date_time_parts_for_fields(
+        &self,
+        formatter: Value,
+        fields: &DateTimeFields,
+    ) -> Vec<(String, String)> {
+        let options = self.date_time_part_options(formatter, fields);
+        self.localize_date_time_parts(
+            formatter,
+            intl_datetime_parts::format_parts(fields, &options),
+        )
+    }
+
+    fn date_time_formattable(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<(Value, Option<TemporalKind>), JsError> {
+        let temporal = temporal_date_time_fields(self.heap.get(value))
+            .or_else(|| self.temporal_plain_time_fields(value));
+        if let Some(fields) = temporal {
+            return Ok((value, fields.temporal_kind));
+        }
+        let temporal_kind = match self.heap.get(value) {
+            Some(Cell::TemporalInstant { .. }) => Some(TemporalKind::Instant),
+            Some(Cell::TemporalZonedDateTime { .. }) => Some(TemporalKind::ZonedDateTime),
+            _ => None,
+        };
+        if temporal_kind.is_some() {
+            return Ok((value, temporal_kind));
+        }
+        let number = self.to_number(p, value)?;
+        Ok((Value::number(number), None))
     }
 
     fn date_time_supported_locales_of(
@@ -1159,15 +1368,21 @@ fn temporal_date_time_fields(cell: Option<&Cell>) -> Option<DateTimeFields> {
         year: 1970,
         month: 1,
         day: 1,
+        month_code: None,
         hour: 0,
         minute: 0,
         second: 0,
         millisecond: 0,
+        weekday: 0,
         has_date: true,
         has_time: false,
         is_temporal: true,
         temporal_kind: None,
         calendar: None,
+        related_year: None,
+        cyclic_year: None,
+        era: None,
+        era_year: None,
     };
     match cell? {
         Cell::TemporalPlainDate {
@@ -1228,31 +1443,134 @@ fn temporal_date_time_fields(cell: Option<&Cell>) -> Option<DateTimeFields> {
         }
         _ => return None,
     }
+    fields.weekday = super::temporal_date::iso_day_of_week(super::temporal_date::IsoDate {
+        year: fields.year,
+        month: fields.month,
+        day: fields.day,
+    });
     Some(fields)
 }
 
 fn same_datetime_range_kind(
-    start: Option<&Cell>,
-    end: Option<&Cell>,
     start_temporal: Option<TemporalKind>,
     end_temporal: Option<TemporalKind>,
 ) -> bool {
-    if start_temporal.is_some() || end_temporal.is_some() {
-        return start_temporal == end_temporal;
-    }
-    matches!(
-        (start, end),
-        (Some(Cell::Date { .. }), Some(Cell::Date { .. }))
-    ) || matches!(
-        (start, end),
-        (
-            Some(Cell::TemporalInstant { .. }),
-            Some(Cell::TemporalInstant { .. })
-        )
-    ) || (start.is_none() && end.is_none())
+    start_temporal == end_temporal
 }
 
+fn merge_date_time_range_parts(
+    start: Vec<(String, String)>,
+    end: Vec<(String, String)>,
+    same_date: bool,
+    has_time: bool,
+    compress_date: bool,
+) -> Vec<(String, String, Option<String>)> {
+    if start == end {
+        return start
+            .into_iter()
+            .map(|(kind, value)| (kind, value, Some("shared".into())))
+            .collect();
+    }
+    if same_date && has_time {
+        return merge_same_date_time_parts(start, end);
+    }
+    if !compress_date {
+        let mut parts = Vec::with_capacity(start.len() + end.len() + RANGE_SEPARATOR_PARTS);
+        append_range_parts(&mut parts, &start, "startRange");
+        parts.push(("literal".into(), " – ".into(), Some("shared".into())));
+        append_range_parts(&mut parts, &end, "endRange");
+        return parts;
+    }
+    let shared_prefix = start
+        .iter()
+        .zip(&end)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let shared_suffix = start[shared_prefix..]
+        .iter()
+        .rev()
+        .zip(end[shared_prefix..].iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let start_end = start.len() - shared_suffix;
+    let end_end = end.len() - shared_suffix;
+    let mut merged = Vec::with_capacity(start.len() + end.len() + RANGE_SEPARATOR_PARTS);
+    append_range_parts(&mut merged, &start[..shared_prefix], "shared");
+    append_range_parts(&mut merged, &start[shared_prefix..start_end], "startRange");
+    if shared_prefix < start_end || shared_prefix < end_end {
+        merged.push((
+            "literal".into(),
+            " – ".into(),
+            Some("shared".into()),
+        ));
+    }
+    append_range_parts(&mut merged, &end[shared_prefix..end_end], "endRange");
+    append_range_parts(&mut merged, &start[start_end..], "shared");
+    merged
+}
+
+fn merge_same_date_time_parts(
+    start: Vec<(String, String)>,
+    end: Vec<(String, String)>,
+) -> Vec<(String, String, Option<String>)> {
+    let time_start = start
+        .iter()
+        .position(|(kind, _)| matches!(kind.as_str(), "hour" | "minute" | "second"))
+        .unwrap_or(start.len());
+    let end_time_start = end
+        .iter()
+        .position(|(kind, _)| matches!(kind.as_str(), "hour" | "minute" | "second"))
+        .unwrap_or(end.len());
+    if time_start == start.len() || end_time_start == end.len() {
+        return merge_identical_parts(start, end);
+    }
+    let date_end = time_start.saturating_sub(DATE_TIME_SEPARATOR_PARTS);
+    let mut merged = Vec::with_capacity(start.len() + end.len() + RANGE_SEPARATOR_PARTS);
+    append_range_parts(&mut merged, &start[..date_end], "shared");
+    append_range_parts(&mut merged, &start[date_end..time_start], "shared");
+    append_range_parts(&mut merged, &start[time_start..], "startRange");
+    merged.push(("literal".into(), " – ".into(), Some("shared".into())));
+    append_range_parts(&mut merged, &end[end_time_start..], "endRange");
+    merged
+}
+
+fn merge_identical_parts(
+    start: Vec<(String, String)>,
+    end: Vec<(String, String)>,
+) -> Vec<(String, String, Option<String>)> {
+    if start == end {
+        return start
+            .into_iter()
+            .map(|(kind, value)| (kind, value, Some("shared".into())))
+            .collect();
+    }
+    let mut parts = Vec::with_capacity(start.len() + end.len() + RANGE_SEPARATOR_PARTS);
+    append_range_parts(&mut parts, &start, "startRange");
+    parts.push(("literal".into(), " – ".into(), Some("shared".into())));
+    append_range_parts(&mut parts, &end, "endRange");
+    parts
+}
+
+fn append_range_parts(
+    output: &mut Vec<(String, String, Option<String>)>,
+    parts: &[(String, String)],
+    source: &str,
+) {
+    output.extend(
+        parts
+            .iter()
+            .map(|(kind, value)| (kind.clone(), value.clone(), Some(source.into()))),
+    );
+}
+
+const RANGE_SEPARATOR_PARTS: usize = 1;
+const DATE_TIME_SEPARATOR_PARTS: usize = 1;
+
 fn time_zone_name_for(style: &str, zone: &str) -> String {
+    let zone = match zone {
+        "Asia/Calcutta" => "Asia/Kolkata",
+        other => other,
+    };
     if zone.eq_ignore_ascii_case("utc") {
         return match style {
             "long" | "longGeneric" => "Coordinated Universal Time".into(),
@@ -1326,8 +1644,9 @@ fn canonical_time_zone(zone: &str) -> Option<String> {
             total_minutes % MINUTES_PER_HOUR
         ));
     }
-    chrono_tz::Tz::from_str(zone)
-        .ok()
+    chrono_tz::TZ_VARIANTS
+        .iter()
+        .find(|timezone| timezone.name().eq_ignore_ascii_case(zone))
         .map(|timezone| timezone.name().to_string())
 }
 
@@ -1346,7 +1665,9 @@ fn date_in_time_zone(
             .single()
             .map(|instant| instant.with_timezone(&offset));
     }
-    let timezone = chrono_tz::Tz::from_str(zone).ok()?;
+    let timezone = chrono_tz::Tz::from_str(zone).ok().or_else(|| {
+        canonical_time_zone(zone).and_then(|canonical| chrono_tz::Tz::from_str(&canonical).ok())
+    })?;
     Utc.timestamp_millis_opt(milliseconds.trunc() as i64)
         .single()
         .map(|instant| instant.with_timezone(&timezone).fixed_offset())

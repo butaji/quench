@@ -62,7 +62,7 @@ const MILLISECONDS_PER_MINUTE: f64 = 60_000.0;
 const MILLISECONDS_PER_HOUR: f64 = 3_600_000.0;
 const HOURS_PER_DAY: f64 = 24.0;
 const MILLISECONDS_PER_DAY: f64 = MILLISECONDS_PER_HOUR * HOURS_PER_DAY;
-const DATE_TIME_CLIP_LIMIT_MS: f64 = 8.64e15;
+pub(super) const DATE_TIME_CLIP_LIMIT_MS: f64 = 8.64e15;
 const INT32_MODULUS: f64 = 4_294_967_296.0;
 const INT32_SIGN_BOUNDARY: f64 = 2_147_483_648.0;
 const LEGACY_DATE_YEAR_MIN: f64 = 0.0;
@@ -94,6 +94,10 @@ const DATE_MILLISECOND_DIGITS: usize = 3;
 const DATE_OFFSET_FIELD_WIDTH: usize = 2;
 const DATE_MINUTES_PER_HOUR: u32 = 60;
 const DATE_MILLISECONDS_PER_DAY: i64 = 86_400_000;
+const DATE_SECONDS_PER_MINUTE_I64: i64 = 60;
+const DATE_MINUTES_PER_HOUR_I64: i64 = 60;
+const DATE_EPOCH_WEEKDAY_SUNDAY_INDEX: i64 = 4;
+const DATE_DAYS_PER_WEEK: i64 = 7;
 const DATE_MILLISECONDS_PER_HOUR: i64 = 3_600_000;
 const DATE_MILLISECONDS_PER_MINUTE: i64 = 60_000;
 const DATE_MILLISECONDS_PER_SECOND: i64 = 1_000;
@@ -476,7 +480,7 @@ impl<H: Host> Vm<H> {
             current
         };
         let parts = if setter.utc || current.is_nan() {
-            date_parts(base_time, Utc)
+        date_parts_utc(base_time)
         } else {
             date_parts_local(base_time)
         };
@@ -637,7 +641,7 @@ fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
             | Native::DateGetUTCMilliseconds
     );
     let parts = if utc {
-        date_parts(milliseconds, Utc)
+        date_parts_utc(milliseconds)
     } else {
         date_parts_local(milliseconds)
     };
@@ -660,22 +664,39 @@ fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
     })
 }
 
-fn date_parts<Tz: TimeZone>(milliseconds: f64, timezone: Tz) -> Option<DateParts> {
-    if !milliseconds.is_finite() {
+fn date_parts_utc(milliseconds: f64) -> Option<DateParts> {
+    if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
         return None;
     }
-    let date = timezone
+    if let Some(date) = Utc
         .timestamp_millis_opt(milliseconds.trunc() as i64)
-        .single()?;
+        .single()
+    {
+        return Some(DateParts {
+            year: date.year(),
+            month: date.month0(),
+            day: date.day(),
+            weekday: date.weekday().num_days_from_sunday(),
+            hour: date.hour(),
+            minute: date.minute(),
+            second: date.second(),
+            millisecond: date.timestamp_subsec_millis(),
+        });
+    }
+    let whole = milliseconds.trunc() as i64;
+    let days = whole.div_euclid(DATE_MILLISECONDS_PER_DAY);
+    let time = whole.rem_euclid(DATE_MILLISECONDS_PER_DAY);
+    let (year, month, day) = civil_from_days(days);
     Some(DateParts {
-        year: date.year(),
-        month: date.month0(),
-        day: date.day(),
-        weekday: date.weekday().num_days_from_sunday(),
-        hour: date.hour(),
-        minute: date.minute(),
-        second: date.second(),
-        millisecond: date.timestamp_subsec_millis(),
+        year: i32::try_from(year).ok()?,
+        month: u32::try_from(month - 1).ok()?,
+        day: u32::try_from(day).ok()?,
+        weekday: (days + DATE_EPOCH_WEEKDAY_SUNDAY_INDEX).rem_euclid(DATE_DAYS_PER_WEEK) as u32,
+        hour: (time / MILLISECONDS_PER_HOUR as i64) as u32,
+        minute: ((time / (MILLISECONDS_PER_SECOND as i64 * DATE_SECONDS_PER_MINUTE_I64))
+            % DATE_MINUTES_PER_HOUR_I64) as u32,
+        second: ((time / MILLISECONDS_PER_SECOND as i64) % DATE_SECONDS_PER_MINUTE_I64) as u32,
+        millisecond: (time % MILLISECONDS_PER_SECOND as i64) as u32,
     })
 }
 

@@ -59,17 +59,12 @@ pub(super) fn parse_plain_month_day_string(text: &str) -> Option<(IsoDate, Strin
 }
 
 pub(super) fn parse_calendar_identifier(text: &str) -> Option<String> {
-    let calendar = parse_calendar_annotation(text)?;
-    if calendar == ISO_CALENDAR || calendar == GREGORIAN_CALENDAR {
-        Some(calendar)
-    } else {
-        None
-    }
+    parse_calendar_annotation(text)
 }
 
 pub(super) fn parse_calendar_identifier_name(text: &str) -> Option<String> {
-    let calendar = text.to_ascii_lowercase();
-    matches!(calendar.as_str(), ISO_CALENDAR | GREGORIAN_CALENDAR).then_some(calendar)
+    let calendar = quench_intl::calendar_alias(text);
+    quench_intl::valid_calendar(&calendar).then_some(calendar)
 }
 
 pub(super) fn calendar_identifier_from_string(text: &str) -> Option<String> {
@@ -89,14 +84,15 @@ pub(super) fn calendar_identifier_from_string(text: &str) -> Option<String> {
 
 fn parse_calendar_annotation(text: &str) -> Option<String> {
     let lower = text.to_ascii_lowercase();
-    if matches!(lower.as_str(), ISO_CALENDAR | GREGORIAN_CALENDAR) {
-        return Some(lower);
+    if quench_intl::valid_calendar(&lower) {
+        return Some(quench_intl::calendar_alias(&lower));
     }
     if !valid_calendar_source(text) {
         return None;
     }
     let calendar = first_calendar_annotation(&lower).unwrap_or(ISO_CALENDAR);
-    matches!(calendar, ISO_CALENDAR | GREGORIAN_CALENDAR).then(|| calendar.to_owned())
+    let calendar = quench_intl::calendar_alias(calendar);
+    quench_intl::valid_calendar(&calendar).then_some(calendar)
 }
 
 fn first_calendar_annotation(text: &str) -> Option<&str> {
@@ -345,9 +341,8 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
 }
 
 fn has_invalid_calendar_annotation(text: &str) -> bool {
-    first_calendar_annotation(text).is_some_and(|value| {
-        !value.eq_ignore_ascii_case(ISO_CALENDAR) && !value.eq_ignore_ascii_case(GREGORIAN_CALENDAR)
-    })
+    first_calendar_annotation(text)
+        .is_some_and(|value| !quench_intl::valid_calendar(&quench_intl::calendar_alias(value)))
 }
 
 fn has_time_junk(text: &str) -> bool {

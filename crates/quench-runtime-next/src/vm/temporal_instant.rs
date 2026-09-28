@@ -127,7 +127,10 @@ impl<H: Host> Vm<H> {
             ("round", Native::TemporalInstantRound),
             ("since", Native::TemporalInstantSince),
             ("until", Native::TemporalInstantUntil),
-            ("toZonedDateTimeISO", Native::TemporalInstantToZonedDateTimeISO),
+            (
+                "toZonedDateTimeISO",
+                Native::TemporalInstantToZonedDateTimeISO,
+            ),
         ] {
             self.set_builtin_named(p, prototype, name, native)?;
         }

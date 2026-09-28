@@ -22,9 +22,7 @@ pub(super) struct PlainDateTimeFromFields {
 
 impl PlainDateTimeFromFields {
     pub(super) fn has_zoned_time(&self) -> bool {
-        self.time.iter().any(Option::is_some)
-            || self.offset.is_some()
-            || self.time_zone.is_some()
+        self.time.iter().any(Option::is_some) || self.offset.is_some() || self.time_zone.is_some()
     }
 }
 
@@ -71,7 +69,10 @@ impl<H: Host> Vm<H> {
             ("toJSON", Native::TemporalPlainDateTimeToJSON),
             ("toPlainDate", Native::TemporalPlainDateTimeToPlainDate),
             ("toPlainTime", Native::TemporalPlainDateTimeToPlainTime),
-            ("toZonedDateTime", Native::TemporalPlainDateTimeToZonedDateTime),
+            (
+                "toZonedDateTime",
+                Native::TemporalPlainDateTimeToZonedDateTime,
+            ),
             ("with", Native::TemporalPlainDateTimeWith),
             ("withCalendar", Native::TemporalPlainDateTimeWithCalendar),
             ("withPlainTime", Native::TemporalPlainDateTimeWithPlainTime),
@@ -92,9 +93,15 @@ impl<H: Host> Vm<H> {
             ("weekOfYear", Native::TemporalPlainDateTimeWeekOfYearGetter),
             ("yearOfWeek", Native::TemporalPlainDateTimeYearOfWeekGetter),
             ("daysInWeek", Native::TemporalPlainDateTimeDaysInWeekGetter),
-            ("daysInMonth", Native::TemporalPlainDateTimeDaysInMonthGetter),
+            (
+                "daysInMonth",
+                Native::TemporalPlainDateTimeDaysInMonthGetter,
+            ),
             ("daysInYear", Native::TemporalPlainDateTimeDaysInYearGetter),
-            ("monthsInYear", Native::TemporalPlainDateTimeMonthsInYearGetter),
+            (
+                "monthsInYear",
+                Native::TemporalPlainDateTimeMonthsInYearGetter,
+            ),
             ("inLeapYear", Native::TemporalPlainDateTimeInLeapYearGetter),
             ("hour", Native::TemporalPlainDateTimeHourGetter),
             ("minute", Native::TemporalPlainDateTimeMinuteGetter),
@@ -337,8 +344,7 @@ impl<H: Host> Vm<H> {
                 super::temporal_date::ISO_DAYS_PER_WEEK
             }
             Native::TemporalPlainDateTimeDaysInMonthGetter => i64::from(
-                super::temporal_date::iso_days_in_month(date.year, date.month as i32)
-                    .unwrap_or(31),
+                super::temporal_date::iso_days_in_month(date.year, date.month as i32).unwrap_or(31),
             ),
             Native::TemporalPlainDateTimeDaysInYearGetter => {
                 i64::from(super::temporal_date::iso_days_in_year(date.year))
@@ -436,10 +442,10 @@ impl<H: Host> Vm<H> {
         bag: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let fields = self.read_plain_date_time_fields(p, bag)?;
+        let fields = self.read_plain_date_time_fields(p, bag, false)?;
         let constrain =
             self.plain_date_overflow(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let resolved = self.resolve_plain_date_time_fields(p, fields, constrain)?;
+        let resolved = self.resolve_plain_date_time_fields(p, fields, constrain, true)?;
         self.make_plain_date_time(
             p,
             constructor,
@@ -472,9 +478,11 @@ impl<H: Host> Vm<H> {
         let month = self.plain_date_field(p, bag, "month")?;
         let month_code = self.plain_date_time_month_code_field(p, bag)?;
         let mut offset = None;
-        for (index, name) in super::temporal_plain_date_time_conversion::TIME_FIELDS.iter().enumerate().skip(
-            super::temporal_plain_date_time_conversion::TIME_FIELDS_BEFORE_MONTH,
-        ) {
+        for (index, name) in super::temporal_plain_date_time_conversion::TIME_FIELDS
+            .iter()
+            .enumerate()
+            .skip(super::temporal_plain_date_time_conversion::TIME_FIELDS_BEFORE_MONTH)
+        {
             if include_zoned_fields && *name == "second" {
                 let atom = self.intern_atom("offset");
                 let value = self.get_property(p, bag, atom)?;
@@ -757,18 +765,15 @@ impl<H: Host> Vm<H> {
             duration.iter_mut().for_each(|field| *field = -*field);
         }
         self.validate_duration_fields(p, &duration)?;
-        let constrain = self.plain_date_overflow(
-            p,
-            args.get(1).copied().unwrap_or(Value::UNDEFINED),
-        )?;
+        let constrain =
+            self.plain_date_overflow(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
         let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
-        let month_delta = i128::from(
-            duration[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64,
-        )
-            * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
-            + i128::from(
-                duration[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64,
-            );
+        let month_delta =
+            i128::from(duration[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64)
+                * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+                + i128::from(
+                    duration[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64,
+                );
         let original_day = date.day;
         let mut date = super::temporal_date::shift_iso_months(date, month_delta)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
@@ -788,11 +793,10 @@ impl<H: Host> Vm<H> {
             .sum::<i128>();
         let carry_days = time_nanos.div_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
         let remainder = time_nanos.rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
-        let duration_days = i128::from(
-            duration[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] as i64,
-        )
-            * i128::from(super::temporal_date_arithmetic::DAYS_PER_WEEK)
-            + i128::from(duration[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] as i64);
+        let duration_days =
+            i128::from(duration[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] as i64)
+                * i128::from(super::temporal_date_arithmetic::DAYS_PER_WEEK)
+                + i128::from(duration[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] as i64);
         let days = i64::try_from(duration_days + carry_days)
             .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
         if days != 0 {
@@ -1041,7 +1045,14 @@ impl<H: Host> Vm<H> {
         }
         let date = checked_iso_date(year, month, day)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-        for (value, limit) in time.iter_mut().zip([HOUR_LIMIT, MINUTE_SECOND_LIMIT, MINUTE_SECOND_LIMIT, SUBSECOND_LIMIT, SUBSECOND_LIMIT, SUBSECOND_LIMIT]) {
+        for (value, limit) in time.iter_mut().zip([
+            HOUR_LIMIT,
+            MINUTE_SECOND_LIMIT,
+            MINUTE_SECOND_LIMIT,
+            SUBSECOND_LIMIT,
+            SUBSECOND_LIMIT,
+            SUBSECOND_LIMIT,
+        ]) {
             if constrain {
                 *value = (*value).clamp(0, limit);
             }
@@ -1151,17 +1162,12 @@ impl<H: Host> Vm<H> {
                 "compatible"
             } else {
                 let mode = self.to_string(p, value)?.to_string();
-                if !super::temporal_zoned_date_time::DISAMBIGUATION_OPTIONS.contains(&mode.as_str()) {
+                if !super::temporal_zoned_date_time::DISAMBIGUATION_OPTIONS.contains(&mode.as_str())
+                {
                     return Err(self.range_error(p, "Invalid disambiguation".into()));
                 }
-                return self.make_zoned_date_time_from_local(
-                    p,
-                    date,
-                    time,
-                    calendar,
-                    timezone,
-                    &mode,
-                );
+                return self
+                    .make_zoned_date_time_from_local(p, date, time, calendar, timezone, &mode);
             }
         };
         self.make_zoned_date_time_from_local(p, date, time, calendar, timezone, disambiguation)
@@ -1183,9 +1189,7 @@ impl<H: Host> Vm<H> {
             disambiguation,
         )
         .ok_or_else(|| self.range_error(p, "Invalid time zone transition".into()))?;
-        if epoch.unsigned_abs()
-            > super::temporal_zoned_date_time::MAX_EPOCH_NANOSECONDS as u128
-        {
+        if epoch.unsigned_abs() > super::temporal_zoned_date_time::MAX_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "Invalid instant".into()));
         }
         let temporal_atom = self.intern_atom("Temporal");
