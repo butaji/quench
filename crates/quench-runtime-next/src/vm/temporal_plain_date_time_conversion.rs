@@ -48,10 +48,13 @@ pub(super) fn to_time_with_options<H: Host>(
         return Ok([0; 6]);
     }
     if let Some(Cell::TemporalPlainDateTime { .. }) = vm.heap.get(value) {
-        return Ok(vm
+        validate_overflow_options_type(vm, p, options)?;
+        let time = vm
             .temporal_plain_date_time_slots(p, value)?
             .1
-            .map(|part| part as i32));
+            .map(|part| part as i32);
+        let _ = vm.plain_date_overflow(p, options)?;
+        return Ok(time);
     }
     if let Some(Cell::TemporalZonedDateTime {
         epoch_nanoseconds,
@@ -59,9 +62,12 @@ pub(super) fn to_time_with_options<H: Host>(
         ..
     }) = vm.heap.get(value)
     {
+        let (epoch_nanoseconds, time_zone) = (*epoch_nanoseconds, time_zone.clone());
+        validate_overflow_options_type(vm, p, options)?;
         let local =
-            super::temporal_zoned_date_time::zoned_date_time_fields(*epoch_nanoseconds, time_zone)
+            super::temporal_zoned_date_time::zoned_date_time_fields(epoch_nanoseconds, &time_zone)
                 .ok_or_else(|| vm.range_error(p, "Invalid time".into()))?;
+        let _ = vm.plain_date_overflow(p, options)?;
         return Ok([local[3], local[4], local[5], local[6], local[7], local[8]]);
     }
     if vm.is_string(value) {
@@ -79,6 +85,17 @@ pub(super) fn to_time_with_options<H: Host>(
         true,
         (!options.is_undefined()).then_some(options),
     )
+}
+
+fn validate_overflow_options_type<H: Host>(
+    vm: &mut Vm<H>,
+    p: &ResidualProgram,
+    options: Value,
+) -> Result<(), JsError> {
+    if !options.is_undefined() && !vm.is_object_like(options) {
+        return Err(vm.type_error(p, "Options must be an object".into()));
+    }
+    Ok(())
 }
 
 pub(super) fn to_date_time<H: Host>(
@@ -203,6 +220,9 @@ pub(super) fn parse_time_string<H: Host>(
     }) {
         return Err(vm.range_error(p, "Invalid time string".into()));
     }
+    if !time_offset_is_valid(time) {
+        return Err(vm.range_error(p, "Invalid time string".into()));
+    }
     let time = strip_time_offset(time);
     if time.is_empty() {
         return Err(vm.range_error(p, "Invalid time string".into()));
@@ -278,6 +298,16 @@ fn strip_time_offset(time: &str) -> &str {
         return &time[..index];
     }
     time
+}
+
+fn time_offset_is_valid(time: &str) -> bool {
+    let index = time
+        .find('+')
+        .or_else(|| time.rfind('-').filter(|index| *index > 0));
+    index.is_none_or(|index| {
+        let offset = &time[index..];
+        quench_temporal::valid_date_time_offset(offset)
+    })
 }
 
 fn normalize_compact_time(time: &str) -> String {
