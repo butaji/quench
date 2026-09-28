@@ -2,6 +2,7 @@ use super::temporal_date::{self, IsoDate};
 use super::*;
 
 pub(super) const MAX_CALENDAR_DIFFERENCE_ROUNDING_INCREMENT: i128 = 100_000_000;
+const MAX_PLAIN_DATE_TIME_ROUNDING_INCREMENT: f64 = 1_000_000_000.0;
 
 const MONTHS_PER_YEAR: i128 = 12;
 const UNITS: [&str; 10] = [
@@ -33,6 +34,12 @@ struct DifferenceOptions {
     smallest: &'static str,
     increment: i128,
     rounding_mode: String,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum DifferenceDomain {
+    PlainDateTime,
+    ZonedDateTime,
 }
 
 impl<H: Host> Vm<H> {
@@ -122,7 +129,11 @@ impl<H: Host> Vm<H> {
         if unit_rank(smallest) < unit_rank(largest) {
             return Err(self.range_error(p, "smallestUnit larger than largestUnit".into()));
         }
-        if !difference_increment_is_valid(increment, smallest) {
+        if !difference_increment_is_valid(
+            increment,
+            smallest,
+            DifferenceDomain::PlainDateTime,
+        ) {
             return Err(self.range_error(p, "Invalid roundingIncrement".into()));
         }
         Ok(DifferenceOptions {
@@ -359,7 +370,7 @@ impl<H: Host> Vm<H> {
             days = i64::try_from(rounded * options.increment)
                 .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
             time = 0;
-        } else if options.smallest != "nanosecond" {
+        } else {
             let quantum = unit_nanos(options.smallest) * options.increment;
             time = super::temporal_zoned_date_time::round_temporal_nanoseconds(
                 time * sign,
@@ -388,13 +399,23 @@ impl<H: Host> Vm<H> {
     }
 }
 
-pub(super) fn difference_increment_is_valid(increment: f64, smallest: &str) -> bool {
+pub(super) fn difference_increment_is_valid(
+    increment: f64,
+    smallest: &str,
+    domain: DifferenceDomain,
+) -> bool {
     if !increment.is_finite() || increment < 1.0 {
         return false;
     }
     let maximum = match smallest {
         "year" | "week" | "day" => {
-            return increment <= MAX_CALENDAR_DIFFERENCE_ROUNDING_INCREMENT as f64;
+            let maximum = match domain {
+                DifferenceDomain::PlainDateTime => MAX_PLAIN_DATE_TIME_ROUNDING_INCREMENT,
+                DifferenceDomain::ZonedDateTime => {
+                    MAX_CALENDAR_DIFFERENCE_ROUNDING_INCREMENT as f64
+                }
+            };
+            return increment <= maximum;
         }
         "month" => 12.0,
         "hour" => 24.0,
