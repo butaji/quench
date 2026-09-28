@@ -435,9 +435,18 @@ impl<H: Host> Vm<H> {
             }
             Native::DetachArrayBuffer => self.detach_array_buffer_native(p, args),
             Native::SharedArrayBufferGrow => self.shared_array_buffer_grow_native(p, this, args),
-            Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayOf => {
+            Native::ArrayFrom
+            | Native::ArrayFromAsync
+            | Native::ArrayOf
+            | Native::TypedArrayFrom
+            | Native::TypedArrayOf => {
                 self.array_modern_native(p, native, this, args)
             }
+            Native::TypedArrayToStringTag => Ok(self.typed_array_to_string_tag_native(this)),
+            Native::TypedArrayBufferGetter
+            | Native::TypedArrayByteLengthGetter
+            | Native::TypedArrayByteOffsetGetter
+            | Native::TypedArrayLengthGetter => self.typed_array_getter_native(p, native, this),
             Native::FunctionPrototype => Ok(Value::UNDEFINED),
             Native::FunctionPrototypeHasInstance => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -494,9 +503,7 @@ impl<H: Host> Vm<H> {
             Native::SymbolToString
             | Native::SymbolToPrimitive
             | Native::SymbolValueOf
-            | Native::SymbolDescriptionGetter => {
-                self.call_symbol_value_native(p, native, this)
-            }
+            | Native::SymbolDescriptionGetter => self.call_symbol_value_native(p, native, this),
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
             Native::TemporalToLocaleString => match self.heap.get(this) {
                 Some(Cell::TemporalDuration { .. }) => {

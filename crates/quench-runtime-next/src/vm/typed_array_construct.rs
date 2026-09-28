@@ -116,6 +116,26 @@ impl<H: Host> Vm<H> {
         &mut self,
         constructor: Value,
     ) -> Result<(), JsError> {
+        let to_string_tag = self.native_with_realm(
+            Native::TypedArrayToStringTag,
+            Value::NULL,
+            self.realm.globals,
+        );
+        self.set_builtin_function_name(to_string_tag, "get [Symbol.toStringTag]")?;
+        let tag_symbol = self.well_known_symbols.get("toStringTag").copied().unwrap();
+        self.set_symbol_property(self.typed_array_proto, tag_symbol, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            self.typed_array_proto,
+            PropertyKey::symbol(tag_symbol),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(to_string_tag),
+                setter: None,
+            },
+        );
         let species = self.well_known_symbols.get("species").copied().unwrap();
         let getter = self.native_value(Native::ArraySpecies);
         self.set_builtin_function_name(getter, "get [Symbol.species]")?;
@@ -132,6 +152,14 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        for (name, native) in [
+            ("from", Native::TypedArrayFrom),
+            ("of", Native::TypedArrayOf),
+        ] {
+            let method = self.native_with_realm(native, Value::NULL, self.realm.globals);
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(constructor, name, method)?;
+        }
         Ok(())
     }
 

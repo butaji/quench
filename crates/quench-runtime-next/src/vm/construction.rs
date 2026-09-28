@@ -130,6 +130,7 @@ impl<H: Host> Vm<H> {
                         | Native::Object
                         | Native::Proxy
                         | Native::Array
+                        | Native::TypedArray
                         | Native::ArrayBuffer
                         | Native::SharedArrayBuffer
                         | Native::Uint8Array
@@ -838,6 +839,9 @@ impl<H: Host> Vm<H> {
                 }))
             }
             Native::Array => self.construct_array_native(p, args, new_target),
+            Native::TypedArray => {
+                Err(self.type_error(p, "TypedArray is an abstract constructor".into()))
+            }
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 self.construct_buffer_native(p, native, args, new_target)
             }

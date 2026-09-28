@@ -219,6 +219,12 @@ fn same_static_module_binding(left: &StaticModuleValue, right: &StaticModuleValu
 }
 
 fn native_length(kind: Native) -> Option<f64> {
+    if let Some((_, _, array_native)) = super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS
+        .iter()
+        .find(|(_, typed_native, _)| *typed_native == kind)
+    {
+        return native_length(*array_native);
+    }
     if let Some(length) = super::string::string_native_length(kind) {
         return Some(length);
     }
@@ -238,7 +244,26 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::FunctionPrototype
         | Native::FunctionToString
         | Native::FunctionCaller
+        | Native::TypedArrayOf
+        | Native::Uint8ArrayReverse
+        | Native::Uint8ArrayToString
+        | Native::Uint8ArrayKeys
+        | Native::Uint8ArrayValues
+        | Native::Uint8ArrayEntries
+        | Native::TypedArrayToStringTag
+        | Native::TypedArrayBufferGetter
+        | Native::TypedArrayByteLengthGetter
+        | Native::TypedArrayByteOffsetGetter
+        | Native::TypedArrayLengthGetter
         | Native::ThrowTypeError => 0.0,
+        Native::TypedArrayLastIndexOf => 1.0,
+        Native::TypedArraySort => 1.0,
+        Native::Uint8ArrayFill
+        | Native::Uint8ArrayIncludes
+        | Native::Uint8ArrayIndexOf
+        | Native::Uint8ArrayJoin
+        | Native::Uint8ArraySet => 1.0,
+        Native::Uint8ArrayCopyWithin | Native::Uint8ArraySubarray | Native::Uint8ArraySlice => 2.0,
         Native::FunctionPrototypeHasInstance => 1.0,
         Native::FunctionCall | Native::FunctionBind => 1.0,
         Native::FunctionApply => 2.0,
@@ -605,6 +630,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::SetClear | Native::SetKeys | Native::SetValues | Native::SetEntries => 0.0,
         Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
+        Native::TypedArrayFrom => 1.0,
         Native::ArrayBuffer
         | Native::SharedArrayBuffer
         | Native::ArrayBufferIsView

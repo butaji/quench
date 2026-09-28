@@ -1,6 +1,12 @@
 use super::*;
 use crate::heap::{ArrayFromAsyncAwait, ArrayFromAsyncState};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrayFromTarget {
+    Array,
+    TypedArray,
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn array_modern_native(
         &mut self,
@@ -17,9 +23,13 @@ impl<H: Host> Vm<H> {
             Native::ArraySpecies => Ok(this),
             Native::ArrayToString => self.array_to_string_native(p, this),
             Native::ArrayToLocaleString => self.array_to_locale_string_native(p, this),
-            Native::ArrayFrom => self.array_from_native(p, this, args),
+            Native::ArrayFrom => self.array_from_native(p, this, args, ArrayFromTarget::Array),
+            Native::TypedArrayFrom => {
+                self.array_from_native(p, this, args, ArrayFromTarget::TypedArray)
+            }
             Native::ArrayFromAsync => self.array_from_async_native(p, this, args),
             Native::ArrayOf => self.array_of_native(p, this, args),
+            Native::TypedArrayOf => self.typed_array_of_native(p, this, args),
             _ => unreachable!("non-modern native routed to modern array dispatch"),
         }
     }
@@ -125,6 +135,32 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    fn typed_array_of_native(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.is_constructable(p, constructor) {
+            return Err(self.type_error(p, "typed array of receiver is not a constructor".into()));
+        }
+        let target = self.array_from_target(
+            p,
+            constructor,
+            Some(args.len()),
+            ArrayFromTarget::TypedArray,
+        )?;
+        let target_root = self.heap.root(target);
+        let outcome = (|| {
+            for (index, value) in args.iter().copied().enumerate() {
+                self.typed_array_set(p, target, index, value)?;
+            }
+            Ok(self.heap.root_value(target_root).unwrap())
+        })();
+        self.heap.release_root(target_root);
+        outcome
+    }
+
     fn array_create(&mut self, p: &ResidualProgram, length: usize) -> Result<Value, JsError> {
         if length > MAX_ARRAY_LENGTH {
             return Err(self.range_error(p, "invalid array length".into()));
@@ -139,12 +175,21 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
         length: Option<usize>,
+        target: ArrayFromTarget,
     ) -> Result<Value, JsError> {
         if self.is_constructable(p, constructor) {
             let args = length
                 .map(|length| vec![Value::number(length as f64)])
                 .unwrap_or_default();
-            self.construct_value(p, constructor, &args)
+            let result = self.construct_value(p, constructor, &args)?;
+            if target == ArrayFromTarget::TypedArray && self.typed_array_kind(result).is_none() {
+                return Err(
+                    self.type_error(p, "typed array constructor returned invalid result".into())
+                );
+            }
+            Ok(result)
+        } else if target == ArrayFromTarget::TypedArray {
+            Err(self.type_error(p, "typed array from receiver is not a constructor".into()))
         } else {
             self.array_create(p, length.unwrap_or(0))
         }
@@ -155,13 +200,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
         args: &[Value],
+        target_kind: ArrayFromTarget,
     ) -> Result<Value, JsError> {
+        if target_kind == ArrayFromTarget::TypedArray && !self.is_constructable(p, constructor) {
+            return Err(self.type_error(p, "typed array from receiver is not a constructor".into()));
+        }
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         let done_atom = self.intern_atom("done");
         let value_atom = self.intern_atom("value");
         let mapfn = args.get(1).copied().filter(|value| !value.is_undefined());
         if mapfn.is_some_and(|mapfn| !self.is_function(mapfn)) {
-            return Err(JsError("Array.from map function is not callable".into()));
+            return Err(self.type_error(p, "Array.from map function is not callable".into()));
         }
         let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
         let iterator_symbol = self.well_known_symbols.get("iterator").copied();
@@ -173,7 +222,17 @@ impl<H: Host> Vm<H> {
             if !self.is_function(iterator_method) {
                 return Err(self.type_error(p, "iterator method is not callable".into()));
             }
-            let target = self.array_from_target(p, constructor, None)?;
+            if target_kind == ArrayFromTarget::TypedArray {
+                return self.typed_array_from_iterable(
+                    p,
+                    constructor,
+                    source,
+                    iterator_method,
+                    mapfn,
+                    map_this,
+                );
+            }
+            let target = self.array_from_target(p, constructor, None, target_kind)?;
             let root = self.heap.root(target);
             let outcome = (|| {
                 let iterator = self.call_value(p, iterator_method, source, &[])?;
@@ -247,7 +306,7 @@ impl<H: Host> Vm<H> {
         } else {
             length.floor().min(usize::MAX as f64) as usize
         };
-        let target = self.array_from_target(p, constructor, Some(length))?;
+        let target = self.array_from_target(p, constructor, Some(length), target_kind)?;
         let root = self.heap.root(target);
         let outcome = (|| {
             for index in 0..length {
@@ -257,11 +316,87 @@ impl<H: Host> Vm<H> {
                         self.call_value(p, mapfn, map_this, &[value, Value::number(index as f64)])?;
                 }
                 let target = self.heap.root_value(root).unwrap();
-                self.create_data_property_or_throw(p, target, index, value)?;
+                if target_kind == ArrayFromTarget::TypedArray {
+                    self.typed_array_set(p, target, index, value)?;
+                } else {
+                    self.create_data_property_or_throw(p, target, index, value)?;
+                }
             }
             Ok(self.heap.root_value(root).unwrap())
         })();
         self.heap.release_root(root);
+        outcome
+    }
+
+    fn typed_array_from_iterable(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        source: Value,
+        iterator_method: Value,
+        mapfn: Option<Value>,
+        map_this: Value,
+    ) -> Result<Value, JsError> {
+        let done_atom = self.intern_atom("done");
+        let value_atom = self.intern_atom("value");
+        let iterator = self.call_value(p, iterator_method, source, &[])?;
+        if !self.is_object_like(iterator) {
+            return Err(self.type_error(p, "iterator method did not return an object".into()));
+        }
+        let iterator_root = self.heap.root(iterator);
+        let mut values = Vec::new();
+        let outcome = (|| {
+            loop {
+                let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
+                let step = match self.iterator_next(p, iterator) {
+                    Ok(step) => step,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                let done = match self.get_property(p, step, done_atom) {
+                    Ok(done) => done,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                if self.truthy(done) {
+                    break;
+                }
+                let mut value = match self.get_property(p, step, value_atom) {
+                    Ok(value) => value,
+                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                };
+                if let Some(mapfn) = mapfn {
+                    value = match self.call_value(
+                        p,
+                        mapfn,
+                        map_this,
+                        &[value, Value::number(values.len() as f64)],
+                    ) {
+                        Ok(value) => value,
+                        Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                    };
+                }
+                values.push(self.heap.root(value));
+            }
+            let target = self.array_from_target(
+                p,
+                constructor,
+                Some(values.len()),
+                ArrayFromTarget::TypedArray,
+            )?;
+            let target_root = self.heap.root(target);
+            let result = (|| {
+                for (index, value) in values.iter().enumerate() {
+                    let value = self.heap.root_value(*value).unwrap();
+                    self.typed_array_set(p, target, index, value)?;
+                }
+                Ok(self.heap.root_value(target_root).unwrap())
+            })();
+            self.heap.release_root(target_root);
+            result
+        })();
+        self.heap.release_root(iterator_root);
+        for value in values {
+            self.heap.release_root(value);
+        }
         outcome
     }
 
