@@ -238,19 +238,53 @@ impl<H: Host> Vm<H> {
         }
         let this = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, this)?;
-        if native == Native::ArrayMap && length > u32::MAX as usize {
+        self.array_callback_with_length(p, native, this, args, length, false)
+    }
+
+    pub(super) fn typed_array_callback_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
+            return Err(self.type_error(p, "typed array callback receiver is invalid".into()));
+        };
+        if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(*buffer) {
+            return Err(self.type_error(p, "typed array callback receiver is invalid".into()));
+        }
+        let length = self.typed_array_length(this).unwrap_or(0);
+        if matches!(native, Native::ArrayReduce | Native::ArrayReduceRight) {
+            return self.array_reduce_with_length(p, native, this, args, length, true);
+        }
+        self.array_callback_with_length(p, native, this, args, length, true)
+    }
+
+    fn array_callback_with_length(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+        length: usize,
+        typed_array: bool,
+    ) -> Result<Value, JsError> {
+        if !typed_array && native == Native::ArrayMap && length > u32::MAX as usize {
             return Err(self.range_error(p, "invalid array length".into()));
         }
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
-            return Err(JsError("array callback is not callable".into()));
+            return Err(self.type_error(p, "array callback is not callable".into()));
         }
         let result = match native {
             Native::ArrayMap => Some(self.array_species_create(p, this, length)?),
+            Native::ArrayFilter if typed_array => None,
             Native::ArrayFilter => Some(self.array_species_create(p, this, 0)?),
             _ => None,
         };
         let result_root = result.map(|result| self.heap.root(result));
+        let mut filtered_value_roots = Vec::new();
         let outcome = (|| {
             let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
             let mut result_length = 0;
@@ -265,7 +299,7 @@ impl<H: Host> Vm<H> {
                         | Native::ArrayFindLast
                         | Native::ArrayFindLastIndex
                 );
-                if !finds_holes && !self.has_property(p, this, key)? {
+                if !typed_array && !finds_holes && !self.has_property(p, this, key)? {
                     continue;
                 }
                 let value = self.get_index(p, this, key)?;
@@ -281,11 +315,15 @@ impl<H: Host> Vm<H> {
                         self.create_data_property_or_throw(p, target, index, mapped)?;
                     }
                     Native::ArrayFilter if self.truthy(mapped) => {
-                        let target = self
-                            .heap
-                            .root_value(result_root.expect("filter result is rooted"))
-                            .unwrap();
-                        self.create_data_property_or_throw(p, target, result_length, value)?;
+                        if typed_array {
+                            filtered_value_roots.push(self.heap.root(value));
+                        } else {
+                            let target = self
+                                .heap
+                                .root_value(result_root.expect("filter result is rooted"))
+                                .unwrap();
+                            self.create_data_property_or_throw(p, target, result_length, value)?;
+                        }
                         result_length += 1;
                     }
                     Native::ArraySome if self.truthy(mapped) => return Ok(Value::TRUE),
@@ -303,6 +341,19 @@ impl<H: Host> Vm<H> {
             }
             match native {
                 Native::ArrayForEach => Ok(Value::UNDEFINED),
+                Native::ArrayFilter if typed_array => {
+                    let target = self.typed_array_species_create(p, this, result_length)?;
+                    let target_root = self.heap.root(target);
+                    let result = (|| {
+                        for (index, value_root) in filtered_value_roots.iter().enumerate() {
+                            let value = self.heap.root_value(*value_root).unwrap();
+                            self.typed_array_set(p, target, index, value)?;
+                        }
+                        Ok(self.heap.root_value(target_root).unwrap())
+                    })();
+                    self.heap.release_root(target_root);
+                    result
+                }
                 Native::ArrayMap | Native::ArrayFilter => Ok(self
                     .heap
                     .root_value(result_root.expect("callback result is rooted"))
@@ -317,6 +368,9 @@ impl<H: Host> Vm<H> {
             }
         })();
         if let Some(root) = result_root {
+            self.heap.release_root(root);
+        }
+        for root in filtered_value_roots {
             self.heap.release_root(root);
         }
         outcome
@@ -392,6 +446,18 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
+        self.array_reduce_with_length(p, native, object, args, length, false)
+    }
+
+    fn array_reduce_with_length(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        object: Value,
+        args: &[Value],
+        length: usize,
+        typed_array: bool,
+    ) -> Result<Value, JsError> {
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
             return Err(self.type_error(p, "reduce callback is not callable".into()));
@@ -404,7 +470,7 @@ impl<H: Host> Vm<H> {
                 index -= 1;
             }
             let key = Value::number(index as f64);
-            if self.has_property(p, object, key)? {
+            if typed_array || self.has_property(p, object, key)? {
                 accumulator = Some(self.get_index(p, object, key)?);
             }
             if !reverse {
@@ -419,7 +485,7 @@ impl<H: Host> Vm<H> {
                 index -= 1;
             }
             let key = Value::number(index as f64);
-            if self.has_property(p, object, key)? {
+            if typed_array || self.has_property(p, object, key)? {
                 let value = self.get_index(p, object, key)?;
                 let callback_args = [accumulator, value, key, object];
                 accumulator = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
