@@ -929,6 +929,7 @@ impl<H: Host> Vm<H> {
         self.install_number_for_realm(program, global, object_prototype)?;
         self.install_function_prototype_for_realm(global, object_prototype, function)?;
         self.install_typed_array_constructors_for_realm(program, global)?;
+        self.install_weak_collections_for_realm(program, global, object_prototype)?;
         let set = self.native_with_realm(Native::Set, global, global);
         self.install_set_prototype(program, set, object_prototype)?;
         self.install_set_species(set)?;

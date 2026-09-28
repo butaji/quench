@@ -594,12 +594,21 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::ObjectPrototypeHasOwnProperty
         | Native::ObjectPrototypePropertyIsEnumerable
         | Native::ObjectPrototypeIsPrototypeOf => 1.0,
-        Native::Map | Native::Set | Native::MapSizeGetter | Native::SetSizeGetter => 0.0,
+        Native::Map
+        | Native::Set
+        | Native::WeakMap
+        | Native::WeakSet
+        | Native::MapSizeGetter
+        | Native::SetSizeGetter => 0.0,
         Native::MapGet | Native::MapHas | Native::MapDelete | Native::MapForEach => 1.0,
         Native::MapSet => 2.0,
         Native::MapClear | Native::MapKeys | Native::MapValues | Native::MapEntries => 0.0,
         Native::MapGroupBy => 2.0,
         Native::MapGetOrInsert | Native::MapGetOrInsertComputed => 2.0,
+        Native::WeakMapGet | Native::WeakMapHas | Native::WeakMapDelete => 1.0,
+        Native::WeakMapSet
+        | Native::WeakMapGetOrInsert
+        | Native::WeakMapGetOrInsertComputed => 2.0,
         Native::MathMax
         | Native::MathMin
         | Native::MathPow
