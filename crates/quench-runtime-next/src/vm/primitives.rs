@@ -408,11 +408,16 @@ impl<H: Host> Vm<H> {
                 )))
             }
             Native::DecodeUri | Native::DecodeUriComponent => {
-                let value = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let decoded =
-                    super::string_extra::decode_uri(&value, native == Native::DecodeUriComponent)
-                        .map_err(|message| JsError(message.into()))?;
-                Ok(self.heap.alloc(Cell::String(decoded.into())))
+                let value = self.coerce_js_string(
+                    p,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                )?;
+                let decoded = super::string_extra::decode_uri(
+                    &value,
+                    native == Native::DecodeUriComponent,
+                )
+                .map_err(|message| self.uri_error(p, message.into()))?;
+                Ok(self.heap.alloc(Cell::String(decoded)))
             }
             Native::StringFromCharCode => {
                 let mut units = Vec::with_capacity(args.len());

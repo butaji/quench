@@ -288,6 +288,10 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::Boolean => 1.0,
         Native::BooleanToString | Native::BooleanValueOf => 0.0,
         Native::DataView => 1.0,
+        Native::EncodeUri
+        | Native::EncodeUriComponent
+        | Native::DecodeUri
+        | Native::DecodeUriComponent => 1.0,
         Native::DataViewGetBigInt64
         | Native::DataViewGetBigUint64
         | Native::DataViewGetFloat16
