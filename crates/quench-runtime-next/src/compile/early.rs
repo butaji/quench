@@ -45,8 +45,7 @@ pub(super) fn normalize_dynamic_function_body(source: &str) -> Cow<'_, str> {
         }
         let byte = normalized[cursor];
         lexical.advance(&normalized, &mut cursor);
-        line_start = matches!(byte, b'\n' | b'\r')
-            || line_start && matches!(byte, b' ' | b'\t');
+        line_start = matches!(byte, b'\n' | b'\r') || line_start && matches!(byte, b' ' | b'\t');
     }
     if changed {
         String::from_utf8(normalized).map_or(Cow::Borrowed(source), Cow::Owned)
@@ -679,20 +678,24 @@ pub(super) fn collect_var_names(statements: &[Statement<'_>]) -> Vec<String> {
     names
 }
 
-pub(super) fn annex_b_lexical_collisions(statements: &[Statement<'_>]) -> FxHashSet<String> {
+pub(super) fn annex_b_lexical_collisions(statements: &[Statement<'_>]) -> FxHashSet<u32> {
     let visible = lexical_names(statements);
     let mut collisions = FxHashSet::default();
     collect_annex_b_collisions(statements, &visible, &mut collisions);
     collisions
 }
 
-pub(super) fn annex_b_function_names(statements: &[Statement<'_>]) -> Vec<String> {
-    statements.iter().flat_map(annex_b_function_names_in).collect()
+pub(super) fn annex_b_function_names(statements: &[Statement<'_>]) -> Vec<(u32, String)> {
+    statements
+        .iter()
+        .flat_map(annex_b_function_names_in)
+        .collect()
 }
 
-fn annex_b_function_names_in(statement: &Statement<'_>) -> Vec<String> {
+fn annex_b_function_names_in(statement: &Statement<'_>) -> Vec<(u32, String)> {
     match statement {
         Statement::FunctionDeclaration(function) => annex_b_function_name(function)
+            .map(|name| (function.span.start, name))
             .into_iter()
             .collect(),
         Statement::BlockStatement(block) => annex_b_function_names(&block.body),
@@ -733,8 +736,23 @@ fn annex_b_function_names_in(statement: &Statement<'_>) -> Vec<String> {
 
 fn annex_b_function_name(function: &oxc_ast::ast::Function<'_>) -> Option<String> {
     (!function.r#async && !function.generator)
-        .then(|| function.id.as_ref().map(|identifier| identifier.name.to_string()))
+        .then(|| {
+            function
+                .id
+                .as_ref()
+                .map(|identifier| identifier.name.to_string())
+        })
         .flatten()
+}
+
+fn block_function_names(statements: &[Statement<'_>]) -> Vec<String> {
+    statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::FunctionDeclaration(function) => annex_b_function_name(function),
+            _ => None,
+        })
+        .collect()
 }
 
 fn lexical_names(statements: &[Statement<'_>]) -> Vec<String> {
@@ -762,20 +780,18 @@ fn lexical_names(statements: &[Statement<'_>]) -> Vec<String> {
 fn collect_annex_b_collisions(
     statements: &[Statement<'_>],
     visible: &[String],
-    collisions: &mut FxHashSet<String>,
+    collisions: &mut FxHashSet<u32>,
 ) {
     for statement in statements {
         match statement {
             Statement::BlockStatement(block) => {
-                let mut nested = visible.to_vec();
-                nested.extend(lexical_names(&block.body));
-                collect_annex_b_collisions(&block.body, &nested, collisions);
+                collect_block_collisions(&block.body, visible, collisions);
             }
             Statement::FunctionDeclaration(function) => {
                 if let Some(identifier) = &function.id
                     && visible.iter().any(|name| name == identifier.name.as_str())
                 {
-                    collisions.insert(identifier.name.to_string());
+                    collisions.insert(function.span.start);
                 }
             }
             Statement::IfStatement(statement) => {
@@ -812,25 +828,47 @@ fn collect_annex_b_collisions(
                 collect_annex_b_one(&statement.body, visible, collisions);
             }
             Statement::SwitchStatement(statement) => {
-                let mut nested = visible.to_vec();
+                let mut own_lexicals = Vec::new();
                 for case in &statement.cases {
-                    nested.extend(lexical_names(&case.consequent));
+                    own_lexicals.extend(lexical_names(&case.consequent));
                 }
+                let mut direct_functions = Vec::new();
                 for case in &statement.cases {
-                    collect_annex_b_collisions(&case.consequent, &nested, collisions);
+                    direct_functions.extend(block_function_names(&case.consequent));
+                }
+                let mut function_visible = visible.to_vec();
+                function_visible.extend(own_lexicals);
+                let mut nested_visible = function_visible.clone();
+                nested_visible.extend(direct_functions);
+                for case in &statement.cases {
+                    for nested_statement in &case.consequent {
+                        if let Statement::FunctionDeclaration(function) = nested_statement {
+                            if let Some(identifier) = &function.id
+                                && function_visible
+                                    .iter()
+                                    .any(|name| name == identifier.name.as_str())
+                            {
+                                collisions.insert(function.span.start);
+                            }
+                        } else {
+                            collect_annex_b_one(nested_statement, &nested_visible, collisions);
+                        }
+                    }
                 }
             }
             Statement::TryStatement(statement) => {
-                collect_annex_b_collisions(&statement.block.body, visible, collisions);
+                collect_block_collisions(&statement.block.body, visible, collisions);
                 if let Some(handler) = &statement.handler {
                     let mut nested = visible.to_vec();
-                    if let Some(parameter) = &handler.param {
+                    if let Some(parameter) = &handler.param
+                        && !matches!(parameter.pattern, BindingPattern::BindingIdentifier(_))
+                    {
                         collect_pattern_names(&parameter.pattern, &mut nested);
                     }
-                    collect_annex_b_collisions(&handler.body.body, &nested, collisions);
+                    collect_block_collisions(&handler.body.body, &nested, collisions);
                 }
                 if let Some(finalizer) = &statement.finalizer {
-                    collect_annex_b_collisions(&finalizer.body, visible, collisions);
+                    collect_block_collisions(&finalizer.body, visible, collisions);
                 }
             }
             _ => {}
@@ -838,10 +876,34 @@ fn collect_annex_b_collisions(
     }
 }
 
+fn collect_block_collisions(
+    statements: &[Statement<'_>],
+    visible: &[String],
+    collisions: &mut FxHashSet<u32>,
+) {
+    let mut function_visible = visible.to_vec();
+    function_visible.extend(lexical_names(statements));
+    let mut nested_visible = function_visible.clone();
+    nested_visible.extend(block_function_names(statements));
+    for statement in statements {
+        if let Statement::FunctionDeclaration(function) = statement {
+            if let Some(identifier) = &function.id
+                && function_visible
+                    .iter()
+                    .any(|name| name == identifier.name.as_str())
+            {
+                collisions.insert(function.span.start);
+            }
+        } else {
+            collect_annex_b_one(statement, &nested_visible, collisions);
+        }
+    }
+}
+
 fn collect_annex_b_one(
     statement: &Statement<'_>,
     visible: &[String],
-    collisions: &mut FxHashSet<String>,
+    collisions: &mut FxHashSet<u32>,
 ) {
     collect_annex_b_collisions(std::slice::from_ref(statement), visible, collisions);
 }
@@ -850,7 +912,7 @@ fn collect_loop_collisions(
     left: &oxc_ast::ast::ForStatementLeft<'_>,
     body: &Statement<'_>,
     visible: &[String],
-    collisions: &mut FxHashSet<String>,
+    collisions: &mut FxHashSet<u32>,
 ) {
     let mut nested = visible.to_vec();
     if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left

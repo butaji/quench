@@ -31,7 +31,7 @@ impl Compiler<'_> {
         function_scope: &mut FxHashSet<Atom>,
         strict: bool,
         nested: bool,
-        annex_b_collisions: &FxHashSet<String>,
+        annex_b_collisions: &FxHashSet<u32>,
     ) {
         for statement in body {
             match statement {
@@ -48,16 +48,15 @@ impl Compiler<'_> {
                 }
                 Statement::FunctionDeclaration(function)
                     if (!strict || !nested)
-                        && (!nested
-                            || function.id.as_ref().is_none_or(|identifier| {
-                                !annex_b_collisions.contains(identifier.name.as_str())
-                            })) => self
-                    .collect_name(
+                        && (!nested || !annex_b_collisions.contains(&function.span.start)) =>
+                {
+                    self.collect_name(
                         function.id.as_ref().map(|name| name.name.as_str()),
                         output,
                         seen,
                         function_scope,
-                    ),
+                    )
+                }
                 Statement::ImportDeclaration(_) => {
                     for binding in super::module_import_bindings(std::slice::from_ref(statement)) {
                         self.collect_name(Some(&binding.local), output, seen, function_scope);
@@ -240,8 +239,7 @@ impl Compiler<'_> {
                             if matches!(statement, Statement::VariableDeclaration(declaration)
                                 if super::is_lexical_binding_declaration(declaration.kind))
                                 || matches!(statement, Statement::FunctionDeclaration(function)
-                                    if strict || function.id.as_ref().is_some_and(|identifier|
-                                        annex_b_collisions.contains(identifier.name.as_str())))
+                                    if strict || annex_b_collisions.contains(&function.span.start))
                             {
                                 continue;
                             }
