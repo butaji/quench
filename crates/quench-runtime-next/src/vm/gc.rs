@@ -203,6 +203,11 @@ impl<H: Host> Vm<H> {
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),
                 )
                 .chain(
+                    self.intl_number_format_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
+                .chain(
                     self.intl_collator_constructors
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),

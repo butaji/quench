@@ -20,7 +20,10 @@ pub use locale_data::{
     calendar_alias, default_numbering_system, sanitize_datetime_locale, valid_calendar,
     valid_numbering_system, valid_unicode_type, CALENDARS, NUMBERING_SYSTEMS,
 };
-pub use supported_values::{collation_supported, supported_time_zones, COLLATIONS, CURRENCIES, UNITS};
+pub use supported_values::{
+    collation_supported, currency_fraction_digits, supported_time_zones, COLLATIONS, CURRENCIES,
+    UNITS,
+};
 
 pub const NUMBER_FORMAT_OPTION_KEYS: &[&str] = &[
     "localeMatcher",
