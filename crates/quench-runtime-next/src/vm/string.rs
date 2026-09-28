@@ -344,10 +344,21 @@ impl<H: Host> Vm<H> {
             | Native::StringToLowerCase
             | Native::StringToLocaleUpperCase
             | Native::StringToLocaleLowerCase => {
-                let text = if matches!(
+                let upper = matches!(
                     native,
                     Native::StringToUpperCase | Native::StringToLocaleUpperCase
+                );
+                let text = if matches!(
+                    native,
+                    Native::StringToLocaleUpperCase | Native::StringToLocaleLowerCase
                 ) {
+                    let locale = self
+                        .collator_locale_list(p, args.first().copied())?
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| "en-US".into());
+                    quench_intl::locale_case(receiver.host_string(), &locale, upper)
+                } else if upper {
                     receiver.host_string().to_uppercase()
                 } else {
                     receiver.host_string().to_lowercase()
@@ -356,15 +367,25 @@ impl<H: Host> Vm<H> {
             }
             Native::StringLocaleCompare => {
                 let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                use unicode_normalization::UnicodeNormalization;
-                let left = receiver.host_string().nfc().collect::<String>();
-                let right = other.nfc().collect::<String>();
-                let ordering = left.cmp(&right);
-                Ok(Value::number(match ordering {
-                    std::cmp::Ordering::Less => -1.0,
-                    std::cmp::Ordering::Equal => 0.0,
-                    std::cmp::Ordering::Greater => 1.0,
-                }))
+                self.collator_locale_list(p, args.get(1).copied())?;
+                let collator_args = [
+                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
+                    args.get(2).copied().unwrap_or(Value::UNDEFINED),
+                ];
+                let constructor = self
+                    .intl_collator_constructors
+                    .get(&self.realm.globals)
+                    .copied()
+                    .ok_or_else(|| JsError("Intl.Collator intrinsic is not installed".into()))?;
+                let collator = self.intl_collator_construct(p, &collator_args, constructor)?;
+                let left = self.heap.alloc(Cell::String(receiver));
+                let right = self.heap.alloc(Cell::String(other.into()));
+                self.intl_collator_native(
+                    p,
+                    Native::IntlCollatorCompare,
+                    collator,
+                    &[left, right],
+                )
             }
             Native::StringConcat => {
                 let mut text = receiver;
