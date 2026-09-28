@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
             Native::ArraySpecies => Ok(this),
             Native::ArrayToString => self.array_to_string_native(p, this),
-            Native::ArrayToLocaleString => self.array_to_locale_string_native(p, this),
+            Native::ArrayToLocaleString => self.array_to_locale_string_native(p, this, args),
             Native::ArrayFrom => self.array_from_native(p, this, args, ArrayFromTarget::Array),
             Native::TypedArrayFrom => {
                 self.array_from_native(p, this, args, ArrayFromTarget::TypedArray)
@@ -87,10 +87,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         this: Value,
+        args: &[Value],
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
-        self.array_to_locale_string_with_length(p, object, length)
+        self.array_to_locale_string_with_length(p, object, length, args)
     }
 
     pub(super) fn array_to_locale_string_with_length(
@@ -98,8 +99,13 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
         length: usize,
+        args: &[Value],
     ) -> Result<Value, JsError> {
         let to_locale_string = self.intern_atom("toLocaleString");
+        let invoke_arguments = [
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+            args.get(1).copied().unwrap_or(Value::UNDEFINED),
+        ];
         let mut result = String::new();
         for index in 0..length {
             if index != 0 {
@@ -113,7 +119,7 @@ impl<H: Host> Vm<H> {
             if !self.is_function(method) {
                 return Err(self.type_error(p, "toLocaleString is not callable".into()));
             }
-            let element = self.call_value(p, method, value, &[])?;
+            let element = self.call_value(p, method, value, &invoke_arguments)?;
             result.push_str(&self.to_string(p, element)?);
         }
         Ok(self.heap.alloc(Cell::String(result.into())))

@@ -217,7 +217,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "typed array receiver is invalid".into()));
             }
             let length = self.typed_array_length(this).unwrap_or_default();
-            return self.array_to_locale_string_with_length(p, this, length);
+            return self.array_to_locale_string_with_length(p, this, length, args);
         }
         if native == Native::Uint8ArraySubarray {
             return self.typed_array_subarray_native(p, this, args);
