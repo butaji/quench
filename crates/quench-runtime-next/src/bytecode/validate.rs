@@ -248,6 +248,13 @@ impl ResidualProgram {
                 return Err(format!("function {index} has an invalid global var atom"));
             }
             if function
+                .environment_atoms
+                .iter()
+                .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
+            {
+                return Err(format!("function {index} has an invalid environment atom"));
+            }
+            if function
                 .parent
                 .is_some_and(|p| p as usize >= self.functions.len())
             {
@@ -423,6 +430,7 @@ mod tests {
             strict: false,
             locals: 0,
             local_atoms: vec![],
+            environment_atoms: vec![],
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],

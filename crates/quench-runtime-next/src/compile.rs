@@ -1889,6 +1889,11 @@ impl<'a> Compiler<'a> {
                 Some((locals.len() - 1) as u16)
             }
         };
+        let environment_atoms = locals
+            .iter()
+            .copied()
+            .filter(|atom| function_scope.contains(atom))
+            .collect();
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -2065,6 +2070,7 @@ impl<'a> Compiler<'a> {
             strict: root_strict,
             locals: function.locals.len() as u16,
             local_atoms: function.locals.clone(),
+            environment_atoms,
             lexical_atoms,
             global_lexical_atoms: Vec::new(),
             global_var_atoms: Vec::new(),

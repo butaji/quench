@@ -600,6 +600,8 @@ pub struct Function {
     pub strict: bool,
     pub locals: u16,
     pub local_atoms: Vec<Atom>,
+    /// Names visible through this function's captured declarative environment.
+    pub environment_atoms: Vec<Atom>,
     pub lexical_atoms: Vec<Atom>,
     pub global_lexical_atoms: Vec<Atom>,
     pub global_var_atoms: Vec<Atom>,
@@ -939,8 +941,8 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 25;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_0019_0000;
+    pub const FORMAT_VERSION: u8 = 26;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_001a_0000;
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

@@ -132,6 +132,10 @@ pub(super) fn write_program(
         for atom in &function.local_atoms {
             out.u32(*atom);
         }
+        out.u32(function.environment_atoms.len() as u32);
+        for atom in &function.environment_atoms {
+            out.u32(*atom);
+        }
         out.u32(function.lexical_atoms.len() as u32);
         for atom in &function.lexical_atoms {
             out.u32(*atom);
@@ -386,6 +390,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         };
         let locals = input.u16()?;
         let local_atoms = input.list(|input| input.u32())?;
+        let environment_atoms = input.list(|input| input.u32())?;
         let lexical_atoms = input.list(|input| input.u32())?;
         let global_lexical_atoms = input.list(|input| input.u32())?;
         let global_var_atoms = input.list(|input| input.u32())?;
@@ -488,6 +493,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             strict,
             locals,
             local_atoms,
+            environment_atoms,
             lexical_atoms,
             global_lexical_atoms,
             global_var_atoms,

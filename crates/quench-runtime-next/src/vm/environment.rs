@@ -290,11 +290,14 @@ impl<H: Host> Vm<H> {
                         .get(super::program_store::ProgramId::from_raw(program))
                 })
                 && let Some(metadata) = environment_program.functions.get(*function as usize)
-                && (*function != super::ROOT_FUNCTION_ID
-                    || metadata.global_lexical_atoms.contains(&atom)
-                    || self.module_root_var_binding(&environment_program, *function, atom)
-                    || (root_eval_scope
-                        && program.is_some_and(|program| program != self.active_program.raw())))
+                && if *function == super::ROOT_FUNCTION_ID {
+                    metadata.global_lexical_atoms.contains(&atom)
+                        || self.module_root_var_binding(&environment_program, *function, atom)
+                        || (root_eval_scope
+                            && program.is_some_and(|program| program != self.active_program.raw()))
+                } else {
+                    root_eval_scope || metadata.environment_atoms.contains(&atom)
+                }
                 && let Some(slot) = self.local_binding_slot(&environment_program, *function, atom)
                 && slot < slots.len()
             {
