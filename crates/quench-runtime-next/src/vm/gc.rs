@@ -257,6 +257,11 @@ impl<H: Host> Vm<H> {
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
+                .chain(
+                    self.intl_locale_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(
                     self.iterator_realm_prototypes

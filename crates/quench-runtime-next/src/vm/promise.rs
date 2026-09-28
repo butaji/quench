@@ -329,6 +329,17 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::IntlRelativeTimeFormat => 1.0,
         Native::IntlRelativeTimeFormatResolvedOptions => 0.0,
         Native::IntlGetCanonicalLocales | Native::IntlSupportedValuesOf | Native::IntlLocale => 1.0,
+        Native::IntlLocaleToString | Native::IntlLocaleMaximize | Native::IntlLocaleMinimize
+        | Native::IntlLocaleGetCalendars | Native::IntlLocaleGetCollations
+        | Native::IntlLocaleGetHourCycles | Native::IntlLocaleGetNumberingSystems
+        | Native::IntlLocaleGetTimeZones | Native::IntlLocaleGetTextInfo
+        | Native::IntlLocaleGetWeekInfo => 0.0,
+        Native::IntlLocaleBaseNameGetter | Native::IntlLocaleLanguageGetter
+        | Native::IntlLocaleScriptGetter | Native::IntlLocaleRegionGetter
+        | Native::IntlLocaleVariantsGetter | Native::IntlLocaleCalendarGetter
+        | Native::IntlLocaleCollationGetter | Native::IntlLocaleHourCycleGetter
+        | Native::IntlLocaleCaseFirstGetter | Native::IntlLocaleFirstDayOfWeekGetter
+        | Native::IntlLocaleNumberingSystemGetter | Native::IntlLocaleNumericGetter => 0.0,
         Native::IntlCollator => 0.0,
         Native::IntlCollatorSupportedLocalesOf => 1.0,
         Native::IntlCollatorCompareGetter => 0.0,
