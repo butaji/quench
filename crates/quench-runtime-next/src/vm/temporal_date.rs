@@ -697,9 +697,24 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<i32, JsError> {
-        let code = self.to_string(p, value)?.to_string();
-        parse_iso_month_code(&code)
-            .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+        let code = self.temporal_month_code_to_string(p, value)?;
+        self.parse_plain_date_month_code(p, &code)
+    }
+
+    pub(super) fn temporal_month_code_to_string(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<String, JsError> {
+        Ok(self.to_string(p, value)?.to_string())
+    }
+
+    pub(super) fn parse_plain_date_month_code(
+        &mut self,
+        p: &ResidualProgram,
+        code: &str,
+    ) -> Result<i32, JsError> {
+        parse_iso_month_code(code).ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
     }
 
     pub(super) fn plain_date_optional_integer(
