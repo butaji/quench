@@ -981,10 +981,16 @@ impl<H: Host> Vm<H> {
         }
         let needs_relative_date =
             smallest <= 2 || largest <= 2 || fields[..3].iter().any(|value| *value != 0.0);
+        let needs_zoned_day_rounding = largest
+            == super::temporal_date_arithmetic::DURATION_DAYS_FIELD
+            && smallest >= super::temporal_date_arithmetic::DURATION_HOURS_FIELD
+            && relative_date
+                .as_ref()
+                .is_some_and(|relative| relative.zoned.is_some());
         if needs_relative_date && relative_date.is_none() {
             return Err(self.range_error(p, "relativeTo required for calendar units".into()));
         }
-        if needs_relative_date {
+        if needs_relative_date || needs_zoned_day_rounding {
             return self.temporal_duration_round_relative_date(
                 p,
                 fields,
@@ -992,7 +998,7 @@ impl<H: Host> Vm<H> {
                 smallest,
                 increment,
                 &mode,
-                relative_date.expect("relative date checked above").iso_date,
+                relative_date.expect("relative date checked above"),
                 explicit_smallest_unit,
             );
         }
@@ -1025,9 +1031,49 @@ impl<H: Host> Vm<H> {
         smallest: usize,
         increment: i128,
         mode: &str,
-        relative_date: quench_temporal::IsoDate,
+        relative_date: TemporalRelativeDate,
         explicit_smallest_unit: bool,
     ) -> Result<Value, JsError> {
+        if largest == super::temporal_date_arithmetic::DURATION_DAYS_FIELD
+            && smallest >= super::temporal_date_arithmetic::DURATION_HOURS_FIELD
+            && fields[..super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+                .iter()
+                .all(|value| *value == 0.0)
+            && relative_date.zoned.is_some()
+        {
+            let quantum = duration_round_unit_nanoseconds(smallest)
+                .checked_mul(increment)
+                .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
+            let time_fields = std::array::from_fn(|index| {
+                if index >= super::temporal_date_arithmetic::DURATION_HOURS_FIELD {
+                    fields[index]
+                } else {
+                    0.0
+                }
+            });
+            let rounded = round_duration_integer(
+                self.duration_time_nanos(&time_fields),
+                quantum,
+                mode,
+            )
+            .checked_mul(quantum)
+            .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+            if rounded.unsigned_abs()
+                < super::temporal_date_arithmetic::NANOS_PER_DAY as u128
+            {
+                let mut result = [0.0; 10];
+                result[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+                    .copy_from_slice(&fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]);
+                balance_duration_time_units(
+                    rounded,
+                    super::temporal_date_arithmetic::DURATION_HOURS_FIELD,
+                    &mut result,
+                );
+                self.validate_duration_fields(p, &result)?;
+                return self.make_temporal_duration(p, result);
+            }
+        }
+        let relative_date = relative_date.iso_date;
         let fields_i128 = std::array::from_fn(|index| fields[index] as i128);
         let (target_date, time_remainder) = if !explicit_smallest_unit {
             let total = quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
@@ -1347,11 +1393,7 @@ fn divide_duration_nanos(nanos: i128, divisor: i128) -> f64 {
         remainder %= divisor;
     }
     let value = decimal.parse::<f64>().unwrap_or(f64::INFINITY);
-    if negative {
-        -value
-    } else {
-        value
-    }
+    if negative { -value } else { value }
 }
 
 fn parse_duration_unit(unit: &str) -> Option<usize> {

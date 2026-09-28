@@ -74,6 +74,7 @@ impl<H: Host> Vm<H> {
         let right_total = datetime_nanos(right_date, right_time);
         let signed_total = (right_total - left_total) * direction;
         let sign = signed_total.signum();
+        let receiver_is_end = left_total >= right_total;
         let mut fields = [0.0; 10];
         if options.largest_rank() >= unit_rank("hour") {
             self.balance_time_difference(signed_total, &options, &mut fields)?;
@@ -83,6 +84,7 @@ impl<H: Host> Vm<H> {
                 (left_date, left_time),
                 (right_date, right_time),
                 sign,
+                receiver_is_end,
                 &options,
                 &mut fields,
             )?;
@@ -217,6 +219,7 @@ impl<H: Host> Vm<H> {
         left: (IsoDate, [u32; 6]),
         right: (IsoDate, [u32; 6]),
         sign: i128,
+        receiver_is_end: bool,
         options: &DifferenceOptions,
         fields: &mut [f64; 10],
     ) -> Result<(), JsError> {
@@ -225,9 +228,18 @@ impl<H: Host> Vm<H> {
         } else {
             (right, left)
         };
+        let (receiver, target) = if receiver_is_end {
+            (end, start)
+        } else {
+            (start, end)
+        };
         let mut days = temporal_date::days_from_iso_date(end.0)
             - temporal_date::days_from_iso_date(start.0);
-        let mut time = time_nanos(end.1) - time_nanos(start.1);
+        let mut time = if receiver_is_end {
+            time_nanos(receiver.1) - time_nanos(target.1)
+        } else {
+            time_nanos(target.1) - time_nanos(receiver.1)
+        };
         if time < 0 {
             days -= 1;
             time += super::temporal_date_arithmetic::NANOS_PER_DAY;
@@ -238,16 +250,43 @@ impl<H: Host> Vm<H> {
         if matches!(largest, "year" | "month") {
             months = i128::from(end.0.year - start.0.year) * MONTHS_PER_YEAR
                 + i128::from(end.0.month as i32 - start.0.month as i32);
-            let mut anchor = shift_months_clamped(start.0, months)
+            let receiver_anchor = if receiver_is_end {
+                shift_months_clamped(receiver.0, -months)
+            } else {
+                shift_months_clamped(receiver.0, months)
+            };
+            let anchor_from_receiver = receiver_anchor.is_some();
+            let anchor = receiver_anchor.or_else(|| shift_months_clamped(start.0, months))
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-            if datetime_nanos(anchor, start.1) > datetime_nanos(end.0, end.1) {
+            let anchor_total = datetime_nanos(anchor, receiver.1);
+            let target_total = datetime_nanos(target.0, target.1);
+            if (anchor_from_receiver && receiver_is_end && anchor_total < target_total)
+                || (anchor_from_receiver && !receiver_is_end && anchor_total > target_total)
+                || (!anchor_from_receiver
+                    && datetime_nanos(anchor, start.1) > datetime_nanos(end.0, end.1))
+            {
                 months -= 1;
-                anchor = shift_months_clamped(start.0, months)
-                    .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
             }
-            days = temporal_date::days_from_iso_date(end.0)
-                - temporal_date::days_from_iso_date(anchor);
-            time = time_nanos(end.1) - time_nanos(start.1);
+            let anchor = if anchor_from_receiver && receiver_is_end {
+                shift_months_clamped(receiver.0, -months)
+            } else if anchor_from_receiver {
+                shift_months_clamped(receiver.0, months)
+            } else {
+                shift_months_clamped(start.0, months)
+            }
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+            days = if receiver_is_end {
+                temporal_date::days_from_iso_date(anchor)
+                    - temporal_date::days_from_iso_date(target.0)
+            } else {
+                temporal_date::days_from_iso_date(target.0)
+                    - temporal_date::days_from_iso_date(anchor)
+            };
+            time = if receiver_is_end {
+                time_nanos(receiver.1) - time_nanos(target.1)
+            } else {
+                time_nanos(target.1) - time_nanos(receiver.1)
+            };
             if time < 0 {
                 days -= 1;
                 time += super::temporal_date_arithmetic::NANOS_PER_DAY;
@@ -266,33 +305,53 @@ impl<H: Host> Vm<H> {
         }
         let nanos_per_day = super::temporal_date_arithmetic::NANOS_PER_DAY;
         let subday = time_nanos(end.1) - time_nanos(start.1);
+        let receiver_unit_direction = if receiver_is_end {
+            -MONTHS_PER_YEAR.signum()
+        } else {
+            MONTHS_PER_YEAR.signum()
+        };
         let rounded_calendar_unit = match options.smallest {
             "year" => {
-                let anchor = shift_months_clamped(start.0, years * MONTHS_PER_YEAR)
+                let receiver_year_shift = receiver_unit_direction * MONTHS_PER_YEAR;
+                let year_anchor = shift_months_clamped(
+                    receiver.0,
+                    receiver_year_shift * years,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+                let year_boundary = shift_months_clamped(
+                    year_anchor,
+                    receiver_unit_direction * MONTHS_PER_YEAR,
+                )
                     .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-                let year_days = i128::from(temporal_date::iso_days_in_year(anchor.year));
-                let residual_days = temporal_date::days_from_iso_date(end.0)
-                    - temporal_date::days_from_iso_date(anchor);
-                Some((
-                    (years * year_days + i128::from(residual_days)) * nanos_per_day + subday,
-                    year_days * nanos_per_day,
-                ))
+                let year_nanos = datetime_nanos(year_boundary, receiver.1)
+                    .abs_diff(datetime_nanos(year_anchor, receiver.1))
+                    .try_into()
+                    .unwrap_or(i128::MAX);
+                let remainder = datetime_nanos(target.0, target.1)
+                    .abs_diff(datetime_nanos(year_anchor, receiver.1))
+                    .try_into()
+                    .unwrap_or(i128::MAX);
+                Some((years * year_nanos + remainder, year_nanos))
             }
             "month" => {
                 let total_months = years * MONTHS_PER_YEAR + months;
-                let anchor = shift_months_clamped(start.0, total_months)
+                let receiver_month_shift = receiver_unit_direction;
+                let month_anchor = shift_months_clamped(
+                    receiver.0,
+                    receiver_month_shift * total_months,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+                let month_boundary = shift_months_clamped(month_anchor, receiver_month_shift)
                     .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-                let month_days = i128::from(
-                    temporal_date::iso_days_in_month(anchor.year, anchor.month as i32)
-                        .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?,
-                );
-                let residual_days = temporal_date::days_from_iso_date(end.0)
-                    - temporal_date::days_from_iso_date(anchor);
-                Some((
-                    (total_months * month_days + i128::from(residual_days)) * nanos_per_day
-                        + subday,
-                    month_days * nanos_per_day,
-                ))
+                let month_nanos = datetime_nanos(month_boundary, receiver.1)
+                    .abs_diff(datetime_nanos(month_anchor, receiver.1))
+                    .try_into()
+                    .unwrap_or(i128::MAX);
+                let remainder = datetime_nanos(target.0, target.1)
+                    .abs_diff(datetime_nanos(month_anchor, receiver.1))
+                    .try_into()
+                    .unwrap_or(i128::MAX);
+                Some((total_months * month_nanos + remainder, month_nanos))
             }
             "week" => {
                 if days == 0 && time == 0 {
