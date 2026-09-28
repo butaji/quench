@@ -101,6 +101,17 @@ const NATIVES: &[Native] = &[
     Native::ArrayFlatMap,
     Native::ArrayReduce,
     Native::ArrayReduceRight,
+    Native::TypedArrayForEach,
+    Native::TypedArrayMap,
+    Native::TypedArrayFilter,
+    Native::TypedArraySome,
+    Native::TypedArrayEvery,
+    Native::TypedArrayFind,
+    Native::TypedArrayFindIndex,
+    Native::TypedArrayFindLast,
+    Native::TypedArrayFindLastIndex,
+    Native::TypedArrayReduce,
+    Native::TypedArrayReduceRight,
     Native::ArrayToReversed,
     Native::ArrayToSpliced,
     Native::ArraySort,
@@ -704,6 +715,7 @@ impl<H: Host> Vm<H> {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
         self.install_array_species()?;
+        self.install_typed_array_species(self.native_value(Native::TypedArray))?;
         self.install_array_unscopables()?;
         self.install_abstract_module_source(program)?;
         self.install_array_buffer_species(program)?;

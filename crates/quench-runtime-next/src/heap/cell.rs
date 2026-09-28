@@ -60,6 +60,17 @@ pub(crate) enum Native {
     ArrayFlatMap,
     ArrayReduce,
     ArrayReduceRight,
+    TypedArrayForEach,
+    TypedArrayMap,
+    TypedArrayFilter,
+    TypedArraySome,
+    TypedArrayEvery,
+    TypedArrayFind,
+    TypedArrayFindIndex,
+    TypedArrayFindLast,
+    TypedArrayFindLastIndex,
+    TypedArrayReduce,
+    TypedArrayReduceRight,
     ArrayToReversed,
     ArrayToSpliced,
     ArraySort,
@@ -562,6 +573,17 @@ impl Native {
                 | Self::Uint8ArrayIndexOf
                 | Self::Uint8ArrayJoin
                 | Self::Uint8ArrayToString
+                | Self::TypedArrayForEach
+                | Self::TypedArrayMap
+                | Self::TypedArrayFilter
+                | Self::TypedArraySome
+                | Self::TypedArrayEvery
+                | Self::TypedArrayFind
+                | Self::TypedArrayFindIndex
+                | Self::TypedArrayFindLast
+                | Self::TypedArrayFindLastIndex
+                | Self::TypedArrayReduce
+                | Self::TypedArrayReduceRight
                 | Self::ArrayBufferIsView
         )
     }

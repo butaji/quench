@@ -1,3 +1,4 @@
+use super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS;
 use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 impl<H: Host> Vm<H> {
@@ -22,16 +23,22 @@ impl<H: Host> Vm<H> {
         let uint8_array = self.native_value(Native::Uint8Array);
         let typed_array = self.native_value(Native::TypedArray);
         self.uint8_array_proto = self.object();
+        self.typed_array_proto = self.object();
+        self.object_data_mut(self.uint8_array_proto)
+            .expect("Uint8Array prototype")
+            .proto = self.typed_array_proto;
         self.object_data_mut(typed_array)
             .expect("TypedArray constructor")
             .proto = self.function_proto;
-        self.set_named(program, typed_array, "prototype", self.uint8_array_proto)?;
+        self.set_named(program, typed_array, "prototype", self.typed_array_proto)?;
+        self.set_builtin_value_named(self.typed_array_proto, "constructor", typed_array)?;
         let typed_name = self.heap.alloc(Cell::String("TypedArray".into()));
         self.set_named(program, typed_array, "name", typed_name)?;
         self.object_data_mut(uint8_array)
             .expect("Uint8Array constructor")
             .proto = typed_array;
         self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
+        self.set_builtin_value_named(self.uint8_array_proto, "constructor", uint8_array)?;
         let name = self.heap.alloc(Cell::String("Uint8Array".into()));
         self.set_named(program, uint8_array, "name", name)?;
         self.set_named_constant(
@@ -61,7 +68,12 @@ impl<H: Host> Vm<H> {
             ("values", Native::Uint8ArrayValues),
             ("entries", Native::Uint8ArrayEntries),
         ] {
-            self.set_builtin_named(program, self.uint8_array_proto, name, native)?;
+            self.set_builtin_named(program, self.typed_array_proto, name, native)?;
+        }
+        for &(name, native, _) in TYPED_ARRAY_CALLBACK_METHODS {
+            let method = self.native_with_realm(native, Value::NULL, self.realm.globals);
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(self.typed_array_proto, name, method)?;
         }
         self.global(program, "Uint8Array", uint8_array)?;
         for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
@@ -84,6 +96,15 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if let Some(array_native) =
+            TYPED_ARRAY_CALLBACK_METHODS
+                .iter()
+                .find_map(|(_, typed_native, array_native)| {
+                    (*typed_native == native).then_some(*array_native)
+                })
+        {
+            return self.typed_array_callback_native(p, array_native, this, args);
+        }
         if native == Native::ArrayBufferIsView {
             return Ok(
                 if matches!(

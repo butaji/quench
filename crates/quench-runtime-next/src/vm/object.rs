@@ -491,6 +491,12 @@ impl<H: Host> Vm<H> {
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
         }
+        if target == receiver
+            && matches!(self.heap.get(target), Some(Cell::TypedArray { .. }))
+            && let Some(index) = Self::canonical_typed_array_index(self.atom_name(atom))
+        {
+            return self.typed_array_set(p, target, index, value);
+        }
         if let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(target).cloned()
@@ -944,16 +950,6 @@ impl<H: Host> Vm<H> {
                 Ok(())
             } else {
                 Err(self.type_error(p, "cannot assign property on primitive value".into()))
-            };
-        }
-        if matches!(self.heap.get(object), Some(Cell::TypedArray { .. }))
-            && let Some(index) = Self::canonical_typed_array_index(self.atom_name(atom))
-        {
-            let written = self.typed_array_set(p, object, index, value)?;
-            return if written || !strict {
-                Ok(())
-            } else {
-                Err(self.type_error(p, "cannot assign typed array index".into()))
             };
         }
         if atom == self.length_atom
