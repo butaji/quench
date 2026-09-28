@@ -61,6 +61,32 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
+        self.array_last_index_of_with_length(p, object, args, length)
+    }
+
+    pub(super) fn typed_array_last_index_of_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
+            return Err(self.type_error(p, "typed array lastIndexOf receiver is invalid".into()));
+        };
+        if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(*buffer) {
+            return Err(self.type_error(p, "typed array lastIndexOf receiver is invalid".into()));
+        }
+        let length = self.typed_array_length(this).unwrap_or(0);
+        self.array_last_index_of_with_length(p, this, args, length)
+    }
+
+    fn array_last_index_of_with_length(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        args: &[Value],
+        length: usize,
+    ) -> Result<Value, JsError> {
         if length == 0 {
             return Ok(Value::number(-1.0));
         }

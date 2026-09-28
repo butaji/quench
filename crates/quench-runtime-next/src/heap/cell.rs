@@ -26,7 +26,7 @@ pub(crate) enum Native {
     JsonStringify,
     JsonRawJson,
     JsonIsRawJson,
-    Array, TypedArray, ArrayToLocaleString, ArraySpecies, ArrayFromAsync,
+    Array, TypedArray, TypedArrayFrom, TypedArrayOf, TypedArrayLastIndexOf, TypedArraySort, TypedArrayBufferGetter, TypedArrayByteLengthGetter, TypedArrayByteOffsetGetter, TypedArrayLengthGetter, TypedArrayToStringTag, ArrayToLocaleString, ArraySpecies, ArrayFromAsync,
     ArrayFromAsyncFulfilled, ArrayFromAsyncRejected,
     ArrayIsArray,
     ArrayPush,
@@ -584,6 +584,8 @@ impl Native {
                 | Self::TypedArrayFindLastIndex
                 | Self::TypedArrayReduce
                 | Self::TypedArrayReduceRight
+                | Self::TypedArrayLastIndexOf
+                | Self::TypedArraySort
                 | Self::ArrayBufferIsView
         )
     }

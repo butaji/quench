@@ -75,6 +75,39 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(self.typed_array_proto, name, method)?;
         }
+        let last_index_of = self.native_with_realm(
+            Native::TypedArrayLastIndexOf,
+            Value::NULL,
+            self.realm.globals,
+        );
+        self.set_builtin_function_name(last_index_of, "lastIndexOf")?;
+        self.set_builtin_value_named(self.typed_array_proto, "lastIndexOf", last_index_of)?;
+        let sort = self.native_with_realm(Native::TypedArraySort, Value::NULL, self.realm.globals);
+        self.set_builtin_function_name(sort, "sort")?;
+        self.set_builtin_value_named(self.typed_array_proto, "sort", sort)?;
+        for (name, native) in [
+            ("buffer", Native::TypedArrayBufferGetter),
+            ("byteLength", Native::TypedArrayByteLengthGetter),
+            ("byteOffset", Native::TypedArrayByteOffsetGetter),
+            ("length", Native::TypedArrayLengthGetter),
+        ] {
+            let getter = self.native_with_realm(native, Value::NULL, self.realm.globals);
+            self.set_builtin_function_name(getter, &format!("get {name}"))?;
+            let atom = self.intern_atom(name);
+            self.set_named(program, self.typed_array_proto, name, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                self.typed_array_proto,
+                PropertyKey::string(atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
         self.global(program, "Uint8Array", uint8_array)?;
         for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
             self.install_typed_array_kind(program, kind, native, name)?;
@@ -96,6 +129,12 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if native == Native::TypedArrayLastIndexOf {
+            return self.typed_array_last_index_of_native(p, this, args);
+        }
+        if native == Native::TypedArraySort {
+            return self.typed_array_sort_native(p, this, args);
+        }
         if let Some(array_native) =
             TYPED_ARRAY_CALLBACK_METHODS
                 .iter()
@@ -117,15 +156,18 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
+            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+        };
+        if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(*buffer) {
+            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+        }
         let (buffer, offset, length) = self
             .typed_array_view(this)
-            .ok_or_else(|| JsError("Uint8Array receiver is invalid".into()))?;
+            .ok_or_else(|| self.type_error(p, "typed array receiver is invalid".into()))?;
         let kind = self
             .typed_array_kind(this)
             .ok_or_else(|| JsError("typed array receiver is invalid".into()))?;
-        if self.array_buffer_detached(buffer) {
-            return Err(JsError("Uint8Array backing buffer is detached".into()));
-        }
         match native {
             Native::Uint8ArrayReverse => {
                 for index in 0..length / 2 {
@@ -238,13 +280,24 @@ impl<H: Host> Vm<H> {
                 self.new_typed_view(copied, 0, count, kind)
             }
             Native::Uint8ArrayIncludes | Native::Uint8ArrayIndexOf => {
-                let search =
-                    self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                if length == 0 {
+                    return Ok(if native == Native::Uint8ArrayIncludes {
+                        Value::FALSE
+                    } else {
+                        Value::number(-1.0)
+                    });
+                }
+                let search = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let from = self.typed_array_relative_index(p, args.get(1), length)?;
                 let found = (from..length).find(|index| {
-                    self.typed_array_get(this, *index)
-                        .and_then(|value| value.as_number())
-                        .is_some_and(|value| value == search)
+                    let Some(value) = self.typed_array_get(this, *index) else {
+                        return false;
+                    };
+                    if native == Native::Uint8ArrayIncludes {
+                        self.same_value_zero(value, search)
+                    } else {
+                        self.strict_equal(value, search)
+                    }
                 });
                 if native == Native::Uint8ArrayIncludes {
                     Ok(if found.is_some() {
@@ -279,6 +332,163 @@ impl<H: Host> Vm<H> {
             }
             _ => unreachable!(),
         }
+    }
+
+    pub(super) fn typed_array_sort_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let comparator = args.first().copied().filter(|value| !value.is_undefined());
+        if let Some(value) = comparator
+            && !matches!(self.heap.get(value), Some(Cell::Function { .. }))
+        {
+            return Err(self.type_error(p, "sort comparator is not callable".into()));
+        }
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
+            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+        };
+        let buffer = *buffer;
+        let immutable = matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. }));
+        if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer) || immutable {
+            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+        }
+
+        let length = self.typed_array_length(this).unwrap_or_default();
+        let mut values = (0..length)
+            .map(|index| self.typed_array_get(this, index).unwrap_or(Value::UNDEFINED))
+            .collect::<Vec<_>>();
+        for index in 1..values.len() {
+            let value = values[index];
+            let mut position = index;
+            while position > 0
+                && self.typed_array_sort_compare(p, comparator, values[position - 1], value)? > 0
+            {
+                values[position] = values[position - 1];
+                position -= 1;
+            }
+            values[position] = value;
+        }
+        for (index, value) in values.into_iter().enumerate() {
+            self.typed_array_set(p, this, index, value)?;
+        }
+        Ok(this)
+    }
+
+    fn typed_array_sort_compare(
+        &mut self,
+        p: &ResidualProgram,
+        comparator: Option<Value>,
+        left: Value,
+        right: Value,
+    ) -> Result<i8, JsError> {
+        if let Some(comparator) = comparator {
+            let result = self.call_value(p, comparator, Value::UNDEFINED, &[left, right])?;
+            let number = self.to_number(p, result)?;
+            return Ok(if number.is_nan() || number == 0.0 {
+                0
+            } else if number < 0.0 {
+                -1
+            } else {
+                1
+            });
+        }
+        if let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
+            (self.heap.get(left), self.heap.get(right))
+        {
+            let left = left.parse::<i128>().unwrap_or_default();
+            let right = right.parse::<i128>().unwrap_or_default();
+            return Ok(match left.cmp(&right) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            });
+        }
+        let left = left.as_number().unwrap_or(f64::NAN);
+        let right = right.as_number().unwrap_or(f64::NAN);
+        Ok(if left.is_nan() {
+            if right.is_nan() { 0 } else { 1 }
+        } else if right.is_nan() {
+            -1
+        } else if left == 0.0 && right == 0.0 {
+            match (left.is_sign_negative(), right.is_sign_negative()) {
+                (true, false) => -1,
+                (false, true) => 1,
+                _ => 0,
+            }
+        } else {
+            match left.partial_cmp(&right).unwrap_or(std::cmp::Ordering::Equal) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            }
+        })
+    }
+
+    pub(super) fn typed_array_to_string_tag_native(&mut self, this: Value) -> Value {
+        let Some(kind) = self.typed_array_kind(this) else {
+            return Value::UNDEFINED;
+        };
+        let name = TYPED_ARRAY_INSTALLS
+            .iter()
+            .find_map(|(candidate, _, name)| (*candidate == kind).then_some(*name))
+            .unwrap_or("Uint8Array");
+        self.heap.alloc(Cell::String(name.into()))
+    }
+
+    pub(super) fn typed_array_getter_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TypedArray {
+            buffer,
+            offset,
+            length,
+            length_tracking,
+            kind,
+            ..
+        }) = self.heap.get(this)
+        else {
+            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+        };
+        let (buffer, offset, length, length_tracking, kind) =
+            (*buffer, *offset, *length, *length_tracking, *kind);
+        let (buffer_length, detached) = match self.heap.get(buffer) {
+            Some(Cell::ArrayBuffer { bytes, detached, .. }) => (bytes.len(), *detached),
+            _ => (0, true),
+        };
+        let out_of_bounds = detached
+            || if length_tracking {
+                offset > buffer_length
+            } else {
+                offset.saturating_add(length.saturating_mul(kind.width())) > buffer_length
+            };
+        let view_length = if detached || out_of_bounds {
+            0
+        } else if length_tracking {
+            buffer_length.saturating_sub(offset) / kind.width()
+        } else {
+            length
+        };
+        Ok(match native {
+            Native::TypedArrayBufferGetter => buffer,
+            Native::TypedArrayByteOffsetGetter if !out_of_bounds => {
+                Value::number(offset as f64)
+            }
+            Native::TypedArrayLengthGetter if !out_of_bounds => {
+                Value::number(view_length as f64)
+            }
+            Native::TypedArrayByteLengthGetter if !out_of_bounds => Value::number(
+                (view_length * kind.width()) as f64,
+            ),
+            Native::TypedArrayByteOffsetGetter
+            | Native::TypedArrayLengthGetter
+            | Native::TypedArrayByteLengthGetter => Value::number(0.0),
+            _ => unreachable!(),
+        })
     }
 
     fn typed_array_relative_index(
