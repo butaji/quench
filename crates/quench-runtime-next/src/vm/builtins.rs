@@ -755,18 +755,14 @@ impl<H: Host> Vm<H> {
         self.set_builtin_named(program, string, "raw", Native::StringRaw)?;
         self.global(program, "String", string)?;
         self.install_iterator_self(program)?;
-        self.global(program, "parseInt", self.native_value(Native::ParseInt))?;
-        self.global(
-            program,
-            "parseFloat",
-            self.native_value(Native::NumberParseFloat),
-        )?;
-        self.global(program, "isNaN", self.native_value(Native::GlobalIsNaN))?;
-        self.global(
-            program,
-            "isFinite",
-            self.native_value(Native::GlobalIsFinite),
-        )?;
+        for (name, native) in [
+            ("parseInt", Native::ParseInt),
+            ("parseFloat", Native::NumberParseFloat),
+            ("isNaN", Native::GlobalIsNaN),
+            ("isFinite", Native::GlobalIsFinite),
+        ] {
+            self.set_builtin_named(program, self.realm.globals, name, native)?;
+        }
         self.install_number(program)?;
         for (name, native) in [
             ("encodeURI", Native::EncodeUri),
