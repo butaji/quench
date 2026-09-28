@@ -589,7 +589,7 @@ impl<H: Host> Vm<H> {
             "\0rqj:to-string",
             self.native_value(Native::ToString),
         )?;
-        self.global(program, "eval", self.native_value(Native::Eval))?;
+        self.set_builtin_named(program, self.realm.globals, "eval", Native::Eval)?;
         self.global(
             program,
             "\0rqj:with-enter",
@@ -1060,6 +1060,15 @@ impl<H: Host> Vm<H> {
         native: Native,
     ) -> Result<(), JsError> {
         let function = self.native_value(native);
+        self.set_builtin_function_value_named(object, name, function)
+    }
+
+    pub(super) fn set_builtin_function_value_named(
+        &mut self,
+        object: Value,
+        name: &str,
+        function: Value,
+    ) -> Result<(), JsError> {
         self.set_builtin_function_name(function, name)?;
         self.set_builtin_value_named(object, name, function)
     }
