@@ -426,6 +426,7 @@ pub struct Vm<H> {
     // the small set of captured environments it has materialized.
     function_values: FxHashMap<(ProgramId, u32), Vec<(Value, Value)>>,
     direct_eval: bool,
+    direct_eval_var_program: Option<ProgramId>,
     parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,
