@@ -57,7 +57,9 @@ impl<H: Host> Vm<H> {
             }
             Op::LoadLocal => {
                 let slot = i.local_slot();
-                let v = if let Some(value) =
+                let v = if let Some(value) = self.direct_eval_var_binding(f, slot) {
+                    value
+                } else if let Some(value) =
                     self.root_global_lexical_value(p, self.frames[f].function, slot)
                 {
                     value
@@ -164,7 +166,9 @@ impl<H: Host> Vm<H> {
             }
             Op::LoadEnvLocal => {
                 let slot = i.local_slot();
-                let value = if let Some(value) =
+                let value = if let Some(value) = self.direct_eval_var_binding(f, slot) {
+                    value
+                } else if let Some(value) =
                     self.root_global_lexical_value(p, self.frames[f].function, slot)
                 {
                     value
