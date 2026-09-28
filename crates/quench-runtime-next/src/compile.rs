@@ -11,6 +11,7 @@ use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::{fmt, ops::Range};
+mod annex_b_targets;
 mod arrow;
 mod ast;
 mod binding_time;
@@ -729,6 +730,11 @@ impl Engine {
         private_name_overrides: &[(String, String)],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
+        let (normalized, annex_b_call_target_marker) = match annex_b_targets::normalize(&normalized)
+        {
+            Some(targets) => (targets.source, targets.marker),
+            None => (normalized.into_owned(), String::new()),
+        };
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, source_type).parse();
         if !parsed.diagnostics.is_empty() {
@@ -758,8 +764,14 @@ impl Engine {
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
         let private_name_labels = private_name_labels(&semantic.semantic);
-        let mut compiler =
-            Compiler::new_with_mode(name, &normalized, mode, atom_prefix, private_name_ids);
+        let mut compiler = Compiler::new_with_mode(
+            name,
+            &normalized,
+            mode,
+            atom_prefix,
+            private_name_ids,
+            annex_b_call_target_marker,
+        );
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_name_overrides.iter().cloned().collect();
         compiler.capture_script_completion = capture_script_completion;
@@ -1157,6 +1169,7 @@ struct Compiler<'a> {
     private_name_ids: FxHashMap<(u32, u32), u32>,
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<String, String>,
+    annex_b_call_target_marker: String,
     constants: Vec<Constant>,
     constant_index: FxHashMap<ConstantKey, u32>,
     functions: Vec<Option<BcFunction>>,
@@ -1295,6 +1308,7 @@ impl<'a> Compiler<'a> {
         mode: SpecializationMode,
         atom_prefix: &[String],
         private_name_ids: FxHashMap<(u32, u32), u32>,
+        annex_b_call_target_marker: String,
     ) -> Self {
         let atoms: Vec<Rc<str>> = atom_prefix
             .iter()
@@ -1316,6 +1330,7 @@ impl<'a> Compiler<'a> {
             private_name_ids,
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
+            annex_b_call_target_marker,
             constants: vec![],
             constant_index: FxHashMap::default(),
             functions: vec![],
@@ -1661,6 +1676,14 @@ impl<'a> Compiler<'a> {
         self.private_name_overrides
             .values()
             .any(|name| self.atom_index.get(name.as_str()) == Some(&atom))
+    }
+
+    fn source_text(&self, span: Span) -> Option<String> {
+        let source = self.text.get(span.start as usize..span.end as usize)?;
+        if self.annex_b_call_target_marker.is_empty() {
+            return Some(source.to_owned());
+        }
+        Some(source.replace(&format!(".{}", self.annex_b_call_target_marker), ""))
     }
 
     fn private_name_label(&self, span: Span, id: u32) -> String {
