@@ -288,19 +288,18 @@ impl<H: Host> Vm<H> {
         if native == Native::TemporalPlainTimeRound {
             let options = args.first().copied().unwrap_or(Value::UNDEFINED);
             let parsed = super::temporal_instant_round::read_options(self, p, options)?;
-            let (unit, scale) = super::temporal_instant_round::parse_unit(
+            let (_, scale) = super::temporal_instant_round::parse_unit(
                 self,
                 p,
                 parsed.smallest_unit.as_deref(),
+                super::temporal_instant_round::RoundingDomain::PlainTime,
             )?;
-            if unit == "day" {
-                return Err(self.range_error(p, "Invalid PlainTime rounding unit".into()));
-            }
             let increment = super::temporal_instant_round::validate_increment(
                 self,
                 p,
                 parsed.increment,
                 scale,
+                super::temporal_instant_round::RoundingDomain::PlainTime,
             )?;
             let mode = super::temporal_instant_round::validate_mode(
                 self,
@@ -413,16 +412,15 @@ impl<H: Host> Vm<H> {
             self,
             p,
             Some(&options.largest_unit),
+            super::temporal_instant_round::RoundingDomain::PlainTime,
         )?;
         let (smallest_unit, smallest_scale) = super::temporal_instant_round::parse_unit(
             self,
             p,
             Some(&options.smallest_unit),
+            super::temporal_instant_round::RoundingDomain::PlainTime,
         )?;
-        if largest_unit == "day"
-            || smallest_unit == "day"
-            || largest_scale < smallest_scale
-        {
+        if largest_unit == "day" || smallest_unit == "day" || largest_scale < smallest_scale {
             return Err(self.range_error(p, "Invalid time unit relationship".into()));
         }
         let increment = super::temporal_instant_round::validate_increment(
@@ -430,15 +428,15 @@ impl<H: Host> Vm<H> {
             p,
             Some(options.increment),
             smallest_scale,
+            super::temporal_instant_round::RoundingDomain::PlainTime,
         )?;
-        let rounding_mode = super::temporal_instant_round::validate_mode(
-            self,
-            p,
-            Some(&options.rounding_mode),
-        )?;
+        let rounding_mode =
+            super::temporal_instant_round::validate_mode(self, p, Some(&options.rounding_mode))?;
         let quantum = smallest_scale * increment;
         let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
-            delta, quantum, rounding_mode,
+            delta,
+            quantum,
+            rounding_mode,
         ) * quantum;
         let units = super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES;
         let largest_index = units

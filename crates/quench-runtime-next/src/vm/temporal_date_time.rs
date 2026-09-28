@@ -789,25 +789,26 @@ impl<H: Host> Vm<H> {
             self,
             p,
             parsed.smallest_unit.as_deref(),
+            super::temporal_instant_round::RoundingDomain::PlainDateTime,
         )?;
-        let increment =
-            super::temporal_instant_round::validate_increment(self, p, parsed.increment, scale)?;
-        let mode = super::temporal_instant_round::validate_mode(
+        let increment = super::temporal_instant_round::validate_increment(
             self,
             p,
-            parsed.rounding_mode.as_deref(),
+            parsed.increment,
+            scale,
+            super::temporal_instant_round::RoundingDomain::PlainDateTime,
         )?;
+        let mode =
+            super::temporal_instant_round::validate_mode(self, p, parsed.rounding_mode.as_deref())?;
         let total = time
             .iter()
             .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
             .map(|(value, scale)| i128::from(*value) * scale)
             .sum::<i128>();
         let quantum = scale * increment;
-        let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
-            total,
-            quantum,
-            mode,
-        ) * quantum;
+        let rounded =
+            super::temporal_zoned_date_time::round_temporal_nanoseconds(total, quantum, mode)
+                * quantum;
         let carry = rounded.div_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
         let remainder = rounded.rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
         let days = i64::try_from(carry)
