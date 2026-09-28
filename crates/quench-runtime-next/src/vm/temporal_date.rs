@@ -545,9 +545,9 @@ impl<H: Host> Vm<H> {
         }
         let (date, calendar) = if let Some(Cell::String(text)) = self.heap.get(value) {
             let text = text.host_string().to_owned();
-            let _ = self.plain_date_overflow(p, options)?;
             let (date, calendar) = temporal_date_parse::parse_plain_date_string(&text)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?;
+            let _ = self.plain_date_overflow(p, options)?;
             (date, calendar)
         } else if self.is_object_like(value) {
             self.plain_date_from_bag(p, value, options)?
