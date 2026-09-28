@@ -484,8 +484,7 @@ impl<H: Host> Vm<H> {
         let mut output = Vec::new();
         for index in 0..length {
             let value = self.get_index(p, locales, Value::number(index as f64))?;
-            if !matches!(self.heap.get(value), Some(Cell::String(_)))
-                && !self.is_object_like(value)
+            if !matches!(self.heap.get(value), Some(Cell::String(_))) && !self.is_object_like(value)
             {
                 return Err(self.type_error(p, "locale list elements must be strings".into()));
             }
@@ -506,11 +505,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         locale: String,
     ) -> Result<String, JsError> {
-        if super::intl_number::valid_locale_identifier(&locale) {
-            Ok(locale)
-        } else {
-            Err(self.range_error(p, "invalid locale identifier".into()))
-        }
+        quench_intl::canonical_locale_identifier(&locale)
+            .ok_or_else(|| self.range_error(p, "invalid locale identifier".into()))
     }
 
     fn set_collator_string(
