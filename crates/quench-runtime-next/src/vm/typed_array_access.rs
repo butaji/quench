@@ -155,21 +155,15 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typed_array_byte_offset(&self, object: Value) -> Option<usize> {
-        let (buffer, offset) = match self.heap.get(object) {
-            Some(Cell::TypedArray { buffer, offset, .. }) => (*buffer, *offset),
+        let offset = match self.heap.get(object) {
+            Some(Cell::TypedArray { offset, .. }) => *offset,
             _ => return None,
         };
-        let length = self.typed_array_length(object).unwrap_or(0);
-        let width = self
-            .typed_array_kind(object)
-            .map_or(1, TypedArrayKind::width);
-        Some(
-            if self.array_buffer_out_of_bounds(buffer, offset, length * width) {
-                0
-            } else {
-                offset
-            },
-        )
+        Some(if self.typed_array_out_of_bounds(object) {
+            0
+        } else {
+            offset
+        })
     }
 
     pub(super) fn indexed_view_property(&self, object: Value, atom: Atom) -> Option<Value> {

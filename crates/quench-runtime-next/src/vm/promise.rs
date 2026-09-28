@@ -244,6 +244,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::FunctionPrototype
         | Native::FunctionToString
         | Native::FunctionCaller
+        | Native::TypedArray
         | Native::TypedArrayOf
         | Native::Uint8ArrayReverse
         | Native::Uint8ArrayToString
@@ -256,6 +257,7 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::TypedArrayByteOffsetGetter
         | Native::TypedArrayLengthGetter
         | Native::TypedArrayToReversed
+        | Native::TypedArrayToLocaleString
         | Native::ThrowTypeError => 0.0,
         Native::TypedArrayAt | Native::TypedArrayToSorted => 1.0,
         Native::TypedArrayLastIndexOf => 1.0,

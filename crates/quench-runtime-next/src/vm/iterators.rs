@@ -2539,11 +2539,14 @@ impl<H: Host> Vm<H> {
             native,
             Native::Uint8ArrayKeys | Native::Uint8ArrayValues | Native::Uint8ArrayEntries
         ) {
-            if self.typed_array_length(source).is_none() {
+            let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(source) else {
                 return Err(self.type_error(
                     p,
                     "typed array iterator called on incompatible receiver".into(),
                 ));
+            };
+            if self.typed_array_out_of_bounds(source) || self.array_buffer_detached(*buffer) {
+                return Err(self.type_error(p, "typed array iterator receiver is invalid".into()));
             }
             source
         } else {
@@ -2972,8 +2975,10 @@ impl<H: Host> Vm<H> {
         kind: IteratorKind,
         index: usize,
     ) -> Result<Option<(Value, Option<Value>)>, JsError> {
-        if self.typed_array_out_of_bounds(source) {
-            return Err(self.type_error(p, "typed array is out of bounds".into()));
+        if let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(source) {
+            if !self.array_buffer_detached(*buffer) && self.typed_array_out_of_bounds(source) {
+                return Err(self.type_error(p, "typed array is out of bounds".into()));
+            }
         }
         if let Some(length) = self.typed_array_length(source) {
             if index >= length {
