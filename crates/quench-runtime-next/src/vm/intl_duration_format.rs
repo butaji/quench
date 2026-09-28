@@ -708,11 +708,19 @@ fn format_duration_parts(options: &DurationFormatOptions, fields: [f64; 10]) -> 
         }
     }
     let mut parts = Vec::new();
+    let group_count = groups.len();
     for (index, group) in groups.into_iter().enumerate() {
         if index > 0 {
             parts.push(DurationPart {
                 kind: "literal",
-                value: ", ".into(),
+                value: super::intl_list_format::list_separator(
+                    index,
+                    group_count,
+                    &options.locale,
+                    "unit",
+                    &options.style,
+                )
+                .into(),
                 unit: None,
             });
         }

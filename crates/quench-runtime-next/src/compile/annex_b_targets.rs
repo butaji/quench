@@ -111,7 +111,23 @@ fn is_call_open(bytes: &[u8], open: usize) -> bool {
     let Some(previous) = previous_non_whitespace(bytes, open) else {
         return false;
     };
+    if is_control_keyword_before(bytes, open, previous) {
+        return false;
+    }
     is_identifier_part(bytes[previous]) || matches!(bytes[previous], b')' | b']')
+}
+
+fn is_control_keyword_before(bytes: &[u8], open: usize, end: usize) -> bool {
+    let mut start = end;
+    while start > 0 && is_identifier_part(bytes[start - 1]) {
+        start -= 1;
+    }
+    matches!(
+        bytes.get(start..=end),
+        Some(b"if" | b"while" | b"switch" | b"catch" | b"with" | b"for")
+    ) && bytes
+        .get(end + 1..open)
+        .is_some_and(|between| between.iter().all(u8::is_ascii_whitespace))
 }
 
 fn is_call_assignment_target(

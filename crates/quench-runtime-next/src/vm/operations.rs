@@ -217,6 +217,7 @@ impl<H: Host> Vm<H> {
             Native::IntlListFormatFormatGetter
             | Native::IntlListFormatFormat
             | Native::IntlListFormatFormatToParts
+            | Native::IntlListFormatResolvedOptions
             | Native::IntlListFormatSupportedLocalesOf => {
                 self.intl_list_format_native(p, native, this, args)
             }
