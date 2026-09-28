@@ -88,6 +88,11 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.intl_number_format_prototypes.insert(global, prototype);
+        let fallback_symbol = self.heap.alloc(Cell::Symbol(Some(
+            "IntlLegacyConstructedSymbol".into(),
+        )));
+        self.intl_number_format_fallback_symbols
+            .insert(global, fallback_symbol);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
@@ -267,6 +272,101 @@ impl<H: Host> Vm<H> {
         Ok(formatter)
     }
 
+    pub(super) fn intl_number_format_call(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.number_format_legacy_receiver(p, this)? {
+            return self.intl_number_format_construct(
+                p,
+                args,
+                self.native_value(Native::IntlNumberFormat),
+            );
+        }
+        let Some(symbol) = self
+            .intl_number_format_fallback_symbols
+            .get(&self.realm.globals)
+            .copied()
+        else {
+            return self.intl_number_format_construct(
+                p,
+                args,
+                self.native_value(Native::IntlNumberFormat),
+            );
+        };
+        let fallback = self.get_symbol_property_with_receiver(p, this, symbol, this)?;
+        if !fallback.is_undefined() {
+            return Ok(this);
+        }
+        let formatter = self.intl_number_format_construct(
+            p,
+            args,
+            self.native_value(Native::IntlNumberFormat),
+        )?;
+        self.set_symbol_property(this, symbol, formatter)?;
+        self.set_property_attributes(
+            this,
+            PropertyKey::symbol(symbol),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(this)
+    }
+
+    fn number_format_legacy_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<bool, JsError> {
+        if !self.is_object_like(receiver) || receiver == self.realm.globals {
+            return Ok(false);
+        }
+        if self.hidden_string(receiver, NUMBER_FORMAT_LOCALE_SLOT).is_some() {
+            return Ok(true);
+        }
+        let prototypes = self
+            .intl_number_format_prototypes
+            .values()
+            .copied()
+            .collect::<Vec<_>>();
+        let mut prototype = self.object_get_prototype_of(p, receiver)?;
+        while !prototype.is_null() {
+            if prototypes.contains(&prototype) {
+                return Ok(true);
+            }
+            prototype = self.object_get_prototype_of(p, prototype)?;
+        }
+        Ok(false)
+    }
+
+    fn number_format_unwrap_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        let Some(symbol) = self
+            .intl_number_format_fallback_symbols
+            .get(&self.realm.globals)
+            .copied()
+        else {
+            return Ok(receiver);
+        };
+        let fallback = self.get_symbol_property_with_receiver(p, receiver, symbol, receiver)?;
+        Ok(if fallback.is_undefined() {
+            receiver
+        } else {
+            fallback
+        })
+    }
+
     fn number_format_instance_prototype(
         &mut self,
         p: &ResidualProgram,
@@ -290,6 +390,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
+        let this = self.number_format_unwrap_receiver(p, this)?;
         if self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT).is_none() {
             return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
         }
@@ -730,6 +831,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let this = self.number_format_unwrap_receiver(p, this)?;
         let Some(locale) = self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT) else {
             return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
         };
@@ -881,6 +983,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
+        let this = self.number_format_unwrap_receiver(p, this)?;
         let Some(locale) = self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT) else {
             return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
         };
@@ -1008,6 +1111,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let this = self.number_format_unwrap_receiver(p, this)?;
         let formatted = self.intl_number_format_format(p, this, args)?;
         let Some(Cell::String(formatted)) = self.heap.get(formatted) else {
             return Err(JsError("NumberFormat output is not a string".into()));
@@ -1026,10 +1130,13 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let this = self.number_format_unwrap_receiver(p, this)?;
         let locale = self.number_format_locale_from_receiver(p, this)?;
         let (start, end) = self.number_format_range_values(p, args)?;
-        let first = self.intl_number_format_format(p, this, &[Value::number(start)])?;
-        let second = self.intl_number_format_format(p, this, &[Value::number(end)])?;
+        let start_value = args.first().copied().unwrap_or(Value::number(start));
+        let end_value = args.get(1).copied().unwrap_or(Value::number(end));
+        let first = self.intl_number_format_format(p, this, &[start_value])?;
+        let second = self.intl_number_format_format(p, this, &[end_value])?;
         let first = self.to_string(p, first)?;
         let second = self.to_string(p, second)?;
         let range = if first == second {
@@ -1039,19 +1146,32 @@ impl<H: Host> Vm<H> {
                 format!("~{first}")
             }
         } else {
-            let separator = if locale.starts_with("pt") { " - " } else { " – " };
-            let collapsed_separator = if locale.starts_with("pt") { " - " } else { "–" };
             let style = self.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT).unwrap_or_default();
+            let separator = if locale.starts_with("pt") {
+                " - "
+            } else if style == "currency" {
+                " – "
+            } else {
+                "–"
+            };
+            let collapsed_separator = if locale.starts_with("pt") { " - " } else { "–" };
+            let sign_display = self
+                .hidden_string(this, NUMBER_FORMAT_SIGN_DISPLAY_SLOT)
+                .unwrap_or_else(|| "auto".into());
             if style == "currency" {
                 let currency = self.hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT).unwrap_or_default();
                 let display = self.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT).unwrap_or_else(|| "symbol".into());
                 let symbol = number_currency_symbol(&currency, &display, &locale);
                 let prefix = shared_prefix_before_number(&first, &second);
-                if prefix.contains(&symbol) {
+                if sign_display == "always" && prefix.contains(&symbol) {
                     format!("{first}{collapsed_separator}{}", &second[prefix.len()..])
                 } else if first.ends_with(&symbol) && second.ends_with(&symbol) {
                     let suffix = shared_currency_suffix(&first, &second, &symbol);
-                    format!("{}{collapsed_separator}{}{}", &first[..first.len() - suffix.len()], &second[..second.len() - suffix.len()], suffix)
+                    let mut second = second[..second.len() - suffix.len()].to_owned();
+                    if sign_display == "always" && first.starts_with('+') && second.starts_with('+') {
+                        second.remove(0);
+                    }
+                    format!("{}{collapsed_separator}{second}{suffix}", &first[..first.len() - suffix.len()])
                 } else {
                     format!("{first}{separator}{second}")
                 }
@@ -1068,14 +1188,17 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let this = self.number_format_unwrap_receiver(p, this)?;
         self.number_format_locale_from_receiver(p, this)?;
         let (start, end) = self.number_format_range_values(p, args)?;
-        let first = self.intl_number_format_format_to_parts(p, this, &[Value::number(start)])?;
-        let second = self.intl_number_format_format_to_parts(p, this, &[Value::number(end)])?;
+        let start_value = args.first().copied().unwrap_or(Value::number(start));
+        let end_value = args.get(1).copied().unwrap_or(Value::number(end));
+        let first = self.intl_number_format_format_to_parts(p, this, &[start_value])?;
+        let second = self.intl_number_format_format_to_parts(p, this, &[end_value])?;
         let mut parts = Vec::new();
-        if start != end && self.number_format_formatted(p, this, start)?
-            == self.number_format_formatted(p, this, end)?
-        {
+        let first_text = self.number_format_parts_text(p, first)?;
+        let second_text = self.number_format_parts_text(p, second)?;
+        if first_text == second_text {
             let approximate = self.number_format_part("approximatelySign", "~", None)?;
             self.set_intl_string_property(approximate, "source", "shared")?;
             parts.push(approximate);
@@ -1098,6 +1221,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<String, JsError> {
+        let this = self.number_format_unwrap_receiver(p, this)?;
         self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT)
             .ok_or_else(|| self.type_error(p, "incompatible NumberFormat receiver".into()))
     }
@@ -1132,16 +1256,6 @@ impl<H: Host> Vm<H> {
         self.to_number(p, value)
     }
 
-    fn number_format_formatted(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-        number: f64,
-    ) -> Result<String, JsError> {
-        let formatted = self.intl_number_format_format(p, this, &[Value::number(number)])?;
-        self.to_string(p, formatted)
-    }
-
     fn number_format_tag_parts(
         &mut self,
         p: &ResidualProgram,
@@ -1156,6 +1270,22 @@ impl<H: Host> Vm<H> {
                 Ok(part)
             })
             .collect()
+    }
+
+    fn number_format_parts_text(
+        &mut self,
+        p: &ResidualProgram,
+        array: Value,
+    ) -> Result<String, JsError> {
+        let length = self.array_like_length(p, array)?;
+        let value_atom = self.intern_atom("value");
+        let mut text = String::new();
+        for index in 0..length {
+            let part = self.get_index(p, array, Value::number(index as f64))?;
+            let value = self.get_property(p, part, value_atom)?;
+            text.push_str(&self.to_string(p, value)?);
+        }
+        Ok(text)
     }
 
     fn number_format_part(
@@ -1285,6 +1415,8 @@ impl<H: Host> Vm<H> {
             let locale = self.hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT).unwrap_or_default();
             let unit_prefix = if locale.starts_with("ja") && rest.starts_with("時速 ") {
                 Some(("時速", "時速 "))
+            } else if locale.starts_with("ko") && rest.starts_with("시속 ") {
+                Some(("시속", "시속 "))
             } else if locale.starts_with("zh-TW") && rest.starts_with("每小時 ") {
                 Some(("每小時", "每小時 "))
             } else {
@@ -1804,8 +1936,10 @@ fn group_decimal_integer_locale(value: &str, locale: &str) -> String {
             .join(",");
     }
     let grouped = group_decimal_integer(value);
-    if locale.starts_with("de") || locale.starts_with("pt") {
+    if locale.starts_with("de") {
         grouped.replace(',', ".")
+    } else if locale.starts_with("pt") {
+        grouped.replace(',', "\u{a0}")
     } else {
         grouped
     }
