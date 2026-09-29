@@ -903,8 +903,8 @@ impl<H: Host> Vm<H> {
             | Native::WeakSet
             | Native::WeakRef
             | Native::DisposableStack
-            | Native::AsyncDisposableStack
-            | Native::RegExp => self.construct_native(p, native, args),
+            | Native::AsyncDisposableStack => self.construct_native(p, native, args),
+            Native::RegExp => self.construct_regexp_native(p, args, None),
             Native::ThrowTypeError => {
                 Err(self.type_error(p, "restricted arguments property".into()))
             }
