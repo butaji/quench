@@ -54,12 +54,15 @@ pub fn calendar_fields_from_iso(
         .to_calendar(AnyCalendar::new(kind));
     let (year, related_year, cyclic_year, era, era_year) = match date.year() {
         icu_calendar::types::YearInfo::Era(value) => {
-            let year = if calendar == "ethiopic" && value.year > ETHIOPIC_AMETE_ALEM_YEAR_OFFSET {
+            let year = if calendar == "ethiopic" && value.era.as_str() == "aa" {
                 value.year - ETHIOPIC_AMETE_ALEM_YEAR_OFFSET
-            } else if calendar.starts_with("islamic") && year < ISLAMIC_ERA_START_YEAR
-                || calendar == "roc" && year < ROC_ERA_START_YEAR
+            } else if calendar == "gregory" && value.era.as_str() == "bce"
+                || calendar == "roc" && value.era.as_str() == "broc"
+                || calendar.starts_with("islamic") && year < ISLAMIC_ERA_START_YEAR
             {
                 1 - value.year
+            } else if calendar == "japanese" {
+                year
             } else {
                 value.year
             };
@@ -121,14 +124,46 @@ pub fn calendar_month_from_code(year: i32, code: &str, calendar: &str) -> Option
     if number == 13 && !leap && matches!(calendar, "coptic" | "ethiopic" | "ethioaa") {
         return Some(13);
     }
-    let input_month = if leap {
+    let month_code = if leap {
         Month::leap(number)
     } else {
         Month::new(number)
-    };
-    let date = Date::try_new(year.into(), input_month, FIRST_DAY_OF_MONTH, AnyCalendar::new(kind))
-        .ok()?;
+    }
+    .code();
+    #[allow(deprecated)]
+    let date = Date::try_new_from_codes(
+        None,
+        year,
+        month_code,
+        FIRST_DAY_OF_MONTH,
+        AnyCalendar::new(kind),
+    )
+    .ok()?;
     (date.month().to_input().code().0 == code).then_some(u32::from(date.month().ordinal))
+}
+
+pub fn calendar_year_from_era(era: &str, year: i32, calendar: &str) -> Option<i32> {
+    let kind = calendar_kind(calendar)?;
+    #[allow(deprecated)]
+    let date = Date::try_new_from_codes(
+        Some(era),
+        year,
+        Month::new(FIRST_MONTH_OF_YEAR as u8).code(),
+        FIRST_DAY_OF_MONTH,
+        AnyCalendar::new(kind),
+    )
+    .ok()?;
+    if calendar == "coptic" {
+        return Some(year);
+    }
+    let iso = date.to_calendar(Iso);
+    calendar_fields_from_iso(
+        iso.year().extended_year(),
+        u32::from(iso.month().ordinal),
+        u32::from(iso.day_of_month().0),
+        calendar,
+    )
+    .map(|fields| fields.year)
 }
 
 pub fn calendar_date_add(
@@ -294,7 +329,6 @@ const FIRST_MONTH_OF_YEAR: u32 = 1;
 const ISO_MONTHS_PER_YEAR: u32 = 12;
 const ETHIOPIC_AMETE_ALEM_YEAR_OFFSET: i32 = 5_500;
 const ISLAMIC_ERA_START_YEAR: i32 = 622;
-const ROC_ERA_START_YEAR: i32 = 1_912;
 const MONTHS_PER_YEAR: u32 = 12;
 const GREGORIAN_COMMON_YEAR_DAYS: u32 = 365;
 const GREGORIAN_LEAP_YEAR_DAYS: u32 = 366;
