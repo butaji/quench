@@ -728,7 +728,7 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         self.set_shape_property(receiver, PropertyKey::string(atom), value)?;
-        self.mirror_global_var_property_write(p, receiver, atom, value);
+        self.mirror_global_var_property_write(receiver, atom, value);
         Ok(true)
     }
 
