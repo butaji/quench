@@ -1,6 +1,6 @@
 use icu_calendar::{
     cal::Iso,
-    options::{DateAddOptions, Overflow},
+    options::{DateAddOptions, DateDifferenceOptions, DateDurationUnit, Overflow},
     types::{DateDuration, Month},
     AnyCalendar, AnyCalendarKind, Date,
 };
@@ -19,6 +19,12 @@ pub struct CalendarDate {
     pub days_in_year: u32,
     pub months_in_year: u32,
     pub is_leap_year: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalendarDifferenceUnit {
+    Years,
+    Months,
 }
 
 pub fn calendar_fields_from_iso(
@@ -58,7 +64,7 @@ pub fn calendar_fields_from_iso(
                 value.year - ETHIOPIC_AMETE_ALEM_YEAR_OFFSET
             } else if calendar == "gregory" && value.era.as_str() == "bce"
                 || calendar == "roc" && value.era.as_str() == "broc"
-                || calendar.starts_with("islamic") && year < ISLAMIC_ERA_START_YEAR
+                || calendar.starts_with("islamic") && value.era.as_str() == "bh"
             {
                 1 - value.year
             } else if calendar == "japanese" {
@@ -213,6 +219,38 @@ pub fn calendar_date_add(
     ))
 }
 
+pub fn calendar_date_difference(
+    start: (i32, u32, u32),
+    end: (i32, u32, u32),
+    calendar: &str,
+    largest_unit: CalendarDifferenceUnit,
+) -> Option<(i64, i64, i64, i64)> {
+    let kind = if calendar == "iso8601" {
+        AnyCalendarKind::Iso
+    } else {
+        calendar_kind(calendar)?
+    };
+    let start = Date::try_new_iso(start.0, start.1.try_into().ok()?, start.2.try_into().ok()?)
+        .ok()?
+        .to_calendar(AnyCalendar::new(kind));
+    let end = Date::try_new_iso(end.0, end.1.try_into().ok()?, end.2.try_into().ok()?)
+        .ok()?
+        .to_calendar(AnyCalendar::new(kind));
+    let mut options = DateDifferenceOptions::default();
+    options.largest_unit = Some(match largest_unit {
+        CalendarDifferenceUnit::Years => DateDurationUnit::Years,
+        CalendarDifferenceUnit::Months => DateDurationUnit::Months,
+    });
+    let duration = start.try_until_with_options(&end, options).ok()?;
+    let sign = if duration.is_negative { -1 } else { 1 };
+    Some((
+        i64::from(duration.years) * sign,
+        i64::from(duration.months) * sign,
+        i64::from(duration.weeks) * sign,
+        i64::from(duration.days) * sign,
+    ))
+}
+
 pub fn calendar_date_to_iso_with_overflow(
     year: i32,
     month: u32,
@@ -328,7 +366,6 @@ const FIRST_DAY_OF_MONTH: u8 = 1;
 const FIRST_MONTH_OF_YEAR: u32 = 1;
 const ISO_MONTHS_PER_YEAR: u32 = 12;
 const ETHIOPIC_AMETE_ALEM_YEAR_OFFSET: i32 = 5_500;
-const ISLAMIC_ERA_START_YEAR: i32 = 622;
 const MONTHS_PER_YEAR: u32 = 12;
 const GREGORIAN_COMMON_YEAR_DAYS: u32 = 365;
 const GREGORIAN_LEAP_YEAR_DAYS: u32 = 366;
