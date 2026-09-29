@@ -10,8 +10,9 @@ mod supported_values;
 
 pub use bigint::{format_bigint, BigIntFormatOptions};
 pub use calendar::{
-    calendar_date_add, calendar_date_to_iso, calendar_date_to_iso_with_overflow,
-    calendar_fields_from_iso, calendar_month_from_code, calendar_year_from_era, CalendarDate,
+    calendar_date_add, calendar_date_difference, calendar_date_to_iso,
+    calendar_date_to_iso_with_overflow, calendar_fields_from_iso, calendar_month_from_code,
+    calendar_year_from_era, CalendarDate, CalendarDifferenceUnit,
 };
 pub use collator::{canonical_locale_identifier, compare_collator, CollatorOptions};
 pub use digits::localize_digits;
