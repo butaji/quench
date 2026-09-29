@@ -392,11 +392,12 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (iso_year, iso_month, iso_day, calendar) =
-            self.temporal_plain_date_slots(p, this)?;
+        let (iso_year, iso_month, iso_day, calendar) = self.temporal_plain_date_slots(p, this)?;
         let calendar_fields =
             quench_intl::calendar_fields_from_iso(iso_year, iso_month, iso_day, &calendar);
-        let base_year = calendar_fields.as_ref().map_or(iso_year, |fields| fields.year);
+        let base_year = calendar_fields
+            .as_ref()
+            .map_or(iso_year, |fields| fields.year);
         let base_month = calendar_fields
             .as_ref()
             .map_or(iso_month as i32, |fields| fields.month as i32);
@@ -495,13 +496,7 @@ impl<H: Host> Vm<H> {
             month_code_text.map(|value| self.heap.alloc(Cell::String(value.into())));
         let month_code = month_code_value
             .map(|value| {
-                self.plain_date_month_code(
-                    p,
-                    value,
-                    &calendar,
-                    year,
-                    overflow == "constrain",
-                )
+                self.plain_date_month_code(p, value, &calendar, year, overflow == "constrain")
             })
             .transpose()?;
         let month = match (month, month_code) {
@@ -745,15 +740,9 @@ impl<H: Host> Vm<H> {
         let Some(day) = day else {
             return Err(self.type_error(p, "Missing PlainDate field".into()));
         };
-        let year = self.resolve_calendar_year(
-            p,
-            &calendar,
-            year,
-            era.as_deref(),
-            era_year,
-        )?;
+        let year = self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
         let month_code = month_code
-            .map(|month| self.calendarized_month_code(p, month, &calendar, year))
+            .map(|month| self.calendarized_month_code(p, month, &calendar, year, constrain))
             .transpose()?;
         let month = match (month, month_code) {
             (Some(month), Some(month_code)) if month != month_code => {
@@ -823,12 +812,26 @@ impl<H: Host> Vm<H> {
                 if !constrain || !canonical_code.ends_with('L') {
                     return None;
                 }
-                let ordinary_code = if calendar == "hebrew" && canonical_code == "M05L" {
-                    HEBREW_LEAP_MONTH_FALLBACK
-                } else {
-                    canonical_code.trim_end_matches('L')
+                let ordinary_code = match calendar {
+                    "hebrew" if canonical_code == "M05L" => HEBREW_LEAP_MONTH_FALLBACK,
+                    "chinese" | "dangi" => canonical_code.trim_end_matches('L'),
+                    _ => return None,
                 };
                 quench_intl::calendar_month_from_code(year, ordinary_code, calendar)
+            })
+            .or_else(|| {
+                (constrain
+                    && matches!(calendar, "chinese" | "dangi")
+                    && canonical_code.ends_with('L')
+                    && parsed <= ISO_MONTHS_PER_YEAR as i32)
+                .then(|| {
+                    canonical_code
+                        .strip_prefix('M')?
+                        .strip_suffix('L')?
+                        .parse::<u32>()
+                        .ok()
+                })
+                .flatten()
             })
             .or_else(|| {
                 (!canonical_code.ends_with('L') && parsed <= ISO_MONTHS_PER_YEAR as i32)
@@ -844,13 +847,14 @@ impl<H: Host> Vm<H> {
         code: i32,
         calendar: &str,
         year: i32,
+        constrain: bool,
     ) -> Result<i32, JsError> {
         let code = if code >= ISO_LEAP_MONTH_CODE_OFFSET {
             format!("M{:02}L", code - ISO_LEAP_MONTH_CODE_OFFSET)
         } else {
             format!("M{code:02}")
         };
-        self.parse_plain_date_month_code(p, &code, calendar, year, false)
+        self.parse_plain_date_month_code(p, &code, calendar, year, constrain)
     }
 
     pub(super) fn resolve_calendar_year(

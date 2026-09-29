@@ -198,6 +198,52 @@ pub fn calendar_month_from_code(year: i32, code: &str, calendar: &str) -> Option
     (date.month().to_input().code().0 == code).then_some(u32::from(date.month().ordinal))
 }
 
+pub fn calendar_month_code_for_ordinal(
+    year: i32,
+    ordinal: u32,
+    calendar: &str,
+) -> Option<String> {
+    let kind = calendar_kind(calendar)?;
+    (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).find_map(|number| {
+        [Month::new(number as u8), Month::leap(number as u8)]
+            .into_iter()
+            .find_map(|month| {
+                let date = Date::try_new(
+                    year.into(),
+                    month,
+                    FIRST_DAY_OF_MONTH,
+                    AnyCalendar::new(kind),
+                )
+                .ok()?;
+                (u32::from(date.month().ordinal) == ordinal)
+                    .then(|| date.month().to_input().code().0.to_string())
+            })
+    })
+}
+
+pub fn calendar_days_in_month_for_code(year: i32, code: &str, calendar: &str) -> Option<u32> {
+    let kind = calendar_kind(calendar)?;
+    let month_number = code
+        .strip_suffix('L')
+        .unwrap_or(code)
+        .strip_prefix('M')?
+        .parse::<u8>()
+        .ok()?;
+    let month = if code.ends_with('L') {
+        Month::leap(month_number)
+    } else {
+        Month::new(month_number)
+    };
+    Date::try_new(
+        year.into(),
+        month,
+        FIRST_DAY_OF_MONTH,
+        AnyCalendar::new(kind),
+    )
+    .ok()
+    .map(|date| u32::from(date.days_in_month()))
+}
+
 pub fn calendar_reference_date_from_code(
     code: &str,
     day: u32,
@@ -207,6 +253,9 @@ pub fn calendar_reference_date_from_code(
     if let Some(year) = lunisolar_reference_year(code, day, calendar) {
         if let Some(date) = calendar_iso_date_for_code(year, code, day, calendar) {
             return Some(date);
+        }
+        if constrain {
+            return lunisolar_reference_fallback_date(year, code, day);
         }
     }
     let years = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END).rev();
@@ -273,6 +322,22 @@ pub fn calendar_reference_date_from_code(
     });
     let date = quench_temporal::civil_from_days(
         first_day + i64::from(target_day.saturating_sub(FIRST_DAY_OF_MONTH_VALUE)),
+    )?;
+    Some((date.year, date.month, date.day))
+}
+
+fn lunisolar_reference_fallback_date(year: i32, code: &str, day: u32) -> Option<(i32, u32, u32)> {
+    let month = code
+        .strip_prefix('M')?
+        .strip_suffix('L')?
+        .parse::<u32>()
+        .ok()?;
+    let date = quench_temporal::civil_from_days(
+        quench_temporal::days_from_civil(quench_temporal::IsoDate {
+            year,
+            month,
+            day: FIRST_DAY_OF_MONTH_VALUE,
+        }) + i64::from(day.saturating_sub(FIRST_DAY_OF_MONTH_VALUE)),
     )?;
     Some((date.year, date.month, date.day))
 }
@@ -812,6 +877,7 @@ const FIRST_DAY_OF_MONTH_VALUE: u32 = 1;
 const REFERENCE_MONTH_DAY_LIMIT: u32 = 31;
 const THIRTY_DAY_MONTH_LENGTH: u32 = 30;
 const LUNISOLAR_REFERENCE_YEARS: &[(&str, u32, i32)] = &[
+    ("M01L", 30, 1_970),
     ("M03L", 30, 1_955),
     ("M04L", 30, 1_944),
     ("M05L", 30, 1_952),

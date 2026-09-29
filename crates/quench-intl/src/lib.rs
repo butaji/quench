@@ -12,7 +12,9 @@ pub use bigint::{BigIntFormatOptions, format_bigint};
 pub use calendar::{
     CalendarDate, CalendarDifferenceDirection, CalendarDifferenceUnit, calendar_date_add,
     calendar_date_difference, calendar_date_to_iso, calendar_date_to_iso_with_overflow,
-    calendar_fields_from_iso, calendar_month_from_code, calendar_reference_date_from_code,
+    calendar_days_in_month_for_code, calendar_fields_from_iso, calendar_month_code_for_ordinal,
+    calendar_month_from_code,
+    calendar_reference_date_from_code,
     calendar_uses_eras, calendar_year_from_era, calendar_year_month_reference_date,
 };
 pub use collator::{CollatorOptions, canonical_locale_identifier, compare_collator};
