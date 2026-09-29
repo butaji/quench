@@ -398,8 +398,7 @@ impl<H: Host> Vm<H> {
         if let Some(identifier) = time_zone_from_datetime_identifier(&text) {
             return Ok(identifier);
         }
-        canonical_time_zone(&text)
-            .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))
+        canonical_time_zone(&text).ok_or_else(|| self.range_error(p, "Invalid time zone".into()))
     }
 
     fn temporal_zoned_date_time_intrinsic_constructor(
@@ -1532,18 +1531,14 @@ impl<H: Host> Vm<H> {
         if left.calendar != other.calendar {
             return Err(self.range_error(p, "ZonedDateTime calendars do not match".into()));
         }
-        if !zoned_time_zones_equivalent(&left.time_zone, &other.time_zone) {
-            return Err(self.range_error(p, "ZonedDateTime time zones do not match".into()));
-        }
         if zoned_date_time_unit_rank(options.largest) >= zoned_date_time_unit_rank("hour") {
             return self.zoned_date_time_time_difference(p, native, &left, &other, &options);
         }
-        let left_local = zoned_date_time_fields(left.epoch_nanoseconds, &left.time_zone)
-            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
-        let right_local = zoned_date_time_fields(other.epoch_nanoseconds, &other.time_zone)
-            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
-        if left_local[..3] == right_local[..3] {
-            return self.zoned_date_time_time_difference(p, native, &left, &other, &options);
+        if !zoned_time_zones_equivalent(&left.time_zone, &other.time_zone) {
+            return Err(self.range_error(p, "ZonedDateTime time zones do not match".into()));
+        }
+        if left.epoch_nanoseconds == other.epoch_nanoseconds {
+            return self.make_temporal_duration(p, [0.0; 10]);
         }
         self.zoned_date_time_calendar_difference(p, native, &left, &other, &options)
     }
@@ -1560,9 +1555,8 @@ impl<H: Host> Vm<H> {
             && options.increment == MIN_ROUNDING_INCREMENT
             && self.zoned_date_time_difference_uses_local_endpoints(left, right)
         {
-            return self.zoned_date_time_calendar_difference_unrounded(
-                p, native, left, right, options,
-            );
+            return self
+                .zoned_date_time_calendar_difference_unrounded(p, native, left, right, options);
         }
         let date_time_constructor = self.temporal_plain_date_time_constructor(p)?;
         let left_date_time =
@@ -1644,12 +1638,11 @@ impl<H: Host> Vm<H> {
             .enumerate()
         {
             let value = remainder / scale;
-            fields[index + super::temporal_date_arithmetic::DURATION_HOURS_FIELD] =
-                if value == 0 {
-                    0.0
-                } else {
-                    (value * operation_sign) as f64
-                };
+            fields[index + super::temporal_date_arithmetic::DURATION_HOURS_FIELD] = if value == 0 {
+                0.0
+            } else {
+                (value * operation_sign) as f64
+            };
             remainder %= scale;
         }
         for field in &mut fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD] {
@@ -1723,11 +1716,13 @@ impl<H: Host> Vm<H> {
         fields: &[f64; 10],
     ) -> Result<i128, JsError> {
         let date_fields: [Value; 10] = std::array::from_fn(|index| {
-            Value::number(if index <= super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
-                fields[index]
-            } else {
-                0.0
-            })
+            Value::number(
+                if index <= super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
+                    fields[index]
+                } else {
+                    0.0
+                },
+            )
         });
         let duration = self.temporal_duration_construct(p, &date_fields)?;
         let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
@@ -1962,11 +1957,7 @@ impl<H: Host> Vm<H> {
                 let parsed = parse_zoned_date_time_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
                 let options = self.temporal_zoned_date_time_options(p, options)?;
-                resolve_zoned_date_time_string(
-                    parsed,
-                    &options.offset,
-                    &options.disambiguation,
-                )
+                resolve_zoned_date_time_string(parsed, &options.offset, &options.disambiguation)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))
             }
             Some(Cell::Object(_)) | Some(Cell::Function { .. }) | Some(Cell::Proxy { .. }) => {
@@ -2868,7 +2859,10 @@ fn zoned_time_zones_equivalent(left: &str, right: &str) -> bool {
     if left == right {
         return true;
     }
-    match (parse_offset_nanoseconds(left), parse_offset_nanoseconds(right)) {
+    match (
+        parse_offset_nanoseconds(left),
+        parse_offset_nanoseconds(right),
+    ) {
         (Some(left), Some(right)) => left == right,
         (Some(_), None) | (None, Some(_)) => false,
         (None, None) => {
@@ -3249,7 +3243,8 @@ pub(super) fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]
     let local = epoch.checked_add(timezone_offset_nanoseconds(zone, epoch).unwrap_or_default())?;
     let date_days = i64::try_from(local.div_euclid(NANOSECONDS_PER_DAY)).ok()?;
     let date = quench_temporal::civil_from_days(date_days)?;
-    let date = super::temporal_date::checked_iso_date(date.year, date.month as i32, date.day as i32)?;
+    let date =
+        super::temporal_date::checked_iso_date(date.year, date.month as i32, date.day as i32)?;
     zoned_fields_from_date_and_time(date, local.rem_euclid(NANOSECONDS_PER_DAY))
 }
 
