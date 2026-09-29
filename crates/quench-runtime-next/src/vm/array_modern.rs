@@ -241,8 +241,6 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "typed array from receiver is not a constructor".into()));
         }
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let done_atom = self.intern_atom("done");
-        let value_atom = self.intern_atom("value");
         let mapfn = args.get(1).copied().filter(|value| !value.is_undefined());
         if mapfn.is_some_and(|mapfn| !self.is_function(mapfn)) {
             return Err(self.type_error(p, "Array.from map function is not callable".into()));
@@ -281,26 +279,8 @@ impl<H: Host> Vm<H> {
                     let mut index = 0;
                     loop {
                         let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
-                        let step = match self.iterator_next(p, iterator) {
-                            Ok(step) => step,
-                            Err(error) => {
-                                return Err(self.iterator_abrupt(p, iterator, error));
-                            }
-                        };
-                        let done = match self.get_property(p, step, done_atom) {
-                            Ok(done) => done,
-                            Err(error) => {
-                                return Err(self.iterator_abrupt(p, iterator, error));
-                            }
-                        };
-                        if self.truthy(done) {
+                        let Some(mut value) = self.iterator_step_value(p, iterator)? else {
                             break;
-                        }
-                        let mut value = match self.get_property(p, step, value_atom) {
-                            Ok(value) => value,
-                            Err(error) => {
-                                return Err(self.iterator_abrupt(p, iterator, error));
-                            }
                         };
                         if let Some(mapfn) = mapfn {
                             let key = Value::number(index as f64);
