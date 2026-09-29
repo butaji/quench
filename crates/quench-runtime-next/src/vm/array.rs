@@ -3,6 +3,30 @@ use super::*;
 const DEFAULT_FLAT_DEPTH: usize = 1;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn indexed_at_index(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        length: usize,
+    ) -> Result<Option<usize>, JsError> {
+        let number = self.to_number(p, value)?;
+        let integer = if number.is_nan() {
+            0.0
+        } else {
+            number.trunc()
+        };
+        let relative = if integer < 0.0 {
+            length as f64 + integer
+        } else {
+            integer
+        };
+        if relative < 0.0 || relative >= length as f64 {
+            Ok(None)
+        } else {
+            Ok(Some(relative as usize))
+        }
+    }
+
     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
         let value = match self.heap.get(array) {
             Some(Cell::Array { elements, .. }) => elements
