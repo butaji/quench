@@ -1615,17 +1615,12 @@ impl<H: Host> Vm<H> {
         right: &ZonedDateTimeRecord,
         options: &ZonedDateTimeDifferenceOptions,
     ) -> Result<Value, JsError> {
-        let (start, target) = if left.epoch_nanoseconds <= right.epoch_nanoseconds {
-            (left, right)
+        let (start, target) = (left, right);
+        let operation_sign = if native == Native::TemporalZonedDateTimeSince {
+            -1
         } else {
-            (right, left)
+            1
         };
-        let operation_sign = (right.epoch_nanoseconds - left.epoch_nanoseconds).signum()
-            * if native == Native::TemporalZonedDateTimeSince {
-                -1
-            } else {
-                1
-            };
         let fields = self.zoned_date_time_local_difference_fields(p, start, target, options)?;
         let (mut fields, endpoint_epoch) =
             self.zoned_date_time_balance_date_difference(p, start, target, fields)?;
@@ -1642,7 +1637,7 @@ impl<H: Host> Vm<H> {
             fields[index + super::temporal_date_arithmetic::DURATION_HOURS_FIELD] = if value == 0 {
                 0.0
             } else {
-                (value * operation_sign) as f64
+                (value * residual.signum() * operation_sign) as f64
             };
             remainder %= scale;
         }
@@ -1693,19 +1688,21 @@ impl<H: Host> Vm<H> {
         mut fields: [f64; 10],
     ) -> Result<([f64; 10], i128), JsError> {
         let mut endpoint_epoch = self.zoned_date_time_add_date_duration(p, start, &fields)?;
+        let direction = (target.epoch_nanoseconds - start.epoch_nanoseconds).signum();
         loop {
-            if endpoint_epoch <= target.epoch_nanoseconds {
+            if (target.epoch_nanoseconds - endpoint_epoch) * direction >= 0 {
                 let mut next_fields = fields;
-                next_fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] += 1.0;
+                next_fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] +=
+                    direction as f64;
                 let next_epoch = self.zoned_date_time_add_date_duration(p, start, &next_fields)?;
-                if next_epoch <= target.epoch_nanoseconds {
+                if (target.epoch_nanoseconds - next_epoch) * direction >= 0 {
                     fields = next_fields;
                     endpoint_epoch = next_epoch;
                     continue;
                 }
                 return Ok((fields, endpoint_epoch));
             }
-            fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] -= 1.0;
+            fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] -= direction as f64;
             endpoint_epoch = self.zoned_date_time_add_date_duration(p, start, &fields)?;
         }
     }

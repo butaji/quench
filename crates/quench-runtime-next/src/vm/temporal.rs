@@ -785,31 +785,59 @@ impl<H: Host> Vm<H> {
         if actual == 0 {
             return Ok(0.0);
         }
-        let years = super::temporal_date_arithmetic::DURATION_YEARS_FIELD;
-        let months = super::temporal_date_arithmetic::DURATION_MONTHS_FIELD;
-        let whole_months = fields[years] as i128
-            * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
-            + fields[months] as i128;
-        let anchor_fields =
-            std::array::from_fn(|index| if index <= months { fields[index] } else { 0.0 });
-        let anchor = self.relative_duration_nanoseconds(p, relative, &anchor_fields)?;
-        let direction = if whole_months != 0 {
-            whole_months.signum()
-        } else {
-            actual.signum()
+        let zoned = relative
+            .zoned
+            .as_ref()
+            .expect("zoned relative date required");
+        let endpoint = zoned
+            .epoch_nanoseconds
+            .checked_add(actual)
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo range".into()))?;
+        let target =
+            super::temporal_zoned_date_time::zoned_date_time_fields(endpoint, &zoned.time_zone)
+                .ok_or_else(|| self.range_error(p, "Invalid relativeTo range".into()))?;
+        let (_, months, _, _) = quench_intl::calendar_date_difference(
+            (
+                relative.iso_date.year,
+                relative.iso_date.month,
+                relative.iso_date.day,
+            ),
+            (target[0], target[1] as u32, target[2] as u32),
+            &zoned.calendar,
+            quench_intl::CalendarDifferenceUnit::Months,
+            quench_intl::CalendarDifferenceDirection::Until,
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid relativeTo range".into()))?;
+        let mut months = i128::from(months);
+        let month_fields = |months: i128| {
+            std::array::from_fn(|index| {
+                if index == super::temporal_date_arithmetic::DURATION_MONTHS_FIELD {
+                    months as f64
+                } else {
+                    0.0
+                }
+            })
         };
-        let mut next_fields = anchor_fields;
-        next_fields[months] += direction as f64;
-        let next = self.relative_duration_nanoseconds(p, relative, &next_fields)?;
-        let month_length = next
-            .checked_sub(anchor)
-            .map(i128::abs)
-            .filter(|length| *length != 0)
+        let direction = actual.signum();
+        let mut anchor = self.relative_duration_nanoseconds(p, relative, &month_fields(months))?;
+        while (actual - anchor) * direction < 0 {
+            months -= direction;
+            anchor = self.relative_duration_nanoseconds(p, relative, &month_fields(months))?;
+        }
+        let mut next =
+            self.relative_duration_nanoseconds(p, relative, &month_fields(months + direction))?;
+        while (actual - next) * direction >= 0 {
+            months += direction;
+            anchor = next;
+            next =
+                self.relative_duration_nanoseconds(p, relative, &month_fields(months + direction))?;
+        }
+        let span = (next - anchor).abs();
+        let numerator = months
+            .checked_mul(span)
+            .and_then(|base| base.checked_add(actual - anchor))
             .ok_or_else(|| self.range_error(p, "Invalid relativeTo range".into()))?;
-        let remainder = actual
-            .checked_sub(anchor)
-            .ok_or_else(|| self.range_error(p, "Invalid relativeTo range".into()))?;
-        Ok(whole_months as f64 + remainder as f64 / month_length as f64)
+        Ok(divide_duration_nanos(numerator, span))
     }
 
     fn temporal_relative_date(
@@ -1234,7 +1262,10 @@ impl<H: Host> Vm<H> {
         }
         if (needs_calendar
             || needs_zoned_day_rounding
-            || fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] != 0.0)
+            || fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] != 0.0
+                && relative_date
+                    .as_ref()
+                    .is_some_and(|relative| relative.zoned.is_some()))
             && let Some(relative_date) = relative_date
         {
             return self.temporal_duration_round_relative_date(
@@ -1514,19 +1545,29 @@ impl<H: Host> Vm<H> {
                 target,
                 total % super::temporal_date_arithmetic::NANOS_PER_DAY,
             )
-        } else if smallest <= 1 {
+        } else if smallest <= super::temporal_date_arithmetic::DURATION_MONTHS_FIELD {
             let total = quench_temporal::total_duration(relative_date, fields_i128, smallest)
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
             let rounded_units =
                 round_duration_number(total / increment as f64, mode) * increment as f64;
-            let months = if smallest == 0 {
+            let months = if smallest == super::temporal_date_arithmetic::DURATION_YEARS_FIELD {
                 (rounded_units * f64::from(super::temporal_date::ISO_MONTHS_PER_YEAR)) as i128
             } else {
                 rounded_units as i128
             };
-            let target = super::temporal_date::shift_iso_months(relative_date.into(), months)
+            super::temporal_date::shift_iso_months(relative_date.into(), months)
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-            (target, 0_i128)
+            let mut result = [0.0; 10];
+            if largest == super::temporal_date_arithmetic::DURATION_YEARS_FIELD {
+                result[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] =
+                    (months / i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)) as f64;
+                result[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] =
+                    (months % i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)) as f64;
+            } else {
+                result[smallest] = rounded_units;
+            }
+            self.validate_duration_fields(p, &result)?;
+            return self.make_temporal_duration(p, result);
         } else {
             let total = quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
