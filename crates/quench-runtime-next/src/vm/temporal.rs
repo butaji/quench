@@ -1200,12 +1200,12 @@ impl<H: Host> Vm<H> {
             || fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
                 .iter()
                 .any(|value| *value != 0.0);
-        let needs_zoned_day_rounding = largest
-            == super::temporal_date_arithmetic::DURATION_DAYS_FIELD
-            && smallest >= super::temporal_date_arithmetic::DURATION_HOURS_FIELD
-            && relative_date
-                .as_ref()
-                .is_some_and(|relative| relative.zoned.is_some());
+        let needs_zoned_day_rounding = relative_date
+            .as_ref()
+            .is_some_and(|relative| relative.zoned.is_some())
+            && (smallest == super::temporal_date_arithmetic::DURATION_DAYS_FIELD
+                || largest == super::temporal_date_arithmetic::DURATION_DAYS_FIELD
+                    && smallest >= super::temporal_date_arithmetic::DURATION_HOURS_FIELD);
         if needs_relative_date && relative_date.is_none() {
             return Err(self.range_error(p, "relativeTo required for calendar units".into()));
         }
