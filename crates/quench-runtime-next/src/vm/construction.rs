@@ -630,8 +630,17 @@ impl<H: Host> Vm<H> {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
+        self.array_prototype_for_realm(p, realm)
+    }
+
+    pub(super) fn array_prototype_for_realm(
+        &mut self,
+        p: &ResidualProgram,
+        realm: Value,
+    ) -> Result<Value, JsError> {
         let array_atom = self.intern_atom("Array");
         let array = self.get_property(p, realm, array_atom)?;
+        let prototype_atom = self.intern_atom("prototype");
         let prototype = self.get_property(p, array, prototype_atom)?;
         Ok(if self.object_data(prototype).is_some() {
             prototype

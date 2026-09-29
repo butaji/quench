@@ -45,8 +45,16 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn new_array(&mut self, values: Vec<Value>) -> Value {
+        self.new_array_with_prototype(values, self.array_proto)
+    }
+
+    pub(super) fn new_array_with_prototype(
+        &mut self,
+        values: Vec<Value>,
+        prototype: Value,
+    ) -> Value {
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: Self::empty_object(prototype),
             elements: Rc::new(values),
         })
     }

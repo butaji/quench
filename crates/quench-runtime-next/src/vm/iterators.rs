@@ -20,6 +20,15 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Value, JsError> {
+        let values = self.iterable_to_list(p, source)?;
+        Ok(self.new_array(values))
+    }
+
+    pub(super) fn iterable_to_list(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+    ) -> Result<Vec<Value>, JsError> {
         let iterator = self.get_iterator(p, source)?;
         let done_atom = self.intern_atom("done");
         let value_atom = self.intern_atom("value");
@@ -42,7 +51,7 @@ impl<H: Host> Vm<H> {
             };
             values.push(value);
         }
-        Ok(self.new_array(values))
+        Ok(values)
     }
 
     pub(super) fn iterator_step_value(
