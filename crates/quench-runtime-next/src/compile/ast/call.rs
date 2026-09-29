@@ -159,7 +159,7 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn call(&mut self, value: &CallExpression<'_>) -> Register {
         if Self::has_spread(&value.arguments) {
-            if self.is_direct_eval_reference(&value.callee) {
+            if super::super::early::is_direct_eval_call(value) {
                 return self.direct_eval_spread_call(value);
             }
             if matches!(&value.callee, Expression::Super(_)) {
@@ -183,7 +183,7 @@ impl FunctionCompiler<'_, '_> {
         let (callee, this) = self.callee(&value.callee);
         let (base, count) = self.arguments(&value.arguments);
         let dst = self.reg();
-        let direct_eval = self.is_direct_eval_reference(&value.callee);
+        let direct_eval = super::super::early::is_direct_eval_call(value);
         if direct_eval
             && self.parameter_context
             && value.arguments.first().is_some_and(|argument| {
@@ -225,13 +225,6 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         dst
-    }
-
-    fn is_direct_eval_reference(&mut self, callee: &Expression<'_>) -> bool {
-        matches!(callee, Expression::Identifier(identifier)
-            if identifier.name == "eval"
-                && !self.local_slots.contains_key(&self.owner.atom("eval"))
-                && !self.scopes.iter().any(|scope| scope.contains_key(&self.owner.atom("eval"))))
     }
 
     fn direct_eval_spread_call(&mut self, value: &CallExpression<'_>) -> Register {

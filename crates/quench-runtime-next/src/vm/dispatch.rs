@@ -885,8 +885,9 @@ impl<H: Host> Vm<H> {
                         self.heap.get(callee),
                         Some(Cell::Function {
                             kind: FunctionKind::Native(Native::Eval),
+                            realm,
                             ..
-                        })
+                        }) if *realm == self.realm.globals
                     );
                 let parameter_eval = direct_eval && i.parameter_eval();
                 let previous_direct_eval = self.direct_eval;
