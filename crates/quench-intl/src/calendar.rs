@@ -174,6 +174,11 @@ pub fn calendar_reference_date_from_code(
     calendar: &str,
     constrain: bool,
 ) -> Option<(i32, u32, u32)> {
+    if let Some(year) = lunisolar_reference_year(code, day, calendar) {
+        if let Some(date) = calendar_iso_date_for_code(year, code, day, calendar) {
+            return Some(date);
+        }
+    }
     let years = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END).rev();
     let exact = years.clone().find_map(|year| {
         (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).find_map(|month| {
@@ -204,7 +209,17 @@ pub fn calendar_reference_date_from_code(
                 })
             })
         })
-        .max_by_key(|(days, year, _, _, _, _)| (*days, *year))?;
+        .max_by_key(|(days, year, _, _, _, _)| (*days, *year));
+    let Some(reference) = reference else {
+        return constrained_regular_month_reference(code, day, calendar, constrain);
+    };
+    if day >= THIRTY_DAY_MONTH_LENGTH
+        && reference.0 < THIRTY_DAY_MONTH_LENGTH
+        && matches!(calendar, "chinese" | "dangi")
+        && code.ends_with('L')
+    {
+        return constrained_regular_month_reference(code, day, calendar, constrain);
+    }
     let days_in_month = fixed_month_length(calendar, code).unwrap_or(reference.0);
     let target_day = day.min(days_in_month);
     let exact_constrained = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END)
@@ -232,10 +247,48 @@ pub fn calendar_reference_date_from_code(
     Some((date.year, date.month, date.day))
 }
 
+fn calendar_iso_date_for_code(
+    year: i32,
+    code: &str,
+    day: u32,
+    calendar: &str,
+) -> Option<(i32, u32, u32)> {
+    (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).find_map(|month| {
+        (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).find_map(|iso_day| {
+            let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
+            (fields.month_code == code && fields.day == day).then_some((year, month, iso_day))
+        })
+    })
+}
+
+fn lunisolar_reference_year(code: &str, day: u32, calendar: &str) -> Option<i32> {
+    matches!(calendar, "chinese" | "dangi")
+        .then(|| {
+            LUNISOLAR_REFERENCE_YEARS
+                .iter()
+                .find_map(|(candidate_code, candidate_day, year)| {
+                    (*candidate_code == code && *candidate_day == day).then_some(*year)
+                })
+        })
+        .flatten()
+}
+
+fn constrained_regular_month_reference(
+    code: &str,
+    day: u32,
+    calendar: &str,
+    constrain: bool,
+) -> Option<(i32, u32, u32)> {
+    (constrain && matches!(calendar, "chinese" | "dangi"))
+        .then(|| code.strip_suffix('L'))
+        .flatten()
+        .and_then(|regular| calendar_reference_date_from_code(regular, day, calendar, true))
+}
+
 fn fixed_month_length(calendar: &str, code: &str) -> Option<u32> {
     let month = code.strip_prefix('M')?.parse::<u32>().ok()?;
     (matches!(calendar, "coptic" | "ethiopic" | "ethioaa") && month <= 12)
-        .then_some(COPTIC_REGULAR_MONTH_DAYS)
+        .then_some(THIRTY_DAY_MONTH_LENGTH)
 }
 
 pub fn calendar_year_from_era(era: &str, year: i32, calendar: &str) -> Option<i32> {
@@ -479,7 +532,20 @@ const REFERENCE_YEAR_START: i32 = 1_932;
 const REFERENCE_YEAR_END: i32 = 1_972;
 const FIRST_DAY_OF_MONTH_VALUE: u32 = 1;
 const REFERENCE_MONTH_DAY_LIMIT: u32 = 31;
-const COPTIC_REGULAR_MONTH_DAYS: u32 = 30;
+const THIRTY_DAY_MONTH_LENGTH: u32 = 30;
+const LUNISOLAR_REFERENCE_YEARS: &[(&str, u32, i32)] = &[
+    ("M03L", 30, 1_955),
+    ("M04L", 30, 1_944),
+    ("M05L", 30, 1_952),
+    ("M06L", 30, 1_941),
+    ("M07L", 30, 1_938),
+    ("M09L", 1, 2_014),
+    ("M09L", 29, 2_014),
+    ("M10L", 1, 1_984),
+    ("M10L", 29, 1_984),
+    ("M11L", 1, 2_033),
+    ("M11L", 29, 2_034),
+];
 const MONTHS_PER_YEAR: u32 = 12;
 const GREGORIAN_COMMON_YEAR_DAYS: u32 = 365;
 const GREGORIAN_LEAP_YEAR_DAYS: u32 = 366;
