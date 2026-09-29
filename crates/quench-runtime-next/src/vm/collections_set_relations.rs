@@ -130,6 +130,10 @@ impl<H: Host> Vm<H> {
                 return Err(error);
             }
         };
+        if !self.is_function(has) {
+            self.heap.release_root(receiver_root);
+            return Err(self.type_error(p, "Set-like has is not callable".into()));
+        }
         let has_root = self.heap.root(has);
         let receiver = self.heap.root_value(receiver_root).unwrap_or(value);
         let keys_atom = self.intern_atom("keys");
@@ -142,12 +146,6 @@ impl<H: Host> Vm<H> {
             }
         };
         let keys_root = self.heap.root(keys);
-        if !self.is_function(has) {
-            self.heap.release_root(keys_root);
-            self.heap.release_root(has_root);
-            self.heap.release_root(receiver_root);
-            return Err(self.type_error(p, "Set-like has is not callable".into()));
-        }
         if !self.is_function(keys) {
             self.heap.release_root(keys_root);
             self.heap.release_root(has_root);
@@ -181,6 +179,27 @@ impl<H: Host> Vm<H> {
                 Ok(self.truthy(result))
             }
         }
+    }
+
+    fn for_each_set_snapshot<F>(
+        &mut self,
+        p: &ResidualProgram,
+        set: Value,
+        mut visit: F,
+    ) -> Result<(), JsError>
+    where
+        F: FnMut(&mut Self, Value) -> Result<bool, JsError>,
+    {
+        let values = match self.heap.get(set) {
+            Some(Cell::Set { entries, .. }) => entries.clone(),
+            _ => return Err(self.type_error(p, "Set method called on incompatible receiver".into())),
+        };
+        for value in values {
+            if !visit(self, value)? {
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn for_each_live_set<F>(
@@ -219,14 +238,15 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn fold_set_record<T, F>(
+    fn fold_set_record<T, I, F>(
         &mut self,
         p: &ResidualProgram,
         other: &SetRecord,
-        init: T,
+        initialize: I,
         mut step: F,
     ) -> Result<T, JsError>
     where
+        I: FnOnce(&mut Self) -> Result<T, JsError>,
         F: FnMut(&mut Self, T, Value) -> Result<SetRecordStep<T>, JsError>,
     {
         match other {
@@ -235,7 +255,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Set { entries, .. }) => entries.clone(),
                     _ => Vec::new(),
                 };
-                let mut acc = init;
+                let mut acc = initialize(self)?;
                 for value in values {
                     acc = match step(self, acc, value)? {
                         SetRecordStep::Continue(acc) => acc,
@@ -272,7 +292,7 @@ impl<H: Host> Vm<H> {
                 let next_root = self.heap.root(next_method);
                 let done_atom = self.intern_atom("done");
                 let value_atom = self.intern_atom("value");
-                let mut acc = init;
+                let mut acc = initialize(self)?;
                 loop {
                     let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
                     let next_method = self.heap.root_value(next_root).unwrap_or(next_method);
@@ -379,7 +399,7 @@ impl<H: Host> Vm<H> {
         };
         match native {
             Native::SetDifference if own_size <= other.size(self) => {
-                self.for_each_live_set(p, own, |vm, value| {
+                self.for_each_set_snapshot(p, own, |vm, value| {
                     if !vm.set_record_has(p, other, value)? {
                         vm.push_set_result(values, roots, value);
                     }
@@ -394,7 +414,7 @@ impl<H: Host> Vm<H> {
                 for value in current {
                     self.push_set_result(values, roots, value);
                 }
-                self.fold_set_record(p, other, (), |vm, (), value| {
+                self.fold_set_record(p, other, |_| Ok(()), |vm, (), value| {
                     values.retain(|candidate| !vm.same_value_zero(*candidate, value));
                     Ok(SetRecordStep::Continue(()))
                 })?;
@@ -408,7 +428,7 @@ impl<H: Host> Vm<H> {
                 })?;
             }
             Native::SetIntersection => {
-                self.fold_set_record(p, other, (), |vm, (), value| {
+                self.fold_set_record(p, other, |_| Ok(()), |vm, (), value| {
                     if vm.set_entry_index(own, value).is_some() {
                         vm.push_set_result(values, roots, value);
                     }
@@ -416,22 +436,33 @@ impl<H: Host> Vm<H> {
                 })?;
             }
             Native::SetSymmetricDifference | Native::SetUnion => {
-                let current = match self.heap.get(own) {
-                    Some(Cell::Set { entries, .. }) => entries.clone(),
-                    _ => Vec::new(),
-                };
-                for value in current {
-                    self.push_set_result(values, roots, value);
-                }
-                self.fold_set_record(p, other, (), |vm, (), value| {
-                    let in_own = vm.set_entry_index(own, value).is_some();
-                    if native == Native::SetSymmetricDifference && in_own {
-                        values.retain(|candidate| !vm.same_value_zero(*candidate, value));
-                    } else if !in_own {
-                        vm.push_set_result(values, roots, value);
-                    }
-                    Ok(SetRecordStep::Continue(()))
-                })?;
+                let (result, result_roots) = self.fold_set_record(
+                    p,
+                    other,
+                    |vm| {
+                        let mut result = Vec::new();
+                        let mut result_roots = Vec::new();
+                        let current = match vm.heap.get(own) {
+                            Some(Cell::Set { entries, .. }) => entries.clone(),
+                            _ => Vec::new(),
+                        };
+                        for value in current {
+                            vm.push_set_result(&mut result, &mut result_roots, value);
+                        }
+                        Ok((result, result_roots))
+                    },
+                    |vm, (mut result, mut result_roots), value| {
+                        let in_own = vm.set_entry_index(own, value).is_some();
+                        if native == Native::SetSymmetricDifference && in_own {
+                            result.retain(|candidate| !vm.same_value_zero(*candidate, value));
+                        } else if !in_own {
+                            vm.push_set_result(&mut result, &mut result_roots, value);
+                        }
+                        Ok(SetRecordStep::Continue((result, result_roots)))
+                    },
+                )?;
+                values.extend(result);
+                roots.extend(result_roots);
             }
             Native::SetIsDisjointFrom if own_size <= other.size(self) => {
                 let mut disjoint = true;
@@ -445,7 +476,7 @@ impl<H: Host> Vm<H> {
                 return Ok(SetRelationResult::Boolean(disjoint));
             }
             Native::SetIsDisjointFrom => {
-                let found = self.fold_set_record(p, other, false, |vm, _, value| {
+                let found = self.fold_set_record(p, other, |_| Ok(false), |vm, _, value| {
                     Ok(if vm.set_entry_index(own, value).is_some() {
                         SetRecordStep::Stop(true)
                     } else {
@@ -472,7 +503,7 @@ impl<H: Host> Vm<H> {
                 if own_size < other.size(self) {
                     return Ok(SetRelationResult::Boolean(false));
                 }
-                let missing = self.fold_set_record(p, other, false, |vm, _, value| {
+                let missing = self.fold_set_record(p, other, |_| Ok(false), |vm, _, value| {
                     Ok(if vm.set_entry_index(own, value).is_some() {
                         SetRecordStep::Continue(false)
                     } else {
