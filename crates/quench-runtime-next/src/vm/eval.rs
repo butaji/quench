@@ -165,11 +165,12 @@ impl<H: Host> Vm<H> {
         source: &str,
     ) -> Result<Value, JsError> {
         let source_name = format!("<Eval:{}>", self.programs.len());
-        let strict = self
-            .frames
-            .last()
-            .and_then(|frame| p.functions.get(frame.function as usize))
-            .is_some_and(|function| function.strict);
+        let strict = self.direct_eval
+            && self
+                .frames
+                .last()
+                .and_then(|frame| p.functions.get(frame.function as usize))
+                .is_some_and(|function| function.strict);
         if let Some(expression) = crate::Engine::eval_single_expression(source) {
             return self.eval_compiled_expression_named(p, expression, strict, &source_name);
         }
@@ -218,87 +219,98 @@ impl<H: Host> Vm<H> {
             caller_scope.then_some(program_id),
         );
         let result = (|| {
+            if !root_function.strict {
+                let global_function_atoms = residual.functions[super::ROOT_FUNCTION_ID as usize]
+                    .global_function_atoms
+                    .clone();
+                for atom in &global_function_atoms {
+                    if (!caller_scope && self.realm.global_lexical_declarations.contains(atom))
+                        || (direct_eval
+                            && self
+                                .direct_eval_lexical_binding(p, *atom)
+                                .is_some_and(|binding| !binding.catch_parameter))
+                    {
+                        return self.syntax_error_result(
+                            p,
+                            "eval function declaration conflicts with lexical binding",
+                        );
+                    }
+                    if caller_scope {
+                        continue;
+                    }
+                    let globals = self.realm.globals;
+                    let name = self.atom_name(*atom).to_owned();
+                    self.check_global_eval_declaration(p, globals, &name, true)?;
+                }
+                for atom in residual.functions[super::ROOT_FUNCTION_ID as usize]
+                    .global_var_atoms
+                    .iter()
+                    .copied()
+                {
+                    if global_function_atoms.contains(&atom) {
+                        continue;
+                    }
+                    if (!caller_scope && self.realm.global_lexical_declarations.contains(&atom))
+                        || (direct_eval
+                            && self
+                                .direct_eval_lexical_binding(p, atom)
+                                .is_some_and(|binding| !binding.catch_parameter))
+                    {
+                        return self.syntax_error_result(
+                            p,
+                            "eval var declaration conflicts with lexical binding",
+                        );
+                    }
+                    if caller_scope {
+                        continue;
+                    }
+                    let globals = self.realm.globals;
+                    let name = self.atom_name(atom).to_owned();
+                    self.check_global_eval_declaration(p, globals, &name, false)?;
+                }
+                if !caller_scope {
+                    let globals = self.realm.globals;
+                    for atom in &global_function_atoms {
+                        let attributes =
+                            self.property_attributes(globals, PropertyKey::string(*atom));
+                        if attributes.is_some_and(|attributes| attributes.configurable) {
+                            self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
+                        } else if self.own_property(globals, *atom).is_some() {
+                            self.set_field_cached(p, globals, *atom, Value::UNDEFINED, 0, false)?;
+                        } else {
+                            self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
+                        }
+                    }
+                    for atom in root_function.global_var_atoms.iter().copied() {
+                        if global_function_atoms.contains(&atom) {
+                            continue;
+                        }
+                        if self.own_property(globals, atom).is_none() {
+                            self.set_property(globals, atom, Value::UNDEFINED)?;
+                            self.set_property_attributes(
+                                globals,
+                                PropertyKey::string(atom),
+                                PropertyAttributes {
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: true,
+                                    accessor: false,
+                                    getter: None,
+                                    setter: None,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
             if caller_scope {
                 self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms);
-            }
-            let global_function_atoms = residual.functions[super::ROOT_FUNCTION_ID as usize]
-                .global_function_atoms
-                .clone();
-            for atom in &global_function_atoms {
-                if (!caller_scope && self.realm.global_lexical_declarations.contains(atom))
-                    || (direct_eval
-                        && self
-                            .direct_eval_lexical_binding(p, *atom)
-                            .is_some_and(|binding| !binding.catch_parameter))
-                {
-                    return self.syntax_error_result(
-                        p,
-                        "eval function declaration conflicts with lexical binding",
-                    );
-                }
-                if caller_scope {
-                    continue;
-                }
-                let globals = self.realm.globals;
-                let name = self.atom_name(*atom).to_owned();
-                self.check_global_eval_declaration(p, globals, &name, true)?;
-                let attributes = self.property_attributes(globals, PropertyKey::string(*atom));
-                if attributes.is_some_and(|attributes| attributes.configurable) {
-                    self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
-                } else if self.own_property(globals, *atom).is_some() {
-                    self.set_field_cached(p, globals, *atom, Value::UNDEFINED, 0, false)?;
-                } else {
-                    self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
-                }
-            }
-            for atom in residual.functions[super::ROOT_FUNCTION_ID as usize]
-                .global_var_atoms
-                .iter()
-                .copied()
-            {
-                if global_function_atoms.contains(&atom) {
-                    continue;
-                }
-                if (!caller_scope && self.realm.global_lexical_declarations.contains(&atom))
-                    || (direct_eval
-                        && self
-                            .direct_eval_lexical_binding(p, atom)
-                            .is_some_and(|binding| !binding.catch_parameter))
-                {
-                    return self.syntax_error_result(
-                        p,
-                        "eval var declaration conflicts with lexical binding",
-                    );
-                }
-                if caller_scope {
-                    continue;
-                }
-                let globals = self.realm.globals;
-                let name = self.atom_name(atom).to_owned();
-                self.check_global_eval_declaration(p, globals, &name, false)?;
-                if self.own_property(globals, atom).is_none() {
-                    self.set_property(globals, atom, Value::UNDEFINED)?;
-                    self.set_property_attributes(
-                        globals,
-                        PropertyKey::string(atom),
-                        PropertyAttributes {
-                            writable: true,
-                            enumerable: true,
-                            configurable: residual.functions[super::ROOT_FUNCTION_ID as usize]
-                                .global_annex_b_var_atoms
-                                .contains(&atom),
-                            accessor: false,
-                            getter: None,
-                            setter: None,
-                        },
-                    );
-                }
             }
             let root_scope = self
                 .frames
                 .last()
                 .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
-            let parent = if direct_eval || root_scope {
+            let parent = if direct_eval {
                 self.frames
                     .len()
                     .checked_sub(1)
@@ -306,7 +318,7 @@ impl<H: Host> Vm<H> {
             } else {
                 Value::NULL
             };
-            let parent = if root_scope {
+            let parent = if direct_eval && root_scope {
                 self.heap.alloc(Cell::Environment {
                     parent,
                     program: None,
@@ -320,7 +332,14 @@ impl<H: Host> Vm<H> {
                 parent
             };
             let root = self.closure(&residual, super::ROOT_FUNCTION_ID, parent)?;
-            self.call_value(&residual, root, self.realm.globals, &[])
+            let this = if direct_eval {
+                self.frames
+                    .last()
+                    .map_or(self.realm.globals, |frame| frame.this)
+            } else {
+                self.realm.globals
+            };
+            self.call_value(&residual, root, this, &[])
         })();
         self.direct_eval_var_program = previous_eval_var_program;
         self.direct_eval = direct_eval;
@@ -423,18 +442,19 @@ impl<H: Host> Vm<H> {
             if invalid_context {
                 return self.syntax_error_result(p, "new.target is not valid in this eval context");
             }
+            if crate::Engine::eval_is_new_target_expression(source) {
+                return self.eval_simple_expression(p, "new.target", inherited_strict);
+            }
         }
         if source.contains("super(") {
-            return Err(self.mark_eval_parser_error(
-                p,
-                "super call requires syntactic eval validation",
-            ));
+            return Err(
+                self.mark_eval_parser_error(p, "super call requires syntactic eval validation")
+            );
         }
         if (source.contains("super.") || source.contains("super[")) && !self.direct_eval {
-            return Err(self.mark_eval_parser_error(
-                p,
-                "super property requires syntactic eval validation",
-            ));
+            return Err(
+                self.mark_eval_parser_error(p, "super property requires syntactic eval validation")
+            );
         }
         if source.contains("\n++")
             || source.contains("for(;false;)")
@@ -777,25 +797,6 @@ impl<H: Host> Vm<H> {
                     _ => return Ok(value),
                 };
                 result = self.eval_source_simple(p, &source, strict)?;
-                continue;
-            }
-            if let Some(name) = statement.strip_prefix("delete ") {
-                let atom = self.intern_atom(name.trim());
-                let eval_binding = self.frames.last().and_then(|frame| {
-                    frame
-                        .dynamic_bindings
-                        .iter()
-                        .rposition(|(candidate, _)| *candidate == atom)
-                });
-                if let Some(index) = eval_binding {
-                    if let Some(frame) = self.frames.last_mut() {
-                        frame.dynamic_bindings.remove(index);
-                    }
-                    self.sync_dynamic_bindings();
-                    result = Value::TRUE;
-                } else {
-                    result = self.delete_name(p, atom)?;
-                }
                 continue;
             }
             if let Some(expression) = statement.strip_prefix("throw ") {
@@ -1912,7 +1913,7 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|function| function.lexical_atoms.contains(&atom))
     }
 
-    fn sync_dynamic_bindings(&mut self) {
+    pub(super) fn sync_dynamic_bindings(&mut self) {
         let Some(frame) = self.frames.last() else {
             return;
         };

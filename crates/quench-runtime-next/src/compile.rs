@@ -210,6 +210,14 @@ impl Engine {
         source.get(span.start as usize..span.end as usize)
     }
 
+    pub(crate) fn eval_is_new_target_expression(source: &str) -> bool {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
+        parsed.diagnostics.is_empty()
+            && matches!(parsed.program.body.as_slice(), [Statement::ExpressionStatement(statement)]
+                if matches!(statement.expression.without_parentheses(), Expression::NewTarget(_)))
+    }
+
     pub(crate) fn eval_block_completion(source: &str) -> Option<(&str, &str)> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
@@ -285,7 +293,11 @@ impl Engine {
                         | Statement::TryStatement(_)
                         | Statement::LabeledStatement(_)
                         | Statement::WithStatement(_)
-                )
+                ) || matches!(statement, Statement::VariableDeclaration(declaration)
+                    if is_lexical_binding_declaration(declaration.kind))
+                    || matches!(statement, Statement::ExpressionStatement(statement)
+                        if matches!(statement.expression.without_parentheses(), Expression::UnaryExpression(unary)
+                            if unary.operator == oxc_syntax::operator::UnaryOperator::Delete))
             })
     }
 
@@ -912,6 +924,13 @@ impl Engine {
     }
 
     pub(crate) fn eval_strict_binding_early_error(source: &str, strict: bool) -> Option<String> {
+        let strict_source;
+        let source = if strict {
+            strict_source = format!("'use strict';\n{source}");
+            strict_source.as_str()
+        } else {
+            source
+        };
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         if !parsed.diagnostics.is_empty() {
@@ -923,6 +942,12 @@ impl Engine {
                 return None;
             }
             return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
+        }
+        let semantic = oxc_semantic::SemanticBuilder::new()
+            .with_check_syntax_error(true)
+            .build(&parsed.program);
+        if let Some(error) = semantic.diagnostics.first() {
+            return Some(format!("SyntaxError: {error}"));
         }
         early::strict_binding_early_error(&parsed.program, strict)
     }
@@ -1736,7 +1761,13 @@ impl<'a> Compiler<'a> {
         self.field_sites.shrink_to_fit();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
-            module: self.module_goal,
+            kind: if self.module_goal {
+                crate::bytecode::ProgramKind::Module
+            } else if self.capture_script_completion {
+                crate::bytecode::ProgramKind::Eval
+            } else {
+                crate::bytecode::ProgramKind::Script
+            },
             module_requests,
             module_imports,
             module_link_plan,
@@ -2007,6 +2038,9 @@ impl<'a> Compiler<'a> {
             });
         let module_goal = self.module_goal;
         let capture_script_completion = parent.is_none() && self.capture_script_completion;
+        if capture_script_completion && !root_strict {
+            function_scope.retain(|atom| lexical_atoms.contains(atom));
+        }
         let module_source = self.source;
         let annex_b_collisions = early::annex_b_lexical_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {

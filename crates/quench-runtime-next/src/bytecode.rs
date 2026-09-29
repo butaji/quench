@@ -914,10 +914,36 @@ impl ModuleRequestPhase {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProgramKind {
+    Script,
+    Module,
+    Eval,
+}
+
+impl ProgramKind {
+    pub(crate) const fn binary_tag(self) -> u8 {
+        match self {
+            Self::Script => 0,
+            Self::Module => 1,
+            Self::Eval => 2,
+        }
+    }
+
+    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Script),
+            1 => Some(Self::Module),
+            2 => Some(Self::Eval),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,
-    pub(crate) module: bool,
+    pub(crate) kind: ProgramKind,
     pub(crate) module_requests: Vec<ModuleRequest>,
     pub(crate) module_imports: Vec<ModuleImportBinding>,
     pub(crate) module_link_plan: Option<ModuleLinkPlan>,
@@ -945,8 +971,22 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 27;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = 0x5251_4a00_001b_0000;
+    pub const FORMAT_VERSION: u8 = 28;
+    pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+        const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+        const FORMAT_VERSION_SHIFT: u32 = 16;
+        ABI_SIGNATURE | ((Self::FORMAT_VERSION as u64) << FORMAT_VERSION_SHIFT)
+    };
+
+    pub(crate) fn is_module(&self) -> bool {
+        self.kind == ProgramKind::Module
+    }
+
+    pub(crate) fn root_variables_are_local(&self) -> bool {
+        self.is_module()
+            || (self.kind == ProgramKind::Eval
+                && self.functions.first().is_some_and(|root| root.strict))
+    }
 
     pub fn function_count(&self) -> usize {
         self.functions.len()

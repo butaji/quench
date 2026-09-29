@@ -139,7 +139,7 @@ mod tests {
     fn partitions_pairs_and_nonsequential_boundaries_by_dispatch_class() {
         let program = ResidualProgram {
             specialized: true,
-            module: false,
+            kind: crate::bytecode::ProgramKind::Script,
             module_requests: Vec::new(),
             module_imports: Vec::new(),
             module_link_plan: None,

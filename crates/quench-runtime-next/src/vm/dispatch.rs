@@ -356,7 +356,7 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeClosure => {
                 let env = self.promote_frame_environment(f);
-                let module_root = p.module
+                let module_root = p.is_module()
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
                 let v = if module_root {
