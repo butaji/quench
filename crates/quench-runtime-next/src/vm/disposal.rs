@@ -893,11 +893,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.construct_error_native(p, Native::SuppressedError, &[error, completion])?
         };
-        self.set_async_disposal_state_value(
-            state,
-            ASYNC_DISPOSAL_COMPLETION_SLOT,
-            completion,
-        );
+        self.set_async_disposal_state_value(state, ASYNC_DISPOSAL_COMPLETION_SLOT, completion);
         Ok(())
     }
 
@@ -906,91 +902,92 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         state: Value,
     ) -> Result<Value, JsError> {
-        loop {
-            let cursor = self
-                .async_disposal_state_value(state, ASYNC_DISPOSAL_CURSOR_SLOT)
-                .as_number()
-                .expect("async disposal cursor is numeric") as usize;
-            if cursor == 0 {
-                let completion =
-                    self.async_disposal_state_value(state, ASYNC_DISPOSAL_COMPLETION_SLOT);
-                let result = self.async_disposal_state_value(state, ASYNC_DISPOSAL_RESULT_SLOT);
-                if completion.is_deleted() {
-                    self.promise_settle(p, result, PromiseState::Fulfilled, Value::UNDEFINED)?;
-                } else {
-                    self.promise_settle(p, result, PromiseState::Rejected, completion)?;
-                }
-                return Ok(Value::UNDEFINED);
-            }
-
-            let cursor = cursor - 1;
-            self.set_async_disposal_state_value(
-                state,
-                ASYNC_DISPOSAL_CURSOR_SLOT,
-                Value::number(cursor as f64),
-            );
-            let resources = self.async_disposal_state_value(state, ASYNC_DISPOSAL_ENTRIES_SLOT);
-            let entry = match self.heap.get(resources) {
-                Some(Cell::Array { elements, .. }) => elements[cursor],
-                _ => return Err(JsError("DisposableStack entries are invalid".into())),
-            };
-            let (callback, value, mode, await_result) = match self.heap.get(entry) {
-                Some(Cell::Array { elements, .. }) => (
-                    elements
-                        .get(DISPOSAL_ENTRY_CALLBACK_SLOT)
-                        .copied()
-                        .unwrap_or(Value::UNDEFINED),
-                    elements
-                        .get(DISPOSAL_ENTRY_RECEIVER_SLOT)
-                        .copied()
-                        .unwrap_or(Value::UNDEFINED),
-                    elements
-                        .get(DISPOSAL_ENTRY_MODE_SLOT)
-                        .and_then(|value| value.as_int())
-                        .unwrap_or(DISPOSAL_INVALID_MODE),
-                    elements
-                        .get(DISPOSAL_ENTRY_AWAIT_RESULT_SLOT)
-                        .is_some_and(|value| self.truthy(*value)),
-                ),
-                _ => continue,
-            };
-            let result = match mode {
-                DISPOSAL_USE_MODE => self.call_value(p, callback, value, &[]),
-                DISPOSAL_ADOPT_MODE => {
-                    self.call_value(p, callback, Value::UNDEFINED, &[value])
-                }
-                DISPOSAL_DEFER_MODE => {
-                    self.call_value(p, callback, Value::UNDEFINED, &[])
-                }
-                DISPOSAL_AWAIT_MODE => Ok(Value::UNDEFINED),
-                _ => return Err(JsError("DisposableStack entry mode is invalid".into())),
-            };
-            match result {
-                Err(error) => {
-                    let error = self.thrown_value_for(p, error);
-                    self.add_async_disposal_error(p, state, error)?;
-                }
-                Ok(value) if await_result => {
-                    let promise = self.promise_for_value(p, value)?;
-                    let fulfilled = self.native_with_env(
-                        Native::DisposableStackAsyncDisposalFulfilled,
-                        state,
-                    );
-                    let rejected = self.native_with_env(
-                        Native::DisposableStackAsyncDisposalRejected,
-                        state,
-                    );
-                    let _ = self.call_promise_native(
-                        p,
-                        Native::PromiseThen,
-                        promise,
-                        &[fulfilled, rejected],
-                    )?;
+        let state_root = self.heap.root(state);
+        let result = (|| {
+            let state = self
+                .heap
+                .root_value(state_root)
+                .expect("rooted async disposal state remains live");
+            loop {
+                let cursor =
+                    self.async_disposal_state_value(state, ASYNC_DISPOSAL_CURSOR_SLOT)
+                        .as_number()
+                        .expect("async disposal cursor is numeric") as usize;
+                if cursor == 0 {
+                    let completion =
+                        self.async_disposal_state_value(state, ASYNC_DISPOSAL_COMPLETION_SLOT);
+                    let result = self.async_disposal_state_value(state, ASYNC_DISPOSAL_RESULT_SLOT);
+                    if completion.is_deleted() {
+                        self.promise_settle(p, result, PromiseState::Fulfilled, Value::UNDEFINED)?;
+                    } else {
+                        self.promise_settle(p, result, PromiseState::Rejected, completion)?;
+                    }
                     return Ok(Value::UNDEFINED);
                 }
-                Ok(_) => {}
+
+                let cursor = cursor - 1;
+                self.set_async_disposal_state_value(
+                    state,
+                    ASYNC_DISPOSAL_CURSOR_SLOT,
+                    Value::number(cursor as f64),
+                );
+                let resources = self.async_disposal_state_value(state, ASYNC_DISPOSAL_ENTRIES_SLOT);
+                let entry = match self.heap.get(resources) {
+                    Some(Cell::Array { elements, .. }) => elements[cursor],
+                    _ => return Err(JsError("DisposableStack entries are invalid".into())),
+                };
+                let (callback, value, mode, await_result) = match self.heap.get(entry) {
+                    Some(Cell::Array { elements, .. }) => (
+                        elements
+                            .get(DISPOSAL_ENTRY_CALLBACK_SLOT)
+                            .copied()
+                            .unwrap_or(Value::UNDEFINED),
+                        elements
+                            .get(DISPOSAL_ENTRY_RECEIVER_SLOT)
+                            .copied()
+                            .unwrap_or(Value::UNDEFINED),
+                        elements
+                            .get(DISPOSAL_ENTRY_MODE_SLOT)
+                            .and_then(|value| value.as_int())
+                            .unwrap_or(DISPOSAL_INVALID_MODE),
+                        elements
+                            .get(DISPOSAL_ENTRY_AWAIT_RESULT_SLOT)
+                            .is_some_and(|value| self.truthy(*value)),
+                    ),
+                    _ => continue,
+                };
+                let result = match mode {
+                    DISPOSAL_USE_MODE => self.call_value(p, callback, value, &[]),
+                    DISPOSAL_ADOPT_MODE => self.call_value(p, callback, Value::UNDEFINED, &[value]),
+                    DISPOSAL_DEFER_MODE => self.call_value(p, callback, Value::UNDEFINED, &[]),
+                    DISPOSAL_AWAIT_MODE => Ok(Value::UNDEFINED),
+                    _ => return Err(JsError("DisposableStack entry mode is invalid".into())),
+                };
+                match result {
+                    Err(error) => {
+                        let error = self.thrown_value_for(p, error);
+                        self.add_async_disposal_error(p, state, error)?;
+                    }
+                    Ok(value) if await_result => {
+                        let promise = self.promise_for_value(p, value)?;
+                        let fulfilled = self
+                            .native_with_env(Native::DisposableStackAsyncDisposalFulfilled, state);
+                        let rejected = self
+                            .native_with_env(Native::DisposableStackAsyncDisposalRejected, state);
+                        let _ = self.call_promise_native(
+                            p,
+                            Native::PromiseThen,
+                            promise,
+                            &[fulfilled, rejected],
+                        )?;
+                        return Ok(Value::UNDEFINED);
+                    }
+                    Ok(_) => {}
+                }
             }
-        }
+        })();
+        self.heap.release_root(state_root);
+        result
     }
 
     fn disposal_result_promise(
