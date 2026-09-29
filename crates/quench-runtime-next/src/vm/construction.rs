@@ -535,7 +535,11 @@ impl<H: Host> Vm<H> {
                 self.set_dynamic_function_prototype(p, result, new_target, native)?;
             } else if !matches!(
                 native,
-                Native::Proxy | Native::Array | Native::ArrayBuffer | Native::SharedArrayBuffer
+                Native::Proxy
+                    | Native::Array
+                    | Native::ArrayBuffer
+                    | Native::SharedArrayBuffer
+                    | Native::RegExp
             ) && !(native == Native::Object
                 && new_target == self.native_value(Native::Object)
                 && args
@@ -632,6 +636,27 @@ impl<H: Host> Vm<H> {
             prototype
         } else {
             self.array_proto
+        })
+    }
+
+    pub(super) fn regexp_prototype_from_new_target(
+        &mut self,
+        p: &ResidualProgram,
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        if self.object_data(prototype).is_some() {
+            return Ok(prototype);
+        }
+        let realm = self.function_realm(p, new_target)?;
+        let regexp_atom = self.intern_atom("RegExp");
+        let regexp = self.get_property(p, realm, regexp_atom)?;
+        let prototype = self.get_property(p, regexp, prototype_atom)?;
+        Ok(if self.object_data(prototype).is_some() {
+            prototype
+        } else {
+            self.regexp_proto
         })
     }
 
@@ -894,7 +919,7 @@ impl<H: Host> Vm<H> {
                 self.construct_disposable_stack_native(p, native, new_target)
             }
             Native::Promise => self.construct_promise(p, args),
-            Native::RegExp => self.construct_regexp_native(p, args),
+            Native::RegExp => self.construct_regexp_native(p, args, Some(new_target)),
             Native::Date => self.date_construct_native(p, args),
             Native::IntlNumberFormat => self.intl_number_format_construct(p, args, new_target),
             Native::IntlCollator => self.intl_collator_construct(p, args, new_target),
