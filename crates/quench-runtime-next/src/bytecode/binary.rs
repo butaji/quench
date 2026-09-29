@@ -1,11 +1,13 @@
 use super::{
-    AtomTable, Constant, DispatchClass, EvalBinding, EvalSite, FieldBase, FieldSite, Function,
-    Handler, Instr, MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind,
-    ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase,
-    ObjectSite, Op, Superinstruction, WideInstruction,
+    AtomTable, Constant, DispatchClass, EvalBinding, EvalBindingLocation, EvalSite, FieldBase,
+    FieldSite, Function, Handler, Instr, LexicalBindingKind, MethodSite, ModuleImportBinding,
+    ModuleImportName, ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind,
+    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Superinstruction, WideInstruction,
 };
 
 const RESIDUAL_MAGIC: &[u8; 5] = &[b'R', b'Q', b'J', 0, super::ResidualProgram::FORMAT_VERSION];
+const EVAL_BINDING_LOCAL: u8 = 0;
+const EVAL_BINDING_CAPTURE: u8 = 1;
 const OPTIONAL_STRING_NONE: u8 = 0;
 const OPTIONAL_STRING_SOME: u8 = 1;
 const MODULE_LINK_PLAN_NONE: u8 = 0;
@@ -166,8 +168,18 @@ pub(super) fn write_program(
             out.u32(site.lexical_bindings.len() as u32);
             for binding in &site.lexical_bindings {
                 out.u32(binding.atom);
-                out.u16(binding.slot);
-                out.u8(u8::from(binding.immutable));
+                match binding.location {
+                    EvalBindingLocation::Local(slot) => {
+                        out.u8(EVAL_BINDING_LOCAL);
+                        out.u16(slot);
+                    }
+                    EvalBindingLocation::Capture { depth, slot } => {
+                        out.u8(EVAL_BINDING_CAPTURE);
+                        out.u16(depth);
+                        out.u16(slot);
+                    }
+                }
+                out.u8(binding.kind as u8);
                 out.u8(u8::from(binding.catch_parameter));
             }
         }
@@ -400,12 +412,15 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             let lexical_bindings = input.list(|input| {
                 Ok(EvalBinding {
                     atom: input.u32()?,
-                    slot: input.u16()?,
-                    immutable: match input.u8()? {
-                        0 => false,
-                        1 => true,
-                        _ => return Err("invalid eval binding mutability flag".into()),
+                    location: match input.u8()? {
+                        EVAL_BINDING_LOCAL => EvalBindingLocation::Local(input.u16()?),
+                        EVAL_BINDING_CAPTURE => EvalBindingLocation::Capture {
+                            depth: input.u16()?,
+                            slot: input.u16()?,
+                        },
+                        _ => return Err("invalid eval binding location".into()),
                     },
+                    kind: LexicalBindingKind::from_binary_tag(input.u8()?)?,
                     catch_parameter: match input.u8()? {
                         0 => false,
                         1 => true,

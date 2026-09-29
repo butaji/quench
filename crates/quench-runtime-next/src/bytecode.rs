@@ -629,9 +629,42 @@ pub(crate) struct EvalSite {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EvalBinding {
     pub(crate) atom: Atom,
-    pub(crate) slot: u16,
-    pub(crate) immutable: bool,
+    pub(crate) location: EvalBindingLocation,
+    pub(crate) kind: LexicalBindingKind,
     pub(crate) catch_parameter: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum EvalBindingLocation {
+    Local(u16),
+    Capture { depth: u16, slot: u16 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum LexicalBindingKind {
+    Mutable = 0,
+    Immutable = 1,
+    FunctionName = 2,
+}
+
+impl LexicalBindingKind {
+    pub(crate) const ALL: [Self; 3] = [Self::Mutable, Self::Immutable, Self::FunctionName];
+
+    pub(crate) fn capture_prefix(self) -> &'static str {
+        match self {
+            Self::Mutable => "\0rqj:lexical-capture:",
+            Self::Immutable => "\0rqj:immutable-capture:",
+            Self::FunctionName => "\0rqj:function-name-capture:",
+        }
+    }
+
+    pub(crate) fn from_binary_tag(tag: u8) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| *kind as u8 == tag)
+            .ok_or_else(|| "invalid lexical binding kind".into())
+    }
 }
 
 /// High bit of `Function::arguments_slot` marks a mapped (sloppy, simple
@@ -971,7 +1004,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 28;
+    pub const FORMAT_VERSION: u8 = 29;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

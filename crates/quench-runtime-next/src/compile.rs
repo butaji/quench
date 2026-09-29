@@ -1,8 +1,8 @@
 use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
-    MAPPED_ARGUMENTS_BIT, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
-    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
-    SET_THIS_REGISTER, Superinstruction, WideInstruction,
+    LexicalBindingKind, MAPPED_ARGUMENTS_BIT, MethodSite, ModuleImportBinding, ModuleImportName,
+    ModuleLinkPlan, ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register,
+    ResidualProgram, SET_THIS_REGISTER, Superinstruction, WideInstruction,
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
@@ -2129,11 +2129,7 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        lexical_slots.sort_unstable();
-        lexical_slots.dedup();
-        for slot in lexical_slots {
-            function.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
-        }
+        function.initialize_tdz_slots(lexical_slots);
         if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);
         }

@@ -329,15 +329,19 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {
         let name = self.owner.atoms[atom as usize].clone();
-        let marker = self.owner.atom(&format!("\0rqj:immutable-capture:{name}"));
+        let marker = self.owner.atom(&format!(
+            "{}{name}",
+            LexicalBindingKind::Immutable.capture_prefix()
+        ));
         self.scopes.iter().any(|scope| scope.contains_key(&marker))
     }
 
     fn has_function_name_capture(&mut self, atom: Atom) -> bool {
         let name = self.owner.atoms[atom as usize].clone();
-        let marker = self
-            .owner
-            .atom(&format!("\0rqj:function-name-capture:{name}"));
+        let marker = self.owner.atom(&format!(
+            "{}{name}",
+            LexicalBindingKind::FunctionName.capture_prefix()
+        ));
         self.scopes.iter().any(|scope| scope.contains_key(&marker))
     }
 
