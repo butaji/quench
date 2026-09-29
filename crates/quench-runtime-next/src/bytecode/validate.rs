@@ -167,7 +167,7 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::FunctionNamePrefix => {
             instruction.function_name_prefix() <= super::FUNCTION_NAME_PREFIX_SETTER
         }
-        super::ImmediateRole::ArrayLength => instruction.array_length() <= usize::from(u16::MAX),
+        super::ImmediateRole::ArrayLength => instruction.array_length() <= super::MAX_ARRAY_LENGTH,
         super::ImmediateRole::MethodSiteIndex => {
             (instruction.method_site_index() as usize) < bounds.method_sites
         }
