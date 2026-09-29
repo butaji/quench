@@ -341,7 +341,10 @@ impl<H: Host> Vm<H> {
                         Value::number(f64::from(iso_day_of_week(IsoDate { year, month, day })))
                     }
                     Native::TemporalPlainDateDayOfYearGetter => {
-                        Value::number(f64::from(iso_day_of_year(IsoDate { year, month, day })))
+                        Value::number(f64::from(calendar_fields.as_ref().map_or_else(
+                            || iso_day_of_year(IsoDate { year, month, day }),
+                            |fields| fields.day_of_year,
+                        )))
                     }
                     Native::TemporalPlainDateWeekOfYearGetter => {
                         temporal_iso_week(IsoDate { year, month, day }, &calendar)
