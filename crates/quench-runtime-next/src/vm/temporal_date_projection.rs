@@ -1131,6 +1131,28 @@ impl<H: Host> Vm<H> {
             self.plain_date_integer(p, year_value)?
         };
         let constrain = self.plain_date_overflow(p, options)?;
+        let non_iso_calendar = !matches!(calendar.as_str(), "iso8601" | "gregory");
+        if non_iso_calendar && year_value.is_undefined() && month.is_some() {
+            return Err(self.type_error(p, "Missing year".into()));
+        }
+        if non_iso_calendar && !year_value.is_undefined() {
+            if let Some(code) = month_code_text.as_deref() {
+                let ordinal = quench_intl::calendar_month_from_code(year, code, &calendar)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
+                if month.is_some_and(|month| month != ordinal as i32) {
+                    return Err(self.range_error(p, "month and monthCode must agree".into()));
+                }
+                let iso = quench_intl::calendar_date_to_iso_with_overflow(
+                    year,
+                    ordinal,
+                    day as u32,
+                    &calendar,
+                    constrain,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                return self.make_plain_month_day_from_iso_date(p, constructor, iso, calendar);
+            }
+        }
         if month.is_none()
             && year_value.is_undefined()
             && !matches!(calendar.as_str(), "iso8601" | "gregory")
@@ -1326,6 +1348,30 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(reference_year)),
         ];
         self.temporal_plain_month_day_construct(p, &args, constructor)
+    }
+
+    fn make_plain_month_day_from_iso_date(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        (year, month, day): (i32, u32, u32),
+        calendar: String,
+    ) -> Result<Value, JsError> {
+        let reference = quench_intl::calendar_fields_from_iso(year, month, day, &calendar)
+            .and_then(|fields| {
+                quench_intl::calendar_reference_date_from_code(
+                    &fields.month_code,
+                    fields.day,
+                    &calendar,
+                    false,
+                )
+            });
+        let (iso_year, iso_month, iso_day) = reference.unwrap_or((
+            DEFAULT_REFERENCE_ISO_YEAR,
+            month,
+            day,
+        ));
+        self.make_plain_month_day(p, constructor, iso_month, iso_day, calendar, iso_year)
     }
 
     fn make_plain_year_month(
