@@ -1039,7 +1039,7 @@ impl<H: Host> Vm<H> {
             return Ok(self.native_value(Native::ObjectFreeze));
         }
         if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
-            return Ok(value);
+            return self.checked_binding_read(p, atom, value);
         }
         if !name.starts_with('\0') {
             if let Some(frame) = self.frames.last()
@@ -1050,14 +1050,15 @@ impl<H: Host> Vm<H> {
                     || self.root_local_var_binding(p, frame.function, atom))
                 && let Some(slot) = self.local_binding_slot(p, frame.function, atom)
             {
-                return Ok(if frame.captured {
+                let value = if frame.captured {
                     match self.heap.get(frame.env) {
                         Some(Cell::Environment { slots, .. }) => slots[slot],
                         _ => Value::UNDEFINED,
                     }
                 } else {
                     frame.locals[slot]
-                });
+                };
+                return self.checked_binding_read(p, atom, value);
             }
             if let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied() {
                 return self.checked_binding_read(p, atom, value);
@@ -1070,7 +1071,7 @@ impl<H: Host> Vm<H> {
                 return self.checked_binding_read(p, atom, slots[slot]);
             }
             if let Some(value) = self.load_eval_frame_local(p, atom) {
-                return Ok(value);
+                return self.checked_binding_read(p, atom, value);
             }
         }
         let value = self.get_field_cached(p, self.realm.globals, atom, cache)?;

@@ -1535,10 +1535,20 @@ impl<H: Host> Vm<H> {
     }
 
     fn direct_eval_lexical_value(&self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
-        let frame = self.frames.last()?;
-        let slot = usize::from(self.direct_eval_lexical_binding(p, atom)?.slot);
-        if frame.captured {
-            match self.heap.get(frame.env)? {
+        let binding = self.direct_eval_lexical_binding(p, atom)?;
+        let frame_index = self.frames.len().checked_sub(1)?;
+        let frame = &self.frames[frame_index];
+        let (environment, slot) = match binding.location {
+            crate::bytecode::EvalBindingLocation::Capture { depth, slot } => (
+                Some(self.capture_env(frame_index, depth)?),
+                usize::from(slot),
+            ),
+            crate::bytecode::EvalBindingLocation::Local(slot) => {
+                (frame.captured.then_some(frame.env), usize::from(slot))
+            }
+        };
+        if let Some(environment) = environment {
+            match self.heap.get(environment)? {
                 Cell::Environment { slots, .. } => slots.get(slot).copied(),
                 _ => None,
             }
@@ -1552,25 +1562,49 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         atom: Atom,
         value: Value,
+        strict: bool,
     ) -> Result<bool, JsError> {
         let Some(binding) = self.direct_eval_lexical_binding(p, atom) else {
             return Ok(false);
         };
-        if binding.immutable {
-            return Err(self.type_error(p, "assignment to immutable binding".into()));
+        if let Some(current) = self.direct_eval_lexical_value(p, atom) {
+            self.checked_binding_read(p, atom, current)?;
         }
-        let Some(frame) = self.frames.last_mut() else {
+        match binding.kind {
+            crate::bytecode::LexicalBindingKind::Immutable => {
+                return Err(self.type_error(p, "assignment to immutable binding".into()));
+            }
+            crate::bytecode::LexicalBindingKind::FunctionName => {
+                return if strict {
+                    Err(self.type_error(p, "assignment to function name binding".into()))
+                } else {
+                    Ok(true)
+                };
+            }
+            crate::bytecode::LexicalBindingKind::Mutable => {}
+        }
+        let Some(frame_index) = self.frames.len().checked_sub(1) else {
             return Ok(false);
         };
-        let slot = usize::from(binding.slot);
-        if frame.captured {
-            if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(frame.env)
+        let (environment, slot) = match binding.location {
+            crate::bytecode::EvalBindingLocation::Capture { depth, slot } => {
+                (self.capture_env(frame_index, depth), usize::from(slot))
+            }
+            crate::bytecode::EvalBindingLocation::Local(slot) => (
+                self.frames[frame_index]
+                    .captured
+                    .then_some(self.frames[frame_index].env),
+                usize::from(slot),
+            ),
+        };
+        if let Some(environment) = environment {
+            if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(environment)
                 && let Some(local) = slots.get_mut(slot)
             {
                 *local = value;
                 return Ok(true);
             }
-        } else if let Some(local) = frame.locals.get_mut(slot) {
+        } else if let Some(local) = self.frames[frame_index].locals.get_mut(slot) {
             *local = value;
             return Ok(true);
         }
@@ -1623,7 +1657,7 @@ impl<H: Host> Vm<H> {
                 self.sync_dynamic_bindings();
                 return Ok(());
             }
-            if self.direct_eval && self.store_direct_eval_lexical_value(p, atom, value)? {
+            if self.direct_eval && self.store_direct_eval_lexical_value(p, atom, value, strict)? {
                 return Ok(());
             }
             if !self.parameter_eval && self.store_frame_local(p, atom, value) {
@@ -1662,7 +1696,7 @@ impl<H: Host> Vm<H> {
                 self.sync_dynamic_bindings();
                 return Ok(());
             }
-            if self.direct_eval && self.store_direct_eval_lexical_value(p, atom, value)? {
+            if self.direct_eval && self.store_direct_eval_lexical_value(p, atom, value, strict)? {
                 return Ok(());
             }
             let global_frame = self.frames.last().is_some_and(|frame| frame.function == 0);
@@ -1818,12 +1852,18 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         atom: Atom,
     ) -> Option<Value> {
+        let program = self.frames.last()?.program;
         let name = self.atom_name(atom).to_owned();
         let mut best: Option<(String, Value)> = None;
         for index in (0..self.frames.len()).rev() {
             let frame = &self.frames[index];
+            if frame.program != program {
+                continue;
+            }
             if index != self.frames.len().saturating_sub(1)
-                && (frame.function != 0 || self.own_property(self.realm.globals, atom).is_none())
+                && (frame.function != super::ROOT_FUNCTION_ID
+                    || frame.this != self.realm.globals
+                    || self.own_property(self.realm.globals, atom).is_none())
             {
                 continue;
             }

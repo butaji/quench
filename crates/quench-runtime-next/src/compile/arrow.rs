@@ -82,6 +82,11 @@ impl Compiler<'_> {
         function.super_call_binds_this = super_call_binds_this;
         function.this_override = lexical_this_atom.map(|atom| function.load_atom(atom));
         function.dynamic_eval = early::parameters_contain_direct_eval(&value.params);
+        let lexical_slots = lexical_atoms
+            .iter()
+            .filter_map(|atom| function.local_slots.get(atom).copied())
+            .collect();
+        function.initialize_tdz_slots(lexical_slots);
         function.emit_parameter_bindings(&value.params);
         match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {

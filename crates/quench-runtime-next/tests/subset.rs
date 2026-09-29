@@ -23,7 +23,10 @@ fn output(source: &str) -> Vec<String> {
 #[test]
 fn residual_binary_round_trip_preserves_execution() {
     let path = std::env::temp_dir().join(format!("rqj-roundtrip-{}.residual", std::process::id()));
-    let program = Engine::specialize("print(12345678901234567890n);", "roundtrip.js").unwrap();
+    let program = Engine::specialize(
+        "print(12345678901234567890n); class C { value = () => eval('C'); } print(new C().value() === C); function own() { { let y = 7; return eval('y'); } } print(own());",
+        "roundtrip.js",
+    ).unwrap();
     program.write_binary(&path).unwrap();
     let decoded = rqj::ResidualProgram::read_binary(&path).unwrap();
     std::fs::remove_file(path).unwrap();
@@ -32,7 +35,7 @@ fn residual_binary_round_trip_preserves_execution() {
     Vm::new(host).execute(&decoded).unwrap();
     assert_eq!(
         Rc::try_unwrap(view.0).unwrap().into_inner(),
-        ["12345678901234567890"]
+        ["12345678901234567890", "true", "7"]
     );
 }
 
