@@ -15,6 +15,7 @@ pub struct CalendarDate {
     pub cyclic_year: Option<u8>,
     pub era: Option<String>,
     pub era_year: Option<i32>,
+    pub day_of_year: u32,
     pub days_in_month: u32,
     pub days_in_year: u32,
     pub months_in_year: u32,
@@ -50,6 +51,7 @@ pub fn calendar_fields_from_iso(
             cyclic_year: None,
             era: has_era.then(|| if year > 0 { "ce" } else { "bce" }.into()),
             era_year: has_era.then_some(if year > 0 { year } else { 1 - year }),
+            day_of_year: iso_day_of_year(year, month, day)?,
             days_in_month: quench_temporal::days_in_month(year, month)?,
             days_in_year: if quench_temporal::is_leap_year(year) {
                 GREGORIAN_LEAP_YEAR_DAYS
@@ -104,11 +106,23 @@ pub fn calendar_fields_from_iso(
         cyclic_year,
         era,
         era_year,
+        day_of_year: u32::from(date.day_of_year().0),
         days_in_month: u32::from(date.days_in_month()),
         days_in_year: u32::from(date.days_in_year()),
         months_in_year: u32::from(date.months_in_year()),
         is_leap_year: date.is_in_leap_year(),
     })
+}
+
+fn iso_day_of_year(year: i32, month: u32, day: u32) -> Option<u32> {
+    let current = quench_temporal::days_from_civil(quench_temporal::IsoDate { year, month, day });
+    let start = quench_temporal::days_from_civil(quench_temporal::IsoDate {
+        year,
+        month: FIRST_MONTH_OF_YEAR,
+        day: FIRST_DAY_OF_MONTH_VALUE,
+    });
+    u32::try_from(current.checked_sub(start)?.checked_add(i64::from(FIRST_DAY_OF_MONTH_VALUE))?)
+        .ok()
 }
 
 pub fn calendar_date_to_iso(

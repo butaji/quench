@@ -717,11 +717,18 @@ impl<H: Host> Vm<H> {
                     )
                     .unwrap_or_default(),
                     Native::TemporalZonedDateTimeDayOfYearGetter => i32::try_from(
-                        super::temporal_date::iso_day_of_year(super::temporal_date::IsoDate {
-                            year: fields[0],
-                            month: fields[1] as u32,
-                            day: fields[2] as u32,
-                        }),
+                        calendar_fields.as_ref().map_or_else(
+                            || {
+                                super::temporal_date::iso_day_of_year(
+                                    super::temporal_date::IsoDate {
+                                        year: fields[0],
+                                        month: fields[1] as u32,
+                                        day: fields[2] as u32,
+                                    },
+                                )
+                            },
+                            |fields| fields.day_of_year,
+                        ),
                     )
                     .unwrap_or_default(),
                     Native::TemporalZonedDateTimeWeekOfYearGetter => {
