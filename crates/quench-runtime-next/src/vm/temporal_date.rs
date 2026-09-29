@@ -860,14 +860,26 @@ impl<H: Host> Vm<H> {
         era: Option<&str>,
         era_year: Option<i32>,
     ) -> Result<i32, JsError> {
-        if let Some(year) = year {
-            return Ok(year);
+        if !quench_intl::calendar_uses_eras(calendar) {
+            return year.ok_or_else(|| self.type_error(p, "Missing year".into()));
         }
-        let (Some(era), Some(era_year)) = (era, era_year) else {
-            return Err(self.type_error(p, "Missing year".into()));
+        let era_year = match (era, era_year) {
+            (Some(era), Some(era_year)) => Some(
+                quench_intl::calendar_year_from_era(era, era_year, calendar)
+                    .ok_or_else(|| self.range_error(p, "Invalid era".into()))?,
+            ),
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(self.type_error(p, "era and eraYear must be provided together".into()));
+            }
+            (None, None) => None,
         };
-        quench_intl::calendar_year_from_era(era, era_year, calendar)
-            .ok_or_else(|| self.type_error(p, "Invalid calendar era fields".into()))
+        match (year, era_year) {
+            (Some(year), Some(era_year)) if year != era_year => {
+                Err(self.range_error(p, "Conflicting year and era fields".into()))
+            }
+            (Some(year), _) | (None, Some(year)) => Ok(year),
+            (None, None) => Err(self.type_error(p, "Missing year".into())),
+        }
     }
 
     pub(super) fn plain_date_optional_integer(
