@@ -1376,14 +1376,14 @@ impl<H: Host> Vm<H> {
         });
         let named = regexp_named_capture_ranges(&matched);
         let groups = self.regexp_groups_object(&named, input.units())?;
-        let groups_atom = self.intern_atom("groups");
-        self.set_property(result, groups_atom, groups)?;
         let index = matched.range.start;
         let index_atom = self.intern_atom("index");
         self.set_property(result, index_atom, Value::number(index as f64))?;
         let input_value = self.heap.alloc(Cell::String(input));
         let input_atom = self.intern_atom("input");
         self.set_property(result, input_atom, input_value)?;
+        let groups_atom = self.intern_atom("groups");
+        self.set_property(result, groups_atom, groups)?;
         if flags.contains('d') {
             let indices = self.regexp_indices_array(&matched, &named)?;
             let indices_atom = self.intern_atom("indices");
