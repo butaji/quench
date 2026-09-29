@@ -344,6 +344,42 @@ impl ParameterEarlyErrors {
             );
         }
     }
+
+    fn validate_parameter_body(
+        &mut self,
+        params: &FormalParameters<'_>,
+        body: &[Statement<'_>],
+    ) {
+        let mut parameters = Vec::new();
+        for item in &params.items {
+            collect_pattern_names(&item.pattern, &mut parameters);
+        }
+        if let Some(rest) = &params.rest {
+            collect_pattern_names(&rest.rest.argument, &mut parameters);
+        }
+        let parameters: FxHashSet<_> = parameters.into_iter().collect();
+        let mut lexical = Vec::new();
+        for statement in body {
+            match statement {
+                Statement::VariableDeclaration(declaration)
+                    if declaration.kind != VariableDeclarationKind::Var =>
+                {
+                    for item in &declaration.declarations {
+                        collect_pattern_names(&item.id, &mut lexical);
+                    }
+                }
+                Statement::ClassDeclaration(class) => {
+                    if let Some(name) = &class.id {
+                        lexical.push(name.name.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        if lexical.iter().any(|name| parameters.contains(name)) {
+            self.error = Some("SyntaxError: lexical declaration conflicts with parameter".into());
+        }
+    }
 }
 
 impl<'a> Visit<'a> for ParameterEarlyErrors {
@@ -354,6 +390,9 @@ impl<'a> Visit<'a> for ParameterEarlyErrors {
                 .any(|directive| directive.directive == "use strict")
         });
         self.validate_function(&function.params, own_strict);
+        if let Some(body) = &function.body {
+            self.validate_parameter_body(&function.params, &body.statements);
+        }
         let previous = self.strict;
         let previous_parameters = self.in_parameters;
         let previous_async = self.async_parameters;
@@ -378,6 +417,9 @@ impl<'a> Visit<'a> for ParameterEarlyErrors {
             _ => false,
         };
         self.validate_function(&function.params, own_strict);
+        if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &function.body {
+            self.validate_parameter_body(&function.params, &body.statements);
+        }
         let previous = self.strict;
         let previous_parameters = self.in_parameters;
         let previous_async = self.async_parameters;
