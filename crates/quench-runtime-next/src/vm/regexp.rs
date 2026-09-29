@@ -315,17 +315,17 @@ impl<H: Host> Vm<H> {
         )?;
         let input_value = self.heap.alloc(Cell::String(input.clone()));
         let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let flags_atom = self.intern_atom("flags");
-        let flags_value = self.get_property(p, receiver, flags_atom)?;
-        let flags = self.to_string(p, flags_value)?;
-        let global = flags.contains('g');
-        let unicode = flags.contains('u') || flags.contains('v');
         let callable = self.is_function(replacement);
         let replacement_string = if callable {
             None
         } else {
             Some(self.regexp_input_string(p, replacement)?)
         };
+        let flags_atom = self.intern_atom("flags");
+        let flags_value = self.get_property(p, receiver, flags_atom)?;
+        let flags = self.to_string(p, flags_value)?;
+        let global = flags.contains('g');
+        let unicode = flags.contains('u') || flags.contains('v');
         let last_index_atom = self.intern_atom("lastIndex");
         if global {
             self.set_property_with_program_mode(
@@ -940,20 +940,10 @@ impl<H: Host> Vm<H> {
         let flags_atom = self.intern_atom("flags");
         let flags_value = self.get_property(p, receiver, flags_atom)?;
         let flags = self.to_string(p, flags_value)?;
-        let global = self.intern_atom("global");
-        let global_value = self.get_property(p, receiver, global)?;
-        if !self.truthy(global_value) {
+        if !flags.contains('g') {
             return self.regexp_exec_value(p, receiver, input_value);
         }
-        let unicode = self.intern_atom("unicode");
-        let unicode_sets = self.intern_atom("unicodeSets");
-        let unicode_value = self.get_property(p, receiver, unicode)?;
-        let full_unicode = if self.truthy(unicode_value) {
-            true
-        } else {
-            let unicode_sets_value = self.get_property(p, receiver, unicode_sets)?;
-            self.truthy(unicode_sets_value) || flags.contains('v')
-        };
+        let full_unicode = flags.contains('u') || flags.contains('v');
         let last_index = self.intern_atom("lastIndex");
         self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
         let mut matches = Vec::new();
@@ -979,7 +969,13 @@ impl<H: Host> Vm<H> {
                     current.trunc().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize
                 };
                 let next = advance_string_index_units(input.units(), current, full_unicode);
-                self.set_property(receiver, last_index, Value::number(next as f64))?;
+                self.set_property_with_program_mode(
+                    p,
+                    receiver,
+                    last_index,
+                    Value::number(next as f64),
+                    true,
+                )?;
             }
         }
         if matches.is_empty() {
@@ -1146,7 +1142,7 @@ impl<H: Host> Vm<H> {
         let flags_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let pattern_is_regexp = self.regexp_is_regexp(p, pattern_value)?;
         let flags_omitted = flags_value.is_undefined();
-        if flags_omitted && pattern_is_regexp {
+        if new_target.is_none() && flags_omitted && pattern_is_regexp {
             let constructor_atom = self.intern_atom("constructor");
             let constructor = self.get_property(p, pattern_value, constructor_atom)?;
             let regexp_atom = self.intern_atom("RegExp");
