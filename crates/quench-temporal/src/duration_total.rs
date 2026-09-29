@@ -1,11 +1,9 @@
-use crate::{civil_from_days, days_from_civil, days_in_month, IsoDate};
+use crate::{IsoDate, civil_from_days, days_from_civil, days_in_month};
 
 const NANOSECONDS_PER_DAY: i128 = 86_400_000_000_000;
 const NANOSECONDS_PER_WEEK: i128 = 604_800_000_000_000;
-const MONTHS_PER_YEAR: i128 = 12;
 const DAYS_PER_WEEK: i128 = 7;
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
-const NANOS_PER_DAY: i128 = 86_400_000_000_000;
 const DURATION_FIELD_COUNT: usize = 10;
 const YEARS_FIELD: usize = 0;
 const MONTHS_FIELD: usize = 1;
@@ -22,9 +20,6 @@ const NANOSECONDS_UNIT: usize = 9;
 const MAX_SAFE_INTEGER: i128 = 9_007_199_254_740_991;
 const MAX_DURATION_TIME_NANOSECONDS: i128 = MAX_SAFE_INTEGER * NANOSECONDS_PER_SECOND;
 const DURATION_DECIMAL_DIGITS: usize = 32;
-const HALF_YEAR_DAY_ROUNDING_TOLERANCE: f64 = 1e-9;
-const COMMON_YEAR_DAYS: f64 = 365.0;
-const LEAP_YEAR_DAYS: f64 = 366.0;
 const MIN_TEMPORAL_DATE: IsoDate = IsoDate {
     year: -271_821,
     month: 4,
@@ -79,10 +74,16 @@ fn relative_duration(
     if !temporal_date_in_range(start) {
         return None;
     }
-    let mut target = shift_unit(start, YEARS_UNIT, fields[YEARS_FIELD])?;
-    target = shift_unit(target, MONTHS_UNIT, fields[MONTHS_FIELD])?;
-    target = shift_unit(target, WEEKS_UNIT, fields[WEEKS_FIELD])?;
-    target = shift_unit(target, DAYS_UNIT, fields[DAYS_FIELD])?;
+    let mut target = crate::add_iso_date(
+        start,
+        (
+            i64::try_from(fields[YEARS_FIELD]).ok()?,
+            i64::try_from(fields[MONTHS_FIELD]).ok()?,
+            i64::try_from(fields[WEEKS_FIELD]).ok()?,
+            i64::try_from(fields[DAYS_FIELD]).ok()?,
+        ),
+        true,
+    )?;
     if !temporal_date_in_range(target) {
         return None;
     }
@@ -125,9 +126,9 @@ fn temporal_date_in_range(date: IsoDate) -> bool {
 }
 
 fn temporal_datetime_in_range(date: IsoDate, time: i128) -> bool {
-    let start = i128::from(days_from_civil(MIN_TEMPORAL_DATE)) * NANOS_PER_DAY;
-    let end = i128::from(days_from_civil(MAX_TEMPORAL_DATE)) * NANOS_PER_DAY;
-    let value = i128::from(days_from_civil(date)) * NANOS_PER_DAY + time;
+    let start = i128::from(days_from_civil(MIN_TEMPORAL_DATE)) * NANOSECONDS_PER_DAY;
+    let end = i128::from(days_from_civil(MAX_TEMPORAL_DATE)) * NANOSECONDS_PER_DAY;
+    let value = i128::from(days_from_civil(date)) * NANOSECONDS_PER_DAY + time;
     (start..=end).contains(&value)
 }
 
@@ -166,63 +167,31 @@ fn calendar_total(
     total: i128,
     unit: usize,
 ) -> Option<f64> {
-    let months = (i128::from(target.year) - i128::from(start.year)) * MONTHS_PER_YEAR
-        + i128::from(target.month)
-        - i128::from(start.month);
-    let anchor = shift_unit(start, MONTHS_UNIT, months)?;
-    let remainder = i128::from(days_from_civil(target) - days_from_civil(anchor))
+    if total == 0 {
+        return Some(0.0);
+    }
+    let mut count = i128::from(target.year) - i128::from(start.year);
+    if unit == MONTHS_UNIT {
+        count = count.checked_mul(crate::ISO_MONTHS_PER_YEAR as i128)? + i128::from(target.month)
+            - i128::from(start.month);
+    }
+    let endpoint = i128::from(days_from_civil(target))
         .checked_mul(NANOSECONDS_PER_DAY)?
         .checked_add(time)?;
-    let span = month_span_days(anchor, total, remainder)?;
-    let remainder_days = (days_from_civil(target) - days_from_civil(anchor)) as f64
-        + time as f64 / NANOSECONDS_PER_DAY as f64;
-    if unit == YEARS_UNIT {
-        return year_total(start, target, total, time);
-    }
-    let (months, remainder_days) = match (total >= 0, remainder_days) {
-        (true, value) if value < 0.0 => (months - 1, value + span),
-        (false, value) if value > 0.0 => (months + 1, value - span),
-        _ => (months, remainder_days),
+    let anchor_epoch = |count| {
+        let date = shift_unit(start, unit, count)?;
+        i128::from(days_from_civil(date)).checked_mul(NANOSECONDS_PER_DAY)
     };
-    Some((months as f64 * span + remainder_days) / span)
-}
-
-fn month_span_days(anchor: IsoDate, total: i128, remainder: i128) -> Option<f64> {
-    let current_month_length = days_in_month(anchor.year, anchor.month)?;
-    if total >= 0 && remainder >= 0 && anchor.day == current_month_length {
-        let next = shift_unit(anchor, 1, 1)?;
-        Some(days_in_month(next.year, next.month)? as f64)
-    } else {
-        Some(current_month_length as f64)
+    let direction = total.signum();
+    let mut anchor = anchor_epoch(count)?;
+    while (endpoint - anchor) * direction < 0 {
+        count -= direction;
+        anchor = anchor_epoch(count)?;
     }
-}
-
-fn year_total(start: IsoDate, target: IsoDate, total: i128, time: i128) -> Option<f64> {
-    let mut whole_years = i128::from(target.year) - i128::from(start.year);
-    let mut anchor = shift_unit(start, YEARS_UNIT, whole_years)?;
-    if total >= 0 {
-        while days_from_civil(anchor) > days_from_civil(target) {
-            whole_years -= 1;
-            anchor = shift_unit(start, YEARS_UNIT, whole_years)?;
-        }
-    } else {
-        while days_from_civil(anchor) < days_from_civil(target) {
-            whole_years += 1;
-            anchor = shift_unit(start, YEARS_UNIT, whole_years)?;
-        }
-    }
-    let direction = if total >= 0 { 1 } else { -1 };
-    let next_anchor = shift_unit(anchor, YEARS_UNIT, direction)?;
-    let mut year_span =
-        (days_from_civil(next_anchor) - days_from_civil(anchor)).unsigned_abs() as f64;
-    let year_remainder = (days_from_civil(target) - days_from_civil(anchor)) as f64
-        + time as f64 / NANOSECONDS_PER_DAY as f64;
-    if year_span == COMMON_YEAR_DAYS
-        && (year_remainder * 2.0 - LEAP_YEAR_DAYS).abs() < HALF_YEAR_DAY_ROUNDING_TOLERANCE
-    {
-        year_span = LEAP_YEAR_DAYS;
-    }
-    Some(whole_years as f64 + year_remainder / year_span)
+    let next = anchor_epoch(count + direction)?;
+    let span = (next - anchor).abs();
+    let numerator = count.checked_mul(span)?.checked_add(endpoint - anchor)?;
+    Some(divide_duration(numerator, span))
 }
 
 fn shift_unit(date: IsoDate, unit: usize, amount: i128) -> Option<IsoDate> {
@@ -232,19 +201,13 @@ fn shift_unit(date: IsoDate, unit: usize, amount: i128) -> Option<IsoDate> {
         let day_number = days_from_civil(date).checked_add(days)?;
         return civil_from_days(day_number);
     }
-    let month_scale = if unit == YEARS_UNIT {
-        MONTHS_PER_YEAR
+    let amount = i64::try_from(amount).ok()?;
+    let (years, months) = if unit == YEARS_UNIT {
+        (amount, 0)
     } else {
-        1
+        (0, amount)
     };
-    let month_index = i128::from(date.year)
-        .checked_mul(12)?
-        .checked_add(i128::from(date.month) - 1)?
-        .checked_add(amount.checked_mul(month_scale)?)?;
-    let year = i32::try_from(month_index.div_euclid(12)).ok()?;
-    let month = u32::try_from(month_index.rem_euclid(12)).ok()? + 1;
-    let day = date.day.min(days_in_month(year, month)?);
-    Some(IsoDate { year, month, day })
+    crate::add_iso_date(date, (years, months, 0, 0), true)
 }
 
 fn divide_duration(nanoseconds: i128, divisor: i128) -> f64 {
@@ -264,9 +227,5 @@ fn divide_duration(nanoseconds: i128, divisor: i128) -> f64 {
         }
     }
     let value = digits.parse::<f64>().unwrap_or(f64::INFINITY);
-    if nanoseconds < 0 {
-        -value
-    } else {
-        value
-    }
+    if nanoseconds < 0 { -value } else { value }
 }

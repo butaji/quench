@@ -285,11 +285,20 @@ impl<H: Host> Vm<H> {
             let anchor = receiver_anchor
                 .or_else(|| shift_months_clamped(start.0, months))
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-            let anchor_total = datetime_nanos(anchor, receiver.1);
-            let target_total = datetime_nanos(target.0, target.1);
-            if anchor.day != receiver.0.day
-                || (anchor_from_receiver && receiver_is_end && anchor_total < target_total)
-                || (anchor_from_receiver && !receiver_is_end && anchor_total > target_total)
+            let anchor_calendar = (
+                anchor.year,
+                anchor.month,
+                receiver.0.day,
+                time_nanos(receiver.1),
+            );
+            let target_calendar = (
+                target.0.year,
+                target.0.month,
+                target.0.day,
+                time_nanos(target.1),
+            );
+            if (anchor_from_receiver && receiver_is_end && anchor_calendar < target_calendar)
+                || (anchor_from_receiver && !receiver_is_end && anchor_calendar > target_calendar)
                 || (!anchor_from_receiver
                     && datetime_nanos(anchor, start.1) > datetime_nanos(end.0, end.1))
             {
