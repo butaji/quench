@@ -458,7 +458,10 @@ impl<H: Host> Vm<H> {
                     }) if *other_month == month
                         && *other_day == day
                         && *other_calendar == calendar
-                        && *other_year == reference_year => Value::TRUE,
+                        && *other_year == reference_year =>
+                    {
+                        Value::TRUE
+                    }
                     _ => Value::FALSE,
                 })
             }
@@ -1169,28 +1172,16 @@ impl<H: Host> Vm<H> {
             if matches!(calendar.as_str(), "chinese" | "dangi")
                 && let Some(ordinal) = month
             {
-                let code = if constrain
-                    && ordinal > super::temporal_date::ISO_MONTHS_PER_YEAR
-                {
-                    format!(
-                        "M{:02}",
-                        super::temporal_date::ISO_MONTHS_PER_YEAR
-                    )
+                let code = if constrain && ordinal > super::temporal_date::ISO_MONTHS_PER_YEAR {
+                    format!("M{:02}", super::temporal_date::ISO_MONTHS_PER_YEAR)
                 } else {
                     let ordinal = if constrain { ordinal.max(1) } else { ordinal };
-                    quench_intl::calendar_month_code_for_ordinal(
-                        year,
-                        ordinal as u32,
-                        &calendar,
-                    )
-                    .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?
+                    quench_intl::calendar_month_code_for_ordinal(year, ordinal as u32, &calendar)
+                        .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?
                 };
-                let maximum_day = quench_intl::calendar_days_in_month_for_code(
-                    year,
-                    &code,
-                    &calendar,
-                )
-                .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                let maximum_day =
+                    quench_intl::calendar_days_in_month_for_code(year, &code, &calendar)
+                        .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
                 if day < 1 || (!constrain && day as u32 > maximum_day) {
                     return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
                 }
@@ -1222,14 +1213,7 @@ impl<H: Host> Vm<H> {
                     code, day as u32, &calendar, constrain,
                 )
                 .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
-                return self.make_plain_month_day(
-                    p,
-                    constructor,
-                    iso.1,
-                    iso.2,
-                    calendar,
-                    iso.0,
-                );
+                return self.make_plain_month_day(p, constructor, iso.1, iso.2, calendar, iso.0);
             }
         }
         let month_code = month_code
@@ -1795,6 +1779,26 @@ pub(super) fn to_zoned_date_time<H: Host>(
         to_unsigned(microsecond)?,
         to_unsigned(nanosecond)?,
     ];
+    if time_value.is_undefined() {
+        let epoch_nanoseconds = super::temporal_zoned_date_time::timezone_start_of_day_epoch(
+            super::temporal_date::IsoDate { year, month, day },
+            &time_zone,
+        )
+        .ok_or_else(|| vm.range_error(p, "Invalid ZonedDateTime".into()))?;
+        let temporal_atom = vm.intern_atom("Temporal");
+        let temporal = vm.get_property(p, vm.realm.globals, temporal_atom)?;
+        let constructor_atom = vm.intern_atom("ZonedDateTime");
+        let constructor = vm.get_property(p, temporal, constructor_atom)?;
+        return vm.make_temporal_zoned_date_time(
+            p,
+            constructor,
+            super::temporal_zoned_date_time::ZonedDateTimeRecord {
+                epoch_nanoseconds,
+                time_zone,
+                calendar,
+            },
+        );
+    }
     vm.make_zoned_date_time_from_local(
         p,
         super::temporal_date::IsoDate { year, month, day },
