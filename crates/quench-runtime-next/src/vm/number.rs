@@ -11,8 +11,7 @@ const HEXADECIMAL_RADIX: u32 = 16;
 const MAX_NUMBER_FORMAT_DIGITS: usize = 100;
 
 pub(super) fn parse_number_string(text: &str) -> f64 {
-    let text =
-        text.trim_matches(|character: char| character.is_whitespace() || character == '\u{feff}');
+    let text = text.trim_matches(super::primitives::is_ecma_whitespace_character);
     if text.is_empty() {
         return 0.0;
     }
@@ -464,7 +463,7 @@ fn normalize_exponent_sign(text: &str) -> String {
 }
 
 pub(super) fn parse_float(text: &str) -> f64 {
-    let text = text.trim_start();
+    let text = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
     if text.starts_with('+') || text.starts_with('-') {
         if text[1..].starts_with("Infinity") {
             return if text.starts_with('-') {

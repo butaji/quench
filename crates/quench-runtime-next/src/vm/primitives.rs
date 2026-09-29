@@ -16,6 +16,10 @@ fn is_ecma_whitespace(unit: u16) -> bool {
     )
 }
 
+pub(super) fn is_ecma_whitespace_character(character: char) -> bool {
+    u16::try_from(u32::from(character)).is_ok_and(is_ecma_whitespace)
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
         match self.heap.get(callee) {
