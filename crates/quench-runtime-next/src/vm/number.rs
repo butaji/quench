@@ -731,7 +731,7 @@ fn f16_round(value: f64) -> f64 {
     half_to_f64(f64_to_half(value))
 }
 
-fn f64_to_half(value: f64) -> u16 {
+pub(super) fn f64_to_half(value: f64) -> u16 {
     let bits = value.to_bits();
     let sign = ((bits >> 63) as u16) << 15;
     let exponent = ((bits >> 52) & 0x7ff) as u16;
@@ -775,7 +775,7 @@ fn round_half(value: f64) -> u16 {
     (lower + u64::from(fraction > 0.5 || (fraction == 0.5 && lower & 1 != 0))) as u16
 }
 
-fn half_to_f64(bits: u16) -> f64 {
+pub(super) fn half_to_f64(bits: u16) -> f64 {
     let sign_bits = (u64::from(bits & 0x8000)) << 48;
     let exponent = (bits >> 10) & 0x1f;
     let fraction = bits & 0x03ff;

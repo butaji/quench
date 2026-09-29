@@ -180,6 +180,7 @@ impl<H: Host> Vm<H> {
                     TypedArrayKind::Int32 => "Int32Array",
                     TypedArrayKind::BigInt64 => "BigInt64Array",
                     TypedArrayKind::BigUint64 => "BigUint64Array",
+                    TypedArrayKind::Float16 => "Float16Array",
                     TypedArrayKind::Float32 => "Float32Array",
                     TypedArrayKind::Float64 => "Float64Array",
                 },

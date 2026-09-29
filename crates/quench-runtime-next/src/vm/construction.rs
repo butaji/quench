@@ -142,6 +142,7 @@ impl<H: Host> Vm<H> {
                         | Native::Int32Array
                         | Native::BigInt64Array
                         | Native::BigUint64Array
+                        | Native::Float16Array
                         | Native::DynamicDerivedClass
                         | Native::Float32Array
                         | Native::Float64Array
@@ -707,6 +708,7 @@ impl<H: Host> Vm<H> {
                 Native::Int32Array => Some("Int32Array"),
                 Native::BigInt64Array => Some("BigInt64Array"),
                 Native::BigUint64Array => Some("BigUint64Array"),
+                Native::Float16Array => Some("Float16Array"),
                 Native::Float32Array => Some("Float32Array"),
                 Native::Float64Array => Some("Float64Array"),
                 Native::Date => Some("Date"),
@@ -900,6 +902,7 @@ impl<H: Host> Vm<H> {
             Native::Int32Array => self.construct_int32_array_native(p, args),
             Native::BigInt64Array => self.construct_bigint64_array_native(p, args),
             Native::BigUint64Array => self.construct_biguint64_array_native(p, args),
+            Native::Float16Array => self.construct_float16_array_native(p, args),
             Native::Float32Array => self.construct_float32_array_native(p, args),
             Native::Float64Array => self.construct_float64_array_native(p, args),
             Native::DataView => self.construct_data_view_native(p, args),

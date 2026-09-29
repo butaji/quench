@@ -180,6 +180,7 @@ const NATIVES: &[Native] = &[
     Native::Int32Array,
     Native::BigInt64Array,
     Native::BigUint64Array,
+    Native::Float16Array,
     Native::Float32Array,
     Native::Float64Array,
     Native::Uint8ArraySet,

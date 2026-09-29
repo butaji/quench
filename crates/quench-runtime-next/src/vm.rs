@@ -383,6 +383,7 @@ pub struct Vm<H> {
     int32_array_proto: Value,
     bigint64_array_proto: Value,
     biguint64_array_proto: Value,
+    float16_array_proto: Value,
     float32_array_proto: Value,
     float64_array_proto: Value,
     data_view_proto: Value,
