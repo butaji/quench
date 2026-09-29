@@ -1,4 +1,3 @@
-use super::temporal_date::IsoDate;
 use super::*;
 
 pub(super) const DURATION_YEARS_FIELD: usize = 0;
@@ -39,10 +38,9 @@ impl<H: Host> Vm<H> {
             .zip(TIME_UNIT_NANOSECOND_SCALES)
             .map(|(value, scale)| *value as i128 * scale)
             .sum::<i128>();
-        let days = i64::try_from(
-            duration[DURATION_DAYS_FIELD] as i128 + subday_nanos / NANOS_PER_DAY,
-        )
-            .map_err(|_| self.range_error(p, "Invalid PlainDate".into()))?;
+        let days =
+            i64::try_from(duration[DURATION_DAYS_FIELD] as i128 + subday_nanos / NANOS_PER_DAY)
+                .map_err(|_| self.range_error(p, "Invalid PlainDate".into()))?;
         let result = quench_intl::calendar_date_add(
             (year, month, day),
             (
@@ -54,12 +52,10 @@ impl<H: Host> Vm<H> {
             &calendar,
             constrain,
         )
-            .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
-        let result = IsoDate {
-            year: result.0,
-            month: result.1,
-            day: result.2,
-        };
+        .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+        let result =
+            super::temporal_date::checked_iso_date(result.0, result.1 as i32, result.2 as i32)
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
         let constructor = self.temporal_plain_date_constructor(p)?;
         self.make_temporal_plain_date(p, result, calendar, constructor)
     }

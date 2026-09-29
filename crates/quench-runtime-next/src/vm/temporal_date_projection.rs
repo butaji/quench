@@ -900,6 +900,7 @@ impl<H: Host> Vm<H> {
             constrain,
         )
         .ok_or_else(|| self.range_error(p, "Invalid PlainYearMonth".into()))?;
+        self.validate_plain_year_month_range(p, result.0, result.1 as i32, result.2)?;
         Ok(self.heap.alloc(Cell::TemporalPlainYearMonth {
             object: Box::new(Self::empty_object(self.temporal_plain_year_month_proto)),
             year: result.0,
