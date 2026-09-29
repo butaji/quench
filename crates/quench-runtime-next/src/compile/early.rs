@@ -55,28 +55,26 @@ pub(super) fn normalize_dynamic_function_body(source: &str) -> Cow<'_, str> {
 }
 
 pub(super) fn normalize_dynamic_function_parameters(source: &str) -> Cow<'_, str> {
-    let source = source.strip_prefix("<!--").unwrap_or(source);
-    if !source
-        .lines()
-        .enumerate()
-        .any(|(line_number, line)| line_number > 0 && line.trim_start().starts_with("-->"))
-    {
-        return Cow::Borrowed(source);
+    let original = source;
+    let source = original.strip_prefix("<!--").unwrap_or(original);
+    let mut changed = source.len() != original.len();
+    let mut first_line = true;
+    let mut lines = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if !first_line && trimmed.starts_with("-->") {
+            changed = true;
+            lines.push(&line[..line.len() - trimmed.len()]);
+        } else {
+            lines.push(line);
+        }
+        first_line = false;
     }
-    let normalized = source
-        .lines()
-        .enumerate()
-        .map(|(line_number, line)| {
-            let trimmed = line.trim_start();
-            if line_number > 0 && trimmed.starts_with("-->") {
-                &line[..line.len() - trimmed.len()]
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    Cow::Owned(normalized)
+    if changed {
+        Cow::Owned(lines.join("\n"))
+    } else {
+        Cow::Borrowed(source)
+    }
 }
 
 fn dynamic_body_is_strict(source: &str) -> bool {
