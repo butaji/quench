@@ -776,6 +776,44 @@ impl<H: Host> Vm<H> {
         Ok((days, actual - anchor, day_length))
     }
 
+    fn zoned_relative_month_total(
+        &mut self,
+        p: &ResidualProgram,
+        relative: &TemporalRelativeDate,
+        fields: &[f64; 10],
+    ) -> Result<f64, JsError> {
+        let actual = self.relative_duration_nanoseconds(p, relative, fields)?;
+        if actual == 0 {
+            return Ok(0.0);
+        }
+        let years = super::temporal_date_arithmetic::DURATION_YEARS_FIELD;
+        let months = super::temporal_date_arithmetic::DURATION_MONTHS_FIELD;
+        let whole_months = fields[years] as i128
+            * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+            + fields[months] as i128;
+        let anchor_fields = std::array::from_fn(|index| {
+            if index <= months { fields[index] } else { 0.0 }
+        });
+        let anchor = self.relative_duration_nanoseconds(p, relative, &anchor_fields)?;
+        let direction = if whole_months != 0 {
+            whole_months.signum()
+        } else {
+            actual.signum()
+        };
+        let mut next_fields = anchor_fields;
+        next_fields[months] += direction as f64;
+        let next = self.relative_duration_nanoseconds(p, relative, &next_fields)?;
+        let month_length = next
+            .checked_sub(anchor)
+            .map(i128::abs)
+            .filter(|length| *length != 0)
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo range".into()))?;
+        let remainder = actual
+            .checked_sub(anchor)
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo range".into()))?;
+        Ok(whole_months as f64 + remainder as f64 / month_length as f64)
+    }
+
     fn temporal_relative_date(
         &mut self,
         p: &ResidualProgram,
@@ -955,6 +993,16 @@ impl<H: Host> Vm<H> {
             return Ok(Value::number(
                 days as f64 + remainder as f64 / day_length as f64,
             ));
+        }
+        if index == super::temporal_date_arithmetic::DURATION_MONTHS_FIELD
+            && fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+                .iter()
+                .any(|value| *value != 0.0)
+            && let Some(relative) = relative_date.as_ref().filter(|relative| relative.zoned.is_some())
+        {
+            return Ok(Value::number(self.zoned_relative_month_total(
+                p, relative, &fields,
+            )?));
         }
         if index >= super::temporal_date_arithmetic::DURATION_HOURS_FIELD
             && fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
@@ -1205,6 +1253,26 @@ impl<H: Host> Vm<H> {
         relative_date: TemporalRelativeDate,
         explicit_smallest_unit: bool,
     ) -> Result<Value, JsError> {
+        if smallest == super::temporal_date_arithmetic::DURATION_MONTHS_FIELD
+            && relative_date.zoned.is_some()
+        {
+            let total = self.zoned_relative_month_total(p, &relative_date, &fields)?;
+            let rounded =
+                round_duration_number(total / increment as f64, mode) * increment as f64;
+            let total_months = rounded as i128;
+            let mut result = [0.0; 10];
+            if largest == super::temporal_date_arithmetic::DURATION_YEARS_FIELD {
+                result[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] =
+                    (total_months / i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)) as f64;
+                result[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] =
+                    (total_months % i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)) as f64;
+            } else {
+                result[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] =
+                    total_months as f64;
+            }
+            self.validate_duration_fields(p, &result)?;
+            return self.make_temporal_duration(p, result);
+        }
         if largest <= super::temporal_date_arithmetic::DURATION_DAYS_FIELD
             && relative_date.zoned.is_some()
             && fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
@@ -1315,7 +1383,12 @@ impl<H: Host> Vm<H> {
         {
             let (mut days, mut remainder, mut day_length) =
                 self.zoned_relative_day_balance(p, &relative_date, &fields)?;
-            let quantum = duration_round_unit_nanoseconds(smallest)
+            let round_unit = if smallest == super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
+                day_length
+            } else {
+                duration_round_unit_nanoseconds(smallest)
+            };
+            let quantum = round_unit
                 .checked_mul(increment)
                 .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
             remainder = round_duration_integer(remainder, quantum, mode)
