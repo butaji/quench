@@ -88,7 +88,7 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
             proto: Value::NULL,
             properties: ValueVec::new(),
         },
-        entries: Vec::new(),
+        entries: WeakMapEntries::default(),
     });
     let key = heap.alloc(Cell::Object(Object {
         proto: Value::NULL,
@@ -96,7 +96,7 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
     }));
     let value = heap.alloc(Cell::String("value".into()));
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
-        entries.push((key, value));
+        entries.insert(key, value);
     }
     let map_root = heap.root(weak_map);
     let key_root = heap.root(key);

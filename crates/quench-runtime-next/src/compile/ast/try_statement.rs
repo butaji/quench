@@ -18,18 +18,26 @@ impl FunctionCompiler<'_, '_> {
         self.clear_statement_completion();
         let (slot, binding) = self.catch_slot(handler);
         let start = self.code.len() as u32;
+        self.iterator_close_exclusions.push(vec![]);
         self.scoped_statements(&item.block.body);
+        let close_exclusions = self
+            .iterator_close_exclusions
+            .pop()
+            .expect("try catch exclusion scope");
         let end = self.code.len() as u32;
         let skip = self.emit(Op::Jump, 0, 0, 0, 0);
         let target = self.code.len() as u32;
-        self.handlers.push(crate::bytecode::Handler {
-            start,
-            end,
-            target,
-            slot,
-            return_target: None,
-            return_slot: None,
-            with_depth: self.with_depth,
+        let with_depth = self.with_depth;
+        self.push_handlers_excluding(start, end, &close_exclusions, |start, end| {
+            crate::bytecode::Handler {
+                start,
+                end,
+                target,
+                slot,
+                return_target: None,
+                return_slot: None,
+                with_depth,
+            }
         });
         self.clear_statement_completion();
         self.initialize_inactive_catch_aliases(handler);
@@ -50,7 +58,12 @@ impl FunctionCompiler<'_, '_> {
             abrupt_edges: vec![],
         });
         let start = self.code.len() as u32;
+        self.iterator_close_exclusions.push(vec![]);
         self.scoped_statements(&item.block.body);
+        let close_exclusions = self
+            .iterator_close_exclusions
+            .pop()
+            .expect("try finally exclusion scope");
         let context = self
             .finally_contexts
             .pop()
@@ -66,19 +79,30 @@ impl FunctionCompiler<'_, '_> {
         self.scoped_finalizer_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
+        self.iterator_close_ranges
+            .push((return_target, self.code.len() as u32));
         self.patch_edges(&context.return_edges, return_target);
         self.emit_abrupt_paths(finalizer, &context);
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
-        self.handlers.push(crate::bytecode::Handler {
-            start,
-            end,
-            target: exceptional_target,
-            slot: self.local_slot(error_atom),
-            return_target: Some(return_target),
-            return_slot: self.local_slot(return_atom),
-            with_depth: self.with_depth,
+        let error_slot = self.local_slot(error_atom);
+        let return_slot = self.local_slot(return_atom);
+        let with_depth = self.with_depth;
+        self.push_handlers_excluding(start, end, &close_exclusions, |start, end| {
+            crate::bytecode::Handler {
+                start,
+                end,
+                target: exceptional_target,
+                slot: error_slot,
+                return_target: Some(return_target),
+                return_slot,
+                with_depth,
+            }
         });
+        if !close_exclusions.is_empty() {
+            let (target, _) = self.append_iterator_close_finalizer(finalizer, error_atom);
+            self.push_iterator_close_finally_handlers(&close_exclusions, target, error_atom);
+        }
     }
 
     fn try_catch_finally_statement(
@@ -97,26 +121,40 @@ impl FunctionCompiler<'_, '_> {
             abrupt_edges: vec![],
         });
         let start = self.code.len() as u32;
+        self.iterator_close_exclusions.push(vec![]);
         self.scoped_statements(&item.block.body);
+        let close_exclusions = self
+            .iterator_close_exclusions
+            .pop()
+            .expect("try finally exclusion scope");
         let end = self.code.len() as u32;
         let body_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         let catch_target = self.code.len() as u32;
         let body_handler = self.handlers.len();
-        self.handlers.push(crate::bytecode::Handler {
-            start,
-            end,
-            target: catch_target,
-            slot: catch_slot,
-            return_target: None,
-            return_slot: None,
-            with_depth: self.with_depth,
+        let with_depth = self.with_depth;
+        self.push_handlers_excluding(start, end, &close_exclusions, |start, end| {
+            crate::bytecode::Handler {
+                start,
+                end,
+                target: catch_target,
+                slot: catch_slot,
+                return_target: None,
+                return_slot: None,
+                with_depth,
+            }
         });
+        let body_handlers_end = self.handlers.len();
         self.clear_statement_completion();
         self.initialize_inactive_catch_aliases(handler);
         self.push_catch_binding(handler, binding);
         self.bind_catch_parameter(handler, binding);
         let catch_start = self.code.len() as u32;
+        self.iterator_close_exclusions.push(vec![]);
         self.scoped_statements(&handler.body.body);
+        let catch_close_exclusions = self
+            .iterator_close_exclusions
+            .pop()
+            .expect("catch finally exclusion scope");
         self.lexical_scopes.pop();
         let context = self
             .finally_contexts
@@ -135,23 +173,98 @@ impl FunctionCompiler<'_, '_> {
         self.scoped_finalizer_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
         self.emit(Op::Return, return_value, 0, 0, 0);
-        self.handlers[body_handler].return_target = Some(return_target);
-        self.handlers[body_handler].return_slot = self.local_slot(return_atom);
+        self.iterator_close_ranges
+            .push((return_target, self.code.len() as u32));
+        let return_slot = self.local_slot(return_atom);
+        for body_handler in &mut self.handlers[body_handler..body_handlers_end] {
+            body_handler.return_target = Some(return_target);
+            body_handler.return_slot = return_slot;
+        }
         self.patch_to(body_exit, finalizer_target);
         self.patch_to(catch_exit, finalizer_target);
         self.patch_edges(&context.return_edges, return_target);
         self.emit_abrupt_paths(finalizer, &context);
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
-        self.handlers.push(crate::bytecode::Handler {
-            start: catch_start,
-            end: catch_end,
-            target: exceptional_target,
-            slot: self.local_slot(error_atom),
-            return_target: Some(return_target),
-            return_slot: self.local_slot(return_atom),
-            with_depth: self.with_depth,
-        });
+        let error_slot = self.local_slot(error_atom);
+        let with_depth = self.with_depth;
+        self.push_handlers_excluding(
+            catch_start,
+            catch_end,
+            &catch_close_exclusions,
+            |start, end| crate::bytecode::Handler {
+                start,
+                end,
+                target: exceptional_target,
+                slot: error_slot,
+                return_target: Some(return_target),
+                return_slot,
+                with_depth,
+            },
+        );
+        if !close_exclusions.is_empty() || !catch_close_exclusions.is_empty() {
+            let close_ranges = close_exclusions
+                .iter()
+                .chain(&catch_close_exclusions)
+                .copied()
+                .collect::<Vec<_>>();
+            let (target, _) = self.append_iterator_close_finalizer(finalizer, error_atom);
+            self.push_iterator_close_finally_handlers(&close_ranges, target, error_atom);
+        }
+    }
+
+    fn append_iterator_close_finalizer(
+        &mut self,
+        finalizer: &BlockStatement<'_>,
+        error_atom: Atom,
+    ) -> (u32, u32) {
+        let skip = self.emit(Op::Jump, 0, 0, 0, 0);
+        let start = self.code.len() as u32;
+        self.scoped_finalizer_statements(&finalizer.body);
+        let error = self.load_atom(error_atom);
+        self.emit(Op::Throw, error, 0, 0, 0);
+        let end = self.code.len() as u32;
+        self.patch_to(skip, end);
+        self.iterator_close_ranges.push((start, end));
+        (start, end)
+    }
+
+    pub(super) fn push_handlers_excluding(
+        &mut self,
+        start: u32,
+        end: u32,
+        exclusions: &[(u32, u32)],
+        mut handler: impl FnMut(u32, u32) -> crate::bytecode::Handler,
+    ) {
+        let mut range_start = start;
+        for (excluded_start, excluded_end) in exclusions {
+            if range_start < *excluded_start {
+                self.handlers.push(handler(range_start, *excluded_start));
+            }
+            range_start = *excluded_end;
+        }
+        if range_start < end {
+            self.handlers.push(handler(range_start, end));
+        }
+    }
+
+    fn push_iterator_close_finally_handlers(
+        &mut self,
+        exclusions: &[(u32, u32)],
+        target: u32,
+        error_atom: Atom,
+    ) {
+        for (start, end) in exclusions {
+            self.handlers.push(crate::bytecode::Handler {
+                start: *start,
+                end: *end,
+                target,
+                slot: self.local_slot(error_atom),
+                return_target: None,
+                return_slot: None,
+                with_depth: self.with_depth,
+            });
+        }
     }
 
     fn bind_catch_parameter(&mut self, handler: &CatchClause<'_>, binding: Option<Atom>) {

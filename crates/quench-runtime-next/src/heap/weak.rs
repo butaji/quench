@@ -34,7 +34,7 @@ impl Heap {
                 }
                 let cell = unsafe { self.slots.get_unchecked(index).cell.as_ref() };
                 if let Some(Cell::WeakMap { entries, .. }) = cell {
-                    for (key, value) in entries {
+                    for (key, value) in entries.iter() {
                         if key
                             .heap_index()
                             .is_some_and(|key| Self::marked(&self.marks, key as usize))

@@ -282,14 +282,26 @@ impl FunctionCompiler<'_, '_> {
         let error = self.hidden_local("\0rqj:for-of-body-error");
         let skip_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
         let cleanup = self.code.len() as u32;
-        self.handlers.push(crate::bytecode::Handler {
-            start,
-            end,
-            target: cleanup,
-            slot: self.local_slot(error),
-            return_target: None,
-            return_slot: None,
-            with_depth: self.with_depth,
+        let exclusions = self
+            .iterator_close_ranges
+            .iter()
+            .copied()
+            .filter(|(excluded_start, excluded_end)| {
+                start <= *excluded_start && *excluded_end <= end
+            })
+            .collect::<Vec<_>>();
+        let slot = self.local_slot(error);
+        let with_depth = self.with_depth;
+        self.push_handlers_excluding(start, end, &exclusions, |start, end| {
+            crate::bytecode::Handler {
+                start,
+                end,
+                target: cleanup,
+                slot,
+                return_target: None,
+                return_slot: None,
+                with_depth,
+            }
         });
 
         let close_iterator = self.load_atom(iterator);

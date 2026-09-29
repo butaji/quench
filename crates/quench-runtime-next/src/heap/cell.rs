@@ -4,7 +4,64 @@ use crate::value::Value;
 use crate::value_vec::ValueVec;
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
+use rustc_hash::FxHashMap;
 use std::rc::Rc;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WeakMapEntries {
+    ordered: Vec<(Value, Value)>,
+    indices: FxHashMap<Value, usize>,
+}
+
+impl WeakMapEntries {
+    pub(crate) fn get(&self, key: Value) -> Option<Value> {
+        self.indices
+            .get(&key)
+            .and_then(|index| self.ordered.get(*index))
+            .map(|(_, value)| *value)
+    }
+
+    pub(crate) fn insert(&mut self, key: Value, value: Value) {
+        if let Some(index) = self.indices.get(&key).copied() {
+            self.ordered[index].1 = value;
+        } else {
+            self.indices.insert(key, self.ordered.len());
+            self.ordered.push((key, value));
+        }
+    }
+
+    pub(crate) fn remove(&mut self, key: Value) -> bool {
+        let Some(index) = self.indices.remove(&key) else {
+            return false;
+        };
+        self.ordered.swap_remove(index);
+        if let Some((moved_key, _)) = self.ordered.get(index) {
+            self.indices.insert(*moved_key, index);
+        }
+        true
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &(Value, Value)> {
+        self.ordered.iter()
+    }
+
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&(Value, Value)) -> bool) {
+        self.ordered.retain(|entry| keep(entry));
+        self.indices.clear();
+        self.indices.extend(
+            self.ordered
+                .iter()
+                .enumerate()
+                .map(|(index, (key, _))| (*key, index)),
+        );
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.ordered.capacity() * std::mem::size_of::<(Value, Value)>()
+            + self.indices.capacity() * std::mem::size_of::<(Value, usize)>()
+    }
+}
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
@@ -976,7 +1033,7 @@ pub(crate) enum Cell {
     },
     WeakMap {
         object: Object,
-        entries: Vec<(Value, Value)>,
+        entries: WeakMapEntries,
     },
     WeakSet {
         object: Object,

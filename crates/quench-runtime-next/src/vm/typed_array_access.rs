@@ -112,6 +112,25 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    pub(super) fn typed_array_length_is_variable(&self, object: Value) -> bool {
+        let Some(Cell::TypedArray {
+            buffer,
+            length_tracking,
+            ..
+        }) = self.heap.get(object)
+        else {
+            return false;
+        };
+        matches!(
+            self.heap.get(*buffer),
+            Some(Cell::ArrayBuffer {
+                shared,
+                resizable: true,
+                ..
+            }) if !shared || *length_tracking
+        )
+    }
+
     pub(super) fn typed_array_out_of_bounds(&self, object: Value) -> bool {
         let Some(Cell::TypedArray {
             buffer,
