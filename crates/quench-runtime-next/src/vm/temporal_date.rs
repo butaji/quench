@@ -1,5 +1,6 @@
 use super::*;
 pub(super) const ISO_MONTHS_PER_YEAR: i32 = 12;
+const HEBREW_LEAP_MONTH_FALLBACK: &str = "M06";
 pub(super) const ISO_DAYS_PER_WEEK: i64 = 7;
 const ISO_WEEK_NUMBER_ADJUSTMENT: i64 = 10;
 const ISO_UNIX_EPOCH_WEEKDAY: i64 = 4;
@@ -489,7 +490,15 @@ impl<H: Host> Vm<H> {
         let month_code_value =
             month_code_text.map(|value| self.heap.alloc(Cell::String(value.into())));
         let month_code = month_code_value
-            .map(|value| self.plain_date_month_code(p, value, &calendar, year))
+            .map(|value| {
+                self.plain_date_month_code(
+                    p,
+                    value,
+                    &calendar,
+                    year,
+                    overflow == "constrain",
+                )
+            })
             .transpose()?;
         let month = match (month, month_code) {
             (Some(month), Some(month_code)) if month != month_code => {
@@ -772,9 +781,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         calendar: &str,
         year: i32,
+        constrain: bool,
     ) -> Result<i32, JsError> {
         let code = self.temporal_month_code_to_string(p, value)?;
-        self.parse_plain_date_month_code(p, &code, calendar, year)
+        self.parse_plain_date_month_code(p, &code, calendar, year, constrain)
     }
 
     pub(super) fn temporal_month_code_to_string(
@@ -791,6 +801,7 @@ impl<H: Host> Vm<H> {
         code: &str,
         calendar: &str,
         year: i32,
+        constrain: bool,
     ) -> Result<i32, JsError> {
         let parsed = parse_iso_month_code_syntax(code)
             .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
@@ -804,6 +815,17 @@ impl<H: Host> Vm<H> {
             format!("M{parsed:02}")
         };
         quench_intl::calendar_month_from_code(year, &canonical_code, calendar)
+            .or_else(|| {
+                if !constrain || !canonical_code.ends_with('L') {
+                    return None;
+                }
+                let ordinary_code = if calendar == "hebrew" && canonical_code == "M05L" {
+                    HEBREW_LEAP_MONTH_FALLBACK
+                } else {
+                    canonical_code.trim_end_matches('L')
+                };
+                quench_intl::calendar_month_from_code(year, ordinary_code, calendar)
+            })
             .or_else(|| {
                 (!canonical_code.ends_with('L') && parsed <= ISO_MONTHS_PER_YEAR as i32)
                     .then_some(parsed as u32)
@@ -824,7 +846,7 @@ impl<H: Host> Vm<H> {
         } else {
             format!("M{code:02}")
         };
-        self.parse_plain_date_month_code(p, &code, calendar, year)
+        self.parse_plain_date_month_code(p, &code, calendar, year, false)
     }
 
     pub(super) fn resolve_calendar_year(
