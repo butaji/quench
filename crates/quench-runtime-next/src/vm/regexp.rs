@@ -318,16 +318,8 @@ impl<H: Host> Vm<H> {
         let flags_atom = self.intern_atom("flags");
         let flags_value = self.get_property(p, receiver, flags_atom)?;
         let flags = self.to_string(p, flags_value)?;
-        let global_atom = self.intern_atom("global");
-        let global_value = self.get_property(p, receiver, global_atom)?;
-        let global = self.truthy(global_value);
-        let unicode = if global {
-            let unicode_atom = self.intern_atom("unicode");
-            let unicode_value = self.get_property(p, receiver, unicode_atom)?;
-            self.truthy(unicode_value) || flags.contains('v')
-        } else {
-            false
-        };
+        let global = flags.contains('g');
+        let unicode = flags.contains('u') || flags.contains('v');
         let callable = self.is_function(replacement);
         let replacement_string = if callable {
             None
@@ -345,7 +337,7 @@ impl<H: Host> Vm<H> {
             )?;
         }
 
-        let mut matches = Vec::new();
+        let mut pending_results = Vec::new();
         let collection_result = (|| {
             loop {
                 let result = self.regexp_exec_value(p, receiver, input_value)?;
@@ -353,71 +345,26 @@ impl<H: Host> Vm<H> {
                     break;
                 }
                 let result_root = self.heap.root(result);
-                let mut record_roots = Vec::new();
-                let record = (|| {
-                    let result = self.heap.root_value(result_root).unwrap_or(result);
+                let result = self.heap.root_value(result_root).unwrap_or(result);
+                let matched_for_iteration = if global {
                     let matched_atom = self.intern_atom("0");
-                    let matched_value = self.get_property(p, result, matched_atom)?;
-                    let matched = self.regexp_input_string(p, matched_value)?;
-                    let position_atom = self.intern_atom("index");
-                    let position_value = self.get_property(p, result, position_atom)?;
-                    let position =
-                        regexp_to_integer_or_infinity(self.to_number(p, position_value)?);
-                    let length_atom = self.intern_atom("length");
-                    let length_value = self.get_property(p, result, length_atom)?;
-                    let length = regexp_to_length(self.to_number(p, length_value)?);
-                    let mut capture_roots = Vec::new();
-                    for index in 1..length {
-                        let atom = self.intern_atom(&index.to_string());
-                        let capture = self.get_property(p, result, atom)?;
-                        let capture_root = self.heap.root(capture);
-                        let retained_capture_root = if !callable && !capture.is_undefined() {
-                            let conversion = self.regexp_input_string(
-                                p,
-                                self.heap.root_value(capture_root).unwrap_or(capture),
-                            );
-                            let string = match conversion {
-                                Ok(string) => string,
-                                Err(error) => {
-                                    self.heap.release_root(capture_root);
-                                    return Err(error);
-                                }
-                            };
-                            self.heap.release_root(capture_root);
-                            let capture = self.heap.alloc(Cell::String(string));
-                            self.heap.root(capture)
-                        } else {
-                            capture_root
-                        };
-                        capture_roots.push(retained_capture_root);
-                        record_roots.push(retained_capture_root);
-                    }
-                    let groups_atom = self.intern_atom("groups");
-                    let groups = self.get_property(p, result, groups_atom)?;
-                    if !callable && groups.is_null() {
-                        return Err(self.type_error(p, "RegExp replace groups is null".into()));
-                    }
-                    let groups_root = (!groups.is_undefined()).then(|| self.heap.root(groups));
-                    Ok::<_, JsError>((matched, position, capture_roots, groups_root))
-                })();
-                let (matched, position, capture_roots, groups_root) = match record {
-                    Ok(record) => record,
-                    Err(error) => {
-                        for root in record_roots {
-                            self.heap.release_root(root);
+                    let matched = self
+                        .get_property(p, result, matched_atom)
+                        .and_then(|value| self.regexp_input_string(p, value));
+                    Some(match matched {
+                        Ok(matched) => matched,
+                        Err(error) => {
+                            self.heap.release_root(result_root);
+                            return Err(error);
                         }
-                        self.heap.release_root(result_root);
-                        return Err(error);
-                    }
+                    })
+                } else {
+                    None
                 };
-                self.heap.release_root(result_root);
-                let empty_match = matched.units().is_empty();
-                matches.push(RegExpReplaceMatch {
-                    capture_roots,
-                    groups_root,
-                    matched,
-                    position,
-                });
+                let empty_match = matched_for_iteration
+                    .as_ref()
+                    .is_some_and(|matched| matched.units().is_empty());
+                pending_results.push((result_root, matched_for_iteration));
                 if !global {
                     break;
                 }
@@ -437,19 +384,95 @@ impl<H: Host> Vm<H> {
             Ok::<_, JsError>(())
         })();
         if let Err(error) = collection_result {
-            for matched in matches {
-                for root in matched.capture_roots {
-                    self.heap.release_root(root);
-                }
-                if let Some(root) = matched.groups_root {
-                    self.heap.release_root(root);
-                }
+            for (root, _) in pending_results {
+                self.heap.release_root(root);
             }
             return Err(error);
         }
 
-        if matches.is_empty() {
+        if pending_results.is_empty() {
             return Ok(self.heap.alloc(Cell::String(input)));
+        }
+        let mut matches: Vec<RegExpReplaceMatch> = Vec::with_capacity(pending_results.len());
+        let mut pending_results = pending_results.into_iter();
+        while let Some((result_root, _matched_for_iteration)) = pending_results.next() {
+            let result = self
+                .heap
+                .root_value(result_root)
+                .unwrap_or(Value::UNDEFINED);
+            let mut record_roots = Vec::new();
+            let record = (|| {
+                let length_atom = self.intern_atom("length");
+                let length_value = self.get_property(p, result, length_atom)?;
+                let length = regexp_to_length(self.to_number(p, length_value)?);
+                let matched_atom = self.intern_atom("0");
+                let matched_value = self.get_property(p, result, matched_atom)?;
+                let matched = self.regexp_input_string(p, matched_value)?;
+                let position_atom = self.intern_atom("index");
+                let position_value = self.get_property(p, result, position_atom)?;
+                let position = regexp_to_integer_or_infinity(self.to_number(p, position_value)?);
+                let mut capture_roots = Vec::new();
+                for index in 1..length {
+                    let atom = self.intern_atom(&index.to_string());
+                    let capture = self.get_property(p, result, atom)?;
+                    let capture_root = self.heap.root(capture);
+                    let retained_capture_root = if !callable && !capture.is_undefined() {
+                        let conversion = self.regexp_input_string(
+                            p,
+                            self.heap.root_value(capture_root).unwrap_or(capture),
+                        );
+                        let string = match conversion {
+                            Ok(string) => string,
+                            Err(error) => {
+                                self.heap.release_root(capture_root);
+                                return Err(error);
+                            }
+                        };
+                        self.heap.release_root(capture_root);
+                        let capture = self.heap.alloc(Cell::String(string));
+                        self.heap.root(capture)
+                    } else {
+                        capture_root
+                    };
+                    capture_roots.push(retained_capture_root);
+                    record_roots.push(retained_capture_root);
+                }
+                let groups_atom = self.intern_atom("groups");
+                let groups = self.get_property(p, result, groups_atom)?;
+                if !callable && groups.is_null() {
+                    return Err(self.type_error(p, "RegExp replace groups is null".into()));
+                }
+                let groups_root = (!groups.is_undefined()).then(|| self.heap.root(groups));
+                Ok::<_, JsError>((matched, position, capture_roots, groups_root))
+            })();
+            let (matched, position, capture_roots, groups_root) = match record {
+                Ok(record) => record,
+                Err(error) => {
+                    for root in record_roots {
+                        self.heap.release_root(root);
+                    }
+                    self.heap.release_root(result_root);
+                    for (root, _) in pending_results {
+                        self.heap.release_root(root);
+                    }
+                    for matched in matches {
+                        for root in matched.capture_roots {
+                            self.heap.release_root(root);
+                        }
+                        if let Some(root) = matched.groups_root {
+                            self.heap.release_root(root);
+                        }
+                    }
+                    return Err(error);
+                }
+            };
+            self.heap.release_root(result_root);
+            matches.push(RegExpReplaceMatch {
+                capture_roots,
+                groups_root,
+                matched,
+                position,
+            });
         }
         let output_result = (|| {
             let mut output = Vec::new();
@@ -665,6 +688,7 @@ impl<H: Host> Vm<H> {
         }
         let input =
             self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let constructor = self.regexp_split_species_constructor(p, receiver)?;
         let flags_atom = self.intern_atom("flags");
         let flags_value = self.get_property(p, receiver, flags_atom)?;
         let flags = self.to_string(p, flags_value)?;
@@ -674,7 +698,8 @@ impl<H: Host> Vm<H> {
         } else {
             format!("{flags}y")
         };
-        let splitter = self.regexp_split_species(p, receiver, &splitter_flags)?;
+        let splitter_flags = self.heap.alloc(Cell::String(splitter_flags.into()));
+        let splitter = self.construct_value(p, constructor, &[receiver, splitter_flags])?;
         let limit = self.regexp_split_limit(p, args.get(1).copied())?;
         if limit == 0 {
             return Ok(self.heap.alloc(Cell::Array {
@@ -752,11 +777,10 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn regexp_split_species(
+    fn regexp_split_species_constructor(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
-        flags: &str,
     ) -> Result<Value, JsError> {
         let constructor_atom = self.intern_atom("constructor");
         let constructor = self.get_property(p, receiver, constructor_atom)?;
@@ -779,8 +803,7 @@ impl<H: Host> Vm<H> {
         } else {
             species
         };
-        let flags = self.heap.alloc(Cell::String(flags.into()));
-        self.construct_value(p, intrinsic, &[receiver, flags])
+        Ok(intrinsic)
     }
 
     pub(super) fn regexp_split_limit(
@@ -1117,6 +1140,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
+        new_target: Option<Value>,
     ) -> Result<Value, JsError> {
         let pattern_value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let flags_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -1140,6 +1164,11 @@ impl<H: Host> Vm<H> {
             pattern_value
         };
         let pattern = self.regexp_input_string(p, source_value)?;
+        let prototype = if let Some(new_target) = new_target {
+            self.regexp_prototype_from_new_target(p, new_target)?
+        } else {
+            self.regexp_proto
+        };
         let flags = if flags_omitted && pattern_is_regexp {
             let flags_atom = self.intern_atom("flags");
             let value = self.get_property(p, pattern_value, flags_atom)?;
@@ -1152,7 +1181,7 @@ impl<H: Host> Vm<H> {
         let regex = Self::compile_regexp(pattern.host_string(), &flags)?;
         drop(regex);
         let object = self.heap.alloc(Cell::RegExp {
-            object: Self::empty_object(self.regexp_proto),
+            object: Self::empty_object(prototype),
             source: pattern,
             flags,
         });
