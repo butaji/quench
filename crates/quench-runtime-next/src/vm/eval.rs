@@ -153,15 +153,8 @@ impl<H: Host> Vm<H> {
             .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?;
         }
         let result = self.eval_source_simple(p, trimmed, inherited_strict);
-        let global_direct_eval = self.direct_eval
-            && self
-                .frames
-                .last()
-                .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
         match result {
-            Err(error) if global_direct_eval && error.is_eval_parser_diagnostic() => {
-                self.eval_global_script(p, &text)
-            }
+            Err(error) if error.is_eval_parser_diagnostic() => self.eval_global_script(p, &text),
             result => result,
         }
     }
@@ -432,10 +425,16 @@ impl<H: Host> Vm<H> {
             }
         }
         if source.contains("super(") {
-            return self.syntax_error_result(p, "super call is not valid in eval code");
+            return Err(self.mark_eval_parser_error(
+                p,
+                "super call requires syntactic eval validation",
+            ));
         }
         if (source.contains("super.") || source.contains("super[")) && !self.direct_eval {
-            return self.syntax_error_result(p, "super property is not valid in eval code");
+            return Err(self.mark_eval_parser_error(
+                p,
+                "super property requires syntactic eval validation",
+            ));
         }
         if source.contains("\n++")
             || source.contains("for(;false;)")
@@ -1274,7 +1273,11 @@ impl<H: Host> Vm<H> {
         let message = diagnostics
             .first()
             .map_or("invalid eval expression".to_owned(), ToString::to_string);
-        self.syntax_error_result(p, &message)
+        self.mark_eval_parser_error(p, &message)
+    }
+
+    fn mark_eval_parser_error(&mut self, p: &ResidualProgram, message: &str) -> JsError {
+        self.syntax_error_result(p, message)
             .expect_err("dynamic eval syntax errors must throw")
             .mark_eval_parser_diagnostic()
     }
