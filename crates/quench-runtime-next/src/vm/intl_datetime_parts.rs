@@ -10,6 +10,7 @@ const FULL_FRACTION_DIGITS: u32 = 3;
 const TWO_DIGIT_WIDTH: usize = 2;
 const FIRST_WEEKDAY_CHAR: usize = 1;
 const SHORT_WEEKDAY_LENGTH: usize = 3;
+const SHORT_MONTH_LENGTH: usize = 3;
 const DAYS_PER_WEEK: usize = 7;
 const DAYS_PER_WEEK_U32: u32 = DAYS_PER_WEEK as u32;
 const EVENING_START_HOUR: u32 = 18;
@@ -38,6 +39,20 @@ const HEBREW_MONTHS_EN: &[(&str, &str)] = &[
     ("M10", "Tamuz"),
     ("M11", "Av"),
     ("M12", "Elul"),
+];
+const ISLAMIC_MONTHS_EN: &[&str] = &[
+    "Muharram",
+    "Safar",
+    "Rabiʻ I",
+    "Rabiʻ II",
+    "Jumada I",
+    "Jumada II",
+    "Rajab",
+    "Shaʻban",
+    "Ramadan",
+    "Shawwal",
+    "Dhuʻl-Qiʻdah",
+    "Dhuʻl-Hijjah",
 ];
 const FORMAT_STYLE_FULL: &str = "full";
 const FORMAT_STYLE_LONG: &str = "long";
@@ -246,11 +261,12 @@ fn append_date(
             }),
             _ => None,
         };
-        let value = hebrew_month_name(fields, options.locale.as_deref()).map(str::to_owned).unwrap_or_else(|| match (style, month) {
-            ("long" | "short" | "narrow", Some(name)) => name.to_string(),
-            ("2-digit", Some(prefix)) => format!("{prefix}{}", fields.month),
-            _ => fields.month.to_string(),
-        });
+        let value = localized_calendar_month_name(fields, style, options.locale.as_deref())
+            .unwrap_or_else(|| match (style, month) {
+                ("long" | "short" | "narrow", Some(name)) => name.to_string(),
+                ("2-digit", Some(prefix)) => format!("{prefix}{}", fields.month),
+                _ => fields.month.to_string(),
+            });
         let value = if fields
             .month_code
             .as_deref()
@@ -327,16 +343,32 @@ fn append_date(
     }
 }
 
-fn hebrew_month_name<'a>(fields: &'a DateTimeFields, locale: Option<&str>) -> Option<&'a str> {
-    if fields.calendar.as_deref() != Some("hebrew")
-        || !locale.is_some_and(|locale| locale.starts_with("en"))
-    {
+fn localized_calendar_month_name(
+    fields: &DateTimeFields,
+    style: &str,
+    locale: Option<&str>,
+) -> Option<String> {
+    if !locale.is_some_and(|locale| locale.starts_with("en")) {
         return None;
     }
-    let code = fields.month_code.as_deref()?;
-    HEBREW_MONTHS_EN
-        .iter()
-        .find_map(|(month_code, name)| (*month_code == code).then_some(*name))
+    let name = match fields.calendar.as_deref()? {
+        "hebrew" => {
+            let code = fields.month_code.as_deref()?;
+            HEBREW_MONTHS_EN
+                .iter()
+                .find_map(|(month_code, name)| (*month_code == code).then_some(*name))?
+        }
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" => {
+            ISLAMIC_MONTHS_EN.get(fields.month.checked_sub(FIRST_MONTH_NUMBER)? as usize)?
+        }
+        _ => return None,
+    };
+    Some(match style {
+        "long" => name.to_string(),
+        "short" => name.chars().take(SHORT_MONTH_LENGTH).collect(),
+        "narrow" => name.chars().next()?.to_string(),
+        _ => return None,
+    })
 }
 
 fn era_code_value(code: &str, style: &str) -> String {
