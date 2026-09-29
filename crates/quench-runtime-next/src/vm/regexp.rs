@@ -1267,7 +1267,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        if receiver.is_null() || receiver.is_undefined() {
+        if !self.is_object_like(receiver) {
             return Err(self.type_error(
                 p,
                 "RegExp.prototype.toString called on incompatible receiver".into(),
