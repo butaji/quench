@@ -57,14 +57,48 @@ impl<H: Host> Vm<H> {
             &[args.first().copied().unwrap_or(Value::UNDEFINED)],
         )?;
         let (left_date, left_time, left_calendar) = self.temporal_plain_date_time_slots(p, this)?;
-        let (right_date, right_time, right_calendar) = self.temporal_plain_date_time_slots(p, other)?;
+        let (right_date, right_time, right_calendar) =
+            self.temporal_plain_date_time_slots(p, other)?;
         if left_calendar != right_calendar {
             return Err(self.range_error(p, "Calendar mismatch".into()));
         }
-        let options = self.difference_options(
-            p,
-            args.get(1).copied().unwrap_or(Value::UNDEFINED),
-        )?;
+        let options =
+            self.difference_options(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+        if !matches!(left_calendar.as_str(), "iso8601" | "gregory")
+            && matches!(options.largest, "year" | "month")
+            && left_time == right_time
+            && options.smallest == "nanosecond"
+            && options.increment == 1
+            && options.rounding_mode == "trunc"
+        {
+            let (start, end) = if native == Native::TemporalPlainDateTimeSince {
+                (right_date, left_date)
+            } else {
+                (left_date, right_date)
+            };
+            let largest_unit = if options.largest == "year" {
+                quench_intl::CalendarDifferenceUnit::Years
+            } else {
+                quench_intl::CalendarDifferenceUnit::Months
+            };
+            let difference = quench_intl::calendar_date_difference(
+                (start.year, start.month, start.day),
+                (end.year, end.month, end.day),
+                &left_calendar,
+                largest_unit,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime difference".into()))?;
+            let mut fields = [0.0; 10];
+            fields[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] =
+                difference.0 as f64;
+            fields[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] =
+                difference.1 as f64;
+            fields[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] =
+                difference.2 as f64;
+            fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] =
+                difference.3 as f64;
+            return self.make_temporal_duration(p, fields);
+        }
         let direction = if native == Native::TemporalPlainDateTimeSince {
             -1_i128
         } else {
@@ -131,11 +165,7 @@ impl<H: Host> Vm<H> {
         if unit_rank(smallest) < unit_rank(largest) {
             return Err(self.range_error(p, "smallestUnit larger than largestUnit".into()));
         }
-        if !difference_increment_is_valid(
-            increment,
-            smallest,
-            DifferenceDomain::PlainDateTime,
-        ) {
+        if !difference_increment_is_valid(increment, smallest, DifferenceDomain::PlainDateTime) {
             return Err(self.range_error(p, "Invalid roundingIncrement".into()));
         }
         Ok(DifferenceOptions {
@@ -233,8 +263,8 @@ impl<H: Host> Vm<H> {
         } else {
             (start, end)
         };
-        let mut days = temporal_date::days_from_iso_date(end.0)
-            - temporal_date::days_from_iso_date(start.0);
+        let mut days =
+            temporal_date::days_from_iso_date(end.0) - temporal_date::days_from_iso_date(start.0);
         let mut time = if receiver_is_end {
             time_nanos(receiver.1) - time_nanos(target.1)
         } else {
@@ -256,7 +286,8 @@ impl<H: Host> Vm<H> {
                 shift_months_clamped(receiver.0, months)
             };
             let anchor_from_receiver = receiver_anchor.is_some();
-            let anchor = receiver_anchor.or_else(|| shift_months_clamped(start.0, months))
+            let anchor = receiver_anchor
+                .or_else(|| shift_months_clamped(start.0, months))
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
             let anchor_total = datetime_nanos(anchor, receiver.1);
             let target_total = datetime_nanos(target.0, target.1);
@@ -313,16 +344,11 @@ impl<H: Host> Vm<H> {
         let rounded_calendar_unit = match options.smallest {
             "year" => {
                 let receiver_year_shift = receiver_unit_direction * MONTHS_PER_YEAR;
-                let year_anchor = shift_months_clamped(
-                    receiver.0,
-                    receiver_year_shift * years,
-                )
-                .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-                let year_boundary = shift_months_clamped(
-                    year_anchor,
-                    receiver_unit_direction * MONTHS_PER_YEAR,
-                )
+                let year_anchor = shift_months_clamped(receiver.0, receiver_year_shift * years)
                     .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+                let year_boundary =
+                    shift_months_clamped(year_anchor, receiver_unit_direction * MONTHS_PER_YEAR)
+                        .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
                 let year_nanos = datetime_nanos(year_boundary, receiver.1)
                     .abs_diff(datetime_nanos(year_anchor, receiver.1))
                     .try_into()
@@ -336,11 +362,9 @@ impl<H: Host> Vm<H> {
             "month" => {
                 let total_months = years * MONTHS_PER_YEAR + months;
                 let receiver_month_shift = receiver_unit_direction;
-                let month_anchor = shift_months_clamped(
-                    receiver.0,
-                    receiver_month_shift * total_months,
-                )
-                .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+                let month_anchor =
+                    shift_months_clamped(receiver.0, receiver_month_shift * total_months)
+                        .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
                 let month_boundary = shift_months_clamped(month_anchor, receiver_month_shift)
                     .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
                 let month_nanos = datetime_nanos(month_boundary, receiver.1)
@@ -502,7 +526,10 @@ impl Default for DifferenceOptions {
 }
 
 fn unit_rank(unit: &str) -> usize {
-    UNITS.iter().position(|candidate| *candidate == unit).unwrap_or(usize::MAX)
+    UNITS
+        .iter()
+        .position(|candidate| *candidate == unit)
+        .unwrap_or(usize::MAX)
 }
 
 fn unit_nanos(unit: &str) -> i128 {

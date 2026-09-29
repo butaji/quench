@@ -715,7 +715,13 @@ impl<H: Host> Vm<H> {
             }
             Native::TemporalPlainYearMonthUntil | Native::TemporalPlainYearMonthSince => self
                 .temporal_plain_year_month_difference_native(
-                    p, native, args, year, month, calendar,
+                    p,
+                    native,
+                    args,
+                    year,
+                    month,
+                    reference_day,
+                    calendar,
                 ),
             Native::TemporalPlainYearMonthToPlainDate => {
                 let item = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -731,8 +737,24 @@ impl<H: Host> Vm<H> {
                 if day < 1 {
                     return Err(self.range_error(p, "Invalid PlainDate".into()));
                 }
-                let day = day.min(iso_days_in_month(year, month as i32).unwrap_or(31));
-                let date = checked_iso_date(year, month as i32, day)
+                let fields = quench_intl::calendar_fields_from_iso(
+                    year,
+                    month,
+                    reference_day,
+                    &calendar,
+                );
+                let (calendar_year, calendar_month) = fields.map_or((year, month), |fields| {
+                    (fields.year, fields.month)
+                });
+                let iso = quench_intl::calendar_date_to_iso_with_overflow(
+                    calendar_year,
+                    calendar_month,
+                    day as u32,
+                    &calendar,
+                    true,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+                let date = checked_iso_date(iso.0, iso.1 as i32, iso.2 as i32)
                     .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
                 Ok(self.heap.alloc(Cell::TemporalPlainDate {
                     object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
@@ -861,18 +883,20 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         year: i32,
         month: u32,
+        reference_day: u32,
         calendar: String,
     ) -> Result<Value, JsError> {
         let constructor = self.native_value(Native::TemporalPlainYearMonth);
         let other_args = [args.first().copied().unwrap_or(Value::UNDEFINED)];
         let other = self.temporal_plain_year_month_from(p, constructor, &other_args)?;
-        let (other_year, other_month, other_calendar) = match self.heap.get(other) {
+        let (other_year, other_month, other_reference_day, other_calendar) = match self.heap.get(other) {
             Some(Cell::TemporalPlainYearMonth {
                 year,
                 month,
                 calendar,
+                reference_iso_day,
                 ..
-            }) => (*year, *month, calendar.clone()),
+            }) => (*year, *month, *reference_iso_day, calendar.clone()),
             _ => return Err(self.type_error(p, "Invalid PlainYearMonth".into())),
         };
         if calendar != other_calendar {
@@ -881,8 +905,9 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_year_month_difference(
             p,
             native,
-            (year, month),
-            (other_year, other_month),
+            (year, month, reference_day),
+            (other_year, other_month, other_reference_day),
+            calendar,
             args.get(1).copied().unwrap_or(Value::UNDEFINED),
         )
     }

@@ -58,11 +58,40 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         native: Native,
-        start: (i32, u32),
-        end: (i32, u32),
+        start: (i32, u32, u32),
+        end: (i32, u32, u32),
+        calendar: String,
         options: Value,
     ) -> Result<Value, JsError> {
         let settings = self.year_month_difference_options(p, options)?;
+        if !matches!(calendar.as_str(), "iso8601" | "gregory")
+            && matches!(settings.largest, DateUnit::Year | DateUnit::Month)
+            && settings.smallest == DateUnit::Month
+            && settings.increment == 1.0
+            && is_trunc(settings.rounding_mode)
+        {
+            let (calendar_start, calendar_end) = if native == Native::TemporalPlainYearMonthSince {
+                (end, start)
+            } else {
+                (start, end)
+            };
+            let largest_unit = if settings.largest == DateUnit::Year {
+                quench_intl::CalendarDifferenceUnit::Years
+            } else {
+                quench_intl::CalendarDifferenceUnit::Months
+            };
+            let difference = quench_intl::calendar_date_difference(
+                calendar_start,
+                calendar_end,
+                &calendar,
+                largest_unit,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid PlainYearMonth difference".into()))?;
+            let mut fields = [0.0; 10];
+            fields[DURATION_YEARS_FIELD] = difference.0 as f64;
+            fields[DURATION_MONTHS_FIELD] = difference.1 as f64;
+            return self.make_temporal_duration(p, fields);
+        }
         let direction = if native == Native::TemporalPlainYearMonthSince {
             -1.0
         } else {
@@ -82,7 +111,7 @@ impl<H: Host> Vm<H> {
         if months == 0.0 {
             months = 0.0;
         }
-        self.validate_year_month_difference_target(p, start, total, years, months)?;
+        self.validate_year_month_difference_target(p, (start.0, start.1), total, years, months)?;
         let mut fields = [0.0; 10];
         fields[0] = years;
         fields[1] = months;
@@ -152,9 +181,40 @@ impl<H: Host> Vm<H> {
         if this.3 != other.3 {
             return Err(self.range_error(p, "Calendar mismatch".into()));
         }
+        let calendar = this.3.clone();
         let (start, end) = (to_iso_date(this), to_iso_date(other));
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let settings = self.plain_date_difference_options(p, options)?;
+        if !matches!(calendar.as_str(), "iso8601" | "gregory")
+            && matches!(settings.largest, DateUnit::Year | DateUnit::Month)
+            && matches!(settings.smallest, DateUnit::Auto | DateUnit::Day)
+            && settings.increment == 1.0
+            && is_trunc(settings.rounding_mode)
+        {
+            let (calendar_start, calendar_end) = if native == Native::TemporalPlainDateSince {
+                (end, start)
+            } else {
+                (start, end)
+            };
+            let largest_unit = if settings.largest == DateUnit::Year {
+                quench_intl::CalendarDifferenceUnit::Years
+            } else {
+                quench_intl::CalendarDifferenceUnit::Months
+            };
+            let difference = quench_intl::calendar_date_difference(
+                (calendar_start.year, calendar_start.month, calendar_start.day),
+                (calendar_end.year, calendar_end.month, calendar_end.day),
+                &calendar,
+                largest_unit,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid PlainDate difference".into()))?;
+            let mut fields = [0.0; 10];
+            fields[DURATION_YEARS_FIELD] = difference.0 as f64;
+            fields[DURATION_MONTHS_FIELD] = difference.1 as f64;
+            fields[DURATION_WEEKS_FIELD] = difference.2 as f64;
+            fields[DURATION_DAYS_FIELD] = difference.3 as f64;
+            return self.make_temporal_duration(p, fields);
+        }
         let mut fields = iso_date_difference(start, end, settings.largest)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDate difference".into()))?;
         let date_sign = (temporal_date::days_from_iso_date(end)
