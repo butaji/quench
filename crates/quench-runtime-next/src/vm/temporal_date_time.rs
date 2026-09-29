@@ -354,7 +354,10 @@ impl<H: Host> Vm<H> {
                 i64::from(super::temporal_date::iso_day_of_week(date))
             }
             Native::TemporalPlainDateTimeDayOfYearGetter => {
-                i64::from(super::temporal_date::iso_day_of_year(date))
+                i64::from(calendar_fields.as_ref().map_or_else(
+                    || super::temporal_date::iso_day_of_year(date),
+                    |fields| fields.day_of_year,
+                ))
             }
             Native::TemporalPlainDateTimeWeekOfYearGetter => {
                 return Ok(super::temporal_date::temporal_iso_week(date, &calendar)
