@@ -116,12 +116,14 @@ pub fn supported_time_zones() -> Vec<String> {
     names.into_iter().collect()
 }
 
-pub fn canonical_time_zone_name(value: &str) -> Option<String> {
-    if value.eq_ignore_ascii_case("utc") {
-        return Some("UTC".into());
-    }
+pub fn time_zone_identifier(value: &str) -> Option<&'static str> {
     chrono_tz::TZ_VARIANTS
         .iter()
         .find(|timezone| timezone.name().eq_ignore_ascii_case(value))
-        .map(|timezone| quench_temporal::timezone_primary_name(timezone.name()).to_owned())
+        .map(|timezone| timezone.name())
+}
+
+pub fn canonical_time_zone_name(value: &str) -> Option<String> {
+    time_zone_identifier(value)
+        .map(|identifier| quench_temporal::timezone_primary_name(identifier).to_owned())
 }

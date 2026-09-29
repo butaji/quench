@@ -25,6 +25,8 @@ const PERIOD_NARROW_NOON: &str = "n";
 const CYCLIC_STEM_COUNT: usize = 10;
 const CYCLIC_BRANCH_COUNT: usize = 12;
 const LEAP_MONTH_SUFFIX: &str = "bis";
+const MONTH_CODE_PREFIX: char = 'M';
+const LEAP_MONTH_CODE_SUFFIX: char = 'L';
 const HEBREW_MONTHS_EN: &[(&str, &str)] = &[
     ("M01", "Tishri"),
     ("M02", "Heshvan"),
@@ -242,18 +244,33 @@ fn append_date(
     let month_style = options.month.as_deref();
     let textual_month =
         month_style.is_some_and(|style| matches!(style, "long" | "short" | "narrow"));
+    let display_month = if matches!(fields.calendar.as_deref(), Some("chinese" | "dangi")) {
+        fields
+            .month_code
+            .as_deref()
+            .and_then(|code| code.strip_prefix(MONTH_CODE_PREFIX))
+            .and_then(|digits| {
+                digits
+                    .trim_end_matches(LEAP_MONTH_CODE_SUFFIX)
+                    .parse::<u32>()
+                    .ok()
+            })
+            .unwrap_or(fields.month)
+    } else {
+        fields.month
+    };
     if let Some(style) = month_style {
         let month = match style {
             "long" => MONTH_NAMES
-                .get(fields.month.saturating_sub(FIRST_MONTH_NUMBER) as usize)
+                .get(display_month.saturating_sub(FIRST_MONTH_NUMBER) as usize)
                 .copied(),
             "short" => MONTH_ABBREVIATIONS
-                .get(fields.month.saturating_sub(FIRST_MONTH_NUMBER) as usize)
+                .get(display_month.saturating_sub(FIRST_MONTH_NUMBER) as usize)
                 .copied(),
             "narrow" => MONTH_NAMES
-                .get(fields.month.saturating_sub(FIRST_MONTH_NUMBER) as usize)
+                .get(display_month.saturating_sub(FIRST_MONTH_NUMBER) as usize)
                 .map(|name| &name[..FIRST_WEEKDAY_CHAR]),
-            "2-digit" => Some(if fields.month < DECIMAL_RADIX {
+            "2-digit" => Some(if display_month < DECIMAL_RADIX {
                 "0"
             } else {
                 ""
@@ -263,8 +280,8 @@ fn append_date(
         let value = localized_calendar_month_name(fields, style, options.locale.as_deref())
             .unwrap_or_else(|| match (style, month) {
                 ("long" | "short" | "narrow", Some(name)) => name.to_string(),
-                ("2-digit", Some(prefix)) => format!("{prefix}{}", fields.month),
-                _ => fields.month.to_string(),
+                ("2-digit", Some(prefix)) => format!("{prefix}{display_month}"),
+                _ => display_month.to_string(),
             });
         let value = if fields
             .month_code
@@ -296,11 +313,7 @@ fn append_date(
         } else if options.day.is_some() {
             push(parts, "literal", " ");
         }
-        let display_year = if options.era.is_some() && fields.year <= 0 {
-            1 - fields.year
-        } else {
-            fields.year
-        };
+        let display_year = fields.era_year.unwrap_or(fields.year);
         let value = if style == "2-digit" {
             format!(
                 "{:0width$}",
@@ -364,6 +377,7 @@ fn localized_calendar_month_name(
     };
     Some(match style {
         "long" => name.to_string(),
+        "numeric" | "2-digit" if fields.calendar.as_deref() == Some("hebrew") => name.to_string(),
         "short" => name.chars().take(SHORT_MONTH_LENGTH).collect(),
         "narrow" => name.chars().next()?.to_string(),
         _ => return None,
