@@ -463,6 +463,29 @@ impl<H: Host> Vm<H> {
         if self.date_time_option(resolved, "dateStyle").is_some()
             || self.date_time_option(resolved, "timeStyle").is_some()
         {
+            let forbidden_style = match defaults {
+                DateTimeDefaults::Date => Some("timeStyle"),
+                DateTimeDefaults::Time => Some("dateStyle"),
+                DateTimeDefaults::Temporal(_) if !defaults.has_time_components() => {
+                    Some("timeStyle")
+                }
+                DateTimeDefaults::Temporal(components)
+                    if !components
+                        .iter()
+                        .any(|(name, _)| matches!(*name, "year" | "month" | "day")) =>
+                {
+                    Some("dateStyle")
+                }
+                _ => None,
+            };
+            if forbidden_style.is_some_and(|style| self.date_time_option(resolved, style).is_some())
+            {
+                return Err(self.type_error(
+                    p,
+                    "style is incompatible with required date/time components".into(),
+                ));
+            }
+
             let explicit = [
                 "weekday",
                 "era",
