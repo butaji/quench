@@ -777,7 +777,11 @@ impl<H: Host> Vm<H> {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
         self.install_array_species()?;
-        self.install_typed_array_species(self.native_value(Native::TypedArray))?;
+        self.install_typed_array_species(
+            self.native_value(Native::TypedArray),
+            self.typed_array_proto,
+            self.realm.globals,
+        )?;
         self.install_array_unscopables()?;
         self.install_abstract_module_source(program)?;
         self.install_array_buffer_species(program)?;

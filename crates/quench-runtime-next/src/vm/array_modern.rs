@@ -180,7 +180,19 @@ impl<H: Host> Vm<H> {
         if length > MAX_ARRAY_LENGTH {
             return Err(self.range_error(p, "invalid array length".into()));
         }
-        let array = self.new_array(Vec::new());
+        let array_atom = self.intern_atom("Array");
+        let array_constructor = self.get_property(p, self.realm.globals, array_atom)?;
+        let prototype_atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, array_constructor, prototype_atom)?;
+        let prototype = if self.object_data(prototype).is_some() {
+            prototype
+        } else {
+            self.array_proto
+        };
+        let array = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(prototype),
+            elements: Rc::new(Vec::new()),
+        });
         self.heap.sparse_set_length(array, length);
         Ok(array)
     }
