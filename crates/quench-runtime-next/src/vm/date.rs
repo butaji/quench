@@ -377,14 +377,11 @@ impl<H: Host> Vm<H> {
                 if !milliseconds.is_finite() {
                     return Err(self.range_error(p, "Invalid time value".into()));
                 }
-                let nanoseconds = format!("{:.0}", milliseconds.trunc() * 1_000_000.0);
-                let value = self.heap.alloc(Cell::BigInt(nanoseconds.into()));
-                let object = self
-                    .heap
-                    .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-                let key = self.intern_atom("epochNanoseconds");
-                self.set_property(object, key, value)?;
-                Ok(object)
+                let nanoseconds = (milliseconds.trunc() as i128)
+                    .checked_mul(super::temporal_instant::INSTANT_NANOSECONDS_PER_MILLISECOND)
+                    .ok_or_else(|| self.range_error(p, "Invalid time value".into()))?;
+                let constructor = self.temporal_instant_constructor(p)?;
+                self.make_temporal_instant(p, nanoseconds, constructor)
             }
             _ => Err(JsError("invalid Date native".into())),
         }
